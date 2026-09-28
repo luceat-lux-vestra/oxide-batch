@@ -173,8 +173,8 @@ jobs:
           PY
 
 
-  quality-integration:
-    name: quality-integration-internal
+  quality-integration-0:
+    name: quality-integration-0-internal
     if: ${{ github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -184,8 +184,50 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Run final-only integration tests
-        run: cargo test --workspace --all-features --test '*'
+      - name: Run final-only integration shard 0
+        run: python3 .github/scripts/run-integration-shard.py 0 4
+
+  quality-integration-1:
+    name: quality-integration-1-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run final-only integration shard 1
+        run: python3 .github/scripts/run-integration-shard.py 1 4
+
+  quality-integration-2:
+    name: quality-integration-2-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run final-only integration shard 2
+        run: python3 .github/scripts/run-integration-shard.py 2 4
+
+  quality-integration-3:
+    name: quality-integration-3-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run final-only integration shard 3
+        run: python3 .github/scripts/run-integration-shard.py 3 4
 
   quality-bin-doc:
     name: quality-bin-doc-internal
@@ -237,7 +279,7 @@ jobs:
 
   quality:
     name: quality
-    needs: [quality-fast, quality-integration, quality-bin-doc, quality-contracts]
+    needs: [quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-integration-3, quality-bin-doc, quality-contracts]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -264,12 +306,15 @@ jobs:
         if: ${{ github.event.pull_request.draft == false }}
         env:
           FAST_RESULT: ${{ needs.quality-fast.result }}
-          INTEGRATION_RESULT: ${{ needs.quality-integration.result }}
+          INTEGRATION_0_RESULT: ${{ needs.quality-integration-0.result }}
+          INTEGRATION_1_RESULT: ${{ needs.quality-integration-1.result }}
+          INTEGRATION_2_RESULT: ${{ needs.quality-integration-2.result }}
+          INTEGRATION_3_RESULT: ${{ needs.quality-integration-3.result }}
           BIN_DOC_RESULT: ${{ needs.quality-bin-doc.result }}
           CONTRACTS_RESULT: ${{ needs.quality-contracts.result }}
         run: |
           set -euo pipefail
-          for result in "$FAST_RESULT" "$INTEGRATION_RESULT" "$BIN_DOC_RESULT" "$CONTRACTS_RESULT"; do
+          for result in "$FAST_RESULT" "$INTEGRATION_0_RESULT" "$INTEGRATION_1_RESULT" "$INTEGRATION_2_RESULT" "$INTEGRATION_3_RESULT" "$BIN_DOC_RESULT" "$CONTRACTS_RESULT"; do
             if [ "$result" != "success" ]; then
               echo "::error::quality component concluded '$result'; refusing to emit a successful aggregate"
               exit 1

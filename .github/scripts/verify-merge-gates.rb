@@ -306,7 +306,9 @@ module MergeGateVerifier
   M5_CONFORMANCE_CONTEXT_JOB = 'conformance-campaign'
   QUALITY_WORKFLOW = '.github/workflows/ci.yml'
   QUALITY_AGGREGATE_JOB = 'quality'
-  QUALITY_COMPONENT_JOBS = %w[quality-fast quality-integration quality-bin-doc quality-contracts].freeze
+  QUALITY_INTEGRATION_SHARD_SCRIPT = '.github/scripts/run-integration-shard.py'
+  QUALITY_INTEGRATION_JOBS = %w[quality-integration-0 quality-integration-1 quality-integration-2 quality-integration-3].freeze
+  QUALITY_COMPONENT_JOBS = (%w[quality-fast quality-bin-doc quality-contracts] + QUALITY_INTEGRATION_JOBS).freeze
   PR_SCOPE_GLOBAL_DIRECT_PROOF_PATHS = [
     PR_SCOPE_SCRIPT,
     '.github/merge-gate-policy.json',
@@ -645,7 +647,7 @@ module MergeGateVerifier
     violations
   end
 
-  def quality_parallel_contract(policy:, producer_summary:)
+  def quality_parallel_contract(root:, policy:, producer_summary:)
     violations = []
     workflow = producer_summary.fetch('workflow_docs')[QUALITY_WORKFLOW]
     unless workflow.is_a?(Hash) && workflow['jobs'].is_a?(Hash)
@@ -663,10 +665,6 @@ module MergeGateVerifier
           'cargo clippy --workspace --all-targets --all-features --',
           'cargo clippy -p oxide-batch-xtask --all-targets --all-features --message-format=json --'
         ]
-      },
-      'quality-integration' => {
-        'name' => 'quality-integration-internal',
-        'tokens' => ["cargo test --workspace --all-features --test '*'"]
       },
       'quality-bin-doc' => {
         'name' => 'quality-bin-doc-internal',
@@ -687,6 +685,13 @@ module MergeGateVerifier
         ]
       }
     }
+
+    QUALITY_INTEGRATION_JOBS.each_with_index do |job_id, index|
+      component_specs[job_id] = {
+        'name' => "quality-integration-#{index}-internal",
+        'tokens' => ["python3 #{QUALITY_INTEGRATION_SHARD_SCRIPT} #{index} 4"]
+      }
+    end
 
     component_specs.each do |job_id, spec|
       job = jobs[job_id]
@@ -714,6 +719,25 @@ module MergeGateVerifier
       end
     end
 
+    shard_script = Pathname(root).join(QUALITY_INTEGRATION_SHARD_SCRIPT)
+    if shard_script.file?
+      shard_body = shard_script.read
+      shard_tokens = [
+        '"cargo", "metadata", "--no-deps", "--format-version", "1"',
+        '"test" not in target.get("kind", [])',
+        'integration target names must be workspace-unique before name-based sharding',
+        'integration shard partition is not an exact one-to-one cover',
+        'command = ["cargo", "test", "--workspace", "--all-features"]',
+        'command.extend(["--test", name])'
+      ]
+      missing = shard_tokens.reject { |token| shard_body.include?(token) }
+      unless missing.empty?
+        violations << "#{QUALITY_INTEGRATION_SHARD_SCRIPT} is missing fail-closed shard contract: #{missing.join(', ')}"
+      end
+    else
+      violations << "#{QUALITY_INTEGRATION_SHARD_SCRIPT} is missing"
+    end
+
     aggregate = jobs[QUALITY_AGGREGATE_JOB]
     unless aggregate.is_a?(Hash)
       return violations + ["#{QUALITY_WORKFLOW} must declare required #{QUALITY_AGGREGATE_JOB} aggregate"]
@@ -736,7 +760,10 @@ module MergeGateVerifier
     end
     expected_env = {
       'FAST_RESULT' => "${{ needs.quality-fast.result }}",
-      'INTEGRATION_RESULT' => "${{ needs.quality-integration.result }}",
+      'INTEGRATION_0_RESULT' => "${{ needs.quality-integration-0.result }}",
+      'INTEGRATION_1_RESULT' => "${{ needs.quality-integration-1.result }}",
+      'INTEGRATION_2_RESULT' => "${{ needs.quality-integration-2.result }}",
+      'INTEGRATION_3_RESULT' => "${{ needs.quality-integration-3.result }}",
       'BIN_DOC_RESULT' => "${{ needs.quality-bin-doc.result }}",
       'CONTRACTS_RESULT' => "${{ needs.quality-contracts.result }}"
     }
@@ -744,11 +771,7 @@ module MergeGateVerifier
       violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must bind every component result exactly"
     end
     result_body = result_step['run'].to_s
-    required_tokens = [
-      '"$FAST_RESULT"',
-      '"$INTEGRATION_RESULT"',
-      '"$BIN_DOC_RESULT"',
-      '"$CONTRACTS_RESULT"',
+    required_tokens = expected_env.keys.map { |key| "\"$#{key}\"" } + [
       'if [ "$result" != "success" ]; then',
       'exit 1'
     ]
@@ -995,7 +1018,7 @@ module MergeGateVerifier
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(m5_conformance_routing_contract(policy: policy, producer_summary: producer_summary))
-    violations.concat(quality_parallel_contract(policy: policy, producer_summary: producer_summary))
+    violations.concat(quality_parallel_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(post_main_contract(policy: policy, producer_summary: producer_summary))
 
     required_contexts = producer_summary.fetch('required_contexts') + aggregates.map { |gate| gate['context'] }

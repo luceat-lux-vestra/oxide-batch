@@ -70,17 +70,32 @@
     },
     {
       "workflow": ".github/workflows/ci.yml",
-      "job": "quality-integration",
-      "classification": "advisory"
-    },
-    {
-      "workflow": ".github/workflows/ci.yml",
       "job": "quality-bin-doc",
       "classification": "advisory"
     },
     {
       "workflow": ".github/workflows/ci.yml",
       "job": "quality-contracts",
+      "classification": "advisory"
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "quality-integration-0",
+      "classification": "advisory"
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "quality-integration-1",
+      "classification": "advisory"
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "quality-integration-2",
+      "classification": "advisory"
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
+      "job": "quality-integration-3",
       "classification": "advisory"
     }
   ],
