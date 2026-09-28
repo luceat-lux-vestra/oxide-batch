@@ -94,9 +94,13 @@ Historical M0-M6 gates remain authoritative evidence for completed work.
 Compatibility rows are promoted only by their ledger governance; completion
 or publication of M6 does not automatically make every M6 row `Verified`.
 
-The next delivery work is M7-M13. Those milestones close the remaining flow,
-repository, integration, scale, distributed-execution, migration, ecosystem,
-and certification gaps before the separate M14 project-wide 1.0/GA gate.
+The current delivery milestone is M7. Its advanced compiled-flow/custom-step
+owner (#195) and scope/factory/late-binding owner (#196) are complete, while
+#197-#200 retain the remaining repeat, definition-evolution,
+operator/explorer, and exit-evidence work. M8-M13 are later gap-closing
+milestones for repository, integration, scale, distributed-execution,
+migration, ecosystem, and certification scope before the separate M14
+project-wide 1.0/GA gate.
 
 ## Release interpretation
 
@@ -105,7 +109,8 @@ and certification gaps before the separate M14 project-wide 1.0/GA gate.
 - M5 is an Embedded Core Production Preview/stabilization boundary rather than
   project-wide 1.0;
 - M6 completed the item-processing/test-kit portion of the accepted M6-M13
-  program; M7-M13 remain the active gap-closing milestones;
+  program; M7 is the active in-progress milestone and M8-M13 remain later
+  gap-closing milestones;
 - M14 is the project-wide 1.0/GA evidence and support gate.
 
 ## Permanent non-goals
