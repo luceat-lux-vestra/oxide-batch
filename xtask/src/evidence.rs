@@ -81,6 +81,12 @@ pub struct Verification {
     pub directories: Vec<PathBuf>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum VerificationMode {
+    Integrity,
+    Freshness,
+}
+
 /// Verifies every retained report against its recorded provenance, in every
 /// milestone directory that exists.
 ///
@@ -90,6 +96,19 @@ pub struct Verification {
 /// all, such as no milestone directory existing, or one that exists holding
 /// an unreadable or malformed provenance document.
 pub fn run() -> Result<Verification, String> {
+    run_with_mode(VerificationMode::Integrity)
+}
+
+/// Verifies retained evidence integrity plus current-HEAD semantic freshness.
+///
+/// This is deliberately separate from run(). A semantic change can make
+/// retained evidence stale without making the retained bytes or their producer
+/// provenance invalid.
+pub fn run_freshness() -> Result<Verification, String> {
+    run_with_mode(VerificationMode::Freshness)
+}
+
+fn run_with_mode(mode: VerificationMode) -> Result<Verification, String> {
     let root = suite::workspace_root()?;
 
     let mut violations = Vec::new();
@@ -100,7 +119,7 @@ pub fn run() -> Result<Verification, String> {
         if !directory.is_dir() {
             continue;
         }
-        let milestone = run_directory(&root, &directory)?;
+        let milestone = run_directory(&root, &directory, mode)?;
         violations.extend(milestone.violations);
         reports += milestone.reports;
         directories.push(PathBuf::from(name));
@@ -117,7 +136,11 @@ pub fn run() -> Result<Verification, String> {
 }
 
 /// Verifies every retained report in one milestone directory.
-fn run_directory(root: &Path, directory: &Path) -> Result<Verification, String> {
+fn run_directory(
+    root: &Path,
+    directory: &Path,
+    mode: VerificationMode,
+) -> Result<Verification, String> {
     let path = directory.join(PROVENANCE);
     let source = fs::read_to_string(&path)
         .map_err(|error| format!("could not read {}: {error}", path.display()))?;
@@ -138,7 +161,7 @@ fn run_directory(root: &Path, directory: &Path) -> Result<Verification, String> 
         }
     }
     violations.extend(verify_matrix(&document, entries));
-    violations.extend(verify_semantics(root, &document, &reports));
+    violations.extend(verify_semantics(root, &document, &reports, mode));
 
     Ok(Verification {
         violations,
@@ -556,7 +579,12 @@ fn verify_unique<'a>(
 /// depend on fetching history that a squash-merge removes. Recording the
 /// manifest in the artifact makes the binding exact and offline: the only
 /// inputs are the retained report, the declared closure, and the current tree.
-fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) -> Vec<String> {
+fn verify_semantics(
+    root: &Path,
+    document: &Value,
+    reports: &[(String, Value)],
+    mode: VerificationMode,
+) -> Vec<String> {
     let mut violations = Vec::new();
     let campaigns = match campaign_closures(document) {
         Ok(campaigns) => campaigns,
@@ -564,26 +592,26 @@ fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) 
     };
     let belongs = report_campaigns(document);
 
-    // Every closure is read once, and their union is what the working tree is
-    // checked against: a path in any campaign's closure has to be the tree's.
     let mut closures = BTreeMap::new();
     let mut union = BTreeSet::new();
-    for (name, campaign) in &campaigns {
-        match dependency_closure::check_one(root, &campaign.semantics) {
-            Ok(gaps) => violations.extend(
-                gaps.into_iter()
-                    .map(|gap| format!("{name} dependency closure: {gap}")),
-            ),
-            Err(error) => violations.push(format!(
-                "{name} dependency closure could not be verified: {error}"
-            )),
-        }
-        match semantics_paths(root, &campaign.semantics) {
-            Ok(paths) => {
-                union.extend(paths.iter().cloned());
-                closures.insert(name.clone(), paths);
+    if mode == VerificationMode::Freshness {
+        for (name, campaign) in &campaigns {
+            match dependency_closure::check_one(root, &campaign.semantics) {
+                Ok(gaps) => violations.extend(
+                    gaps.into_iter()
+                        .map(|gap| format!("{name} dependency closure: {gap}")),
+                ),
+                Err(error) => violations.push(format!(
+                    "{name} dependency closure could not be verified: {error}"
+                )),
             }
-            Err(error) => violations.push(error),
+            match semantics_paths(root, &campaign.semantics) {
+                Ok(paths) => {
+                    union.extend(paths.iter().cloned());
+                    closures.insert(name.clone(), paths);
+                }
+                Err(error) => violations.push(error),
+            }
         }
     }
 
@@ -595,13 +623,12 @@ fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) 
             ));
             continue;
         };
-        let Some(declared) = closures.get(campaign) else {
+        let Some(campaign_contract) = campaigns.get(campaign) else {
             violations.push(format!(
                 "{name} belongs to {campaign}, which declares no semantic closure"
             ));
             continue;
         };
-        let declared = declared.clone();
         let Some(objects) = report
             .pointer("/observation/execution_manifest/objects")
             .and_then(Value::as_object)
@@ -611,6 +638,9 @@ fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) 
             ));
             continue;
         };
+        if objects.is_empty() {
+            violations.push(format!("{name} records an empty execution manifest"));
+        }
         if report
             .pointer("/observation/execution_manifest/execution_commit")
             .and_then(Value::as_str)
@@ -626,30 +656,46 @@ fn verify_semantics(root: &Path, document: &Value, reports: &[(String, Value)]) 
             violations.push(format!("{name} ran against a tree that was not clean"));
         }
 
-        // The manifest must cover the declared closure exactly. One that
-        // omitted a path would leave that input unbound; one carrying an extra
-        // would bind something the campaign does not declare.
-        let recorded = objects.keys().cloned().collect::<BTreeSet<_>>();
-        for path in declared.difference(&recorded) {
+        if !objects.contains_key(&campaign_contract.semantics) {
             violations.push(format!(
-                "{name} ran without recording {path}, which the campaign declares as semantics"
-            ));
-        }
-        for path in recorded.difference(&declared) {
-            violations.push(format!(
-                "{name} records {path}, which the campaign does not declare as semantics"
+                "{name} ran without recording {}, which declares the campaign semantics",
+                campaign_contract.semantics
             ));
         }
         for (path, expected) in objects {
-            violations.extend(verify_object(root, name, path, expected));
+            if expected.as_str().is_none_or(str::is_empty) {
+                violations.push(format!(
+                    "{name} records an empty or non-string identity for {path}"
+                ));
+            }
+        }
+
+        if mode == VerificationMode::Freshness {
+            let Some(declared) = closures.get(campaign) else {
+                continue;
+            };
+            let recorded = objects.keys().cloned().collect::<BTreeSet<_>>();
+            for path in declared.difference(&recorded) {
+                violations.push(format!(
+                    "{name} ran without recording {path}, which the campaign declares as semantics"
+                ));
+            }
+            for path in recorded.difference(declared) {
+                violations.push(format!(
+                    "{name} records {path}, which the campaign does not declare as semantics"
+                ));
+            }
+            for (path, expected) in objects {
+                violations.extend(verify_object(root, name, path, expected));
+            }
         }
     }
 
     violations.extend(verify_one_execution(document, reports));
-    violations.extend(verify_worktree(root, &union));
+    if mode == VerificationMode::Freshness {
+        violations.extend(verify_worktree(root, &union));
+    }
 
-    // A closure nothing is retained against is a campaign that was declared and
-    // never delivered, which should be visible rather than silently fine.
     for campaign in campaigns.keys() {
         if !belongs.values().any(|name| name == campaign) {
             violations.push(format!(
@@ -1239,7 +1285,22 @@ mod tests {
     /// Runs the semantics check over mutated reports.
     fn semantics_of(document: &Value, reports: &[(String, Value)]) -> Vec<String> {
         let root = crate::suite::workspace_root().expect("workspace root");
-        super::verify_semantics(&root, document, reports)
+        super::verify_semantics(
+            &root,
+            document,
+            reports,
+            super::VerificationMode::Freshness,
+        )
+    }
+
+    fn integrity_semantics_of(document: &Value, reports: &[(String, Value)]) -> Vec<String> {
+        let root = crate::suite::workspace_root().expect("workspace root");
+        super::verify_semantics(
+            &root,
+            document,
+            reports,
+            super::VerificationMode::Integrity,
+        )
     }
 
     /// Replaces one object identity in every retained report's manifest.
@@ -1338,6 +1399,30 @@ mod tests {
         assert!(
             violations.iter().any(|violation| violation
                 .contains("records README.md, which the campaign does not declare")),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn integrity_allows_current_head_semantic_staleness() {
+        let path = "tests/fixtures/soak/dependency-closure.json";
+        let reports = with_manifest(path, &json!("0".repeat(40)));
+        let violations = integrity_semantics_of(&provenance(), &reports);
+        assert!(
+            !violations.iter().any(|violation| violation.starts_with(path)),
+            "{violations:?}",
+        );
+    }
+
+    #[test]
+    fn integrity_rejects_an_empty_recorded_object_identity() {
+        let path = "tests/fixtures/soak/dependency-closure.json";
+        let reports = with_manifest(path, &json!(""));
+        let violations = integrity_semantics_of(&provenance(), &reports);
+        assert!(
+            violations
+                .iter()
+                .any(|violation| violation.contains("empty or non-string identity")),
             "{violations:?}",
         );
     }
