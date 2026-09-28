@@ -80,5 +80,26 @@
       ]
     }
   ],
-  "pending_ruleset_contexts": []
+  "pending_ruleset_contexts": [],
+  "pr_scope": {
+    "docs_only": {
+      "exact_paths": [
+        "README.md",
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "CODE_OF_CONDUCT.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md"
+      ],
+      "markdown_prefixes": [
+        "docs/"
+      ],
+      "excluded_prefixes": []
+    },
+    "campaign_semantics_glob": "tests/fixtures/**/campaign-semantics.json",
+    "retained_evidence_policy": "docs/engineering/retained-evidence-policy.json",
+    "global_campaign_paths": [
+      "Cargo.lock"
+    ]
+  }
 }
