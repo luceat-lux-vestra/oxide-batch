@@ -120,16 +120,16 @@ The PostgreSQL migration is:
 6. On the same migration PR, move `postgresql` to `active`, remove it from `pending_ruleset_contexts`, and rerun strict review/CI on that new exact HEAD.
 7. Squash-merge only after all final required contexts are green and the live ruleset/policy topology matches exactly.
 
-## Failure-classification rollout sequencing
+## Failure handling before remediation
 
-The trusted `Failure classification` reporter is a `workflow_run` workflow loaded from the repository's default branch. A pull request that introduces `.github/workflows/failure-classification.yml` cannot use that new reporter to classify its own pull-request runs because the reporter does not exist on the default branch until that pull request is merged.
+As of #311, the repository-wide `Failure classification` reporter and mandatory
+`failure-triage` PR declaration/check are retired. Failure investigation remains
+a fail-closed engineering discipline governed by `AGENTS.md`: establish enough
+root-cause evidence to justify the owning layer, never weaken valid evidence to
+obtain green CI, and invalidate affected exact-HEAD evidence when remediation
+changes one of its premises.
 
-Repository rollout therefore has two proof phases:
-
-1. **Reporter bootstrap:** merge the thin trusted reporter adapter, pinned to an immutable central action SHA, while preserving the no-PR-checkout/no-PR-execution/no-artifact-execution and least-privilege invariants.
-2. **Declaration migration and E2E proof:** only after the reporter exists on the default branch, migrate the required failure declaration producer to the central unprivileged `pull_request` adapter and reconcile local policy/audit contracts. On the exact final HEAD, require `failure-triage` plus the ordinary required checks to pass and require the reporter to create or update exactly one sticky `CI Failure Classification` PR comment for that same HEAD. The report must reach `CLEAR` when no tracked workflow is pending or failed.
-
-A repository is not considered fully rolled out merely because one pull request adds both adapters and passes ordinary CI. If the reporter itself was introduced by that pull request, a subsequent PR must provide the default-branch E2E proof.
+No PR-body schema or dedicated failure-triage status is part of merge authority.
 
 ## Enforcement
 
@@ -147,12 +147,11 @@ Local `cargo test` does not perform the external GitHub API readback. This keeps
 
 ## Accepted stable topology
 
-After the #223 aggregate migration and #297 centralized failure-policy migration, the expected required contexts are exactly:
+The current expected required contexts are exactly:
 
 - `Analyze (actions)`
 - `actions-security`
 - `dependency-review`
-- `failure-triage`
 - `msrv`
 - `packaging`
 - `postgres-15-conformance-campaign`
