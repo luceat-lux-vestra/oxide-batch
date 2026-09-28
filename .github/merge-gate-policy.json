@@ -158,7 +158,7 @@
   },
   "repository_merge_gate": {
     "context": "merge-gate",
-    "state": "candidate",
+    "state": "cutover",
     "producer": {
       "workflow": ".github/workflows/pr-labeler.yml",
       "job": "merge-gate"
