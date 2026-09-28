@@ -500,11 +500,25 @@ class MergeGateVerifierTest < Minitest::Test
       original = File.read(path)
       body = original.sub(
         "name: quality\n    runs-on:",
-        "name: quality\n    if: github.actor != 'nobody'\n    runs-on:"
+        "name: quality\n    if: ${{ always() && github.actor != 'nobody' }}\n    runs-on:"
       )
       refute_equal original, body
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'not guaranteed to emit'
+    end
+  end
+
+  def test_required_job_unconditional_always_is_allowed
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        "name: quality\n    runs-on:",
+        "name: quality\n    if: ${{ always() }}\n    runs-on:"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_empty verify(root)
     end
   end
 
