@@ -1362,7 +1362,7 @@ mod tests {
         let commit = super::git(&root, &["rev-parse", "HEAD"]).expect("HEAD");
         let mut document = provenance();
         for entry in document["evidence"].as_array_mut().expect("evidence") {
-            entry["producer"]["execution_commit"] = json!(commit);
+            entry["producer"]["execution_commit"] = json!(commit.clone());
         }
         document
     }
