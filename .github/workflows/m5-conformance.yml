@@ -122,7 +122,9 @@ jobs:
 
       - name: Run PostgreSQL 15 conformance shard
         id: conformance-campaign
-        run: ./tests/fixtures/conformance/run-ci-campaign.sh 15 ${{ matrix.shard }} 2
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: ./tests/fixtures/conformance/run-ci-campaign.sh 15 "$SHARD_INDEX" 2
 
       - name: Retain PostgreSQL 15 shard evidence
         if: ${{ always() }}
@@ -169,7 +171,9 @@ jobs:
 
       - name: Run PostgreSQL 18 conformance shard
         id: conformance-campaign
-        run: ./tests/fixtures/conformance/run-ci-campaign.sh 18 ${{ matrix.shard }} 2
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: ./tests/fixtures/conformance/run-ci-campaign.sh 18 "$SHARD_INDEX" 2
 
       - name: Retain PostgreSQL 18 shard evidence
         if: ${{ always() }}
