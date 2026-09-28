@@ -228,6 +228,13 @@ fn run_shard(index: &str, count: &str) -> Result<Campaign, String> {
 /// `PostgreSQL` major/tree/environment, or claims a target outside its exact
 /// shard. Only after that exact-cover proof does ordinary 133-scenario
 /// reconciliation run.
+struct ShardMergeState {
+    suite: Suite,
+    fixtures: Option<BTreeMap<String, bool>>,
+    environment: Option<Value>,
+    violations: Vec<String>,
+}
+
 fn merge_shards(count: &str, directory: &Path) -> Result<Campaign, String> {
     let count = parse_shard_number("count", count)?;
     if count < 2 {
@@ -243,6 +250,66 @@ fn merge_shards(count: &str, directory: &Path) -> Result<Campaign, String> {
         "canonical conformance merge requires OXIDEBATCH_CAMPAIGN_MATRIX".to_owned()
     })?;
 
+    ensure_exact_shard_report_set(directory, count)?;
+
+    let mut state = ShardMergeState {
+        suite: Suite::default(),
+        fixtures: None,
+        environment: None,
+        violations: Vec::new(),
+    };
+
+    for (index, expected_targets) in partitions.iter().enumerate() {
+        let path = directory.join(shard_report_name(index));
+        let (shard, expected_pairs) = read_validated_shard(
+            &path,
+            index,
+            count,
+            &expected_major,
+            expected_targets,
+            &manifest,
+        )?;
+        merge_shard_payload(&path, index, &expected_pairs, shard, &mut state)?;
+    }
+
+    if state.suite.targets != targets.len() {
+        return Err(format!(
+            "conformance shard merge covered {} targets, expected {}",
+            state.suite.targets,
+            targets.len()
+        ));
+    }
+    if state.suite.documentation.is_none() {
+        return Err("conformance shard merge has no documentation-test proof".to_owned());
+    }
+
+    state.violations.extend(reconcile(&scope, &state.suite));
+    state.violations.sort();
+    state.violations.dedup();
+
+    let fixtures = state
+        .fixtures
+        .ok_or_else(|| "conformance shard merge has no fixture evidence".to_owned())?;
+    let environment = state
+        .environment
+        .ok_or_else(|| "conformance shard merge has no environment evidence".to_owned())?;
+    let report = write_report(
+        &root,
+        &scope,
+        &fixtures,
+        &state.suite,
+        &state.violations,
+        &manifest,
+        &environment,
+    )?;
+
+    Ok(Campaign {
+        violations: state.violations,
+        report,
+    })
+}
+
+fn ensure_exact_shard_report_set(directory: &Path, count: usize) -> Result<(), String> {
     let observed_files = fs::read_dir(directory)
         .map_err(|error| {
             format!(
@@ -260,144 +327,139 @@ fn merge_shards(count: &str, directory: &Path) -> Result<Campaign, String> {
             "conformance shard report set is not exact: expected={expected_files:?} observed={observed_files:?}"
         ));
     }
+    Ok(())
+}
 
-    let mut merged = Suite::default();
-    let mut common_fixtures: Option<BTreeMap<String, bool>> = None;
-    let mut common_environment: Option<Value> = None;
-    let mut violations = Vec::new();
+fn read_validated_shard(
+    path: &Path,
+    index: usize,
+    count: usize,
+    expected_major: &str,
+    expected_targets: &[Target],
+    manifest: &Value,
+) -> Result<(ShardReport, Vec<(String, String)>), String> {
+    let shard = read_shard_report(path)?;
 
-    for (index, expected_targets) in partitions.iter().enumerate() {
-        let path = directory.join(shard_report_name(index));
-        let shard = read_shard_report(&path)?;
-
-        if shard.index != index || shard.count != count {
-            return Err(format!(
-                "{} declares shard {}/{} but merge expected {index}/{count}",
-                path.display(),
-                shard.index,
-                shard.count
-            ));
-        }
-        if shard.major != expected_major {
-            return Err(format!(
-                "{} was produced for PostgreSQL {}, expected {}",
-                path.display(),
-                shard.major,
-                expected_major
-            ));
-        }
-        let expected_pairs = target_pairs(expected_targets);
-        if shard.targets != expected_pairs {
-            return Err(format!(
-                "{} target partition drift: expected={expected_pairs:?} observed={:?}",
-                path.display(),
-                shard.targets
-            ));
-        }
-        if shard.target_count != expected_targets.len() {
-            return Err(format!(
-                "{} ran {} targets but its exact shard owns {}",
-                path.display(),
-                shard.target_count,
-                expected_targets.len()
-            ));
-        }
-        if shard.manifest != manifest {
-            return Err(format!(
-                "{} execution manifest does not match the canonical merge checkout",
-                path.display()
-            ));
-        }
-
-        match &common_environment {
-            Some(environment) if environment != &shard.environment => {
-                return Err(format!(
-                    "{} environment disagrees with the other conformance shards",
-                    path.display()
-                ));
-            }
-            None => common_environment = Some(shard.environment.clone()),
-            _ => {}
-        }
-        match &common_fixtures {
-            Some(fixtures) if fixtures != &shard.fixtures => {
-                return Err(format!(
-                    "{} fixture resolution disagrees with the other conformance shards",
-                    path.display()
-                ));
-            }
-            None => common_fixtures = Some(shard.fixtures.clone()),
-            _ => {}
-        }
-
-        if index == 0 {
-            let documentation = shard.documentation.ok_or_else(|| {
-                format!(
-                    "{} shard zero omitted the workspace documentation-test proof",
-                    path.display()
-                )
-            })?;
-            merged.documentation = Some(documentation);
-        } else if shard.documentation.is_some() {
-            return Err(format!(
-                "{} non-zero shard duplicated the workspace documentation-test proof",
-                path.display()
-            ));
-        }
-
-        for ((package, target, name), outcome) in shard.results {
-            if !expected_pairs.contains(&(package.clone(), target.clone())) {
-                return Err(format!(
-                    "{} reported a result for target {package}/{target} outside its exact shard",
-                    path.display()
-                ));
-            }
-            let key = (package, target, name);
-            if merged.results.insert(key.clone(), outcome).is_some() {
-                return Err(format!(
-                    "{} duplicated test result {}::{}::{}",
-                    path.display(),
-                    key.0,
-                    key.1,
-                    key.2
-                ));
-            }
-        }
-        merged.failed_targets.extend(shard.failed_targets);
-        violations.extend(shard.preflight_violations);
-        merged.targets += shard.target_count;
-    }
-
-    if merged.targets != targets.len() {
+    if shard.index != index || shard.count != count {
         return Err(format!(
-            "conformance shard merge covered {} targets, expected {}",
-            merged.targets,
-            targets.len()
+            "{} declares shard {}/{} but merge expected {index}/{count}",
+            path.display(),
+            shard.index,
+            shard.count
         ));
     }
-    if merged.documentation.is_none() {
-        return Err("conformance shard merge has no documentation-test proof".to_owned());
+    if shard.major != expected_major {
+        return Err(format!(
+            "{} was produced for PostgreSQL {}, expected {}",
+            path.display(),
+            shard.major,
+            expected_major
+        ));
     }
 
-    violations.extend(reconcile(&scope, &merged));
-    violations.sort();
-    violations.dedup();
+    let expected_pairs = target_pairs(expected_targets);
+    if shard.targets != expected_pairs {
+        return Err(format!(
+            "{} target partition drift: expected={expected_pairs:?} observed={:?}",
+            path.display(),
+            shard.targets
+        ));
+    }
+    if shard.target_count != expected_targets.len() {
+        return Err(format!(
+            "{} ran {} targets but its exact shard owns {}",
+            path.display(),
+            shard.target_count,
+            expected_targets.len()
+        ));
+    }
+    if shard.manifest != *manifest {
+        return Err(format!(
+            "{} execution manifest does not match the canonical merge checkout",
+            path.display()
+        ));
+    }
 
-    let fixtures = common_fixtures
-        .ok_or_else(|| "conformance shard merge has no fixture evidence".to_owned())?;
-    let environment = common_environment
-        .ok_or_else(|| "conformance shard merge has no environment evidence".to_owned())?;
-    let report = write_report(
-        &root,
-        &scope,
-        &fixtures,
-        &merged,
-        &violations,
-        &manifest,
-        &environment,
-    )?;
+    Ok((shard, expected_pairs))
+}
 
-    Ok(Campaign { violations, report })
+fn merge_shard_payload(
+    path: &Path,
+    index: usize,
+    expected_pairs: &[(String, String)],
+    shard: ShardReport,
+    state: &mut ShardMergeState,
+) -> Result<(), String> {
+    let ShardReport {
+        target_count,
+        results,
+        failed_targets,
+        documentation,
+        fixtures,
+        environment,
+        preflight_violations,
+        ..
+    } = shard;
+
+    match &state.environment {
+        Some(common) if common != &environment => {
+            return Err(format!(
+                "{} environment disagrees with the other conformance shards",
+                path.display()
+            ));
+        }
+        None => state.environment = Some(environment),
+        _ => {}
+    }
+    match &state.fixtures {
+        Some(common) if common != &fixtures => {
+            return Err(format!(
+                "{} fixture resolution disagrees with the other conformance shards",
+                path.display()
+            ));
+        }
+        None => state.fixtures = Some(fixtures),
+        _ => {}
+    }
+
+    if index == 0 {
+        let documentation = documentation.ok_or_else(|| {
+            format!(
+                "{} shard zero omitted the workspace documentation-test proof",
+                path.display()
+            )
+        })?;
+        state.suite.documentation = Some(documentation);
+    } else if documentation.is_some() {
+        return Err(format!(
+            "{} non-zero shard duplicated the workspace documentation-test proof",
+            path.display()
+        ));
+    }
+
+    for ((package, target, name), outcome) in results {
+        if !expected_pairs.contains(&(package.clone(), target.clone())) {
+            return Err(format!(
+                "{} reported a result for target {package}/{target} outside its exact shard",
+                path.display()
+            ));
+        }
+        let key = (package, target, name);
+        if state.suite.results.insert(key.clone(), outcome).is_some() {
+            return Err(format!(
+                "{} duplicated test result {}::{}::{}",
+                path.display(),
+                key.0,
+                key.1,
+                key.2
+            ));
+        }
+    }
+
+    state.suite.failed_targets.extend(failed_targets);
+    state.violations.extend(preflight_violations);
+    state.suite.targets += target_count;
+    Ok(())
 }
 
 fn parse_shard_number(label: &str, value: &str) -> Result<usize, String> {
@@ -512,7 +574,7 @@ fn write_shard_report(
             "targets": suite.targets,
             "results": results,
             "failed_targets": suite.failed_targets,
-            "documentation_tests_passed": suite.documentation == Some(true),
+            "documentation_tests_passed": suite.documentation,
         },
         "violations": preflight_violations,
         "passed": passed,
