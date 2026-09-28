@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
@@ -47,6 +49,7 @@ class ScopePolicy:
     semantics_glob: str
     retained_evidence_policy: str
     global_campaign_paths: tuple[str, ...]
+    trusted_tree_contract: str
 
 
 def safe_path(path: str) -> bool:
@@ -121,12 +124,37 @@ def load_policy(path: Path) -> ScopePolicy:
     if len(set(global_paths)) != len(global_paths):
         raise ValueError("global campaign paths contain duplicates")
 
+    trusted_tree_contract = raw.get("trusted_tree_contract")
+    if trusted_tree_contract != "exact-git-base-sha":
+        raise ValueError(
+            "pr_scope.trusted_tree_contract must remain exact-git-base-sha"
+        )
+
     return ScopePolicy(
         docs=DocsPolicy(frozenset(exact), prefixes, excluded),
         semantics_glob=semantics_glob,
         retained_evidence_policy=retained,
         global_campaign_paths=global_paths,
+        trusted_tree_contract=trusted_tree_contract,
     )
+
+
+def verify_trusted_base(repo_root: Path, expected_sha: str) -> None:
+    if not re.fullmatch(r"[0-9a-f]{40}", expected_sha):
+        raise ValueError("trusted base SHA must be an exact 40-character lowercase SHA")
+    try:
+        actual = subprocess.run(
+            ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise ValueError(f"cannot resolve trusted repository HEAD: {error}") from error
+    if actual != expected_sha:
+        raise ValueError(
+            f"trusted repository root is {actual}, expected base {expected_sha}"
+        )
 
 
 def path_matches_declared(path: str, declared: str) -> bool:
@@ -434,6 +462,7 @@ def main() -> int:
     parser.add_argument("--repo-root", type=Path, default=Path("."))
     parser.add_argument("--policy", type=Path, required=True)
     parser.add_argument("--expected-count", type=int)
+    parser.add_argument("--trusted-base-sha")
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
 
@@ -451,6 +480,11 @@ def main() -> int:
                 f"({len(campaigns)} campaigns)"
             )
             return 0
+        if args.trusted_base_sha is None:
+            parser.error(
+                "--trusted-base-sha is required for classification"
+            )
+        verify_trusted_base(repo_root, args.trusted_base_sha)
         if args.expected_count is None:
             parser.error(
                 "--expected-count is required unless --self-test is used"
