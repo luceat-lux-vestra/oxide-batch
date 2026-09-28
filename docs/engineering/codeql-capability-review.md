@@ -64,6 +64,21 @@ Exactly one CodeQL authority is allowed:
 5. `Analyze (rust)` remains advisory.
 6. GitHub default setup must remain `not-configured`; re-enabling it is policy drift.
 
+## #315 live cutover readback
+
+On 2026-09-28, the Administration-scoped Code Scanning API was used to disable
+GitHub CodeQL default setup before final PR proof. Immediate readback returned:
+
+- `state: not-configured`;
+- prior managed language inventory: `actions`, `rust`;
+- `query_suite: default`;
+- `threat_model: remote`;
+- `schedule: null` after disabling the managed configuration.
+
+This readback proves only that managed default setup is no longer active. The
+checked-in advanced workflow still requires fresh exact-HEAD PR evidence before
+the migration is accepted.
+
 ## Migration evidence required by #315
 
 Before the advanced-setup cutover is accepted:
