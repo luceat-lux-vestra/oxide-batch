@@ -382,6 +382,22 @@ def self_test(
     campaigns: tuple[Campaign, ...],
 ) -> None:
     assert campaigns, "campaign inventory must not be empty"
+
+    actual_head = subprocess.run(
+        ["git", "-C", str(repo_root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    verify_trusted_base(repo_root, actual_head)
+    wrong_head = "0" * 40 if actual_head != "0" * 40 else "1" * 40
+    try:
+        verify_trusted_base(repo_root, wrong_head)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("trusted-base mismatch must fail closed")
+
     workflows = {campaign.workflow for campaign in campaigns}
     assert ".github/workflows/m5-conformance.yml" in workflows
     assert ".github/workflows/m6-conformance.yml" in workflows
