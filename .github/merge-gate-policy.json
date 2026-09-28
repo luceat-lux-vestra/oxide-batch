@@ -1,5 +1,5 @@
 {
-  "schema_version": 5,
+  "schema_version": 6,
   "ruleset": {
     "id": 19905142,
     "name": "Protect main"
@@ -121,7 +121,9 @@
       ]
     }
   ],
-  "pending_ruleset_contexts": [],
+  "pending_ruleset_contexts": [
+    "merge-gate"
+  ],
   "pr_scope": {
     "docs_only": {
       "exact_paths": [
@@ -153,5 +155,59 @@
   "post_main": {
     "default_branch": "main",
     "allowed_push_workflows": []
+  },
+  "repository_merge_gate": {
+    "context": "merge-gate",
+    "state": "candidate",
+    "producer": {
+      "workflow": ".github/workflows/pr-labeler.yml",
+      "job": "merge-gate"
+    },
+    "members": [
+      {
+        "context": "Analyze (actions)",
+        "workflow": ".github/workflows/codeql.yml"
+      },
+      {
+        "context": "actions-security",
+        "workflow": ".github/workflows/dependency-review.yml"
+      },
+      {
+        "context": "dependency-review",
+        "workflow": ".github/workflows/dependency-review.yml"
+      },
+      {
+        "context": "evidence-provenance",
+        "workflow": ".github/workflows/evidence.yml"
+      },
+      {
+        "context": "msrv",
+        "workflow": ".github/workflows/ci.yml"
+      },
+      {
+        "context": "packaging",
+        "workflow": ".github/workflows/ci.yml"
+      },
+      {
+        "context": "postgres-15-conformance-campaign",
+        "workflow": ".github/workflows/m5-conformance.yml"
+      },
+      {
+        "context": "postgres-18-conformance-campaign",
+        "workflow": ".github/workflows/m5-conformance.yml"
+      },
+      {
+        "context": "postgresql",
+        "workflow": ".github/workflows/ci.yml"
+      },
+      {
+        "context": "quality",
+        "workflow": ".github/workflows/ci.yml"
+      },
+      {
+        "context": "supply-chain",
+        "workflow": ".github/workflows/supply-chain.yml"
+      }
+    ]
   }
 }

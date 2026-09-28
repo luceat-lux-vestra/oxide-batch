@@ -29,13 +29,14 @@ class MergeGateVerifierTest < Minitest::Test
       FileUtils.mkdir_p(File.join(root, '.github/workflows'))
       FileUtils.mkdir_p(File.join(root, '.github/scripts'))
       policy = {
-        'schema_version' => 5,
+        'schema_version' => 6,
         'ruleset' => {'id' => 7, 'name' => 'Protect main'},
         'workflow_defaults' => [
           {'pattern' => '.github/workflows/ci.yml', 'classification' => 'required'},
           {'pattern' => '.github/workflows/campaign-orchestrator.yml', 'classification' => 'advisory'},
           {'pattern' => '.github/workflows/m5-*.yml', 'classification' => 'advisory'},
-          {'pattern' => '.github/workflows/deep-*.yml', 'classification' => 'advisory'}
+          {'pattern' => '.github/workflows/deep-*.yml', 'classification' => 'advisory'},
+          {'pattern' => '.github/workflows/pr-labeler.yml', 'classification' => 'advisory'}
         ],
         'job_overrides' => [
           {
@@ -110,7 +111,21 @@ class MergeGateVerifierTest < Minitest::Test
             ]
           }
         ],
-        'pending_ruleset_contexts' => ['postgresql', 'postgresql-conformance'],
+        'repository_merge_gate' => {
+          'context' => 'merge-gate',
+          'state' => 'candidate',
+          'producer' => {
+            'workflow' => '.github/workflows/pr-labeler.yml',
+            'job' => 'merge-gate'
+          },
+          'members' => [
+            {'context' => 'Analyze (actions)', 'workflow' => '.github/workflows/codeql.yml'},
+            {'context' => 'postgresql', 'workflow' => '.github/workflows/ci.yml'},
+            {'context' => 'postgresql-conformance', 'workflow' => '.github/workflows/m5-conformance.yml'},
+            {'context' => 'quality', 'workflow' => '.github/workflows/ci.yml'}
+          ]
+        },
+        'pending_ruleset_contexts' => ['postgresql', 'postgresql-conformance', 'merge-gate'],
         'pr_scope' => {
           'docs_only' => {
             'exact_paths' => ['README.md'],
@@ -259,6 +274,48 @@ class MergeGateVerifierTest < Minitest::Test
                 env:
                   GITHUB_TOKEN: ${{ github.token }}
                 run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql
+      YAML
+      write(root, '.github/workflows/pr-labeler.yml', <<~YAML)
+        name: Pull request labels
+        on:
+          pull_request_target:
+            types: [opened, edited, synchronize, reopened, ready_for_review]
+        permissions: {}
+        jobs:
+          merge-gate:
+            name: merge-gate
+            runs-on: ubuntu-latest
+            timeout-minutes: 20
+            permissions:
+              actions: read
+              contents: read
+              pull-requests: read
+            steps:
+              - name: Evaluate base-trusted repository merge authority
+                env:
+                  GITHUB_TOKEN: ${{ github.token }}
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+                  PR_DRAFT: ${{ github.event.pull_request.draft }}
+                run: |
+                  echo 'contents/.github/merge-gate-policy.json'
+                  echo '{"ref": base_sha}'
+                  echo 'repository_merge_gate'
+                  echo 'pr.get("base", {}).get("sha") != base_sha'
+                  echo 'pr.get("head", {}).get("sha") != head_sha'
+                  echo 'pr.get("base", {}).get("repo", {}).get("full_name") != repository'
+                  echo 'actions/workflows/{workflow_id}/runs'
+                  echo '"event": "pull_request"'
+                  echo '"head_sha": head_sha'
+                  echo 'linked_pr.get("number") == pr_number_int'
+                  echo 'actions/runs/{run_id}/jobs'
+                  echo '"filter": "all"'
+                  echo 'run_attempt'
+                  echo 'duplicate member jobs at latest run_attempt'
+                  echo 'status != "completed"'
+                  echo 'conclusion != "success"'
+                  echo 'timed out waiting for exact-head merge authority'
       YAML
       write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
         name: M5 Conformance
@@ -678,6 +735,128 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_repository_merge_gate_missing_member_is_rejected
+    with_repo do |root, policy|
+      policy['repository_merge_gate']['members'].reject! { |member| member['context'] == 'quality' }
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join("\n"), 'repository merge gate member inventory mismatch'
+    end
+  end
+
+  def test_repository_merge_gate_wrong_source_workflow_is_rejected
+    with_repo do |root, policy|
+      member = policy['repository_merge_gate']['members'].find { |entry| entry['context'] == 'quality' }
+      member['workflow'] = '.github/workflows/m5-conformance.yml'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join("\n"), 'quality must bind source workflow'
+    end
+  end
+
+  def test_repository_merge_gate_pull_request_trigger_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/pr-labeler.yml')
+      original = File.read(path)
+      body = original.sub('pull_request_target:', 'pull_request:')
+      refute_equal original, body
+      write(root, '.github/workflows/pr-labeler.yml', body)
+      assert_includes verify(root).join("\n"), 'must execute from protected-base pull_request_target authority'
+    end
+  end
+
+  def test_repository_merge_gate_checkout_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/pr-labeler.yml')
+      original = File.read(path)
+      body = original.sub(
+        "    steps:\n      - name: Evaluate base-trusted repository merge authority",
+        "    steps:\n      - uses: actions/checkout@0000000000000000000000000000000000000001\n      - name: Evaluate base-trusted repository merge authority"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/pr-labeler.yml', body)
+      assert_includes verify(root).join("\n"), 'must contain exactly one inline evaluator step'
+    end
+  end
+
+  def test_repository_merge_gate_success_check_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/pr-labeler.yml')
+      original = File.read(path)
+      body = original.sub('conclusion != "success"', 'conclusion is ignored')
+      refute_equal original, body
+      write(root, '.github/workflows/pr-labeler.yml', body)
+      assert_includes verify(root).join("\n"), 'is missing fail-closed contract tokens'
+    end
+  end
+
+  def test_repository_merge_gate_candidate_must_be_pending
+    with_repo do |root, policy|
+      policy['pending_ruleset_contexts'].delete('merge-gate')
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join("\n"), 'candidate repository merge gate merge-gate must be pending'
+    end
+  end
+
+  def test_repository_merge_gate_cutover_accepts_single_gate_topology
+    with_repo do |root, policy|
+      policy['aggregate_gates'].each { |gate| gate['state'] = 'active' }
+      policy['pending_ruleset_contexts'] = ['merge-gate']
+      policy['repository_merge_gate']['state'] = 'cutover'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      write_json(root, 'ruleset.json', ruleset_with('merge-gate'))
+      assert_empty verify(root)
+    end
+  end
+
+  def test_repository_merge_gate_active_requires_single_gate_topology
+    with_repo do |root, policy|
+      policy['aggregate_gates'].each { |gate| gate['state'] = 'active' }
+      policy['pending_ruleset_contexts'] = []
+      policy['repository_merge_gate']['state'] = 'active'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      write_json(root, 'ruleset.json', ruleset_with('merge-gate'))
+      assert_empty verify(root)
+    end
+  end
+
+  def test_repository_merge_gate_active_rejects_legacy_topology
+    with_repo do |root, policy|
+      policy['aggregate_gates'].each { |gate| gate['state'] = 'active' }
+      policy['pending_ruleset_contexts'] = []
+      policy['repository_merge_gate']['state'] = 'active'
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      write_json(root, 'ruleset.json', ruleset_with(*FINAL))
+      assert_includes verify(root).join("\n"), 'live ruleset requires stale/unaccepted contexts'
+    end
+  end
+
+  def test_repository_merge_gate_context_spoof_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        "  quality-fast:\n    name: quality-fast-internal",
+        "  quality-fast:\n    name: merge-gate"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join("\n"), 'repository merge gate context must have exactly one canonical producer'
+    end
+  end
+
+  def test_repository_merge_gate_pr_identity_binding_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/pr-labeler.yml')
+      original = File.read(path)
+      body = original.sub(
+        'linked_pr.get("number") == pr_number_int',
+        'linked PR identity binding removed'
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/pr-labeler.yml', body)
+      assert_includes verify(root).join("\n"), 'is missing fail-closed contract tokens'
+    end
+  end
+
   def test_matrix_context_set_mismatch_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
@@ -781,7 +960,7 @@ class MergeGateVerifierTest < Minitest::Test
   def test_active_aggregates_require_final_topology
     with_repo do |root, policy|
       policy['aggregate_gates'].each { |gate| gate['state'] = 'active' }
-      policy['pending_ruleset_contexts'] = []
+      policy['pending_ruleset_contexts'] = ['merge-gate']
       write_json(root, '.github/merge-gate-policy.json', policy)
       write_json(root, 'ruleset.json', ruleset_with(*FINAL))
       assert_empty verify(root)
