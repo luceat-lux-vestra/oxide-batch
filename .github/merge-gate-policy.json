@@ -18,6 +18,10 @@
       "classification": "required"
     },
     {
+      "pattern": ".github/workflows/codeql.yml",
+      "classification": "advisory"
+    },
+    {
       "pattern": ".github/workflows/hardening-drift-audit-policy.yml",
       "classification": "advisory"
     },
@@ -53,11 +57,14 @@
       "workflow": ".github/workflows/supply-chain.yml",
       "job": "supply-chain",
       "classification": "required"
+    },
+    {
+      "workflow": ".github/workflows/codeql.yml",
+      "job": "analyze-actions",
+      "classification": "required"
     }
   ],
-  "managed_required_contexts": [
-    "Analyze (actions)"
-  ],
+  "managed_required_contexts": [],
   "aggregate_gates": [
     {
       "context": "postgresql",
