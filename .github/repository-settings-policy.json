@@ -286,8 +286,8 @@
       "id": "codeql.default_setup_state",
       "classification": "required",
       "readback": "manual-readback",
-      "expected": "configured",
-      "rationale": "Admin-scoped #231/#248 readback; default setup is the single CodeQL authority."
+      "expected": "not-configured",
+      "rationale": "Issue #315 migrates the repository to checked-in advanced setup so merge-time CodeQL remains PR-only and main-push duplicate validation is eliminated."
     },
     {
       "id": "codeql.languages",
@@ -297,25 +297,28 @@
         "actions",
         "rust"
       ],
-      "rationale": "Managed language set established by #248. Rust scan presence is reviewed operationally; merge authority remains advisory until explicitly promoted."
+      "rationale": "Checked-in .github/workflows/codeql.yml analyzes actions and rust; Actions remains required and Rust advisory."
     },
     {
       "id": "codeql.query_suite",
       "classification": "required",
       "readback": "manual-readback",
-      "expected": "default"
+      "expected": "default",
+      "rationale": "Advanced setup intentionally uses the default CodeQL query suite."
     },
     {
       "id": "codeql.threat_model",
       "classification": "required",
       "readback": "manual-readback",
-      "expected": "remote"
+      "expected": "remote",
+      "rationale": "Advanced setup retains the default remote threat model."
     },
     {
       "id": "codeql.schedule",
       "classification": "required",
       "readback": "manual-readback",
-      "expected": "weekly"
+      "expected": "weekly",
+      "rationale": "Advanced setup retains weekly scheduled analysis without any main-push trigger."
     },
     {
       "id": "security.signed_commits",

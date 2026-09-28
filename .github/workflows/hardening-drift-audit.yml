@@ -1,20 +1,6 @@
 name: Repository hardening drift audit
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - ".github/**"
-      - "SECURITY.md"
-      - "CODE_OF_CONDUCT.md"
-      - "deny.toml"
-      - "Cargo.toml"
-      - "Cargo.lock"
-      - "crates/*/Cargo.toml"
-      - "xtask/**"
-      - "docs/release/**"
-      - "docs/engineering/**"
   schedule:
     - cron: "37 18 * * 1"
   workflow_dispatch:

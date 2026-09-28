@@ -29,7 +29,7 @@ class MergeGateVerifierTest < Minitest::Test
       FileUtils.mkdir_p(File.join(root, '.github/workflows'))
       FileUtils.mkdir_p(File.join(root, '.github/scripts'))
       policy = {
-        'schema_version' => 3,
+        'schema_version' => 4,
         'ruleset' => {'id' => 7, 'name' => 'Protect main'},
         'workflow_defaults' => [
           {'pattern' => '.github/workflows/ci.yml', 'classification' => 'required'},
@@ -85,6 +85,10 @@ class MergeGateVerifierTest < Minitest::Test
           'retained_evidence_policy' => 'docs/engineering/retained-evidence-policy.json',
           'global_campaign_paths' => ['Cargo.lock'],
           'trusted_tree_contract' => 'exact-git-base-sha'
+        },
+        'post_main' => {
+          'default_branch' => 'main',
+          'allowed_push_workflows' => []
         }
       }
       write_json(root, '.github/merge-gate-policy.json', policy)
@@ -215,6 +219,51 @@ class MergeGateVerifierTest < Minitest::Test
     with_repo do |root, _policy|
       FileUtils.rm(File.join(root, '.github/scripts/pr-scope.py'))
       assert_includes verify(root).join('\n'), 'classifier .github/scripts/pr-scope.py is missing'
+    end
+  end
+
+  def test_main_push_validation_is_rejected
+    with_repo do |root, _policy|
+      write(root, '.github/workflows/post-main.yml', <<~YAML)
+        name: Post-main validation
+        on:
+          push:
+            branches: [main]
+        jobs:
+          validate:
+            runs-on: ubuntu-latest
+      YAML
+      assert_includes verify(root).join('\n'), 'targets push to main'
+    end
+  end
+
+  def test_main_push_ignore_is_allowed
+    with_repo do |root, _policy|
+      write(root, '.github/workflows/feature-push.yml', <<~YAML)
+        name: Feature push
+        on:
+          push:
+            branches-ignore: [main]
+        jobs:
+          validate:
+            runs-on: ubuntu-latest
+      YAML
+      refute_includes verify(root).join('\n'), 'feature-push.yml targets push to main'
+    end
+  end
+
+  def test_tag_only_push_is_allowed
+    with_repo do |root, _policy|
+      write(root, '.github/workflows/release-tag.yml', <<~YAML)
+        name: Release tag
+        on:
+          push:
+            tags: ['v*']
+        jobs:
+          release:
+            runs-on: ubuntu-latest
+      YAML
+      refute_includes verify(root).join('\n'), 'release-tag.yml targets push to main'
     end
   end
 

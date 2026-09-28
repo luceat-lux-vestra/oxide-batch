@@ -1,5 +1,5 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "ruleset": {
     "id": 19905142,
     "name": "Protect main"
@@ -16,6 +16,10 @@
     {
       "pattern": ".github/workflows/dependency-review.yml",
       "classification": "required"
+    },
+    {
+      "pattern": ".github/workflows/codeql.yml",
+      "classification": "advisory"
     },
     {
       "pattern": ".github/workflows/hardening-drift-audit-policy.yml",
@@ -53,11 +57,14 @@
       "workflow": ".github/workflows/supply-chain.yml",
       "job": "supply-chain",
       "classification": "required"
+    },
+    {
+      "workflow": ".github/workflows/codeql.yml",
+      "job": "analyze-actions",
+      "classification": "required"
     }
   ],
-  "managed_required_contexts": [
-    "Analyze (actions)"
-  ],
+  "managed_required_contexts": [],
   "aggregate_gates": [
     {
       "context": "postgresql",
@@ -102,5 +109,9 @@
       "Cargo.lock"
     ],
     "trusted_tree_contract": "exact-git-base-sha"
+  },
+  "post_main": {
+    "default_branch": "main",
+    "allowed_push_workflows": []
   }
 }

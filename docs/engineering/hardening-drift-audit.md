@@ -6,10 +6,7 @@ auto-remediate GitHub settings.
 
 ## Architecture
 
-`.github/workflows/hardening-drift-audit.yml` runs weekly and after policy-relevant
-changes land on `main`. The `detect` job has read-only repository contents
-permission and emits one bounded machine-readable job output with exactly one
-classification:
+`.github/workflows/hardening-drift-audit.yml` runs weekly or by explicit manual dispatch. Policy-relevant changes are proved on the pull request exact final HEAD by `.github/workflows/hardening-drift-audit-policy.yml`; merging that already-proved tree does not trigger the audit a second time. The `detect` job has read-only repository contents permission and emits one bounded machine-readable job output with exactly one classification:
 
 - `clean`
 - `policy-drift`
@@ -65,8 +62,8 @@ as continuously monitored.
 The scheduled job deliberately carries no privileged PAT or administration
 token. Administration-only controls include Dependabot/security-analysis
 toggles, Actions allowlist/default-token/fork approval settings, merge-history
-repository fields that may be omitted from low-privilege payloads, and CodeQL
-default-setup configuration.
+repository fields that may be omitted from low-privilege payloads, and the
+Administration-only CodeQL default-setup state.
 
 The #231 admin-scoped readback is the current evidence baseline for those
 controls. Future hardening reviews must repeat that readback when the policy or
@@ -74,17 +71,15 @@ platform behavior changes.
 
 ## CodeQL Rust review
 
-GitHub-managed default setup remains the single CodeQL authority with
-`actions` and `rust` enabled. `Analyze (actions)` remains required.
-`Analyze (rust)` remains advisory in this change.
+Issue #315 replaces GitHub-managed default setup with the checked-in advanced
+workflow `.github/workflows/codeql.yml`. The advanced workflow has no `push`
+trigger: `Analyze (actions)` remains required on pull requests, `Analyze (rust)`
+remains advisory, and both retain weekly scheduled coverage.
 
-That is deliberate: #248 established capability and one exact PR/main observation
-pair, but that is not repeated independent reliability evidence sufficient to
-promote a managed external producer into merge authority. The recurring
-low-privilege audit also cannot authoritatively read the Administration-only
-default-setup configuration. Future promotion therefore requires a separate
-explicit ruleset/policy migration with fresh producer-presence and reliability
-evidence.
+Default setup is an Administration-only setting and the repository settings
+policy requires it to remain `not-configured` while advanced setup is active.
+The recurring low-privilege audit cannot authoritatively read that setting, so
+periodic hardening reviews must still perform the explicit admin readback.
 
 ## Verification
 

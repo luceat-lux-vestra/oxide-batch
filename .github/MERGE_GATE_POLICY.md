@@ -14,19 +14,30 @@ A workflow-level default classifies every job in that workflow unless a `job_ove
 
 ## Required producer types
 
-Most required contexts are produced by checked-in workflow jobs. `managed_required_contexts` covers GitHub-managed controls whose producer is not a repository workflow, currently CodeQL default setup's `Analyze (actions)` context.
+Required contexts are produced by checked-in pull-request workflows. `managed_required_contexts` is now empty; GitHub-managed default CodeQL setup is not part of merge authority.
 
-CodeQL default setup remains the repository's single CodeQL authority. It also
-produces `Analyze (rust)` after the #248 capability correction, but that Rust
-context is intentionally **advisory** while producer presence and reliability
-are accumulated. `managed_required_contexts` records merge authority, not every
-managed diagnostic context, so `Analyze (rust)` is deliberately absent from the
-canonical required-context JSON and from the live ruleset. #233 is the next
-scheduled decision point for promoting it only if repeated PR/main evidence
-supports making it required. A checked-in advanced-setup CodeQL workflow must
-not be added while default setup is the accepted authority.
+`.github/workflows/codeql.yml` is the single CodeQL authority. It emits two explicit jobs rather than a matrix so policy can represent their different authority precisely: `Analyze (actions)` is required and `Analyze (rust)` is advisory. Both run on pull requests and the weekly schedule, but the workflow has no `push` trigger. This preserves the required context name while eliminating post-merge duplicate analysis.
+
+The repository settings policy requires CodeQL default setup to remain disabled while this checked-in advanced setup is active. Re-enabling default setup would create competing configurations and is policy drift.
 
 Matrix jobs are expanded from their literal matrix axes and their checked-in `name`. A changed matrix therefore changes the required context set and must agree with the canonical policy and live topology.
+
+## Post-main validation invariant
+
+`main` is not a second validation stage. A squash merge may not trigger the
+same build/test/security/dependency analysis already proven on the exact final
+pull-request HEAD.
+
+`merge-gate-policy.json.post_main` names the default branch and the explicit
+allowlist for workflows that may target ordinary pushes to that branch. The
+current allowlist is empty. The verifier scans every checked-in workflow and
+fails closed if a non-allowlisted workflow can run on `push: main`.
+
+This does not prohibit tag-only release workflows, feature-branch push Fast CI,
+weekly schedules, `workflow_dispatch`, or issue/PR lifecycle automation. A
+future deployment that genuinely requires a main-push event must be added to
+the allowlist by an explicit policy change rather than silently reintroducing
+post-merge validation.
 
 ## Trusted PR scope and campaign applicability
 
@@ -181,4 +192,4 @@ or unscanned.
 
 The nine Rust PostgreSQL child jobs continue to run as aggregate members; only their direct ruleset surface is replaced. The two conformance contexts continue to run and remain directly required as independent evidence authority.
 
-#233 may compose this verifier later for scheduled hardening drift auditing and must also re-evaluate the advisory Rust CodeQL classification against observed managed-producer reliability.
+#233 may compose this verifier for scheduled hardening drift auditing. Advisory Rust CodeQL remains outside direct merge authority until a separate explicit policy migration promotes it.
