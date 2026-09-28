@@ -32,7 +32,7 @@ Matrix jobs are expanded from their literal matrix axes and their checked-in `na
 
 The next CI topology uses one fail-closed scope model rather than separate path lists for documentation and each M5/M6 campaign.
 
-`.github/scripts/pr-scope.py` is designed to run from the pull request's **trusted base SHA**. A pull request may change the classifier, this policy, a semantic-closure document, or a campaign workflow, but those PR-head changes do not get to decide whether their own validation is applicable. If the base classifier/policy cannot be loaded or changed-file metadata cannot be reconciled exactly, callers must fall back to full validation and all campaigns.
+`.github/scripts/pr-scope.py` must run with its repository root checked out at the pull request's **exact trusted base SHA**. The classifier verifies `git rev-parse HEAD` against the supplied 40-character base SHA before classifying. The classifier, this policy, every discovered semantic-closure document, and the retained-evidence producer inventory are therefore read from one immutable base tree. A pull request may change any of those files, but PR-head changes do not get to decide whether their own validation is applicable. If the trusted tree cannot be established or changed-file metadata cannot be reconciled exactly, callers must fall back to full validation and all campaigns.
 
 Documentation-only scope is intentionally narrow: only the explicitly listed root documentation files and Markdown under `docs/**` qualify. Rename/copy provenance is evaluated on both source and destination.
 
