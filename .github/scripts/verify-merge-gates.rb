@@ -336,6 +336,15 @@ module MergeGateVerifier
     '.github/workflows/supply-chain.yml',
     '.github/workflows/campaign-orchestrator.yml'
   ].freeze
+  PR_TOPOLOGY_PROTECTED_AUTHORITIES = [
+    PR_CI_WORKFLOW,
+    '.github/workflows/ci.yml',
+    '.github/workflows/dependency-review.yml',
+    '.github/workflows/codeql.yml',
+    '.github/workflows/evidence.yml',
+    '.github/workflows/supply-chain.yml',
+    PR_TOPOLOGY_INDEPENDENT_M5
+  ].freeze
   REPOSITORY_MERGE_GATE_PERMISSIONS = {
     'actions' => 'read',
     'contents' => 'read',
@@ -894,22 +903,46 @@ module MergeGateVerifier
 
     gate = policy['repository_merge_gate']
     protected = gate.is_a?(Hash) ? gate['protected_workflows'] : nil
-    unless protected.is_a?(Array) && protected.length == 1 &&
-           protected.first.is_a?(Hash) &&
-           protected.first['workflow'] == PR_CI_WORKFLOW
-      violations << 'schema v7 repository merge gate must protect only the canonical PR entrypoint'
+    if !protected.is_a?(Array)
+      violations << 'schema v7 repository merge gate must declare protected workflow authorities'
     else
-      accepted = protected.first['accepted_blobs']
-      valid = accepted.is_a?(Array) && !accepted.empty? &&
-              accepted.uniq.length == accepted.length &&
-              accepted.all? { |sha| sha.is_a?(String) && sha.match?(/\A[0-9a-f]{40}\z/) }
-      unless valid
-        violations << 'schema v7 PR entrypoint accepted blob inventory is malformed'
-      else
-        path = Pathname(root).join(PR_CI_WORKFLOW)
+      protected_by_workflow = {}
+      protected.each do |entry|
+        unless entry.is_a?(Hash) && entry['workflow'].is_a?(String)
+          violations << "schema v7 protected workflow entry is malformed: #{entry.inspect}"
+          next
+        end
+        workflow = entry['workflow']
+        if protected_by_workflow.key?(workflow)
+          violations << "schema v7 protected workflow inventory duplicates #{workflow}"
+          next
+        end
+        protected_by_workflow[workflow] = entry
+      end
+
+      actual_workflows = protected_by_workflow.keys.sort
+      expected_workflows = PR_TOPOLOGY_PROTECTED_AUTHORITIES.sort
+      unless actual_workflows == expected_workflows
+        violations << "schema v7 protected workflow inventory mismatch: expected=#{expected_workflows.inspect} actual=#{actual_workflows.inspect}"
+      end
+
+      PR_TOPOLOGY_PROTECTED_AUTHORITIES.each do |workflow|
+        entry = protected_by_workflow[workflow]
+        next unless entry.is_a?(Hash)
+
+        accepted = entry['accepted_blobs']
+        valid = accepted.is_a?(Array) && !accepted.empty? &&
+                accepted.uniq.length == accepted.length &&
+                accepted.all? { |sha| sha.is_a?(String) && sha.match?(/\A[0-9a-f]{40}\z/) }
+        unless valid
+          violations << "schema v7 protected workflow #{workflow} accepted blob inventory is malformed"
+          next
+        end
+
+        path = Pathname(root).join(workflow)
         actual = path.file? ? git_blob_sha(path.binread) : nil
         unless accepted.include?(actual)
-          violations << "schema v7 PR entrypoint blob #{actual.inspect} is not accepted by policy"
+          violations << "schema v7 protected workflow #{workflow} blob #{actual.inspect} is not accepted by policy"
         end
       end
     end
