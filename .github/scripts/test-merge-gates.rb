@@ -1807,6 +1807,20 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v7_topology_rejects_unapproved_merge_authority_blob
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      write(root, '.github/workflows/evidence.yml', File.read(path) + "\n# bypass attempt\n")
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'protected workflow .github/workflows/evidence.yml blob'
+      assert_includes violations.join("\n"), 'is not accepted by policy'
+    end
+  end
+
   private
 
   def v7_producer_summary(root)
@@ -2003,11 +2017,23 @@ class MergeGateVerifierTest < Minitest::Test
             {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
           ],
           'protected_workflows' => [
+            '.github/workflows/pr-ci.yml',
+            '.github/workflows/ci.yml',
+            '.github/workflows/dependency-review.yml',
+            '.github/workflows/codeql.yml',
+            '.github/workflows/evidence.yml',
+            '.github/workflows/supply-chain.yml',
+            '.github/workflows/m5-conformance.yml'
+          ].map do |workflow|
             {
-              'workflow' => '.github/workflows/pr-ci.yml',
-              'accepted_blobs' => [MergeGateVerifier.git_blob_sha(pr_ci)]
+              'workflow' => workflow,
+              'accepted_blobs' => [
+                MergeGateVerifier.git_blob_sha(
+                  File.binread(File.join(root, workflow))
+                )
+              ]
             }
-          ]
+          end
         }
       }
       yield root, policy
