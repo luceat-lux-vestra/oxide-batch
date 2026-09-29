@@ -90,7 +90,7 @@ Legacy merge-time workflows expose `workflow_call` and retain a direct `pull_req
 
 ## Native aggregate contract
 
-`postgresql` is an ordinary pull-request job in `.github/workflows/ci.yml`. GitHub therefore owns its lifecycle, cancellation, rerun, and current check state for the PR HEAD.
+`postgresql` is a workflow-internal aggregate job in reusable `.github/workflows/ci.yml`. Under schema v7 that Rust authority is invoked by `.github/workflows/pr-ci.yml`; GitHub still owns the aggregate job's lifecycle, cancellation, rerun, and current check state inside that caller run. The one-time v6→v7 migration marker may still run the Rust workflow directly, but `postgresql` is no longer a repository-level aggregate authority after cutover.
 
 The job uses `if: ${{ always() }}` so it still executes after a failed/cancelled/skipped dependency.
 
@@ -102,7 +102,7 @@ The aggregate's four `needs` job ids each back a matrix (four PostgreSQL version
 
 The final authority is `.github/scripts/evaluate-aggregate-run.rb`, invoked as the aggregate producer's only substantive step. It:
 
-1. Reads the eight canonical member context names exclusively from `merge-gate-policy.json`'s `postgresql` aggregate entry — there is no second, manually duplicated list of the eight names anywhere in the workflow or scripts.
+1. Reads the eight canonical member context names from `merge-gate-policy.json`'s schema-v7 `internal_aggregates` `postgresql` entry (`aggregate_gates` only for pre-v7 compatibility). The verifier independently expands the Rust workflow's aggregate `needs` jobs and their matrix-emitted context names and requires that derived set to equal the policy inventory, so the evaluator script does not carry a second hard-coded member list.
 2. Calls the GitHub Actions Jobs API (`GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs?filter=all&per_page=100`, paginated to exhaustion) to read every job execution recorded for the current run, across **every** workflow attempt — `filter=all`, not `filter=latest`, because a `latest`-only read would miss exactly the un-rerun sibling's earlier execution.
 3. For each canonical member context independently, matches Jobs API entries by exact job `name`, finds that member's own maximum `run_attempt`, and requires that one specific execution to be `status == "completed"` and `conclusion == "success"`.
 
