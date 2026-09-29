@@ -132,13 +132,13 @@
       {
         "workflow": ".github/workflows/pr-ci.yml",
         "accepted_blobs": [
-          "db581b7a747d0bb07b33611ee5f4cdd50097a62c"
+          "a2c118ae776db129866f4dab033fa36a48c832b4"
         ]
       },
       {
         "workflow": ".github/workflows/ci.yml",
         "accepted_blobs": [
-          "fed6ddaa28816c5e2579cc1b08df24ce8c6505ca"
+          "a242d7fa724b54fc75e6d31595b6a4e846171630"
         ]
       },
       {
@@ -156,13 +156,13 @@
       {
         "workflow": ".github/workflows/evidence.yml",
         "accepted_blobs": [
-          "22453abf3982f9f887f47d7adb6ed2af4b8f031b"
+          "8a3cb348588485aae4d50212251b99421fc12d7f"
         ]
       },
       {
         "workflow": ".github/workflows/supply-chain.yml",
         "accepted_blobs": [
-          "9506a99ab7e52ee156321d3f0cdac8c3eb38b717"
+          "f3ffe4aaf4cab64a315fe94f67a8498e9b6509ad"
         ]
       },
       {
