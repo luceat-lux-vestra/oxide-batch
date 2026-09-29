@@ -828,6 +828,14 @@ module MergeGateVerifier
       'supply' => '.github/workflows/supply-chain.yml',
       'campaigns' => '.github/workflows/campaign-orchestrator.yml'
     }
+    call_permissions = {
+      'rust' => {'actions' => 'read', 'contents' => 'read'},
+      'dependency' => {'contents' => 'read'},
+      'codeql' => {'contents' => 'read', 'pull-requests' => 'read', 'security-events' => 'write'},
+      'evidence' => {'contents' => 'read'},
+      'supply' => {'contents' => 'read'},
+      'campaigns' => {'contents' => 'read', 'pull-requests' => 'read'}
+    }
     call_contracts.each do |job_id, workflow|
       job = jobs[job_id]
       unless job.is_a?(Hash) && job['uses'] == "./#{workflow}"
@@ -836,6 +844,9 @@ module MergeGateVerifier
       end
       unless normalize_needs(job).include?(PR_CI_SCOPE_JOB)
         violations << "#{PR_CI_WORKFLOW}##{job_id} must depend on trusted scope"
+      end
+      unless job['permissions'] == call_permissions.fetch(job_id)
+        violations << "#{PR_CI_WORKFLOW}##{job_id} must keep exact reusable-authority permissions #{call_permissions.fetch(job_id).inspect}"
       end
       condition = normalized_shell(job['if'])
       unless condition.include?("needs.scope.outputs.legacy_base != 'true'") &&
