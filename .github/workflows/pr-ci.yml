@@ -49,7 +49,7 @@ jobs:
         shell: bash
         run: |
           {
-            echo 'legacy_base=true'
+            echo 'legacy_base=unknown'
             echo 'docs_only=false'
             echo 'supply_chain_impact=true'
             echo 'evidence_impact=true'
@@ -60,6 +60,8 @@ jobs:
           schema_version="$(jq -er '.schema_version | select(type == "number")' .trusted-base/.github/merge-gate-policy.json)"
           if [ "$schema_version" -ge 7 ]; then
             echo 'legacy_base=false' >> "$GITHUB_OUTPUT"
+          else
+            echo 'legacy_base=true' >> "$GITHUB_OUTPUT"
           fi
 
           pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
