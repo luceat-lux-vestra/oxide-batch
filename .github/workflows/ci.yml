@@ -12,7 +12,6 @@ on:
 permissions:
   actions: read # Needed to inspect the canonical exact-SHA Fast workflow run.
   contents: read
-  pull-requests: read # Needed for fail-closed live PR scope reconciliation.
 
 concurrency:
   group: rust-${{ github.workflow }}-${{ github.ref }}
@@ -110,7 +109,7 @@ jobs:
             fi
             if [ "$docs_conclusion" = "success" ] && [ "$fmt_conclusion" = "skipped" ] && [ "$clippy_conclusion" = "skipped" ] && [ "$unit_conclusion" = "skipped" ]; then
               echo "mode=docs-only" >> "$GITHUB_OUTPUT"
-              echo "Canonical Fast evidence for exact HEAD $EXPECTED_SHA is documentation-only; Final will independently confirm PR scope before suppressing local obligations."
+              echo "Canonical Fast evidence for exact HEAD $EXPECTED_SHA is documentation-only; a routed Rust authority will execute its local full Fast obligations."
               exit 0
             fi
 
