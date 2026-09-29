@@ -9,15 +9,91 @@ on:
 permissions:
   actions: read # Needed to inspect the canonical exact-SHA Fast workflow run.
   contents: read
+  pull-requests: read # Needed for fail-closed live PR scope reconciliation.
 
 concurrency:
   group: rust-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  scope:
+    name: docs-only-scope
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - name: Check out exact trusted base
+        id: trusted-base
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Classify documentation-only scope from trusted base
+        id: classify
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_CHECKOUT: ${{ steps.trusted-base.outcome }}
+        shell: bash
+        run: |
+          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          test "$TRUSTED_CHECKOUT" = "success"
+
+          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg base "$BASE_SHA" \
+            --arg head "$HEAD_SHA" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
+            <<<"$pr_json" >/dev/null
+          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
+
+          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
+          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
+          changed_file_records="$(mktemp)"
+          trap 'rm -f "$changed_file_records"' EXIT
+          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
+
+          classification="$(
+            python3 .trusted-base/.github/scripts/pr-scope.py \
+              --repo-root .trusted-base \
+              --policy .github/merge-gate-policy.json \
+              --expected-count "$expected_count" \
+              --trusted-base-sha "$BASE_SHA" \
+              <"$changed_file_records"
+          )"
+          docs_only="$(
+            jq -er '
+              if .classification_valid == true and
+                 (.docs_only | type) == "boolean"
+              then .docs_only
+              else error("invalid docs-only classification output")
+              end
+            ' <<<"$classification"
+          )"
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "docs-only fast path: $docs_only"
+
   quality-fast:
     name: quality-fast-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -175,7 +251,11 @@ jobs:
 
   quality-integration-0:
     name: quality-integration-0-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -189,7 +269,11 @@ jobs:
 
   quality-integration-1:
     name: quality-integration-1-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -203,7 +287,11 @@ jobs:
 
   quality-integration-2:
     name: quality-integration-2-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -217,7 +305,11 @@ jobs:
 
   quality-integration-3:
     name: quality-integration-3-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -231,7 +323,11 @@ jobs:
 
   quality-bin-doc:
     name: quality-bin-doc-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -248,7 +344,11 @@ jobs:
 
   quality-contracts:
     name: quality-contracts-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -279,7 +379,7 @@ jobs:
 
   quality:
     name: quality
-    needs: [quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-integration-3, quality-bin-doc, quality-contracts]
+    needs: [scope, quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-integration-3, quality-bin-doc, quality-contracts]
     if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -288,14 +388,18 @@ jobs:
         if: ${{ github.event.pull_request.draft }}
         run: echo "full quality validation is deferred until the pull request is ready for review"
 
+      - name: Documentation-only fast path
+        if: ${{ github.event.pull_request.draft == false && needs.scope.result == 'success' && needs.scope.outputs.docs_only == 'true' }}
+        run: echo "Trusted-base classification proved documentation-only scope; heavy quality validation is not applicable."
+
       - name: Check out repository
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event.pull_request.draft == false && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Test trusted PR scope classifier
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event.pull_request.draft == false && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         run: >-
           python3 .github/scripts/pr-scope.py
           --repo-root .
@@ -303,7 +407,7 @@ jobs:
           --self-test
 
       - name: Require all quality components
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event.pull_request.draft == false && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         env:
           FAST_RESULT: ${{ needs.quality-fast.result }}
           INTEGRATION_0_RESULT: ${{ needs.quality-integration-0.result }}
@@ -324,41 +428,58 @@ jobs:
 
   packaging:
     name: packaging
+    needs: [scope]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Documentation-only fast path
+        if: ${{ github.event.pull_request.draft == false && needs.scope.result == 'success' && needs.scope.outputs.docs_only == 'true' }}
+        run: echo "Trusted-base classification proved documentation-only scope; packaging validation is not applicable."
+
       - name: Check out repository
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Package and dry-run every publishable crate
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         run: cargo run --package oxide-batch-xtask -- package
 
   msrv:
     name: msrv
+    needs: [scope]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Documentation-only fast path
+        if: ${{ github.event.pull_request.draft == false && needs.scope.result == 'success' && needs.scope.outputs.docs_only == 'true' }}
+        run: echo "Trusted-base classification proved documentation-only scope; MSRV validation is not applicable."
+
       - name: Check out repository
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Install minimum supported Rust
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         run: rustup toolchain install 1.95.0 --profile minimal
 
       - name: Check workspace on minimum supported Rust
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         run: cargo +1.95.0 check --workspace --all-targets --all-features --locked
 
 
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -379,6 +500,11 @@ jobs:
 
   postgres-repository:
     name: postgres-${{ matrix.postgres }}-repository
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -567,6 +693,11 @@ jobs:
 
   postgres-item-components:
     name: postgres-${{ matrix.postgres }}-item-components
+    needs: [scope]
+    if: >-
+      ${{ always() &&
+          github.event.pull_request.draft == false &&
+          (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -691,6 +822,7 @@ jobs:
     name: postgresql
     if: ${{ always() }}
     needs:
+      - scope
       - postgres-design-gate
       - postgres-item-components
       - postgres-repository
@@ -700,14 +832,18 @@ jobs:
       actions: read # Read sibling job conclusions for the aggregate; never mutate Actions.
       contents: read # Read the verifier script from the reviewed tree.
     steps:
+      - name: Documentation-only fast path
+        if: ${{ github.event.pull_request.draft == false && needs.scope.result == 'success' && needs.scope.outputs.docs_only == 'true' }}
+        run: echo "Trusted-base classification proved documentation-only scope; PostgreSQL product validation is not applicable."
+
       - name: Check out repository
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
       - name: Evaluate selective-rerun-safe PostgreSQL aggregate
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && (needs.scope.result != 'success' || needs.scope.outputs.docs_only != 'true') }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql
