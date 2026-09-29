@@ -5,6 +5,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
+    paths:
+      - .github/ci-topology-v7-migration
+  workflow_call:
   workflow_dispatch:
 
 permissions:
