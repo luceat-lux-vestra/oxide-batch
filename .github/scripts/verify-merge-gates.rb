@@ -311,6 +311,7 @@ module MergeGateVerifier
   FAST_WORKFLOW = '.github/workflows/fast-branch.yml'
   FAST_JOB = 'fast'
   SUPPLY_CHAIN_WORKFLOW = '.github/workflows/supply-chain.yml'
+  SUPPLY_CHAIN_AUDIT_WORKFLOW = '.github/workflows/supply-chain-audit.yml'
   SUPPLY_CHAIN_JOB = 'supply-chain'
   EVIDENCE_WORKFLOW = '.github/workflows/evidence.yml'
   EVIDENCE_JOB = 'evidence-provenance'
@@ -639,8 +640,7 @@ module MergeGateVerifier
         ],
         classifier_if: supply_classifier_if,
         light_if: supply_light_if,
-        full_if: supply_full_if,
-        require_schedule: true
+        full_if: supply_full_if
       )
     )
 
@@ -836,6 +836,37 @@ module MergeGateVerifier
              pr_config['paths'] == [PR_TOPOLOGY_MIGRATION_MARKER] &&
              !pr_config.key?('paths-ignore')
         violations << "#{workflow} direct pull_request trigger must be marker-only during v7 migration"
+      end
+    end
+
+    audit = docs[SUPPLY_CHAIN_AUDIT_WORKFLOW]
+    unless audit.is_a?(Hash)
+      violations << "scheduled supply-chain audit #{SUPPLY_CHAIN_AUDIT_WORKFLOW} is missing"
+    else
+      violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} must be schedule-triggered" unless workflow_event?(audit, 'schedule')
+      violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} must not be pull_request-triggered" if workflow_event?(audit, 'pull_request')
+      unless audit['permissions'] == {}
+        violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} must keep workflow-level permissions empty"
+      end
+      audit_jobs = audit['jobs']
+      supply_job = audit_jobs.is_a?(Hash) ? audit_jobs['supply-chain'] : nil
+      report_job = audit_jobs.is_a?(Hash) ? audit_jobs['report-failure'] : nil
+      unless supply_job.is_a?(Hash) &&
+             supply_job['uses'] == "./#{SUPPLY_CHAIN_WORKFLOW}" &&
+             supply_job['permissions'] == {
+               'contents' => 'read',
+               'pull-requests' => 'read'
+             }
+        violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} must call the read-only reusable supply-chain authority"
+      end
+      unless report_job.is_a?(Hash) &&
+             normalize_needs(report_job) == ['supply-chain'] &&
+             normalized_shell(report_job['if']).include?('needs.supply-chain.result') &&
+             report_job['permissions'] == {
+               'contents' => 'read',
+               'issues' => 'write'
+             }
+        violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} failure reporter must be isolated behind the supply-chain result with issues: write"
       end
     end
 
