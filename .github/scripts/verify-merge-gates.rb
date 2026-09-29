@@ -790,10 +790,11 @@ module MergeGateVerifier
       else
         command = classify['run'].to_s
         required_tokens = [
-          "echo 'legacy_base=true' >> \"$GITHUB_OUTPUT\"",
-          "echo 'docs_only=false' >> \"$GITHUB_OUTPUT\"",
-          "echo 'supply_chain_impact=true' >> \"$GITHUB_OUTPUT\"",
-          "echo 'evidence_impact=true' >> \"$GITHUB_OUTPUT\"",
+          "echo 'legacy_base=true'",
+          "echo 'docs_only=false'",
+          "echo 'supply_chain_impact=true'",
+          "echo 'evidence_impact=true'",
+          '>> "$GITHUB_OUTPUT"',
           '.trusted-base/.github/merge-gate-policy.json',
           'schema_version',
           'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}',
@@ -1469,8 +1470,9 @@ module MergeGateVerifier
     unless aggregate.is_a?(Hash)
       return violations + ["#{QUALITY_WORKFLOW} must declare required #{QUALITY_AGGREGATE_JOB} aggregate"]
     end
-    unless job_policy(policy, QUALITY_WORKFLOW, QUALITY_AGGREGATE_JOB).first == 'required'
-      violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must remain required"
+    expected_quality_classification = policy['schema_version'].to_i >= 7 ? 'advisory' : 'required'
+    unless job_policy(policy, QUALITY_WORKFLOW, QUALITY_AGGREGATE_JOB).first == expected_quality_classification
+      violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must be #{expected_quality_classification} under schema v#{policy['schema_version']}"
     end
     violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must emit context quality" unless aggregate['name'] == 'quality'
     violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must use unconditional always()" unless always_condition?(aggregate['if'])
