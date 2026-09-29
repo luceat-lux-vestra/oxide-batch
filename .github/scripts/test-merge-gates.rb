@@ -1756,6 +1756,22 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v7_topology_rejects_legacy_true_as_unknown_default
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/pr-ci.yml')
+      original = File.read(path)
+      body = original.sub("echo 'legacy_base=unknown'", "echo 'legacy_base=true'")
+      refute_equal original, body
+      write(root, '.github/workflows/pr-ci.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'scope classifier is missing trusted/fail-closed tokens'
+    end
+  end
+
   def test_v7_topology_rejects_weakened_uncertainty_route
     with_v7_topology_contract do |root, policy|
       path = File.join(root, '.github/workflows/pr-ci.yml')
@@ -1868,12 +1884,18 @@ class MergeGateVerifierTest < Minitest::Test
                 continue-on-error: true
                 run: |
                   {
-                    echo 'legacy_base=true'
+                    echo 'legacy_base=unknown'
                     echo 'docs_only=false'
                     echo 'supply_chain_impact=true'
                     echo 'evidence_impact=true'
                   } >> "$GITHUB_OUTPUT"
                   echo '.trusted-base/.github/merge-gate-policy.json schema_version'
+                  schema_version=7
+                  if [ "$schema_version" -ge 7 ]; then
+                    echo 'legacy_base=false'
+                  else
+                    echo 'legacy_base=true'
+                  fi
                   echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
                   echo 'pulls/${PR_NUMBER}/files?per_page=100'
                   echo '.trusted-base/.github/scripts/pr-scope.py'
@@ -1909,6 +1931,9 @@ class MergeGateVerifierTest < Minitest::Test
             if: __EXPR__{{ always() }}
             steps:
               - run: |
+                  if [ "$LEGACY_BASE" = "true" ]; then
+                    echo legacy
+                  fi
                   echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
                   echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
                   echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
