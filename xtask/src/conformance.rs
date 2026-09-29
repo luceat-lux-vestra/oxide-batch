@@ -622,21 +622,20 @@ struct ShardReport {
     preflight_violations: Vec<String>,
 }
 
-fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
-    let source = fs::read_to_string(path)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    let document: Value = serde_json::from_str(&source)
-        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+struct ShardMetadata {
+    index: usize,
+    count: usize,
+    targets: Vec<(String, String)>,
+}
 
-    if document.get("report").and_then(Value::as_str) != Some("conformance-shard")
-        || document.get("schema_version").and_then(Value::as_u64) != Some(1)
-    {
-        return Err(format!(
-            "{} is not a conformance shard v1 report",
-            path.display()
-        ));
-    }
+struct ShardSuitePayload {
+    target_count: usize,
+    results: BTreeMap<(String, String, String), String>,
+    failed_targets: Vec<String>,
+    documentation: Option<bool>,
+}
 
+fn parse_shard_metadata(document: &Value, path: &Path) -> Result<ShardMetadata, String> {
     let shard = document
         .get("shard")
         .and_then(Value::as_object)
@@ -664,6 +663,14 @@ fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
         })
         .collect::<Result<Vec<_>, String>>()?;
 
+    Ok(ShardMetadata {
+        index,
+        count,
+        targets,
+    })
+}
+
+fn parse_shard_suite(document: &Value, path: &Path) -> Result<ShardSuitePayload, String> {
     let suite = document
         .get("suite")
         .and_then(Value::as_object)
@@ -673,6 +680,7 @@ fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
         .and_then(Value::as_u64)
         .and_then(|value| usize::try_from(value).ok())
         .ok_or_else(|| format!("{} has no valid suite target count", path.display()))?;
+
     let mut results = BTreeMap::new();
     for result in suite
         .get("results")
@@ -695,6 +703,7 @@ fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
             ));
         }
     }
+
     let failed_targets = string_array(suite.get("failed_targets"), "failed_targets", path)?;
     let documentation = match suite.get("documentation_tests_passed") {
         Some(Value::Bool(value)) => Some(*value),
@@ -707,7 +716,19 @@ fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
         }
     };
 
-    let fixtures = document
+    Ok(ShardSuitePayload {
+        target_count,
+        results,
+        failed_targets,
+        documentation,
+    })
+}
+
+fn parse_shard_fixtures(
+    document: &Value,
+    path: &Path,
+) -> Result<BTreeMap<String, bool>, String> {
+    document
         .get("fixtures")
         .and_then(Value::as_object)
         .ok_or_else(|| format!("{} has no fixture object", path.display()))?
@@ -718,7 +739,27 @@ fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
                 .map(|present| (name.clone(), present))
                 .ok_or_else(|| format!("{} fixture {name} is not boolean", path.display()))
         })
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
+        .collect()
+}
+
+fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let document: Value = serde_json::from_str(&source)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+
+    if document.get("report").and_then(Value::as_str) != Some("conformance-shard")
+        || document.get("schema_version").and_then(Value::as_u64) != Some(1)
+    {
+        return Err(format!(
+            "{} is not a conformance shard v1 report",
+            path.display()
+        ));
+    }
+
+    let metadata = parse_shard_metadata(&document, path)?;
+    let suite = parse_shard_suite(&document, path)?;
+    let fixtures = parse_shard_fixtures(&document, path)?;
     let environment = document
         .get("environment")
         .cloned()
@@ -735,14 +776,14 @@ fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
     let preflight_violations = string_array(document.get("violations"), "violations", path)?;
 
     Ok(ShardReport {
-        index,
-        count,
+        index: metadata.index,
+        count: metadata.count,
         major,
-        targets,
-        target_count,
-        results,
-        failed_targets,
-        documentation,
+        targets: metadata.targets,
+        target_count: suite.target_count,
+        results: suite.results,
+        failed_targets: suite.failed_targets,
+        documentation: suite.documentation,
         fixtures,
         environment,
         manifest,
