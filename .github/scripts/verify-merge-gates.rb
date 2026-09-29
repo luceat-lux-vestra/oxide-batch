@@ -346,6 +346,23 @@ module MergeGateVerifier
     PR_TOPOLOGY_INDEPENDENT_M5,
     REPOSITORY_MERGE_GATE_WORKFLOW
   ].freeze
+  INTERNAL_POSTGRESQL_AGGREGATE = {
+    'context' => 'postgresql',
+    'producer' => {
+      'workflow' => QUALITY_WORKFLOW,
+      'job' => 'postgresql-merge-gate'
+    },
+    'members' => %w[
+      postgres-15-design-gate
+      postgres-15-item-components
+      postgres-15-repository
+      postgres-16-design-gate
+      postgres-17-design-gate
+      postgres-18-design-gate
+      postgres-18-item-components
+      postgres-18-repository
+    ]
+  }.freeze
   REPOSITORY_MERGE_GATE_PERMISSIONS = {
     'actions' => 'read',
     'contents' => 'read',
@@ -1550,6 +1567,105 @@ module MergeGateVerifier
   end
 
 
+  def internal_aggregate_policy_contract(policy)
+    return [] unless policy['schema_version'].to_i >= 7
+
+    violations = []
+    unless policy.fetch('aggregate_gates', []) == []
+      violations << 'schema v7 branch aggregate_gates must remain empty; reusable-workflow aggregates belong in internal_aggregates'
+    end
+    unless policy['internal_aggregates'] == [INTERNAL_POSTGRESQL_AGGREGATE]
+      violations << 'schema v7 internal_aggregates must exactly declare the canonical PostgreSQL reusable-workflow aggregate'
+    end
+    violations
+  end
+
+  def internal_aggregate_contract(root:, policy:, producer_summary:)
+    violations = internal_aggregate_policy_contract(policy)
+    return violations unless policy['schema_version'].to_i >= 7
+    return violations unless policy['internal_aggregates'].is_a?(Array)
+
+    gate = policy['internal_aggregates'].find do |entry|
+      entry.is_a?(Hash) && entry['context'] == 'postgresql'
+    end
+    return violations unless gate.is_a?(Hash)
+
+    workflow = gate.dig('producer', 'workflow')
+    job_id = gate.dig('producer', 'job')
+    docs = producer_summary.fetch('workflow_docs')
+    doc = docs[workflow]
+    job = doc.is_a?(Hash) && doc['jobs'].is_a?(Hash) ? doc['jobs'][job_id] : nil
+    unless job.is_a?(Hash)
+      return violations + ['schema v7 internal PostgreSQL aggregate producer is missing']
+    end
+
+    unless workflow_event?(doc, 'workflow_call')
+      violations << 'schema v7 internal PostgreSQL aggregate must live in a reusable workflow'
+    end
+    if job_policy(policy, workflow, job_id).first != 'advisory'
+      violations << 'schema v7 internal PostgreSQL aggregate producer must remain advisory to repository merge topology'
+    end
+    violations << 'schema v7 internal PostgreSQL aggregate must emit context postgresql' unless job['name'] == 'postgresql'
+    violations << 'schema v7 internal PostgreSQL aggregate must use unconditional always()' unless always_condition?(job['if'])
+    unless job['runs-on'] == 'ubuntu-latest' && job['timeout-minutes'] == 5
+      violations << 'schema v7 internal PostgreSQL aggregate must use ubuntu-latest with timeout-minutes: 5'
+    end
+    unless job['permissions'] == AGGREGATE_PRODUCER_PERMISSIONS
+      violations << "schema v7 internal PostgreSQL aggregate must keep #{AGGREGATE_PRODUCER_PERMISSIONS.inspect}"
+    end
+
+    context_sources = producer_summary.fetch('context_sources')
+    member_sources = gate['members'].map { |member| [member, context_sources[member]] }
+    missing_members = member_sources.select { |_member, source| !source.is_a?(Hash) }.map(&:first)
+    unless missing_members.empty?
+      violations << "schema v7 internal PostgreSQL aggregate has unknown member contexts: #{missing_members.join(', ')}"
+    end
+
+    valid_sources = member_sources.filter_map { |_member, source| source if source.is_a?(Hash) }
+    foreign = valid_sources.reject { |source| source['kind'] == 'job' && source['workflow'] == workflow }
+    unless foreign.empty?
+      violations << 'schema v7 internal PostgreSQL aggregate members must all be jobs from the reusable Rust workflow'
+    end
+    valid_sources.each do |source|
+      unless job_policy(policy, workflow, source['job']).first == 'advisory'
+        violations << "schema v7 internal PostgreSQL aggregate member #{source['job']} must remain advisory to repository merge topology"
+      end
+    end
+
+    expected_needs = valid_sources.map { |source| source['job'] }.uniq.sort
+    unless normalize_needs(job).sort == expected_needs
+      violations << "schema v7 internal PostgreSQL aggregate needs mismatch: expected #{expected_needs.inspect}, got #{normalize_needs(job).sort.inspect}"
+    end
+
+    steps = Array(job['steps']).select { |step| step.is_a?(Hash) }
+    unless steps.length == 2
+      violations << 'schema v7 internal PostgreSQL aggregate must have exactly checkout + evaluator steps'
+    end
+    checkout = steps[0]
+    evaluator = steps[1]
+    pins = other_jobs_checkout_pins(doc, job_id)
+    unless pins.length == 1 && checkout.is_a?(Hash) && checkout['uses'] == pins.first
+      violations << 'schema v7 internal PostgreSQL aggregate checkout must reuse the workflow canonical pinned checkout'
+    end
+    unless evaluator.is_a?(Hash) &&
+           evaluator.dig('env', 'GITHUB_TOKEN').to_s.match?(TOKEN_ENV_EXPR) &&
+           normalized_shell(evaluator['run']) == normalized_shell(evaluator_invocation_script('postgresql'))
+      violations << 'schema v7 internal PostgreSQL aggregate must invoke the canonical selective-rerun evaluator with github.token'
+    end
+
+    evaluator_path = Pathname(root).join(EVALUATOR_SCRIPT)
+    if evaluator_path.file?
+      evaluator_body = evaluator_path.read
+      %w[internal_aggregates aggregate_gates schema_version].each do |token|
+        violations << "#{EVALUATOR_SCRIPT} must preserve v7/v6 aggregate catalog separation token #{token.inspect}" unless evaluator_body.include?(token)
+      end
+    else
+      violations << "#{EVALUATOR_SCRIPT} is missing"
+    end
+
+    violations
+  end
+
   def repository_authority_members(producer_summary:, aggregates:)
     contexts = producer_summary.fetch('required_contexts').dup
     sources = producer_summary.fetch('context_sources').dup
@@ -2004,6 +2120,7 @@ module MergeGateVerifier
     violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(m5_conformance_routing_contract(policy: policy, producer_summary: producer_summary))
     violations.concat(quality_parallel_contract(root: root, policy: policy, producer_summary: producer_summary))
+    violations.concat(internal_aggregate_contract(root: root, policy: policy, producer_summary: producer_summary))
     repository_gate_violations, repository_gate = repository_merge_gate_contract(policy: policy, producer_summary: producer_summary, aggregates: aggregates)
     violations.concat(repository_gate_violations)
     violations.concat(post_main_contract(policy: policy, producer_summary: producer_summary))
@@ -2059,6 +2176,7 @@ module MergeGateVerifier
     [violations, {
       'required_contexts' => required_contexts.sort,
       'aggregate_gates' => aggregates,
+      'internal_aggregates' => policy.fetch('internal_aggregates', []),
       'repository_merge_gate' => repository_gate,
       'pending_ruleset_contexts' => pending.sort,
       'accepted_live_required_contexts' => accepted_live,
