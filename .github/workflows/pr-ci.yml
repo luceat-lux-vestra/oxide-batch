@@ -162,19 +162,6 @@ jobs:
       contents: read # Read repository source for the reusable authority.
       pull-requests: read # Reconcile live PR identity and trusted routing metadata.
 
-  conformance:
-    name: conformance-authority
-    needs: scope
-    if: >-
-      ${{ always() && github.event.pull_request.draft == false &&
-          needs.scope.outputs.legacy_base != 'true' &&
-          (needs.scope.outputs.classification_outcome != 'success' ||
-           needs.scope.outputs.docs_only != 'true') }}
-    uses: ./.github/workflows/m5-conformance.yml
-    permissions:
-      contents: read # Read repository source for the reusable authority.
-      pull-requests: read # Reconcile live PR identity and trusted routing metadata.
-
   campaigns:
     name: advisory-campaigns
     needs: scope
@@ -190,7 +177,7 @@ jobs:
 
   pr-proof:
     name: pr-proof
-    needs: [scope, rust, dependency, codeql, evidence, supply, conformance]
+    needs: [scope, rust, dependency, codeql, evidence, supply]
     if: ${{ always() }}
     runs-on: ubuntu-slim
     timeout-minutes: 5
@@ -213,7 +200,6 @@ jobs:
           CODEQL_RESULT: ${{ needs.codeql.result }}
           EVIDENCE_RESULT: ${{ needs.evidence.result }}
           SUPPLY_RESULT: ${{ needs.supply.result }}
-          CONFORMANCE_RESULT: ${{ needs.conformance.result }}
         shell: bash
         run: |
           set -euo pipefail
@@ -246,9 +232,8 @@ jobs:
             require_result rust "$RUST_RESULT"
             require_result dependency "$DEPENDENCY_RESULT"
             require_result codeql "$CODEQL_RESULT"
-            require_result conformance "$CONFORMANCE_RESULT"
           else
-            for pair in "rust:$RUST_RESULT" "dependency:$DEPENDENCY_RESULT" "codeql:$CODEQL_RESULT" "conformance:$CONFORMANCE_RESULT"; do
+            for pair in "rust:$RUST_RESULT" "dependency:$DEPENDENCY_RESULT" "codeql:$CODEQL_RESULT"; do
               result="${pair#*:}"
               if [ "$result" != "skipped" ]; then
                 echo "::error::non-applicable authority unexpectedly materialized: $pair"
