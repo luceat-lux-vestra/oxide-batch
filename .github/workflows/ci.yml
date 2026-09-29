@@ -22,8 +22,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # Read the exact trusted base checkout.
+      pull-requests: read # Reconcile live PR identity and the complete changed-file set.
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
     steps:
