@@ -199,8 +199,8 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "Campaign Orchestrator",
-        "workflow_file": ".github/workflows/campaign-orchestrator.yml",
+        "workflow": "M6 Full Component Conformance",
+        "workflow_file": ".github/workflows/m6-conformance.yml",
         "id": 36515668535,
         "attempt": 1,
         "event": "pull_request",
@@ -229,7 +229,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #346 successful Campaign Orchestrator artifact independently fetched through the GitHub API; run/reusable-job identity and success, archive SHA-256, exact extracted canonical merged-report bytes, 45-target exact-cover result, runtime axis, and execution commit were verified before retention."
+        "note": "PR #346 successful reusable M6 Full Component Conformance producer hosted by Campaign Orchestrator run 36515668535; producer-workflow semantic identity, top-level run/reusable-job identity and success, archive SHA-256, exact extracted canonical merged-report bytes, 45-target exact-cover result, runtime axis, and execution commit were independently verified before retention."
       },
       "server_version": null
     },
@@ -249,8 +249,8 @@
         "arch": "x86_64"
       },
       "workflow_run": {
-        "workflow": "Campaign Orchestrator",
-        "workflow_file": ".github/workflows/campaign-orchestrator.yml",
+        "workflow": "M6 Full Component Conformance",
+        "workflow_file": ".github/workflows/m6-conformance.yml",
         "id": 36515668535,
         "attempt": 1,
         "event": "pull_request",
@@ -279,7 +279,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #346 successful Campaign Orchestrator artifact independently fetched through the GitHub API; run/reusable-job identity and success, archive SHA-256, exact extracted canonical merged-report bytes, 45-target exact-cover result, runtime axis, and execution commit were verified before retention."
+        "note": "PR #346 successful reusable M6 Full Component Conformance producer hosted by Campaign Orchestrator run 36515668535; producer-workflow semantic identity, top-level run/reusable-job identity and success, archive SHA-256, exact extracted canonical merged-report bytes, 45-target exact-cover result, runtime axis, and execution commit were independently verified before retention."
       },
       "server_version": null
     }
