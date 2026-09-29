@@ -891,12 +891,42 @@ fn the_canonical_contract_describes_the_real_producer_behavior() -> Result<(), B
          requires that exact outcome",
     );
 
-    // workspace_documentation_tests_must_pass: run unconditionally, not
-    // gated on the accepted scope or the execution envelope.
+    // workspace_documentation_tests_must_pass: the obligation remains
+    // unconditional per PostgreSQL major, but shard zero owns it exactly once
+    // and canonical merge rejects either omission or duplication.
+    let sharding = contract
+        .get("sharding")
+        .ok_or_else(|| Failure("the contract declares no sharding object".to_owned()))?;
+    assert_eq!(
+        sharding.get("shard_count"),
+        Some(&Value::from(2)),
+        "the first bounded optimization must remain an exact two-way partition",
+    );
+    assert_eq!(
+        sharding.get("documentation_owner_shard"),
+        Some(&Value::from(0)),
+        "shard zero must remain the sole documentation-test owner",
+    );
     assert!(
-        producer.contains("suite.documentation = run_documentation_tests(root)?;"),
-        "the contract claims the workspace documentation tests are a required, separate \
-         obligation, but run_suite no longer calls run_documentation_tests unconditionally",
+        producer.contains("run_suite(&root, selected, index == 0)?"),
+        "the producer no longer binds documentation tests to shard zero exactly once",
+    );
+    assert!(
+        producer.contains("let documentation = documentation.ok_or_else"),
+        "canonical merge no longer fails closed when shard zero omits documentation proof",
+    );
+    assert!(
+        producer.contains("} else if documentation.is_some()"),
+        "canonical merge no longer rejects duplicated documentation proof from another shard",
+    );
+    assert!(
+        producer.contains("\"documentation_tests_passed\": suite.documentation"),
+        "shard reports must preserve None for non-owner documentation evidence instead of \
+         serializing it as false and forging duplicate ownership",
+    );
+    assert!(
+        producer.contains("state.violations.extend(reconcile(&scope, &state.suite));"),
+        "the 133-scenario reconciliation must remain after exact-cover shard merge",
     );
 
     Ok(())
@@ -930,9 +960,9 @@ fn no_stale_whole_workspace_language_remains_in_the_contract_or_workflow()
 }
 
 // ---------------------------------------------------------------------
-// Contract-check exactness. `verify-ci-contract.sh` binds two files —
-// `.github/workflows/m5-conformance.yml` and `run-ci-campaign.sh` — by exact
-// git blob identity, not by the literal presence checks alone. These tests
+// Contract-check exactness. `verify-ci-contract.sh` binds three executable
+// files — the workflow, shard runner, and canonical merge runner — by exact
+// git blob identity, not by literal presence checks alone. These tests
 // drive the real script against an isolated sandbox copy of those files, so a
 // mutation proves the checker's actual behaviour rather than one helper's
 // return value, and never touches the repository working tree.
@@ -1065,7 +1095,7 @@ fn contract_check_fails_on_an_additional_producer_command() -> Result<(), Box<dy
     let passed = run_conformance_contract_check(|sandbox| {
         insert_after(
             &sandbox.join(".github/workflows/m5-conformance.yml"),
-            "run: ./tests/fixtures/conformance/run-ci-campaign.sh ${{ matrix.postgres }}\n",
+            "run: ./tests/fixtures/conformance/run-ci-campaign.sh 15 \"$SHARD_INDEX\" 2\n",
             "      - name: Run something else\n        run: echo \"an extra producer step\"\n",
         )
     })?;
@@ -1088,6 +1118,21 @@ fn contract_check_fails_on_an_appended_script_command() -> Result<(), Box<dyn Er
     assert!(
         !passed,
         "an appended command must fail even though the expected cargo command is still present",
+    );
+    Ok(())
+}
+
+#[test]
+fn contract_check_fails_on_an_appended_merge_script_command() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        append_line(
+            &sandbox.join("tests/fixtures/conformance/merge-ci-campaign.sh"),
+            "echo \"extra merge command\"",
+        )
+    })?;
+    assert!(
+        !passed,
+        "an appended canonical merge command must fail exact merge-script identity",
     );
     Ok(())
 }
@@ -1158,6 +1203,7 @@ fn run_conformance_contract_check(
     for name in [
         "execution-contract.json",
         "run-ci-campaign.sh",
+        "merge-ci-campaign.sh",
         "verify-ci-contract.sh",
     ] {
         fs::copy(

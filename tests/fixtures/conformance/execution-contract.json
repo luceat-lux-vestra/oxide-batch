@@ -1,9 +1,9 @@
 {
   "document": "How CI executes the M5 conformance campaign",
-  "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow owns both fail-closed pull-request routing and the PostgreSQL-backed deep execution. Required PR contexts are emitted by lightweight jobs when direct proof is not required; routing ambiguity selects the deep campaign rather than suppressing it.",
-  "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, a changed command, an appended line — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
+  "note": "This contract is the canonical execution description beside the shard/merge scripts. The dedicated workflow owns fail-closed pull-request routing, deterministic PostgreSQL 15/18 target sharding, canonical report merge, and lightweight required-context emission.",
+  "identity_note": "workflow_git_blob, script_git_blob, and merge_script_git_blob are the fail-closed authority. Each is the exact git hash-object identity of executable CI machinery; any byte-level drift makes retained evidence stale and must be deliberately re-proved. Literal fields remain readable diagnostics rather than the trust boundary.",
   "workflow_path": ".github/workflows/m5-conformance.yml",
-  "workflow_git_blob": "0a0f54e296c95f69789bfdf7334e314f26bfebad",
+  "workflow_git_blob": "5e8c3cba0ae1c9f3d7c454c5a6004e71ad58c0ae",
   "workflow_name": "M5 Conformance",
   "triggers": {
     "pull_request": [
@@ -15,14 +15,14 @@
     "contents": "read"
   },
   "runner": "ubuntu-24.04",
-  "script": "./tests/fixtures/conformance/run-ci-campaign.sh ${{ matrix.postgres }}",
+  "script": "./tests/fixtures/conformance/run-ci-campaign.sh {major} \"$SHARD_INDEX\" 2",
   "script_path": "tests/fixtures/conformance/run-ci-campaign.sh",
-  "script_git_blob": "bb4adf4c7b3ee24c3395f6e9256a2533b489daa2",
+  "script_git_blob": "367726d79cf96f9a109261df313b9544e92d77de",
   "supported_matrix": [
     "15",
     "18"
   ],
-  "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Evidence is required from both, exactly once each.",
+  "matrix_note": "The two ends of the supported PostgreSQL 15-18 range. Each major owns two deterministic target shards and one canonical merged report.",
   "database": {
     "image": "postgres:{major}",
     "image_digest_note": "The workflow appends an immutable Docker Hub multi-arch digest selected only from the checked-in PostgreSQL 15/18 matrix; 15 is 926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561 and 18 is 4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280. Unsupported matrix values resolve to an invalid digest and fail before execution.",
@@ -30,7 +30,11 @@
     "user": "postgres",
     "password": "postgres",
     "port": 5432,
-    "health_check": "pg_isready --username postgres --dbname oxide_batch_campaign"
+    "health_check": "pg_isready --username postgres --dbname oxide_batch_campaign",
+    "images": {
+      "15": "postgres:15@sha256:926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561",
+      "18": "postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+    }
   },
   "command": [
     "cargo",
@@ -45,7 +49,7 @@
   "features": "the execution envelope's selected targets are built and run with --all-features by cargo xtask conformance's own target invocations",
   "target_selection": {
     "source": "the (package, target) pairs the accepted-scope document's scenario assignments name",
-    "note": "This is the execution envelope, not the row-proof denominator. The 133 assigned scenarios name 30 unique targets; the producer selects exactly those 30 and no others. A workspace test target outside this set cannot affect the campaign regardless of whether it passes or fails.",
+    "note": "The 133 assigned scenarios name 30 unique targets. The producer derives those 30 exactly, partitions them one-to-one across two deterministic shards per PostgreSQL major, runs every selected target in full, then reconciles all 133 scenarios only after canonical merge.",
     "selected_targets_run_in_full": true,
     "selected_targets_run_in_full_note": "A selected target is not filtered down to only the scenarios that put it in the envelope: every test in that target binary runs, and the target's own exit status gates the campaign. A test inside a selected target that the accepted scope never named still runs and can still fail the campaign; only a target outside the envelope entirely is excluded.",
     "unselected_workspace_targets_excluded": true
@@ -56,7 +60,7 @@
     "selected_target_exit_must_succeed": true,
     "selected_target_exit_must_succeed_note": "Every one of the 30 selected targets must exit successfully as a process, independent of the scenario-level check above. This is the source of the 'selected targets run in full' behavior: a non-assigned test failing inside a selected target fails this condition even though no assigned scenario failed.",
     "workspace_documentation_tests_must_pass": true,
-    "workspace_documentation_tests_must_pass_note": "A third, separate obligation: cargo test --workspace --all-features --doc, run regardless of the accepted scope, because it executes only committed rustdoc examples across every workspace crate rather than reading anything the envelope narrowing is about."
+    "workspace_documentation_tests_must_pass_note": "A third, separate obligation: cargo test --workspace --all-features --doc. Shard zero owns it exactly once per PostgreSQL major; canonical merge rejects missing or duplicated documentation proof."
   },
   "environment": {
     "OXIDEBATCH_POSTGRES_ADMIN_TEST_URL": "postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_campaign",
@@ -69,14 +73,43 @@
   "artifact_name": "conformance-campaign-postgres-{major}",
   "artifact_retention": "30 days, on success and on failure alike, because what a failed conformance campaign is mostly worth reading for is which accepted row, or which selected target, it lost",
   "timeout_minutes": 55,
-  "timeout_note": "The campaign's execution envelope is 30 selected test targets, each run in full, plus the workspace documentation tests as a separate obligation — not one bounded workload, so its ceiling is the widest of the M5 campaigns. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner.",
+  "timeout_note": "Each shard keeps the prior 55-minute safety ceiling; the canonical merge job has a separate 15-minute ceiling. The optimization changes wall-clock topology, not the proof deadline semantics.",
   "pr_routing": {
     "trusted_classifier": ".github/scripts/pr-scope.py from the exact pull request base SHA",
     "direct_set": "direct_proof_campaign_workflows",
     "route_job": "route",
-    "deep_job": "conformance-deep",
+    "deep_job": null,
     "required_context_job": "conformance-campaign",
     "failure_mode": "trusted checkout, API, metadata, classifier, parser, output, or route-job ambiguity requires deep execution",
-    "no_direct_mode": "emit the PostgreSQL 15/18 required contexts without provisioning PostgreSQL services"
+    "no_direct_mode": "emit the PostgreSQL 15/18 required contexts without provisioning PostgreSQL services",
+    "deep_jobs": [
+      "conformance-deep-15",
+      "conformance-deep-18"
+    ],
+    "shard_jobs": [
+      "conformance-shard-15",
+      "conformance-shard-18"
+    ]
+  },
+  "merge_script_path": "tests/fixtures/conformance/merge-ci-campaign.sh",
+  "merge_script_git_blob": "be228e6adcd1ff9981985b5179e553c494457f46",
+  "merge_script": "bash ./tests/fixtures/conformance/merge-ci-campaign.sh {major} 2 target/m5-campaign-shards",
+  "sharding": {
+    "shard_count": 2,
+    "documentation_owner_shard": 0,
+    "partition": "round-robin over the canonical sorted (package, target) execution envelope",
+    "exact_cover_required": true,
+    "partial_report_path": "target/m5-campaigns/conformance-shard-${{ matrix.shard }}.json",
+    "partial_artifact_name": "conformance-shard-postgres-{major}-${{ matrix.shard }}",
+    "merge_input_dir": "target/m5-campaign-shards",
+    "shard_job_ids": [
+      "conformance-shard-15",
+      "conformance-shard-18"
+    ],
+    "deep_job_ids": [
+      "conformance-deep-15",
+      "conformance-deep-18"
+    ],
+    "merge_timeout_minutes": 15
   }
 }

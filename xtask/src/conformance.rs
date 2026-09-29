@@ -67,6 +67,18 @@ use crate::suite::{self, TargetCommand};
 /// The report this campaign retains.
 const REPORT: &str = "conformance-campaign.json";
 
+/// Prefix for one CI shard's intermediate evidence.
+const SHARD_REPORT_PREFIX: &str = "conformance-shard-";
+
+/// CI shard index, present only for partial execution.
+const SHARD_INDEX_ENV: &str = "OXIDEBATCH_CONFORMANCE_SHARD_INDEX";
+
+/// CI shard count, present for both partial execution and canonical merge.
+const SHARD_COUNT_ENV: &str = "OXIDEBATCH_CONFORMANCE_SHARD_COUNT";
+
+/// Directory containing all shard reports for canonical merge.
+const SHARD_MERGE_DIR_ENV: &str = "OXIDEBATCH_CONFORMANCE_MERGE_DIR";
+
 /// The declared semantic closure of the conformance campaign.
 const SEMANTICS: &str = "tests/fixtures/conformance/campaign-semantics.json";
 
@@ -89,6 +101,27 @@ pub struct Campaign {
 /// result at all, such as an unreadable scope document or a suite that could
 /// not be built.
 pub fn run() -> Result<Campaign, String> {
+    let shard_index = env::var(SHARD_INDEX_ENV).ok();
+    let shard_count = env::var(SHARD_COUNT_ENV).ok();
+    let merge_dir = env::var(SHARD_MERGE_DIR_ENV).ok();
+
+    match (shard_index, shard_count, merge_dir) {
+        (None, None, None) => run_full(),
+        (Some(index), Some(count), None) => run_shard(&index, &count),
+        (None, Some(count), Some(directory)) => merge_shards(&count, Path::new(&directory)),
+        _ => Err(
+            "conformance CI mode is ambiguous: shard execution requires shard index+count only, \
+             canonical merge requires shard count+merge directory only"
+                .to_owned(),
+        ),
+    }
+}
+
+/// Runs the original single-process campaign.
+///
+/// Kept as the default local/manual mode so CI sharding does not silently
+/// change developer invocation semantics.
+fn run_full() -> Result<Campaign, String> {
     let root = suite::workspace_root()?;
     let scope = Scope::read(&root)?;
     let manifest = execution_manifest(&root)?;
@@ -96,23 +129,685 @@ pub fn run() -> Result<Campaign, String> {
     let mut violations = Vec::new();
     let fixtures = resolve_fixtures(&scope, &mut violations);
     if !violations.is_empty() {
+        let empty = Suite::default();
+        let environment = suite::environment();
         let report = write_report(
             &root,
             &scope,
             &fixtures,
-            &Suite::default(),
+            &empty,
             &violations,
             &manifest,
+            &environment,
         )?;
         return Ok(Campaign { violations, report });
     }
 
     let targets = suite_targets(&scope)?;
-    let suite = run_suite(&root, &targets)?;
+    let suite = run_suite(&root, &targets, true)?;
     violations.extend(reconcile(&scope, &suite));
+    let environment = suite::environment();
 
-    let report = write_report(&root, &scope, &fixtures, &suite, &violations, &manifest)?;
+    let report = write_report(
+        &root,
+        &scope,
+        &fixtures,
+        &suite,
+        &violations,
+        &manifest,
+        &environment,
+    )?;
     Ok(Campaign { violations, report })
+}
+
+/// Runs exactly one deterministic target shard and retains intermediate evidence.
+///
+/// Scenario reconciliation is deliberately deferred until merge, because any
+/// one shard owns only part of the accepted execution envelope. Target-process
+/// failures, fixture failures, and the documentation-test obligation owned by
+/// shard zero still fail the shard immediately.
+fn run_shard(index: &str, count: &str) -> Result<Campaign, String> {
+    let index = parse_shard_number("index", index)?;
+    let count = parse_shard_number("count", count)?;
+    if count < 2 {
+        return Err("conformance shard count must be at least 2".to_owned());
+    }
+    if index >= count {
+        return Err(format!(
+            "conformance shard index {index} is outside shard count {count}"
+        ));
+    }
+
+    let root = suite::workspace_root()?;
+    let scope = Scope::read(&root)?;
+    let manifest = execution_manifest(&root)?;
+    let environment = suite::environment();
+    let targets = suite_targets(&scope)?;
+    let partitions = partition_targets(&targets, count)?;
+    let selected = &partitions[index];
+
+    let mut preflight = Vec::new();
+    let fixtures = resolve_fixtures(&scope, &mut preflight);
+    let suite = if preflight.is_empty() {
+        run_suite(&root, selected, index == 0)?
+    } else {
+        Suite::default()
+    };
+
+    let report = write_shard_report(
+        &root,
+        ShardReportInput {
+            index,
+            count,
+            selected,
+            fixtures: &fixtures,
+            suite: &suite,
+            preflight_violations: &preflight,
+            manifest: &manifest,
+            environment: &environment,
+        },
+    )?;
+
+    let mut violations = preflight;
+    violations.extend(suite.failed_targets.iter().cloned());
+    if suite.documentation == Some(false)
+        && !violations
+            .iter()
+            .any(|violation| violation == "the workspace documentation tests failed")
+    {
+        violations.push("the workspace documentation tests failed".to_owned());
+    }
+    violations.sort();
+    violations.dedup();
+
+    Ok(Campaign { violations, report })
+}
+
+/// Merges every shard into the one canonical report retained by the campaign.
+///
+/// The merge recomputes the target partition from the accepted scope and
+/// rejects partial evidence that is missing, duplicated, from another
+/// `PostgreSQL` major/tree/environment, or claims a target outside its exact
+/// shard. Only after that exact-cover proof does ordinary 133-scenario
+/// reconciliation run.
+struct ShardMergeState {
+    suite: Suite,
+    fixtures: Option<BTreeMap<String, bool>>,
+    environment: Option<Value>,
+    violations: Vec<String>,
+}
+
+fn merge_shards(count: &str, directory: &Path) -> Result<Campaign, String> {
+    let count = parse_shard_number("count", count)?;
+    if count < 2 {
+        return Err("conformance shard count must be at least 2".to_owned());
+    }
+
+    let root = suite::workspace_root()?;
+    let scope = Scope::read(&root)?;
+    let manifest = execution_manifest(&root)?;
+    let targets = suite_targets(&scope)?;
+    let partitions = partition_targets(&targets, count)?;
+    let expected_major = expected_matrix_major().ok_or_else(|| {
+        "canonical conformance merge requires OXIDEBATCH_CAMPAIGN_MATRIX".to_owned()
+    })?;
+
+    ensure_exact_shard_report_set(directory, count)?;
+
+    let mut state = ShardMergeState {
+        suite: Suite::default(),
+        fixtures: None,
+        environment: None,
+        violations: Vec::new(),
+    };
+
+    for (index, expected_targets) in partitions.iter().enumerate() {
+        let path = directory.join(shard_report_name(index));
+        let (shard, expected_pairs) = read_validated_shard(
+            &path,
+            index,
+            count,
+            &expected_major,
+            expected_targets,
+            &manifest,
+        )?;
+        merge_shard_payload(&path, index, &expected_pairs, shard, &mut state)?;
+    }
+
+    if state.suite.targets != targets.len() {
+        return Err(format!(
+            "conformance shard merge covered {} targets, expected {}",
+            state.suite.targets,
+            targets.len()
+        ));
+    }
+    if state.suite.documentation.is_none() {
+        return Err("conformance shard merge has no documentation-test proof".to_owned());
+    }
+
+    state.violations.extend(reconcile(&scope, &state.suite));
+    state.violations.sort();
+    state.violations.dedup();
+
+    let fixtures = state
+        .fixtures
+        .ok_or_else(|| "conformance shard merge has no fixture evidence".to_owned())?;
+    let environment = state
+        .environment
+        .ok_or_else(|| "conformance shard merge has no environment evidence".to_owned())?;
+    let report = write_report(
+        &root,
+        &scope,
+        &fixtures,
+        &state.suite,
+        &state.violations,
+        &manifest,
+        &environment,
+    )?;
+
+    Ok(Campaign {
+        violations: state.violations,
+        report,
+    })
+}
+
+fn ensure_exact_shard_report_set(directory: &Path, count: usize) -> Result<(), String> {
+    let observed_files = fs::read_dir(directory)
+        .map_err(|error| {
+            format!(
+                "could not read shard directory {}: {error}",
+                directory.display()
+            )
+        })?
+        .filter_map(Result::ok)
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with(SHARD_REPORT_PREFIX))
+        .collect::<BTreeSet<_>>();
+    let expected_files = (0..count).map(shard_report_name).collect::<BTreeSet<_>>();
+    if observed_files != expected_files {
+        return Err(format!(
+            "conformance shard report set is not exact: expected={expected_files:?} observed={observed_files:?}"
+        ));
+    }
+    Ok(())
+}
+
+fn read_validated_shard(
+    path: &Path,
+    index: usize,
+    count: usize,
+    expected_major: &str,
+    expected_targets: &[Target],
+    manifest: &Value,
+) -> Result<(ShardReport, Vec<(String, String)>), String> {
+    let shard = read_shard_report(path)?;
+
+    if shard.index != index || shard.count != count {
+        return Err(format!(
+            "{} declares shard {}/{} but merge expected {index}/{count}",
+            path.display(),
+            shard.index,
+            shard.count
+        ));
+    }
+    if shard.major != expected_major {
+        return Err(format!(
+            "{} was produced for PostgreSQL {}, expected {}",
+            path.display(),
+            shard.major,
+            expected_major
+        ));
+    }
+
+    let expected_pairs = target_pairs(expected_targets);
+    if shard.targets != expected_pairs {
+        return Err(format!(
+            "{} target partition drift: expected={expected_pairs:?} observed={:?}",
+            path.display(),
+            shard.targets
+        ));
+    }
+    if shard.target_count != expected_targets.len() {
+        return Err(format!(
+            "{} ran {} targets but its exact shard owns {}",
+            path.display(),
+            shard.target_count,
+            expected_targets.len()
+        ));
+    }
+    if shard.manifest != *manifest {
+        return Err(format!(
+            "{} execution manifest does not match the canonical merge checkout",
+            path.display()
+        ));
+    }
+
+    Ok((shard, expected_pairs))
+}
+
+fn merge_shard_payload(
+    path: &Path,
+    index: usize,
+    expected_pairs: &[(String, String)],
+    shard: ShardReport,
+    state: &mut ShardMergeState,
+) -> Result<(), String> {
+    let ShardReport {
+        target_count,
+        results,
+        failed_targets,
+        documentation,
+        fixtures,
+        environment,
+        preflight_violations,
+        ..
+    } = shard;
+
+    match &state.environment {
+        Some(common) if common != &environment => {
+            return Err(format!(
+                "{} environment disagrees with the other conformance shards",
+                path.display()
+            ));
+        }
+        None => state.environment = Some(environment),
+        _ => {}
+    }
+    match &state.fixtures {
+        Some(common) if common != &fixtures => {
+            return Err(format!(
+                "{} fixture resolution disagrees with the other conformance shards",
+                path.display()
+            ));
+        }
+        None => state.fixtures = Some(fixtures),
+        _ => {}
+    }
+
+    if index == 0 {
+        let documentation = documentation.ok_or_else(|| {
+            format!(
+                "{} shard zero omitted the workspace documentation-test proof",
+                path.display()
+            )
+        })?;
+        state.suite.documentation = Some(documentation);
+    } else if documentation.is_some() {
+        return Err(format!(
+            "{} non-zero shard duplicated the workspace documentation-test proof",
+            path.display()
+        ));
+    }
+
+    for ((package, target, name), outcome) in results {
+        if !expected_pairs.contains(&(package.clone(), target.clone())) {
+            return Err(format!(
+                "{} reported a result for target {package}/{target} outside its exact shard",
+                path.display()
+            ));
+        }
+        let key = (package, target, name);
+        if state.suite.results.insert(key.clone(), outcome).is_some() {
+            return Err(format!(
+                "{} duplicated test result {}::{}::{}",
+                path.display(),
+                key.0,
+                key.1,
+                key.2
+            ));
+        }
+    }
+
+    state.suite.failed_targets.extend(failed_targets);
+    state.violations.extend(preflight_violations);
+    state.suite.targets += target_count;
+    Ok(())
+}
+
+fn parse_shard_number(label: &str, value: &str) -> Result<usize, String> {
+    value
+        .parse::<usize>()
+        .map_err(|error| format!("invalid conformance shard {label} {value:?}: {error}"))
+}
+
+/// Deterministically partitions the already-sorted execution envelope.
+///
+/// Round-robin over the canonical package/target ordering makes the
+/// partition independent of runtime timing and guarantees stable ownership.
+fn partition_targets(targets: &[Target], count: usize) -> Result<Vec<Vec<Target>>, String> {
+    if count == 0 {
+        return Err("conformance shard count cannot be zero".to_owned());
+    }
+    if targets.len() < count {
+        return Err(format!(
+            "conformance shard count {count} exceeds {} selected targets",
+            targets.len()
+        ));
+    }
+
+    let mut shards = vec![Vec::new(); count];
+    for (position, target) in targets.iter().cloned().enumerate() {
+        shards[position % count].push(target);
+    }
+
+    if shards.iter().any(Vec::is_empty) {
+        return Err("conformance shard partition produced an empty shard".to_owned());
+    }
+    let flattened = shards
+        .iter()
+        .flatten()
+        .map(|target| (target.package.clone(), target.name.clone()))
+        .collect::<Vec<_>>();
+    let expected = target_pairs(targets);
+    let observed = flattened.iter().cloned().collect::<BTreeSet<_>>();
+    let expected_set = expected.iter().cloned().collect::<BTreeSet<_>>();
+    if flattened.len() != expected.len()
+        || observed.len() != flattened.len()
+        || observed != expected_set
+    {
+        return Err("conformance shard partition is not an exact one-to-one cover".to_owned());
+    }
+
+    Ok(shards)
+}
+
+fn target_pairs(targets: &[Target]) -> Vec<(String, String)> {
+    targets
+        .iter()
+        .map(|target| (target.package.clone(), target.name.clone()))
+        .collect()
+}
+
+fn shard_report_name(index: usize) -> String {
+    format!("{SHARD_REPORT_PREFIX}{index}.json")
+}
+
+#[derive(Clone, Copy)]
+struct ShardReportInput<'a> {
+    index: usize,
+    count: usize,
+    selected: &'a [Target],
+    fixtures: &'a BTreeMap<String, bool>,
+    suite: &'a Suite,
+    preflight_violations: &'a [String],
+    manifest: &'a Value,
+    environment: &'a Value,
+}
+
+fn write_shard_report(root: &Path, input: ShardReportInput<'_>) -> Result<PathBuf, String> {
+    let ShardReportInput {
+        index,
+        count,
+        selected,
+        fixtures,
+        suite,
+        preflight_violations,
+        manifest,
+        environment,
+    } = input;
+    let directory = suite::directory(root);
+    fs::create_dir_all(&directory)
+        .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
+    let path = directory.join(shard_report_name(index));
+
+    let results = suite
+        .results
+        .iter()
+        .map(|((package, target, name), outcome)| {
+            json!({
+                "package": package,
+                "target": target,
+                "name": name,
+                "result": outcome,
+            })
+        })
+        .collect::<Vec<_>>();
+    let targets = selected
+        .iter()
+        .map(|target| json!({"package": target.package, "target": target.name}))
+        .collect::<Vec<_>>();
+    let passed = preflight_violations.is_empty()
+        && suite.failed_targets.is_empty()
+        && suite.documentation != Some(false);
+
+    let document = json!({
+        "report": "conformance-shard",
+        "schema_version": 1,
+        "postgresql_major_version": expected_matrix_major(),
+        "environment": environment,
+        "observation": {
+            "execution_manifest": manifest,
+        },
+        "fixtures": fixtures,
+        "shard": {
+            "index": index,
+            "count": count,
+            "targets": targets,
+        },
+        "suite": {
+            "targets": suite.targets,
+            "results": results,
+            "failed_targets": suite.failed_targets,
+            "documentation_tests_passed": suite.documentation,
+        },
+        "violations": preflight_violations,
+        "passed": passed,
+    });
+
+    fs::write(
+        &path,
+        format!(
+            "{}\n",
+            serde_json::to_string_pretty(&document)
+                .map_err(|error| format!("could not render shard report: {error}"))?
+        ),
+    )
+    .map_err(|error| format!("could not write {}: {error}", path.display()))?;
+
+    Ok(path)
+}
+
+struct ShardReport {
+    index: usize,
+    count: usize,
+    major: String,
+    targets: Vec<(String, String)>,
+    target_count: usize,
+    results: BTreeMap<(String, String, String), String>,
+    failed_targets: Vec<String>,
+    documentation: Option<bool>,
+    fixtures: BTreeMap<String, bool>,
+    environment: Value,
+    manifest: Value,
+    preflight_violations: Vec<String>,
+}
+
+struct ShardMetadata {
+    index: usize,
+    count: usize,
+    targets: Vec<(String, String)>,
+}
+
+struct ShardSuitePayload {
+    target_count: usize,
+    results: BTreeMap<(String, String, String), String>,
+    failed_targets: Vec<String>,
+    documentation: Option<bool>,
+}
+
+fn parse_shard_metadata(document: &Value, path: &Path) -> Result<ShardMetadata, String> {
+    let shard = document
+        .get("shard")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("{} has no shard object", path.display()))?;
+    let index = shard
+        .get("index")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| format!("{} has no valid shard index", path.display()))?;
+    let count = shard
+        .get("count")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| format!("{} has no valid shard count", path.display()))?;
+    let targets = shard
+        .get("targets")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{} has no shard target list", path.display()))?
+        .iter()
+        .map(|target| {
+            Ok((
+                required_string(target, "package", path)?,
+                required_string(target, "target", path)?,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+
+    Ok(ShardMetadata {
+        index,
+        count,
+        targets,
+    })
+}
+
+fn parse_shard_suite(document: &Value, path: &Path) -> Result<ShardSuitePayload, String> {
+    let suite = document
+        .get("suite")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("{} has no suite object", path.display()))?;
+    let target_count = suite
+        .get("targets")
+        .and_then(Value::as_u64)
+        .and_then(|value| usize::try_from(value).ok())
+        .ok_or_else(|| format!("{} has no valid suite target count", path.display()))?;
+
+    let mut results = BTreeMap::new();
+    for result in suite
+        .get("results")
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{} has no suite result list", path.display()))?
+    {
+        let key = (
+            required_string(result, "package", path)?,
+            required_string(result, "target", path)?,
+            required_string(result, "name", path)?,
+        );
+        let outcome = required_string(result, "result", path)?;
+        if results.insert(key.clone(), outcome).is_some() {
+            return Err(format!(
+                "{} duplicates test result {}::{}::{}",
+                path.display(),
+                key.0,
+                key.1,
+                key.2
+            ));
+        }
+    }
+
+    let failed_targets = string_array(suite.get("failed_targets"), "failed_targets", path)?;
+    let documentation = match suite.get("documentation_tests_passed") {
+        Some(Value::Bool(value)) => Some(*value),
+        Some(Value::Null) | None => None,
+        _ => {
+            return Err(format!(
+                "{} has invalid documentation_tests_passed",
+                path.display()
+            ));
+        }
+    };
+
+    Ok(ShardSuitePayload {
+        target_count,
+        results,
+        failed_targets,
+        documentation,
+    })
+}
+
+fn parse_shard_fixtures(document: &Value, path: &Path) -> Result<BTreeMap<String, bool>, String> {
+    document
+        .get("fixtures")
+        .and_then(Value::as_object)
+        .ok_or_else(|| format!("{} has no fixture object", path.display()))?
+        .iter()
+        .map(|(name, value)| {
+            value
+                .as_bool()
+                .map(|present| (name.clone(), present))
+                .ok_or_else(|| format!("{} fixture {name} is not boolean", path.display()))
+        })
+        .collect()
+}
+
+fn read_shard_report(path: &Path) -> Result<ShardReport, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let document: Value = serde_json::from_str(&source)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+
+    if document.get("report").and_then(Value::as_str) != Some("conformance-shard")
+        || document.get("schema_version").and_then(Value::as_u64) != Some(1)
+    {
+        return Err(format!(
+            "{} is not a conformance shard v1 report",
+            path.display()
+        ));
+    }
+
+    let metadata = parse_shard_metadata(&document, path)?;
+    let suite = parse_shard_suite(&document, path)?;
+    let fixtures = parse_shard_fixtures(&document, path)?;
+    let environment = document
+        .get("environment")
+        .cloned()
+        .ok_or_else(|| format!("{} has no environment", path.display()))?;
+    let manifest = document
+        .pointer("/observation/execution_manifest")
+        .cloned()
+        .ok_or_else(|| format!("{} has no execution manifest", path.display()))?;
+    let major = document
+        .get("postgresql_major_version")
+        .and_then(Value::as_str)
+        .ok_or_else(|| format!("{} has no PostgreSQL major", path.display()))?
+        .to_owned();
+    let preflight_violations = string_array(document.get("violations"), "violations", path)?;
+
+    Ok(ShardReport {
+        index: metadata.index,
+        count: metadata.count,
+        major,
+        targets: metadata.targets,
+        target_count: suite.target_count,
+        results: suite.results,
+        failed_targets: suite.failed_targets,
+        documentation: suite.documentation,
+        fixtures,
+        environment,
+        manifest,
+        preflight_violations,
+    })
+}
+
+fn required_string(value: &Value, key: &str, path: &Path) -> Result<String, String> {
+    value
+        .get(key)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| format!("{} has no string {key}", path.display()))
+}
+
+fn string_array(value: Option<&Value>, label: &str, path: &Path) -> Result<Vec<String>, String> {
+    value
+        .and_then(Value::as_array)
+        .ok_or_else(|| format!("{} has no {label} array", path.display()))?
+        .iter()
+        .map(|entry| {
+            entry
+                .as_str()
+                .map(str::to_owned)
+                .ok_or_else(|| format!("{} {label} contains a non-string", path.display()))
+        })
+        .collect()
 }
 
 /// Records the object identity of the campaign's closure, as executed.
@@ -334,7 +1029,7 @@ fn selector(name: &str, kinds: &[Value]) -> Option<Vec<String>> {
 /// directory, and running its binary directly fails for a reason that has
 /// nothing to do with the facade. One at a time, because that is what
 /// attributes a result: several scenario names exist in more than one target.
-fn run_suite(root: &Path, targets: &[Target]) -> Result<Suite, String> {
+fn run_suite(root: &Path, targets: &[Target], run_documentation: bool) -> Result<Suite, String> {
     let mut suite = Suite::default();
 
     for target in targets {
@@ -366,11 +1061,14 @@ fn run_suite(root: &Path, targets: &[Target]) -> Result<Suite, String> {
         suite.targets += 1;
     }
 
-    suite.documentation = run_documentation_tests(root)?;
-    if !suite.documentation {
-        suite
-            .failed_targets
-            .push("the workspace documentation tests failed".to_owned());
+    if run_documentation {
+        let documentation = run_documentation_tests(root)?;
+        suite.documentation = Some(documentation);
+        if !documentation {
+            suite
+                .failed_targets
+                .push("the workspace documentation tests failed".to_owned());
+        }
     }
 
     Ok(suite)
@@ -429,6 +1127,7 @@ fn write_report(
     suite: &Suite,
     violations: &[String],
     manifest: &Value,
+    environment: &Value,
 ) -> Result<PathBuf, String> {
     let directory = suite::directory(root);
     fs::create_dir_all(&directory)
@@ -470,7 +1169,7 @@ fn write_report(
         "campaign": "full embedded conformance on the accepted M0-M4 scope",
         "scenario": "full_embedded_conformance_suite_passes_on_the_accepted_scope",
         "postgresql_major_version": expected_matrix_major(),
-        "environment": suite::environment(),
+        "environment": environment,
         "observation": {
             "execution_manifest": manifest,
         },
@@ -508,6 +1207,7 @@ fn write_report(
 }
 
 /// One test target the suite runs.
+#[derive(Clone)]
 struct Target {
     /// The workspace package that owns it.
     package: String,
@@ -526,8 +1226,10 @@ struct Suite {
     failed_targets: Vec<String>,
     /// The number of targets that ran.
     targets: usize,
-    /// Whether the workspace documentation tests passed.
-    documentation: bool,
+    /// Whether this execution owned the workspace documentation-test obligation.
+    ///
+    /// Full/canonical runs always carry Some; non-owner CI shards carry None.
+    documentation: Option<bool>,
 }
 
 /// The committed accepted-scope document.
@@ -615,7 +1317,7 @@ mod tests {
 
     use std::collections::BTreeSet;
 
-    use super::{Scope, required_targets, suite_targets};
+    use super::{Scope, partition_targets, required_targets, suite_targets};
     use crate::suite;
 
     /// Every other M5 campaign's own reconciliation/contract test, plus this
@@ -658,6 +1360,30 @@ mod tests {
                  be part of the campaign's execution envelope",
             );
         }
+    }
+
+    #[test]
+    fn two_way_partition_is_an_exact_non_empty_cover() {
+        let root = suite::workspace_root().expect("workspace root");
+        let scope = Scope::read(&root).expect("accepted-scope.json");
+        let targets = suite_targets(&scope).expect("suite_targets");
+        let shards = partition_targets(&targets, 2).expect("partition");
+
+        assert_eq!(shards.len(), 2);
+        assert!(shards.iter().all(|shard| !shard.is_empty()));
+
+        let expected = targets
+            .iter()
+            .map(|target| (target.package.clone(), target.name.clone()))
+            .collect::<BTreeSet<_>>();
+        let observed = shards
+            .iter()
+            .flatten()
+            .map(|target| (target.package.clone(), target.name.clone()))
+            .collect::<BTreeSet<_>>();
+
+        assert_eq!(observed, expected);
+        assert_eq!(shards.iter().map(Vec::len).sum::<usize>(), targets.len());
     }
 
     #[test]
