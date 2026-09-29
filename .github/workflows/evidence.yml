@@ -22,7 +22,6 @@ on:
 
 permissions:
   contents: read
-  pull-requests: read # Reconcile exact live PR identity and changed-file metadata before trusted-base applicability decisions.
 
 concurrency:
   group: evidence-${{ github.workflow }}-${{ github.ref }}
