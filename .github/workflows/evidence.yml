@@ -16,6 +16,9 @@ name: Evidence
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/ci-topology-v7-migration
+  workflow_call:
 
 permissions:
   contents: read
