@@ -148,8 +148,7 @@ jobs:
            needs.scope.outputs.evidence_impact != 'false') }}
     uses: ./.github/workflows/evidence.yml
     permissions:
-      contents: read # Read repository source for the reusable authority.
-      pull-requests: read # Reconcile live PR identity and trusted routing metadata.
+      contents: read # Read repository source for the routed full authority.
 
   supply:
     name: supply-authority
@@ -161,8 +160,7 @@ jobs:
            needs.scope.outputs.supply_chain_impact != 'false') }}
     uses: ./.github/workflows/supply-chain.yml
     permissions:
-      contents: read # Read repository source for the reusable authority.
-      pull-requests: read # Reconcile live PR identity and trusted routing metadata.
+      contents: read # Read repository source for the routed full authority.
 
   campaigns:
     name: advisory-campaigns
