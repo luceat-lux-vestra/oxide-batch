@@ -201,5 +201,24 @@
         ]
       }
     ]
-  }
+  },
+  "internal_aggregates": [
+    {
+      "context": "postgresql",
+      "producer": {
+        "workflow": ".github/workflows/ci.yml",
+        "job": "postgresql-merge-gate"
+      },
+      "members": [
+        "postgres-15-design-gate",
+        "postgres-15-item-components",
+        "postgres-15-repository",
+        "postgres-16-design-gate",
+        "postgres-17-design-gate",
+        "postgres-18-design-gate",
+        "postgres-18-item-components",
+        "postgres-18-repository"
+      ]
+    }
+  ]
 }
