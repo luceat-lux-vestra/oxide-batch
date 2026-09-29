@@ -106,4 +106,3 @@ jobs:
       - name: Check advisories, licenses, bans, and sources
         if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
-
