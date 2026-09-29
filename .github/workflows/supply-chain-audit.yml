@@ -1,0 +1,99 @@
+name: Scheduled supply-chain audit
+
+on:
+  schedule:
+    - cron: "17 18 * * 1"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: scheduled-supply-chain-audit
+  cancel-in-progress: false
+
+jobs:
+  supply-chain:
+    name: scheduled-supply-chain
+    uses: ./.github/workflows/supply-chain.yml
+    permissions:
+      contents: read # Read repository contents for cargo-deny and policy validation.
+
+  report-failure:
+    name: report-scheduled-failure
+    needs:
+      - supply-chain
+    if: ${{ always() && needs.supply-chain.result == 'failure' }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read # Read repository metadata needed to locate the owned report issue.
+      issues: write # Create or update only the scheduled supply-chain failure issue.
+    steps:
+      - name: Create or update the owned failure issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        with:
+          script: |
+            const title = 'ci: scheduled supply-chain check is failing';
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const runUrl = [
+              context.serverUrl,
+              owner,
+              repo,
+              'actions',
+              'runs',
+              context.runId,
+            ].join('/');
+            const body = [
+              'The scheduled supply-chain gate failed.',
+              '',
+              `Run: ${runUrl}`,
+              '',
+              'Triage advisories, licenses, bans, sources, and exception metadata according to',
+              '`docs/engineering/dependency-policy.md`. Every active exception requires an',
+              'owner, rationale, and unexpired date in `.github/supply-chain-exceptions.json`.',
+            ].join('\n');
+
+            const issues = await github.paginate(
+              github.rest.issues.listForRepo,
+              {
+                owner,
+                repo,
+                state: 'all',
+                labels: 'type:security,area:ci',
+                per_page: 100,
+              },
+            );
+            const existing = issues.find(
+              (issue) => !issue.pull_request && issue.title === title,
+            );
+
+            if (existing) {
+              if (existing.state === 'closed') {
+                await github.rest.issues.update({
+                  owner,
+                  repo,
+                  issue_number: existing.number,
+                  state: 'open',
+                });
+              }
+              await github.rest.issues.createComment({
+                owner,
+                repo,
+                issue_number: existing.number,
+                body,
+              });
+            } else {
+              await github.rest.issues.create({
+                owner,
+                repo,
+                title,
+                body,
+                labels: [
+                  'type:security',
+                  'area:ci',
+                  'priority:p1',
+                  'status:needs-triage',
+                ],
+              });
+            }

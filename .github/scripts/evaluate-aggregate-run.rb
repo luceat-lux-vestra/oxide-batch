@@ -89,11 +89,13 @@ module AggregateEvaluator
     policy = JSON.parse(File.read(policy_path))
     raise EvaluationError, "#{policy_path}: not a JSON object" unless policy.is_a?(Hash)
 
-    gates = policy['aggregate_gates']
-    raise EvaluationError, "#{policy_path}: missing aggregate_gates array" unless gates.is_a?(Array)
+    schema_version = policy['schema_version']
+    gates_key = schema_version.is_a?(Integer) && schema_version >= 7 ? 'internal_aggregates' : 'aggregate_gates'
+    gates = policy[gates_key]
+    raise EvaluationError, "#{policy_path}: missing #{gates_key} array" unless gates.is_a?(Array)
 
     gate = gates.find { |candidate| candidate.is_a?(Hash) && candidate['context'] == context }
-    raise EvaluationError, "#{policy_path}: no aggregate_gates entry for context #{context.inspect}" unless gate
+    raise EvaluationError, "#{policy_path}: no #{gates_key} entry for context #{context.inspect}" unless gate
 
     members = gate['members']
     raise EvaluationError, "#{policy_path}: aggregate #{context.inspect} has no non-empty member list" unless members.is_a?(Array) && !members.empty?

@@ -1715,7 +1715,422 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v7_topology_contract_accepts_canonical_single_entrypoint
+    with_v7_topology_contract do |root, policy|
+      assert_empty MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+    end
+  end
+
+  def test_v7_topology_rejects_entrypoint_path_filter
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/pr-ci.yml')
+      body = File.read(path).sub(
+        "    branches:\n      - main\n",
+        "    branches:\n      - main\n    paths:\n      - docs/**\n"
+      )
+      write(root, '.github/workflows/pr-ci.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'must not suppress pull_request events with path filters'
+    end
+  end
+
+  def test_v7_topology_rejects_missing_workflow_call
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      body = File.read(path).sub("  workflow_call:\n", '')
+      write(root, '.github/workflows/evidence.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'must expose workflow_call'
+    end
+  end
+
+  def test_v7_topology_rejects_legacy_true_as_unknown_default
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/pr-ci.yml')
+      original = File.read(path)
+      body = original.sub("echo 'legacy_base=unknown'", "echo 'legacy_base=true'")
+      refute_equal original, body
+      write(root, '.github/workflows/pr-ci.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'scope classifier is missing trusted/fail-closed tokens'
+    end
+  end
+
+  def test_v7_topology_rejects_weakened_uncertainty_route
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/pr-ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        "if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}",
+        "if: ${{ needs.scope.outputs.legacy_base != 'true' && needs.scope.outputs.docs_only != 'true' }}"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/pr-ci.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'must fail closed on legacy/uncertain scope'
+    end
+  end
+
+  def test_v7_topology_rejects_pr_proof_missing_authority
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/pr-ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        '    needs: [scope, rust, dependency, codeql, evidence, supply]',
+        '    needs: [scope, rust, dependency, evidence, supply]'
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/pr-ci.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'needs mismatch'
+    end
+  end
+
+  def test_v7_internal_aggregate_policy_rejects_missing_catalog
+    with_v7_topology_contract do |_root, policy|
+      policy['internal_aggregates'] = []
+      violations = MergeGateVerifier.internal_aggregate_policy_contract(policy)
+      assert_includes violations.join("\n"), 'internal_aggregates must exactly declare the canonical PostgreSQL reusable-workflow aggregate'
+    end
+  end
+
+  def test_v7_internal_aggregate_policy_rejects_branch_aggregate_reuse
+    with_v7_topology_contract do |_root, policy|
+      policy['aggregate_gates'] = policy['internal_aggregates']
+      violations = MergeGateVerifier.internal_aggregate_policy_contract(policy)
+      assert_includes violations.join("\n"), 'branch aggregate_gates must remain empty'
+    end
+  end
+
+  def test_v7_topology_rejects_unapproved_entrypoint_blob
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/pr-ci.yml')
+      write(root, '.github/workflows/pr-ci.yml', File.read(path) + "\n# unapproved mutation\n")
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'is not accepted by policy'
+    end
+  end
+
+  def test_v7_topology_rejects_unapproved_merge_authority_blob
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      write(root, '.github/workflows/evidence.yml', File.read(path) + "\n# bypass attempt\n")
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'protected workflow .github/workflows/evidence.yml blob'
+      assert_includes violations.join("\n"), 'is not accepted by policy'
+    end
+  end
+
   private
+
+  def v7_producer_summary(root)
+    workflow_docs = {}
+    Dir[File.join(root, '.github/workflows/*.{yml,yaml}')].sort.each do |absolute|
+      relative = Pathname(absolute).relative_path_from(Pathname(root)).to_s
+      workflow_docs[relative] = MergeGateVerifier.load_yaml(absolute)
+    end
+    {'workflow_docs' => workflow_docs}
+  end
+
+  def with_v7_topology_contract
+    Dir.mktmpdir do |root|
+      FileUtils.mkdir_p(File.join(root, '.github/workflows'))
+      FileUtils.mkdir_p(File.join(root, '.github/scripts'))
+
+      pr_ci = <<~YAML
+        name: PR CI
+        on:
+          pull_request:
+            branches:
+              - main
+        permissions:
+          contents: read
+          pull-requests: read
+        jobs:
+          scope:
+            name: trusted-pr-scope
+            outputs:
+              legacy_base: __EXPR__{{ steps.classify.outputs.legacy_base }}
+              classification_outcome: __EXPR__{{ steps.classify.outcome }}
+              docs_only: __EXPR__{{ steps.classify.outputs.docs_only }}
+              supply_chain_impact: __EXPR__{{ steps.classify.outputs.supply_chain_impact }}
+              evidence_impact: __EXPR__{{ steps.classify.outputs.evidence_impact }}
+            steps:
+              - id: trusted-base
+                continue-on-error: true
+                uses: actions/checkout@0000000000000000000000000000000000000001
+                with:
+                  ref: __EXPR__{{ github.event.pull_request.base.sha }}
+                  path: .trusted-base
+                  fetch-depth: 1
+                  persist-credentials: false
+              - id: classify
+                continue-on-error: true
+                run: |
+                  {
+                    echo 'legacy_base=unknown'
+                    echo 'docs_only=false'
+                    echo 'supply_chain_impact=true'
+                    echo 'evidence_impact=true'
+                  } >> "$GITHUB_OUTPUT"
+                  echo '.trusted-base/.github/merge-gate-policy.json schema_version'
+                  schema_version=7
+                  if [ "$schema_version" -ge 7 ]; then
+                    echo 'legacy_base=false'
+                  else
+                    echo 'legacy_base=true'
+                  fi
+                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
+                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
+                  echo '.trusted-base/.github/scripts/pr-scope.py'
+                  echo '--trusted-base-sha "$BASE_SHA"'
+                  echo '.docs_only .supply_chain_impact .evidence_impact'
+          rust:
+            needs: scope
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+            uses: ./.github/workflows/ci.yml
+            permissions:
+              actions: read
+              contents: read
+          dependency:
+            needs: scope
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+            uses: ./.github/workflows/dependency-review.yml
+            permissions:
+              contents: read
+          codeql:
+            needs: scope
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+            uses: ./.github/workflows/codeql.yml
+            permissions:
+              contents: read
+              pull-requests: read
+              security-events: write
+          evidence:
+            needs: scope
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
+            uses: ./.github/workflows/evidence.yml
+            permissions:
+              contents: read
+          supply:
+            needs: scope
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
+            uses: ./.github/workflows/supply-chain.yml
+            permissions:
+              contents: read
+          campaigns:
+            needs: scope
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+            uses: ./.github/workflows/campaign-orchestrator.yml
+            permissions:
+              contents: read
+              pull-requests: read
+          pr-proof:
+            name: pr-proof
+            needs: [scope, rust, dependency, codeql, evidence, supply]
+            if: __EXPR__{{ always() }}
+            steps:
+              - run: |
+                  if [ "$LEGACY_BASE" = "true" ]; then
+                    echo legacy
+                  fi
+                  echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
+                  echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
+                  echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
+      YAML
+      pr_ci = pr_ci.gsub('__EXPR__', '$')
+      write(root, '.github/workflows/pr-ci.yml', pr_ci)
+      write(root, '.github/ci-topology-v7-migration', "schema-v7 migration marker\n")
+
+      authorities = %w[
+        ci.yml
+        dependency-review.yml
+        codeql.yml
+        evidence.yml
+        supply-chain.yml
+        campaign-orchestrator.yml
+      ]
+      authorities.each do |name|
+        write(root, ".github/workflows/#{name}", <<~YAML)
+          name: #{name}
+          on:
+            pull_request:
+              paths:
+                - .github/ci-topology-v7-migration
+            workflow_call:
+          jobs:
+            noop:
+              runs-on: ubuntu-latest
+              steps:
+                - run: echo ok
+        YAML
+      end
+
+      write(root, '.github/workflows/supply-chain-audit.yml', <<~YAML)
+        name: Scheduled supply-chain audit
+        on:
+          schedule:
+            - cron: "17 18 * * 1"
+        permissions: {}
+        jobs:
+          supply-chain:
+            uses: ./.github/workflows/supply-chain.yml
+            permissions:
+              contents: read
+          report-failure:
+            needs:
+              - supply-chain
+            if: __EXPR__{{ always() && needs.supply-chain.result == 'failure' }}
+            permissions:
+              contents: read
+              issues: write
+            steps:
+              - run: echo report
+      YAML
+      audit_path = File.join(root, '.github/workflows/supply-chain-audit.yml')
+      File.write(audit_path, File.read(audit_path).gsub('__EXPR__', '$'))
+
+      write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
+        name: M5 Conformance
+        on:
+          pull_request:
+            branches:
+              - main
+          workflow_dispatch:
+        jobs:
+          conformance-campaign:
+            name: postgres-__EXPR__{{ matrix.postgres }}-conformance-campaign
+            strategy:
+              matrix:
+                postgres: ["15", "18"]
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo conformance
+      YAML
+      m5_path = File.join(root, '.github/workflows/m5-conformance.yml')
+      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '$'))
+
+      write(root, '.github/workflows/pr-labeler.yml', <<~YAML)
+        name: Pull request labels
+        on:
+          pull_request_target:
+        permissions: {}
+        jobs:
+          merge-gate:
+            name: merge-gate
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo trusted-base
+      YAML
+
+      protected_workflows = [
+        '.github/workflows/pr-ci.yml',
+        '.github/workflows/ci.yml',
+        '.github/workflows/dependency-review.yml',
+        '.github/workflows/codeql.yml',
+        '.github/workflows/evidence.yml',
+        '.github/workflows/supply-chain.yml',
+        '.github/workflows/m5-conformance.yml',
+        '.github/workflows/pr-labeler.yml'
+      ]
+
+      policy = {
+        'schema_version' => 7,
+        'pr_topology' => {
+          'schema' => 'single-pr-entrypoint-v1',
+          'entrypoint' => '.github/workflows/pr-ci.yml',
+          'migration_marker' => '.github/ci-topology-v7-migration',
+          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" },
+          'independent_pr_authorities' => [
+            {
+              'workflow' => '.github/workflows/m5-conformance.yml',
+              'reason' => 'retained-evidence-provenance',
+              'contexts' => [
+                'postgres-15-conformance-campaign',
+                'postgres-18-conformance-campaign'
+              ]
+            }
+          ]
+        },
+        'aggregate_gates' => [],
+        'internal_aggregates' => [
+          {
+            'context' => 'postgresql',
+            'producer' => {
+              'workflow' => '.github/workflows/ci.yml',
+              'job' => 'postgresql-merge-gate'
+            },
+            'members' => [
+              'postgres-15-design-gate',
+              'postgres-15-item-components',
+              'postgres-15-repository',
+              'postgres-16-design-gate',
+              'postgres-17-design-gate',
+              'postgres-18-design-gate',
+              'postgres-18-item-components',
+              'postgres-18-repository'
+            ]
+          }
+        ],
+        'repository_merge_gate' => {
+          'context' => 'merge-gate',
+          'state' => 'active',
+          'producer' => {
+            'workflow' => '.github/workflows/pr-labeler.yml',
+            'job' => 'merge-gate'
+          },
+          'members' => [
+            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'},
+            {'context' => 'postgres-15-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'},
+            {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
+          ],
+          'protected_workflows' => protected_workflows.map do |workflow|
+            {
+              'workflow' => workflow,
+              'accepted_blobs' => [
+                MergeGateVerifier.git_blob_sha(
+                  File.binread(File.join(root, workflow))
+                )
+              ]
+            }
+          end
+        }
+      }
+      yield root, policy
+    end
+  end
 
   def write(root, relative, content)
     path = File.join(root, relative)

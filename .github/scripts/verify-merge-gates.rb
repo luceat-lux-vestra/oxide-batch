@@ -4,6 +4,7 @@
 require 'json'
 require 'yaml'
 require 'pathname'
+require 'digest/sha1'
 
 module MergeGateVerifier
   module_function
@@ -310,6 +311,7 @@ module MergeGateVerifier
   FAST_WORKFLOW = '.github/workflows/fast-branch.yml'
   FAST_JOB = 'fast'
   SUPPLY_CHAIN_WORKFLOW = '.github/workflows/supply-chain.yml'
+  SUPPLY_CHAIN_AUDIT_WORKFLOW = '.github/workflows/supply-chain-audit.yml'
   SUPPLY_CHAIN_JOB = 'supply-chain'
   EVIDENCE_WORKFLOW = '.github/workflows/evidence.yml'
   EVIDENCE_JOB = 'evidence-provenance'
@@ -320,6 +322,47 @@ module MergeGateVerifier
   REPOSITORY_MERGE_GATE_CONTEXT = 'merge-gate'
   REPOSITORY_MERGE_GATE_WORKFLOW = '.github/workflows/pr-labeler.yml'
   REPOSITORY_MERGE_GATE_JOB = 'merge-gate'
+  PR_CI_WORKFLOW = '.github/workflows/pr-ci.yml'
+  PR_CI_SCOPE_JOB = 'scope'
+  PR_CI_PROOF_JOB = 'pr-proof'
+  PR_TOPOLOGY_SCHEMA = 'single-pr-entrypoint-v1'
+  PR_TOPOLOGY_MIGRATION_MARKER = '.github/ci-topology-v7-migration'
+  PR_TOPOLOGY_INDEPENDENT_M5 = '.github/workflows/m5-conformance.yml'
+  PR_TOPOLOGY_REUSABLE_AUTHORITIES = [
+    '.github/workflows/ci.yml',
+    '.github/workflows/dependency-review.yml',
+    '.github/workflows/codeql.yml',
+    '.github/workflows/evidence.yml',
+    '.github/workflows/supply-chain.yml',
+    '.github/workflows/campaign-orchestrator.yml'
+  ].freeze
+  PR_TOPOLOGY_PROTECTED_AUTHORITIES = [
+    PR_CI_WORKFLOW,
+    '.github/workflows/ci.yml',
+    '.github/workflows/dependency-review.yml',
+    '.github/workflows/codeql.yml',
+    '.github/workflows/evidence.yml',
+    '.github/workflows/supply-chain.yml',
+    PR_TOPOLOGY_INDEPENDENT_M5,
+    REPOSITORY_MERGE_GATE_WORKFLOW
+  ].freeze
+  INTERNAL_POSTGRESQL_AGGREGATE = {
+    'context' => 'postgresql',
+    'producer' => {
+      'workflow' => QUALITY_WORKFLOW,
+      'job' => 'postgresql-merge-gate'
+    },
+    'members' => %w[
+      postgres-15-design-gate
+      postgres-15-item-components
+      postgres-15-repository
+      postgres-16-design-gate
+      postgres-17-design-gate
+      postgres-18-design-gate
+      postgres-18-item-components
+      postgres-18-repository
+    ]
+  }.freeze
   REPOSITORY_MERGE_GATE_PERMISSIONS = {
     'actions' => 'read',
     'contents' => 'read',
@@ -603,6 +646,72 @@ module MergeGateVerifier
       violations << 'pr_scope docs_only_applicability must exactly match canonical supply/evidence ownership'
     end
 
+    if policy['schema_version'].to_i >= 7
+      full_if = "${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}"
+      routed = [
+        [
+          SUPPLY_CHAIN_WORKFLOW,
+          SUPPLY_CHAIN_JOB,
+          'supply-chain',
+          [
+            'Test supply-chain exception policy',
+            'Validate supply-chain exception registry',
+            'Check advisories, licenses, bans, and sources'
+          ],
+          %w[supply-trusted-base supply-impact],
+          ['Documentation-only supply-chain fast path']
+        ],
+        [
+          EVIDENCE_WORKFLOW,
+          EVIDENCE_JOB,
+          'evidence-provenance',
+          [
+            'Verify repository-wide retained evidence policy',
+            'Hydrate locked dependency graph for closure verification',
+            'Verify campaign dependency closure metadata',
+            'Verify retained campaign evidence integrity and provenance'
+          ],
+          %w[evidence-trusted-base evidence-impact],
+          ['Documentation-only evidence fast path']
+        ]
+      ]
+
+      routed.each do |workflow, job_id, context, heavy_names, forbidden_ids, forbidden_names|
+        doc = producer_summary.fetch('workflow_docs')[workflow]
+        unless doc.is_a?(Hash)
+          violations << "#{workflow} is missing"
+          next
+        end
+        unless doc['permissions'] == {'contents' => 'read'}
+          violations << "#{workflow} must keep contents: read as its only permission after central routing"
+        end
+        job = doc.dig('jobs', job_id)
+        unless job.is_a?(Hash)
+          violations << "#{workflow} must declare canonical #{job_id} job"
+          next
+        end
+        violations << "#{workflow}###{job_id} must emit context #{context}" unless job['name'] == context
+        steps = Array(job['steps']).select { |step| step.is_a?(Hash) }
+        forbidden_ids.each do |id|
+          violations << "#{workflow}###{job_id} must not duplicate trusted PR routing with step id #{id}" if steps.any? { |step| step['id'] == id }
+        end
+        forbidden_names.each do |name|
+          violations << "#{workflow}###{job_id} must not retain lightweight routing step #{name.inspect}" if steps.any? { |step| step['name'] == name }
+        end
+        heavy_names.each do |name|
+          step = steps.find { |candidate| candidate['name'] == name }
+          if !step.is_a?(Hash) || normalized_shell(step['if']) != normalized_shell(full_if)
+            violations << "#{workflow}###{job_id} #{name.inspect} must execute fully whenever the routed authority is invoked"
+          end
+        end
+        body = steps.map { |step| [step['run'], step['with']].inspect }.join("\n")
+        if body.include?('.github/scripts/pr-scope.py') || body.include?('pulls/${PR_NUMBER}/files')
+          violations << "#{workflow}###{job_id} must not re-run PR applicability classification after schema-v7 central routing"
+        end
+      end
+      return violations
+    end
+
     supply_classifier_if = "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}"
     supply_light_if = "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false && steps.supply-impact.outcome == 'success' && steps.supply-impact.outputs.impact == 'false' }}"
     supply_full_if = "${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}"
@@ -624,8 +733,7 @@ module MergeGateVerifier
         ],
         classifier_if: supply_classifier_if,
         light_if: supply_light_if,
-        full_if: supply_full_if,
-        require_schedule: true
+        full_if: supply_full_if
       )
     )
 
@@ -654,6 +762,288 @@ module MergeGateVerifier
         full_if: evidence_full_if
       )
     )
+    violations
+  end
+
+  def git_blob_sha(content)
+    Digest::SHA1.hexdigest("blob #{content.bytesize}\0#{content}")
+  end
+
+  def pr_topology_v7_contract(root:, policy:, producer_summary:)
+    return [] unless policy['schema_version'] == 7
+
+    violations = []
+    topology = policy['pr_topology']
+    expected_topology = {
+      'schema' => PR_TOPOLOGY_SCHEMA,
+      'entrypoint' => PR_CI_WORKFLOW,
+      'migration_marker' => PR_TOPOLOGY_MIGRATION_MARKER,
+      'reusable_authorities' => PR_TOPOLOGY_REUSABLE_AUTHORITIES,
+      'independent_pr_authorities' => [
+        {
+          'workflow' => PR_TOPOLOGY_INDEPENDENT_M5,
+          'reason' => 'retained-evidence-provenance',
+          'contexts' => [
+            'postgres-15-conformance-campaign',
+            'postgres-18-conformance-campaign'
+          ]
+        }
+      ]
+    }
+    unless topology == expected_topology
+      violations << 'schema v7 pr_topology must exactly match the canonical single-entrypoint contract'
+    end
+
+    docs = producer_summary.fetch('workflow_docs')
+    entrypoint = docs[PR_CI_WORKFLOW]
+    unless entrypoint.is_a?(Hash)
+      return violations + ["schema v7 entrypoint #{PR_CI_WORKFLOW} is missing"]
+    end
+
+    unless workflow_event?(entrypoint, 'pull_request') && !pull_request_target_trigger?(entrypoint)
+      violations << "#{PR_CI_WORKFLOW} must be the ordinary pull_request entrypoint"
+    end
+    present, config = event_config(entrypoint, 'pull_request')
+    if present && config.is_a?(Hash) && (config.key?('paths') || config.key?('paths-ignore'))
+      violations << "#{PR_CI_WORKFLOW} must not suppress pull_request events with path filters"
+    end
+    expected_permissions = {'contents' => 'read', 'pull-requests' => 'read'}
+    unless entrypoint['permissions'] == expected_permissions
+      violations << "#{PR_CI_WORKFLOW} must keep only contents/pull-requests read workflow permissions"
+    end
+
+    jobs = entrypoint['jobs']
+    unless jobs.is_a?(Hash)
+      return violations + ["#{PR_CI_WORKFLOW} must declare jobs"]
+    end
+    expected_jobs = %w[scope rust dependency codeql evidence supply campaigns pr-proof]
+    missing_jobs = expected_jobs - jobs.keys.map(&:to_s)
+    violations << "#{PR_CI_WORKFLOW} is missing canonical jobs: #{missing_jobs.join(', ')}" unless missing_jobs.empty?
+
+    call_contracts = {
+      'rust' => '.github/workflows/ci.yml',
+      'dependency' => '.github/workflows/dependency-review.yml',
+      'codeql' => '.github/workflows/codeql.yml',
+      'evidence' => '.github/workflows/evidence.yml',
+      'supply' => '.github/workflows/supply-chain.yml',
+      'campaigns' => '.github/workflows/campaign-orchestrator.yml'
+    }
+    call_permissions = {
+      'rust' => {'actions' => 'read', 'contents' => 'read'},
+      'dependency' => {'contents' => 'read'},
+      'codeql' => {'contents' => 'read', 'pull-requests' => 'read', 'security-events' => 'write'},
+      'evidence' => {'contents' => 'read'},
+      'supply' => {'contents' => 'read'},
+      'campaigns' => {'contents' => 'read', 'pull-requests' => 'read'}
+    }
+    call_contracts.each do |job_id, workflow|
+      job = jobs[job_id]
+      unless job.is_a?(Hash) && job['uses'] == "./#{workflow}"
+        violations << "#{PR_CI_WORKFLOW}##{job_id} must call #{workflow}"
+        next
+      end
+      unless normalize_needs(job).include?(PR_CI_SCOPE_JOB)
+        violations << "#{PR_CI_WORKFLOW}##{job_id} must depend on trusted scope"
+      end
+      unless job['permissions'] == call_permissions.fetch(job_id)
+        violations << "#{PR_CI_WORKFLOW}##{job_id} must keep exact reusable-authority permissions #{call_permissions.fetch(job_id).inspect}"
+      end
+      condition = normalized_shell(job['if'])
+      unless condition.include?("needs.scope.outputs.legacy_base != 'true'") &&
+             condition.include?("needs.scope.outputs.classification_outcome != 'success'")
+        violations << "#{PR_CI_WORKFLOW}##{job_id} must fail closed on legacy/uncertain scope"
+      end
+    end
+
+    %w[rust dependency codeql campaigns].each do |job_id|
+      condition = normalized_shell(jobs.dig(job_id, 'if'))
+      unless condition.include?("needs.scope.outputs.docs_only != 'true'")
+        violations << "#{PR_CI_WORKFLOW}##{job_id} must suppress only proven docs-only scope"
+      end
+    end
+    evidence_if = normalized_shell(jobs.dig('evidence', 'if'))
+    unless evidence_if.include?("needs.scope.outputs.evidence_impact != 'false'")
+      violations << "#{PR_CI_WORKFLOW}#evidence must run unless trusted evidence impact is false"
+    end
+    supply_if = normalized_shell(jobs.dig('supply', 'if'))
+    unless supply_if.include?("needs.scope.outputs.supply_chain_impact != 'false'")
+      violations << "#{PR_CI_WORKFLOW}#supply must run unless trusted supply impact is false"
+    end
+
+    scope = jobs[PR_CI_SCOPE_JOB]
+    unless scope.is_a?(Hash)
+      violations << "#{PR_CI_WORKFLOW} must declare trusted scope job"
+    else
+      outputs = scope['outputs']
+      expected_outputs = %w[legacy_base classification_outcome docs_only supply_chain_impact evidence_impact]
+      missing_outputs = expected_outputs.reject { |name| outputs.is_a?(Hash) && outputs.key?(name) }
+      violations << "#{PR_CI_WORKFLOW} scope is missing outputs: #{missing_outputs.join(', ')}" unless missing_outputs.empty?
+      steps = Array(scope['steps']).select { |step| step.is_a?(Hash) }
+      checkout = steps.find { |step| step['id'] == 'trusted-base' }
+      classify = steps.find { |step| step['id'] == 'classify' }
+      unless checkout.is_a?(Hash) &&
+             checkout['continue-on-error'] == true &&
+             checkout['uses'].to_s.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/) &&
+             checkout.dig('with', 'ref') == '${{ github.event.pull_request.base.sha }}' &&
+             checkout.dig('with', 'path') == '.trusted-base' &&
+             checkout.dig('with', 'persist-credentials') == false
+        violations << "#{PR_CI_WORKFLOW} scope must establish the exact trusted base fail-closed"
+      end
+      unless classify.is_a?(Hash) && classify['continue-on-error'] == true
+        violations << "#{PR_CI_WORKFLOW} scope classifier must continue on error for full fallback"
+      else
+        command = classify['run'].to_s
+        required_tokens = [
+          "echo 'legacy_base=unknown'",
+          "echo 'legacy_base=true'",
+          "echo 'legacy_base=false'",
+          "echo 'docs_only=false'",
+          "echo 'supply_chain_impact=true'",
+          "echo 'evidence_impact=true'",
+          '>> "$GITHUB_OUTPUT"',
+          '.trusted-base/.github/merge-gate-policy.json',
+          'schema_version',
+          'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}',
+          'pulls/${PR_NUMBER}/files?per_page=100',
+          '.trusted-base/.github/scripts/pr-scope.py',
+          '--trusted-base-sha "$BASE_SHA"',
+          '.docs_only',
+          '.supply_chain_impact',
+          '.evidence_impact'
+        ]
+        missing = required_tokens.reject { |token| command.include?(token) }
+        unless missing.empty?
+          violations << "#{PR_CI_WORKFLOW} scope classifier is missing trusted/fail-closed tokens: #{missing.join(', ')}"
+        end
+      end
+    end
+
+    proof = jobs[PR_CI_PROOF_JOB]
+    unless proof.is_a?(Hash)
+      violations << "#{PR_CI_WORKFLOW} must declare #{PR_CI_PROOF_JOB}"
+    else
+      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must emit context pr-proof" unless proof['name'] == 'pr-proof'
+      expected_needs = %w[scope rust dependency codeql evidence supply].sort
+      actual_needs = normalize_needs(proof).sort
+      unless actual_needs == expected_needs
+        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
+      end
+      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must use always()" unless always_condition?(proof['if'])
+      proof_command = Array(proof['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
+      %w[RUST_RESULT DEPENDENCY_RESULT CODEQL_RESULT EVIDENCE_RESULT SUPPLY_RESULT].each do |token|
+        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} is missing #{token} authority check" unless proof_command.include?(token)
+      end
+      unless proof_command.include?('CLASSIFICATION_OUTCOME') &&
+             proof_command.include?('DOCS_ONLY') &&
+             proof_command.include?('LEGACY_BASE') &&
+             proof_command.include?('if [ "$LEGACY_BASE" = "true" ]; then')
+        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must bind trusted routing outputs and reserve the legacy shortcut for an explicit trusted legacy base"
+      end
+    end
+
+    PR_TOPOLOGY_REUSABLE_AUTHORITIES.each do |workflow|
+      doc = docs[workflow]
+      unless doc.is_a?(Hash)
+        violations << "reusable authority #{workflow} is missing"
+        next
+      end
+      violations << "#{workflow} must expose workflow_call" unless workflow_event?(doc, 'workflow_call')
+      pr_present, pr_config = event_config(doc, 'pull_request')
+      unless pr_present && pr_config.is_a?(Hash) &&
+             pr_config['paths'] == [PR_TOPOLOGY_MIGRATION_MARKER] &&
+             !pr_config.key?('paths-ignore')
+        violations << "#{workflow} direct pull_request trigger must be marker-only during v7 migration"
+      end
+    end
+
+    independent = docs[PR_TOPOLOGY_INDEPENDENT_M5]
+    unless independent.is_a?(Hash)
+      violations << "independent provenance authority #{PR_TOPOLOGY_INDEPENDENT_M5} is missing"
+    else
+      violations << "#{PR_TOPOLOGY_INDEPENDENT_M5} must remain directly pull_request-triggered" unless workflow_event?(independent, 'pull_request')
+      violations << "#{PR_TOPOLOGY_INDEPENDENT_M5} must not become a reusable workflow in schema v7" if workflow_event?(independent, 'workflow_call')
+      pr_present, pr_config = event_config(independent, 'pull_request')
+      if pr_present && pr_config.is_a?(Hash) && (pr_config.key?('paths') || pr_config.key?('paths-ignore'))
+        violations << "#{PR_TOPOLOGY_INDEPENDENT_M5} provenance authority must not be path-suppressed"
+      end
+    end
+
+    audit = docs[SUPPLY_CHAIN_AUDIT_WORKFLOW]
+    unless audit.is_a?(Hash)
+      violations << "scheduled supply-chain audit #{SUPPLY_CHAIN_AUDIT_WORKFLOW} is missing"
+    else
+      violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} must be schedule-triggered" unless workflow_event?(audit, 'schedule')
+      violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} must not be pull_request-triggered" if workflow_event?(audit, 'pull_request')
+      unless audit['permissions'] == {}
+        violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} must keep workflow-level permissions empty"
+      end
+      audit_jobs = audit['jobs']
+      supply_job = audit_jobs.is_a?(Hash) ? audit_jobs['supply-chain'] : nil
+      report_job = audit_jobs.is_a?(Hash) ? audit_jobs['report-failure'] : nil
+      unless supply_job.is_a?(Hash) &&
+             supply_job['uses'] == "./#{SUPPLY_CHAIN_WORKFLOW}" &&
+             supply_job['permissions'] == {
+               'contents' => 'read'
+             }
+        violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} must call the read-only reusable supply-chain authority"
+      end
+      unless report_job.is_a?(Hash) &&
+             normalize_needs(report_job) == ['supply-chain'] &&
+             normalized_shell(report_job['if']).include?('needs.supply-chain.result') &&
+             report_job['permissions'] == {
+               'contents' => 'read',
+               'issues' => 'write'
+             }
+        violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} failure reporter must be isolated behind the supply-chain result with issues: write"
+      end
+    end
+
+    gate = policy['repository_merge_gate']
+    protected = gate.is_a?(Hash) ? gate['protected_workflows'] : nil
+    if !protected.is_a?(Array)
+      violations << 'schema v7 repository merge gate must declare protected workflow authorities'
+    else
+      protected_by_workflow = {}
+      protected.each do |entry|
+        unless entry.is_a?(Hash) && entry['workflow'].is_a?(String)
+          violations << "schema v7 protected workflow entry is malformed: #{entry.inspect}"
+          next
+        end
+        workflow = entry['workflow']
+        if protected_by_workflow.key?(workflow)
+          violations << "schema v7 protected workflow inventory duplicates #{workflow}"
+          next
+        end
+        protected_by_workflow[workflow] = entry
+      end
+
+      actual_workflows = protected_by_workflow.keys.sort
+      expected_workflows = PR_TOPOLOGY_PROTECTED_AUTHORITIES.sort
+      unless actual_workflows == expected_workflows
+        violations << "schema v7 protected workflow inventory mismatch: expected=#{expected_workflows.inspect} actual=#{actual_workflows.inspect}"
+      end
+
+      PR_TOPOLOGY_PROTECTED_AUTHORITIES.each do |workflow|
+        entry = protected_by_workflow[workflow]
+        next unless entry.is_a?(Hash)
+
+        accepted = entry['accepted_blobs']
+        valid = accepted.is_a?(Array) && !accepted.empty? &&
+                accepted.uniq.length == accepted.length &&
+                accepted.all? { |sha| sha.is_a?(String) && sha.match?(/\A[0-9a-f]{40}\z/) }
+        unless valid
+          violations << "schema v7 protected workflow #{workflow} accepted blob inventory is malformed"
+          next
+        end
+
+        path = Pathname(root).join(workflow)
+        actual = path.file? ? git_blob_sha(path.binread) : nil
+        unless accepted.include?(actual)
+          violations << "schema v7 protected workflow #{workflow} blob #{actual.inspect} is not accepted by policy"
+        end
+      end
+    end
+
     violations
   end
 
@@ -1179,7 +1569,23 @@ module MergeGateVerifier
       violations << "#{QUALITY_WORKFLOW}#quality-fast Fast evidence resolver is missing mode-integrity tokens: #{missing.join(', ')}" unless missing.empty?
     end
 
-    fallback_if = "${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}"
+    fallback_if = if policy['schema_version'].to_i >= 7
+                    "${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full' }}"
+                  else
+                    "${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}"
+                  end
+    if policy['schema_version'].to_i >= 7
+      workflow_text = workflow.inspect
+      [
+        'docs-only-trusted-base',
+        'steps.docs-only-scope',
+        '.docs-only-trusted-base/.github/scripts/pr-scope.py',
+        'Classify documentation-only scope from trusted base'
+      ].each do |token|
+        violations << "#{QUALITY_WORKFLOW} must not duplicate schema-v7 PR scope routing token #{token.inspect}" if workflow_text.include?(token)
+      end
+    end
+
     ['Check formatting', 'Run Clippy', 'Run workspace unit tests'].each do |name|
       step = fast_steps.find { |candidate| candidate['name'] == name }
       unless step.is_a?(Hash) && normalized_shell(step['if']) == normalized_shell(fallback_if)
@@ -1210,8 +1616,9 @@ module MergeGateVerifier
     unless aggregate.is_a?(Hash)
       return violations + ["#{QUALITY_WORKFLOW} must declare required #{QUALITY_AGGREGATE_JOB} aggregate"]
     end
-    unless job_policy(policy, QUALITY_WORKFLOW, QUALITY_AGGREGATE_JOB).first == 'required'
-      violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must remain required"
+    expected_quality_classification = policy['schema_version'].to_i >= 7 ? 'advisory' : 'required'
+    unless job_policy(policy, QUALITY_WORKFLOW, QUALITY_AGGREGATE_JOB).first == expected_quality_classification
+      violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must be #{expected_quality_classification} under schema v#{policy['schema_version']}"
     end
     violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must emit context quality" unless aggregate['name'] == 'quality'
     violations << "#{QUALITY_WORKFLOW}##{QUALITY_AGGREGATE_JOB} must use unconditional always()" unless always_condition?(aggregate['if'])
@@ -1251,6 +1658,112 @@ module MergeGateVerifier
     violations
   end
 
+
+  def internal_aggregate_policy_contract(policy)
+    return [] unless policy['schema_version'].to_i >= 7
+
+    violations = []
+    unless policy.fetch('aggregate_gates', []) == []
+      violations << 'schema v7 branch aggregate_gates must remain empty; reusable-workflow aggregates belong in internal_aggregates'
+    end
+    unless policy['internal_aggregates'] == [INTERNAL_POSTGRESQL_AGGREGATE]
+      violations << 'schema v7 internal_aggregates must exactly declare the canonical PostgreSQL reusable-workflow aggregate'
+    end
+    violations
+  end
+
+  def internal_aggregate_contract(root:, policy:, producer_summary:)
+    violations = internal_aggregate_policy_contract(policy)
+    return violations unless policy['schema_version'].to_i >= 7
+    return violations unless policy['internal_aggregates'].is_a?(Array)
+
+    gate = policy['internal_aggregates'].find do |entry|
+      entry.is_a?(Hash) && entry['context'] == 'postgresql'
+    end
+    return violations unless gate.is_a?(Hash)
+
+    workflow = gate.dig('producer', 'workflow')
+    job_id = gate.dig('producer', 'job')
+    docs = producer_summary.fetch('workflow_docs')
+    doc = docs[workflow]
+    job = doc.is_a?(Hash) && doc['jobs'].is_a?(Hash) ? doc['jobs'][job_id] : nil
+    unless job.is_a?(Hash)
+      return violations + ['schema v7 internal PostgreSQL aggregate producer is missing']
+    end
+
+    unless workflow_event?(doc, 'workflow_call')
+      violations << 'schema v7 internal PostgreSQL aggregate must live in a reusable workflow'
+    end
+    if job_policy(policy, workflow, job_id).first != 'advisory'
+      violations << 'schema v7 internal PostgreSQL aggregate producer must remain advisory to repository merge topology'
+    end
+    violations << 'schema v7 internal PostgreSQL aggregate must emit context postgresql' unless job['name'] == 'postgresql'
+    violations << 'schema v7 internal PostgreSQL aggregate must use unconditional always()' unless always_condition?(job['if'])
+    unless job['runs-on'] == 'ubuntu-latest' && job['timeout-minutes'] == 5
+      violations << 'schema v7 internal PostgreSQL aggregate must use ubuntu-latest with timeout-minutes: 5'
+    end
+    unless job['permissions'] == AGGREGATE_PRODUCER_PERMISSIONS
+      violations << "schema v7 internal PostgreSQL aggregate must keep #{AGGREGATE_PRODUCER_PERMISSIONS.inspect}"
+    end
+
+    expected_needs = normalize_needs(job).sort
+    expanded_members = {}
+    expected_needs.each do |member_job_id|
+      member_job = doc.dig('jobs', member_job_id)
+      unless member_job.is_a?(Hash)
+        violations << "schema v7 internal PostgreSQL aggregate references missing member job #{member_job_id}"
+        next
+      end
+      unless job_policy(policy, workflow, member_job_id).first == 'advisory'
+        violations << "schema v7 internal PostgreSQL aggregate member #{member_job_id} must remain advisory to repository merge topology"
+      end
+      begin
+        required_job_contexts(member_job_id, member_job).each do |context|
+          if expanded_members.key?(context)
+            violations << "schema v7 internal PostgreSQL aggregate context #{context} is emitted by multiple member jobs"
+          else
+            expanded_members[context] = member_job_id
+          end
+        end
+      rescue StandardError => e
+        violations << "schema v7 internal PostgreSQL aggregate cannot expand #{member_job_id}: #{e.message}"
+      end
+    end
+
+    declared_members = gate['members'].sort
+    actual_members = expanded_members.keys.sort
+    unless declared_members == actual_members
+      violations << "schema v7 internal PostgreSQL aggregate member inventory mismatch: expected #{actual_members.inspect}, declared #{declared_members.inspect}"
+    end
+
+    steps = Array(job['steps']).select { |step| step.is_a?(Hash) }
+    unless steps.length == 2
+      violations << 'schema v7 internal PostgreSQL aggregate must have exactly checkout + evaluator steps'
+    end
+    checkout = steps[0]
+    evaluator = steps[1]
+    pins = other_jobs_checkout_pins(doc, job_id)
+    unless pins.length == 1 && checkout.is_a?(Hash) && checkout['uses'] == pins.first
+      violations << 'schema v7 internal PostgreSQL aggregate checkout must reuse the workflow canonical pinned checkout'
+    end
+    unless evaluator.is_a?(Hash) &&
+           evaluator.dig('env', 'GITHUB_TOKEN').to_s.match?(TOKEN_ENV_EXPR) &&
+           normalized_shell(evaluator['run']) == normalized_shell(evaluator_invocation_script('postgresql'))
+      violations << 'schema v7 internal PostgreSQL aggregate must invoke the canonical selective-rerun evaluator with github.token'
+    end
+
+    evaluator_path = Pathname(root).join(EVALUATOR_SCRIPT)
+    if evaluator_path.file?
+      evaluator_body = evaluator_path.read
+      %w[internal_aggregates aggregate_gates schema_version].each do |token|
+        violations << "#{EVALUATOR_SCRIPT} must preserve v7/v6 aggregate catalog separation token #{token.inspect}" unless evaluator_body.include?(token)
+      end
+    else
+      violations << "#{EVALUATOR_SCRIPT} is missing"
+    end
+
+    violations
+  end
 
   def repository_authority_members(producer_summary:, aggregates:)
     contexts = producer_summary.fetch('required_contexts').dup
@@ -1425,6 +1938,24 @@ module MergeGateVerifier
       'conclusion != "success"',
       'timed out waiting for exact-head merge authority'
     ]
+    if policy['schema_version'].to_i >= 7
+      required_tokens.concat([
+        'contents/.github/merge-gate-policy.json',
+        '{"ref": head_sha}',
+        'normalized_policy_without_blob_sets',
+        'PR-head merge-gate policy changes trust semantics outside',
+        'protected_inventory(policy, "trusted-base")',
+        'protected_inventory(head_policy, "PR-head")',
+        'base_allowed.issubset(head_allowed)',
+        'head_blob not in base_allowed',
+        'head_blob not in head_allowed',
+        'head_allowed.issubset(base_allowed)',
+        'was not pre-admitted by trusted-base policy',
+        'workflow replacement cannot admit',
+        'additional blobs in the same PR'
+      ])
+    end
+
     missing = required_tokens.reject { |token| body.include?(token) }
     unless missing.empty?
       violations << "repository merge gate evaluator is missing fail-closed contract tokens: #{missing.join(', ')}"
@@ -1671,7 +2202,7 @@ module MergeGateVerifier
     ruleset = JSON.parse(File.read(ruleset_path))
     violations = []
 
-    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless policy['schema_version'] == 6
+    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless [6, 7].include?(policy['schema_version'])
     violations << "ruleset id mismatch: expected #{policy.dig('ruleset', 'id')}, got #{ruleset['id']}" unless ruleset['id'] == policy.dig('ruleset', 'id')
     violations << "ruleset name mismatch: expected #{policy.dig('ruleset', 'name').inspect}, got #{ruleset['name'].inspect}" unless ruleset['name'] == policy.dig('ruleset', 'name')
     violations << 'ruleset is not active' unless ruleset['enforcement'] == 'active'
@@ -1681,12 +2212,14 @@ module MergeGateVerifier
     aggregate_violations, aggregates = aggregate_inventory(root: root, policy: policy, producer_summary: producer_summary)
     violations.concat(aggregate_violations)
 
+    violations.concat(pr_topology_v7_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(docs_applicability_contract(policy: policy, producer_summary: producer_summary))
     violations.concat(fast_branch_docs_contract(producer_summary: producer_summary))
     violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(m5_conformance_routing_contract(policy: policy, producer_summary: producer_summary))
     violations.concat(quality_parallel_contract(root: root, policy: policy, producer_summary: producer_summary))
+    violations.concat(internal_aggregate_contract(root: root, policy: policy, producer_summary: producer_summary))
     repository_gate_violations, repository_gate = repository_merge_gate_contract(policy: policy, producer_summary: producer_summary, aggregates: aggregates)
     violations.concat(repository_gate_violations)
     violations.concat(post_main_contract(policy: policy, producer_summary: producer_summary))
@@ -1742,6 +2275,7 @@ module MergeGateVerifier
     [violations, {
       'required_contexts' => required_contexts.sort,
       'aggregate_gates' => aggregates,
+      'internal_aggregates' => policy.fetch('internal_aggregates', []),
       'repository_merge_gate' => repository_gate,
       'pending_ruleset_contexts' => pending.sort,
       'accepted_live_required_contexts' => accepted_live,

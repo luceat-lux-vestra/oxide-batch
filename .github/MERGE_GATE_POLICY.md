@@ -47,7 +47,7 @@ The next CI topology uses one fail-closed scope model rather than separate path 
 
 Documentation-only scope is intentionally narrow: only the explicitly listed root documentation files and Markdown under `docs/**` qualify. Rename/copy provenance is evaluated on both source and destination.
 
-Documentation-only does not by itself mean that every required authority is inapplicable. The same trusted classifier emits `supply_chain_impact` and `evidence_impact` from the machine-readable `pr_scope.docs_only_applicability` policy. Both bits default conservatively to impact for every non-documentation or mixed change. Within documentation-only scope, `docs/engineering/dependency-policy.md` retains full supply-chain validation, while `docs/engineering/campaigns/**` retains full evidence-provenance validation. Ordinary documentation outside those owned control/evidence paths may emit the same required context through a lightweight success path. Missing, malformed, or unavailable applicability evidence always falls back to the full authority.
+Documentation-only does not by itself mean that every authority is inapplicable. Schema v7 computes `docs_only`, `supply_chain_impact`, and `evidence_impact` exactly once in `.github/workflows/pr-ci.yml` from the exact trusted base. The impact bits default conservatively to true for every non-documentation or mixed change. Within documentation-only scope, `docs/engineering/dependency-policy.md` still routes the full supply-chain authority, while `docs/engineering/campaigns/**` still routes the full evidence-provenance authority. Ordinary documentation outside those owned paths does not materialize those reusable authorities at all. Missing, malformed, or unavailable scope evidence routes the full authority set. Once Rust, evidence, or supply-chain is invoked, it executes its full validation contract and never reclassifies the PR independently.
 
 Campaign applicability does **not** duplicate M5/M6 path lists here. The classifier discovers `tests/fixtures/**/campaign-semantics.json`, validates every closure, derives its dedicated workflow from that closure, and requires the resulting workflow inventory to match `docs/engineering/retained-evidence-policy.json`'s artifact producers exactly. A changed path intersects a campaign when it equals a declared semantic path or is below a declared semantic directory.
 
@@ -57,32 +57,40 @@ Each semantic category also declares `pr_proof: direct | stale-only`. `direct` i
 
 Retained evidence now has two explicit authorities. Required `evidence-provenance` continuously verifies retained bytes, producer/provenance identity, canonical verdict, matrix/inventory, execution-manifest structure, and the determinism of the current campaign dependency-closure metadata. `cargo xtask evidence-freshness` is the separate fail-closed current-HEAD authority that compares a retained report's recorded semantic objects with the checkout that would run now. Semantic-impact/deep/release routing may require that freshness proof; an ordinary source PR does not turn a trustworthy historical artifact into forged evidence merely because a bound source object moved. Missing or malformed provenance, manifests, closure metadata, or applicability evidence remains a failure rather than an implicit non-impact decision.
 
-The trusted-classifier foundation is already on `main`. The current migration stage additionally separates direct same-PR campaign proof from stale-only semantic impact without yet suppressing campaign execution or altering the live required-context topology. Routing control-plane paths are a separate fail-closed class: changes to `.github/scripts/pr-scope.py`, `.github/merge-gate-policy.json`, `.github/workflows/campaign-orchestrator.yml`, or `docs/engineering/retained-evidence-policy.json` make every retained campaign direct-proof. The merge-gate verifier requires this exact inventory, so a router/classifier/policy change cannot classify itself as non-impact. A later routing PR may consume only this base-trusted classification to condition deep campaigns safely; retained evidence that is stale-only remains a refresh obligation for scheduled/deep/release execution rather than a reason to trust PR-head routing code.
+Schema v7 consumes this trusted classification directly. Coarse merge-time routing is centralized in `PR CI`; campaign-specific direct-proof routing remains inside the campaign authority because it operates on a finer semantic closure than docs/product applicability. Routing control-plane paths are a separate fail-closed class: changes to `.github/scripts/pr-scope.py`, `.github/merge-gate-policy.json`, `.github/workflows/campaign-orchestrator.yml`, or `docs/engineering/retained-evidence-policy.json` make every retained campaign direct-proof. The verifier requires this exact inventory, so a router/classifier/policy change cannot classify itself as non-impact. Retained evidence that is stale-only remains a refresh obligation for scheduled/deep/release execution rather than a reason to trust PR-head routing code.
 
 ## PostgreSQL aggregate decision
 
 #223 originally evaluated all eleven then-current `postgres-*` required contexts rather than assuming that every PostgreSQL-looking check should be hidden behind one cosmetic status. #323 later retired the completed M0 `postgres-spike` experiment from merge-time CI after its production invariants had moved to the repository/crash-recovery suites.
 
-The accepted current boundary is one native GitHub Actions aggregate context, `postgresql`, over the eight production PostgreSQL jobs emitted by `.github/workflows/ci.yml`:
+Inside the reusable Rust authority, the accepted boundary is one native GitHub Actions internal aggregate, `postgresql`, over the eight production PostgreSQL jobs emitted by `.github/workflows/ci.yml`. It is not a branch-ruleset context under schema v7:
 
 - four PostgreSQL design-gate matrix contexts;
 - two item-component matrix contexts; and
 - two repository matrix contexts.
 
-The two M5 conformance contexts remain independently required:
+The two M5 conformance contexts remain independent repository merge authorities:
 
 - `postgres-15-conformance-campaign`;
 - `postgres-18-conformance-campaign`.
 
 That is an intentional **decline** to aggregate the conformance campaign, not omitted evaluation. GitHub Actions `needs` is workflow-local, so a native conformance aggregate would have to modify `.github/workflows/m5-conformance.yml`. That workflow's exact Git object identity is part of the retained M5 conformance evidence provenance contract. Changing it solely to reduce the ruleset surface invalidates the currently retained campaign evidence and requires a new campaign/evidence promotion even though the conformance obligation itself did not change. The conformance checks therefore retain useful independent evidence authority and stay outside this aggregate.
 
-#223 correctly declined cross-workflow polling for the PostgreSQL-only aggregate because a workflow-local dependency graph was sufficient. The repository-level gate has a different boundary: it composes already-distinct authorities from multiple workflows. It therefore uses protected-base `pull_request_target` authority, not a PR-head poller and not custom commit-status publication. The gate never checks out PR code, loads its member inventory from the exact base SHA, binds each member to its canonical source workflow and exact PR head, reconciles selective reruns per member, and fails closed on missing, duplicate, malformed, or non-success evidence.
+#223 correctly declined cross-workflow polling for the PostgreSQL-only aggregate because a workflow-local dependency graph was sufficient. Schema v7 applies the same principle at repository scope: ordinary pull requests enter through one `.github/workflows/pr-ci.yml` workflow, its trusted-base `scope` job routes only the applicable reusable authorities, and its native `pr-proof` job evaluates those results with `needs`. Cross-workflow polling is no longer used for the normal child proof graph.
 
-Those controls remain distinct child authorities with their own visible check results and failure semantics. The current redesign adds a repository-level `merge-gate` above them; aggregation changes only the future ruleset surface, not whether the child controls execute or remain diagnosable. Advisory Rust CodeQL remains outside merge authority unless separately promoted.
+The branch ruleset still requires only `merge-gate`. That job remains protected-base `pull_request_target` authority and never checks out or executes PR-head code. It loads policy from the exact base SHA and verifies the PR-head Git blobs for every merge-authority workflow: `pr-ci.yml`, Rust, dependency review, CodeQL, evidence, supply-chain, the independent M5 conformance workflow, and the protected-base `pr-labeler.yml` workflow that implements `merge-gate` itself. Only base-policy-approved blobs may produce authority consumed by `merge-gate`. A PR therefore cannot weaken either the proof graph or one of its called authority workflows and have that weakened definition trusted by the same PR. Intentional workflow changes use staged admission: first add the future blob identity to protected-base policy, then change the workflow in a subsequent PR while removing the superseded identity.
+
+The `scope` job starts with `legacy_base=unknown`, not `true`. Only a successfully checked-out exact trusted base with a successfully parsed schema may resolve that state to `true` (v6 migration) or `false` (v7+). Any checkout, metadata, schema, or classifier uncertainty therefore routes to the full v7 authority set; it can never fall into the migration shortcut.
+
+Schema v7 also treats the merge-gate policy itself as protected trust state. The protected-base evaluator reads both base and PR-head policy and requires every field except protected-workflow `accepted_blobs` to remain identical. For an unchanged workflow, a policy-only PR may only add future accepted blobs. A workflow replacement is accepted only when its head blob was already admitted by the base policy; that replacement PR may retain or retire previously admitted blobs but cannot add another new identity at the same time. Changes to routing, scope semantics, member inventory, or the transition rules therefore require first staging a new protected `pr-labeler.yml` evaluator and only then performing the policy migration under that new trusted base.
+
+Legacy merge-time workflows expose `workflow_call` and retain a direct `pull_request` trigger only for the one-time `.github/ci-topology-v7-migration` marker. That makes the v6→v7 transition fail-closed: the migration PR itself still emits the old v6 member contexts, while later PRs no longer materialize those standalone workflow runs. Scheduled/manual authorities remain independent where their operational purpose differs from merge-time validation.
+
+`.github/workflows/m5-conformance.yml` is the deliberate exception. Its exact Git blob is part of retained M5 execution provenance, so the topology migration does not rewrite it merely to make it reusable. It remains an independent pull-request authority and continues to emit the PostgreSQL 15/18 conformance contexts. Schema v7 therefore reduces repository merge authority to `pr-proof` plus those two provenance-bound conformance contexts; protected-base `merge-gate` composes those three results. A future change to that workflow must be coupled to an intentional retained-evidence refresh rather than hidden inside CI plumbing work.
 
 ## Native aggregate contract
 
-`postgresql` is an ordinary pull-request job in `.github/workflows/ci.yml`. GitHub therefore owns its lifecycle, cancellation, rerun, and current check state for the PR HEAD.
+`postgresql` is a workflow-internal aggregate job in reusable `.github/workflows/ci.yml`. Under schema v7 that Rust authority is invoked by `.github/workflows/pr-ci.yml`; GitHub still owns the aggregate job's lifecycle, cancellation, rerun, and current check state inside that caller run. The one-time v6→v7 migration marker may still run the Rust workflow directly, but `postgresql` is no longer a repository-level aggregate authority after cutover.
 
 The job uses `if: ${{ always() }}` so it still executes after a failed/cancelled/skipped dependency.
 
@@ -94,7 +102,7 @@ The aggregate's four `needs` job ids each back a matrix (four PostgreSQL version
 
 The final authority is `.github/scripts/evaluate-aggregate-run.rb`, invoked as the aggregate producer's only substantive step. It:
 
-1. Reads the eight canonical member context names exclusively from `merge-gate-policy.json`'s `postgresql` aggregate entry — there is no second, manually duplicated list of the eight names anywhere in the workflow or scripts.
+1. Reads the eight canonical member context names from `merge-gate-policy.json`'s schema-v7 `internal_aggregates` `postgresql` entry (`aggregate_gates` only for pre-v7 compatibility). The verifier independently expands the Rust workflow's aggregate `needs` jobs and their matrix-emitted context names and requires that derived set to equal the policy inventory, so the evaluator script does not carry a second hard-coded member list.
 2. Calls the GitHub Actions Jobs API (`GET /repos/{owner}/{repo}/actions/runs/{run_id}/jobs?filter=all&per_page=100`, paginated to exhaustion) to read every job execution recorded for the current run, across **every** workflow attempt — `filter=all`, not `filter=latest`, because a `latest`-only read would miss exactly the un-rerun sibling's earlier execution.
 3. For each canonical member context independently, matches Jobs API entries by exact job `name`, finds that member's own maximum `run_attempt`, and requires that one specific execution to be `status == "completed"` and `conclusion == "success"`.
 
@@ -114,21 +122,24 @@ permissions:
 
 No write permission is granted. The job authenticates to the Jobs API with `GITHUB_TOKEN: ${{ github.token }}` passed as an explicit step environment variable; it never publishes a custom commit status, never polls or waits on other workflows, and never uses `pull_request_target`. The aggregate's own pass/fail is still communicated exclusively through GitHub's native check-run status for the `postgresql` job, the same as before.
 
-Aggregate membership lives only in `merge-gate-policy.json`. The verifier maps every aggregate member context back to its checked-in required producer and requires all members to belong to the aggregate producer's workflow. It also requires:
+Schema v7 deliberately separates this internal workflow aggregate from repository merge topology. `aggregate_gates` is empty because the branch ruleset no longer consumes `postgresql` directly; `internal_aggregates` retains the eight-member inventory because the reusable Rust authority still needs selective-rerun-safe reconciliation internally. The verifier expands the three PostgreSQL member-producing matrix jobs from `.github/workflows/ci.yml`, requires that expansion to equal the declared internal inventory exactly, and requires both the members and the aggregate producer to remain advisory to repository-level topology.
 
-- the aggregate workflow to remain PR-triggered without path suppression;
-- the aggregate job's `needs` set to match the member-producing job ids exactly;
-- the emitted context name to match policy exactly;
+It also requires:
+
+- the Rust authority to remain reusable through `workflow_call`;
+- the aggregate job's `needs` set to identify the member-producing jobs exactly;
+- the emitted internal context name to remain `postgresql`;
 - no matrix or `continue-on-error` on the aggregate producer;
 - `if: ${{ always() }}`;
 - the bounded runner/timeout shape;
 - exact least-privilege `permissions: {actions: read, contents: read}`;
-- a checkout step that reuses the same `actions/checkout` SHA already pinned elsewhere in the workflow (no second, independently-drifting pin); and
-- the canonical evaluator invocation (`ruby .github/scripts/evaluate-aggregate-run.rb <context>`) with the `GITHUB_TOKEN` environment wired.
+- a checkout step that reuses the same `actions/checkout` SHA already pinned elsewhere in the workflow;
+- the canonical evaluator invocation (`ruby .github/scripts/evaluate-aggregate-run.rb postgresql`) with `GITHUB_TOKEN` wired; and
+- evaluator support for schema-v7 `internal_aggregates` plus fail-closed v6 compatibility through `aggregate_gates`.
 
-A removed/renamed member, matrix drift, dependency omission, weakened permissions, an unpinned or diverging checkout SHA, an altered/missing evaluator invocation, duplicate context, producer suppression, or producer reclassification therefore fails closed in required `quality` CI.
+A removed/renamed member, matrix drift, dependency omission, missing internal catalog, accidental reuse of branch-level `aggregate_gates`, weakened permissions, checkout drift, or an altered evaluator invocation therefore fails closed inside the reusable Rust authority and its static contract tests.
 
-The two M5 PostgreSQL conformance contexts (`postgres-15-conformance-campaign`, `postgres-18-conformance-campaign`) are produced by a different workflow (`.github/workflows/m5-conformance.yml`) and are not members of this aggregate; they remain independently required, unchanged by this evaluator.
+The two M5 PostgreSQL conformance contexts (`postgres-15-conformance-campaign`, `postgres-18-conformance-campaign`) are intentionally outside this internal aggregate. They remain independent repository merge authorities because their workflow blob is retained-evidence provenance.
 
 ## Repository merge gate bootstrap
 

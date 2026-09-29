@@ -5,11 +5,13 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
+    paths:
+      - .github/ci-topology-v7-migration
+  workflow_call:
 
 permissions:
   actions: read # Needed to inspect the canonical exact-SHA Fast workflow run.
   contents: read
-  pull-requests: read # Needed for fail-closed live PR scope reconciliation.
 
 concurrency:
   group: rust-${{ github.workflow }}-${{ github.ref }}
@@ -107,7 +109,7 @@ jobs:
             fi
             if [ "$docs_conclusion" = "success" ] && [ "$fmt_conclusion" = "skipped" ] && [ "$clippy_conclusion" = "skipped" ] && [ "$unit_conclusion" = "skipped" ]; then
               echo "mode=docs-only" >> "$GITHUB_OUTPUT"
-              echo "Canonical Fast evidence for exact HEAD $EXPECTED_SHA is documentation-only; Final will independently confirm PR scope before suppressing local obligations."
+              echo "Canonical Fast evidence for exact HEAD $EXPECTED_SHA is documentation-only; a routed Rust authority will execute its local full Fast obligations."
               exit 0
             fi
 
@@ -122,75 +124,10 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Check diff hygiene
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
@@ -201,16 +138,16 @@ jobs:
           fi
 
       - name: Show toolchain
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: rustup show
 
 
       - name: Check formatting
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full' }}
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full' }}
         run: >-
           cargo clippy --workspace --all-targets --all-features --
           -D warnings
@@ -218,11 +155,11 @@ jobs:
           -A clippy::too_many_lines
 
       - name: Run workspace unit tests
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full' }}
         run: cargo test --workspace --all-features --lib
 
       - name: Verify narrow audit-shape Clippy exceptions
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         shell: bash
         run: |
           set -euo pipefail
@@ -280,75 +217,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Run final-only integration shard 0
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/run-integration-shard.py 0 4
 
   quality-integration-1:
@@ -361,75 +233,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Run final-only integration shard 1
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/run-integration-shard.py 1 4
 
   quality-integration-2:
@@ -442,75 +249,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Run final-only integration shard 2
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/run-integration-shard.py 2 4
 
   quality-integration-3:
@@ -523,75 +265,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Run final-only integration shard 3
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/run-integration-shard.py 3 4
 
   quality-bin-doc:
@@ -604,79 +281,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Run final-only binary tests
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo test --workspace --all-features --bins
 
       - name: Run final-only documentation tests
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo test --workspace --all-features --doc
 
   quality-contracts:
@@ -689,97 +301,32 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Check facade without optional adapters
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo check -p oxide-batch --no-default-features
 
       - name: Check operator CLI without optional adapters
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo check -p oxide-batch-cli --no-default-features --all-targets
 
       - name: Build documentation
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo doc --workspace --all-features --no-deps
 
       - name: Check extraction boundaries and workspace cycles
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- deps
 
       - name: Inspect the facade surface for disclosed dependencies
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- surface
 
       - name: Verify the canonical publishable-crate release set
-        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- release-crates
 
   quality:
@@ -837,75 +384,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Package and dry-run every publishable crate
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- package
 
   msrv:
@@ -918,79 +400,14 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Install minimum supported Rust
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: rustup toolchain install 1.95.0 --profile minimal
 
       - name: Check workspace on minimum supported Rust
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo +1.95.0 check --workspace --all-targets --all-features --locked
 
 
@@ -1008,75 +425,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Run TLS, roles, schema, and restore fixture
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         # matrix.postgres is the checked-in 15-18 allowlist above, not event input.
         run: ./tests/fixtures/postgres/run-design-gate.sh ${{ matrix.postgres }} # zizmor: ignore[template-injection]
 
@@ -1113,75 +465,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Apply and reapply immutable migrations
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -1189,7 +476,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Run shared PostgreSQL repository contract
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
@@ -1213,7 +500,7 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run shared PostgreSQL operator, explorer, and retention contract
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -1221,7 +508,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Verify durable fault-tolerance state
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
@@ -1237,28 +524,28 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Verify durable flow traversal
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_flow
           -- --nocapture --test-threads=1
 
       - name: Verify PostgreSQL nested-job durable linkage
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_nested_job
           -- --nocapture --test-threads=1
 
       - name: Verify scoped job-context late binding
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres --lib
           scope_runtime::tests::postgres_job_context_source_resolves_and_records_provenance
           -- --nocapture --test-threads=1
 
       - name: Verify scope-provenance compatible restart refusal
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -1266,7 +553,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Verify scope-provenance retention protection
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -1274,7 +561,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Verify disconnect and schema-version classifications
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
@@ -1290,7 +577,7 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run process-kill crash and restart matrix
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_crash_recovery \
@@ -1321,14 +608,14 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_item_stream_crash_recovery
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL M6 #144 retention component-state evidence
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_retention_component_state
@@ -1367,75 +654,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check out exact trusted base for docs-only classification
-        id: docs-only-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .docs-only-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Classify documentation-only scope from trusted base
-        id: docs-only-scope
-        if: ${{ github.event.pull_request.draft == false }}
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TRUSTED_CHECKOUT: ${{ steps.docs-only-trusted-base.outcome }}
-        shell: bash
-        run: |
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          test "$TRUSTED_CHECKOUT" = "success"
-
-          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
-          jq -e \
-            --arg base "$BASE_SHA" \
-            --arg head "$HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" \
-            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
-            <<<"$pr_json" >/dev/null
-          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
-
-          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
-          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
-          changed_file_records="$(mktemp)"
-          trap 'rm -f "$changed_file_records"' EXIT
-          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
-
-          classification="$(
-            python3 .docs-only-trusted-base/.github/scripts/pr-scope.py \
-              --repo-root .docs-only-trusted-base \
-              --policy .github/merge-gate-policy.json \
-              --expected-count "$expected_count" \
-              --trusted-base-sha "$BASE_SHA" \
-              <"$changed_file_records"
-          )"
-          docs_only="$(
-            jq -er '
-              if .classification_valid == true and
-                 (.docs_only | type) == "boolean"
-              then .docs_only
-              else error("invalid docs-only classification output")
-              end
-            ' <<<"$classification"
-          )"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "docs-only fast path: $docs_only"
-
-      - name: Documentation-only fast path
-        if: ${{ github.event.pull_request.draft == false && steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
-        run: echo "Trusted-base classification proved documentation-only scope; heavy product validation is not applicable."
 
 
       - name: Apply migrations
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_repository
@@ -1443,7 +665,7 @@ jobs:
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL cursor and keyset paging reader evidence (#149)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: |
           cargo test -p oxide-batch --features postgres \
             --test postgres_item_components_cursor \
@@ -1453,70 +675,70 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL SQL batch/enlisted writer evidence (#149)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_item_components_batch_writer
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL cursor/paging real process-kill crash/restart evidence (#149)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_item_components_crash_recovery
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL cursor FETCH-level fault-runtime retry evidence (#149)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch --features postgres
           --test postgres_item_components_cursor_fault
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL item-component restart fixtures (#149)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_item_components_db_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL flat-file component restart evidence (#170)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_flat_file_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL JSON/JSONL component restart evidence (#170)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_json_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL peek-decorated reader restart evidence (#170)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_item_components_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL multi-resource restart evidence (#150)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_multi_resource_restart
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL Gate G restart harness (#172)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test restart_harness
           -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL Gate G repository fixture cleanup (#172)
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           cargo test -p oxide-batch-test --features postgres
           --test postgres_fixture
