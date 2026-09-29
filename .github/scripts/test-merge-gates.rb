@@ -1810,6 +1810,22 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v7_internal_aggregate_policy_rejects_missing_catalog
+    with_v7_topology_contract do |_root, policy|
+      policy['internal_aggregates'] = []
+      violations = MergeGateVerifier.internal_aggregate_policy_contract(policy)
+      assert_includes violations.join("\n"), 'internal_aggregates must exactly declare the canonical PostgreSQL reusable-workflow aggregate'
+    end
+  end
+
+  def test_v7_internal_aggregate_policy_rejects_branch_aggregate_reuse
+    with_v7_topology_contract do |_root, policy|
+      policy['aggregate_gates'] = policy['internal_aggregates']
+      violations = MergeGateVerifier.internal_aggregate_policy_contract(policy)
+      assert_includes violations.join("\n"), 'branch aggregate_gates must remain empty'
+    end
+  end
+
   def test_v7_topology_rejects_unapproved_entrypoint_blob
     with_v7_topology_contract do |root, policy|
       path = File.join(root, '.github/workflows/pr-ci.yml')
@@ -2053,6 +2069,26 @@ class MergeGateVerifierTest < Minitest::Test
             }
           ]
         },
+        'aggregate_gates' => [],
+        'internal_aggregates' => [
+          {
+            'context' => 'postgresql',
+            'producer' => {
+              'workflow' => '.github/workflows/ci.yml',
+              'job' => 'postgresql-merge-gate'
+            },
+            'members' => [
+              'postgres-15-design-gate',
+              'postgres-15-item-components',
+              'postgres-15-repository',
+              'postgres-16-design-gate',
+              'postgres-17-design-gate',
+              'postgres-18-design-gate',
+              'postgres-18-item-components',
+              'postgres-18-repository'
+            ]
+          }
+        ],
         'repository_merge_gate' => {
           'context' => 'merge-gate',
           'state' => 'active',
