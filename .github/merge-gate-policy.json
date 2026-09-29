@@ -170,6 +170,12 @@
         "accepted_blobs": [
           "5e8c3cba0ae1c9f3d7c454c5a6004e71ad58c0ae"
         ]
+      },
+      {
+        "workflow": ".github/workflows/pr-labeler.yml",
+        "accepted_blobs": [
+          "c93abb489a8466e54be676944c57571fe274cf1a"
+        ]
       }
     ]
   },
