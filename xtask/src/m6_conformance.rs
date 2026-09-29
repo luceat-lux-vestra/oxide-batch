@@ -148,7 +148,7 @@ fn run_shard(index: &str, count: &str) -> Result<Campaign, String> {
 
     let report = write_shard_report(
         &root,
-        ShardReportInput {
+        &ShardReportInput {
             index,
             count,
             selected,
@@ -380,21 +380,13 @@ struct ShardReportInput<'a> {
     environment: &'a Value,
 }
 
-fn write_shard_report(root: &Path, input: ShardReportInput<'_>) -> Result<PathBuf, String> {
-    let ShardReportInput {
-        index,
-        count,
-        selected,
-        target_reports,
-        violations,
-        manifest,
-        environment,
-    } = input;
+fn write_shard_report(root: &Path, input: &ShardReportInput<'_>) -> Result<PathBuf, String> {
     let directory = suite::directory(root);
     fs::create_dir_all(&directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
-    let path = directory.join(shard_report_name(index));
-    let targets = selected
+    let path = directory.join(shard_report_name(input.index));
+    let targets = input
+        .selected
         .iter()
         .map(|(package, target)| json!({"package": package, "target": target}))
         .collect::<Vec<_>>();
@@ -403,17 +395,17 @@ fn write_shard_report(root: &Path, input: ShardReportInput<'_>) -> Result<PathBu
         "report": "m6-conformance-shard",
         "schema_version": 1,
         "postgresql_major_version": expected_matrix_major(),
-        "environment": environment,
+        "environment": input.environment,
         "target_denominator": TARGETS.len(),
-        "observation": { "execution_manifest": manifest },
+        "observation": { "execution_manifest": input.manifest },
         "shard": {
-            "index": index,
-            "count": count,
+            "index": input.index,
+            "count": input.count,
             "targets": targets,
         },
-        "targets": target_reports,
-        "violations": violations,
-        "passed": violations.is_empty(),
+        "targets": input.target_reports,
+        "violations": input.violations,
+        "passed": input.violations.is_empty(),
     });
     fs::write(
         &path,
