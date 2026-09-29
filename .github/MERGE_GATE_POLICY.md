@@ -82,6 +82,8 @@ The branch ruleset still requires only `merge-gate`. That job remains protected-
 
 Legacy merge-time workflows expose `workflow_call` and retain a direct `pull_request` trigger only for the one-time `.github/ci-topology-v7-migration` marker. That makes the v6→v7 transition fail-closed: the migration PR itself still emits the old v6 member contexts, while later PRs no longer materialize those standalone workflow runs. Scheduled/manual authorities remain independent where their operational purpose differs from merge-time validation.
 
+`.github/workflows/m5-conformance.yml` is the deliberate exception. Its exact Git blob is part of retained M5 execution provenance, so the topology migration does not rewrite it merely to make it reusable. It remains an independent pull-request authority and continues to emit the PostgreSQL 15/18 conformance contexts. Schema v7 therefore reduces repository merge authority to `pr-proof` plus those two provenance-bound conformance contexts; protected-base `merge-gate` composes those three results. A future change to that workflow must be coupled to an intentional retained-evidence refresh rather than hidden inside CI plumbing work.
+
 ## Native aggregate contract
 
 `postgresql` is an ordinary pull-request job in `.github/workflows/ci.yml`. GitHub therefore owns its lifecycle, cancellation, rerun, and current check state for the PR HEAD.
