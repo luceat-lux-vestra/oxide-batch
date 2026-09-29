@@ -1993,7 +1993,6 @@ class MergeGateVerifierTest < Minitest::Test
             uses: ./.github/workflows/supply-chain.yml
             permissions:
               contents: read
-              pull-requests: read
           report-failure:
             needs:
               - supply-chain
