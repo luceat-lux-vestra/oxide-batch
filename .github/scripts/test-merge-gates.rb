@@ -1780,8 +1780,8 @@ class MergeGateVerifierTest < Minitest::Test
       path = File.join(root, '.github/workflows/pr-ci.yml')
       original = File.read(path)
       body = original.sub(
-        '    needs: [scope, rust, dependency, codeql, evidence, supply, conformance]',
-        '    needs: [scope, rust, dependency, evidence, supply, conformance]'
+        '    needs: [scope, rust, dependency, codeql, evidence, supply]',
+        '    needs: [scope, rust, dependency, evidence, supply]'
       )
       refute_equal original, body
       write(root, '.github/workflows/pr-ci.yml', body)
@@ -1881,23 +1881,19 @@ class MergeGateVerifierTest < Minitest::Test
             needs: scope
             if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
             uses: ./.github/workflows/supply-chain.yml
-          conformance:
-            needs: scope
-            if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/m5-conformance.yml
           campaigns:
             needs: scope
             if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
             uses: ./.github/workflows/campaign-orchestrator.yml
           pr-proof:
             name: pr-proof
-            needs: [scope, rust, dependency, codeql, evidence, supply, conformance]
+            needs: [scope, rust, dependency, codeql, evidence, supply]
             if: ${{ always() }}
             steps:
               - run: |
                   echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
                   echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
-                  echo "$EVIDENCE_RESULT $SUPPLY_RESULT $CONFORMANCE_RESULT"
+                  echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
       YAML
       pr_ci = pr_ci.gsub('    path = File.join(root, relative)
     FileUtils.mkdir_p(File.dirname(path))
@@ -1954,7 +1950,6 @@ end
         codeql.yml
         evidence.yml
         supply-chain.yml
-        m5-conformance.yml
         campaign-orchestrator.yml
       ]
       authorities.each do |name|
@@ -1996,13 +1991,41 @@ end
               - run: echo report
       YAML
 
+      write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
+        name: M5 Conformance
+        on:
+          pull_request:
+            branches:
+              - main
+          workflow_dispatch:
+        jobs:
+          conformance-campaign:
+            name: postgres-${{ matrix.postgres }}-conformance-campaign
+            strategy:
+              matrix:
+                postgres: ["15", "18"]
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo conformance
+      YAML
+
       policy = {
         'schema_version' => 7,
         'pr_topology' => {
           'schema' => 'single-pr-entrypoint-v1',
           'entrypoint' => '.github/workflows/pr-ci.yml',
           'migration_marker' => '.github/ci-topology-v7-migration',
-          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" }
+          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" },
+          'independent_pr_authorities' => [
+            {
+              'workflow' => '.github/workflows/m5-conformance.yml',
+              'reason' => 'retained-evidence-provenance',
+              'contexts' => [
+                'postgres-15-conformance-campaign',
+                'postgres-18-conformance-campaign'
+              ]
+            }
+          ]
         },
         'repository_merge_gate' => {
           'context' => 'merge-gate',
@@ -2012,7 +2035,9 @@ end
             'job' => 'merge-gate'
           },
           'members' => [
-            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'}
+            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'},
+            {'context' => 'postgres-15-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'},
+            {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
           ],
           'protected_workflows' => [
             {
