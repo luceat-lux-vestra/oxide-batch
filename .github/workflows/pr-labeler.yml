@@ -206,6 +206,139 @@ jobs:
               except Exception as exc:
                   raise GateError(f"trusted-base merge-gate policy is invalid: {exc}") from exc
 
+              # Schema v7 freezes trust semantics at the protected base. A PR may
+              # only stage or retire pre-approved workflow blob identities; it may
+              # not weaken routing, members, scope policy, or the protected inventory
+              # in the same change that asks this base-trusted gate to approve it.
+              if policy.get("schema_version", 0) >= 7:
+                  head_policy_file = api(
+                      "contents/.github/merge-gate-policy.json",
+                      {"ref": head_sha},
+                  )
+                  head_policy_encoded = head_policy_file.get("content")
+                  if not isinstance(head_policy_encoded, str):
+                      raise GateError("PR-head merge-gate policy response has no content")
+                  try:
+                      head_policy = json.loads(
+                          base64.b64decode(head_policy_encoded).decode("utf-8")
+                      )
+                  except Exception as exc:
+                      raise GateError(
+                          f"PR-head merge-gate policy is invalid: {exc}"
+                      ) from exc
+
+                  def normalized_policy_without_blob_sets(document):
+                      normalized = json.loads(json.dumps(document))
+                      protected = (
+                          normalized.get("repository_merge_gate", {})
+                          .get("protected_workflows")
+                      )
+                      if isinstance(protected, list):
+                          for entry in protected:
+                              if isinstance(entry, dict):
+                                  entry["accepted_blobs"] = ["<staged>"]
+                      return normalized
+
+                  if (
+                      normalized_policy_without_blob_sets(head_policy)
+                      != normalized_policy_without_blob_sets(policy)
+                  ):
+                      raise GateError(
+                          "PR-head merge-gate policy changes trust semantics outside "
+                          "staged protected-workflow blob admission"
+                      )
+
+                  def protected_inventory(document, label):
+                      protected = (
+                          document.get("repository_merge_gate", {})
+                          .get("protected_workflows")
+                      )
+                      if not isinstance(protected, list) or not protected:
+                          raise GateError(
+                              f"{label} protected_workflows must be a non-empty array"
+                          )
+                      inventory = {}
+                      for entry in protected:
+                          if not isinstance(entry, dict):
+                              raise GateError(
+                                  f"{label} protected workflow entry is not an object"
+                              )
+                          workflow = entry.get("workflow")
+                          accepted = entry.get("accepted_blobs")
+                          if (
+                              not isinstance(workflow, str)
+                              or not workflow.startswith(".github/workflows/")
+                              or workflow in inventory
+                              or not isinstance(accepted, list)
+                              or not accepted
+                              or len(set(accepted)) != len(accepted)
+                              or any(
+                                  not isinstance(blob, str)
+                                  or len(blob) != 40
+                                  or any(
+                                      ch not in "0123456789abcdef"
+                                      for ch in blob
+                                  )
+                                  for blob in accepted
+                              )
+                          ):
+                              raise GateError(
+                                  f"{label} protected workflow contract is malformed: "
+                                  f"{entry!r}"
+                              )
+                          inventory[workflow] = set(accepted)
+                      return inventory
+
+                  base_inventory = protected_inventory(policy, "trusted-base")
+                  head_inventory = protected_inventory(head_policy, "PR-head")
+                  if set(head_inventory) != set(base_inventory):
+                      raise GateError(
+                          "PR-head protected workflow inventory differs from "
+                          "trusted-base inventory"
+                      )
+
+                  for workflow_path in sorted(base_inventory):
+                      encoded_path = urllib.parse.quote(workflow_path, safe="/")
+                      base_file = api(
+                          f"contents/{encoded_path}",
+                          {"ref": base_sha},
+                      )
+                      head_file = api(
+                          f"contents/{encoded_path}",
+                          {"ref": head_sha},
+                      )
+                      base_blob = base_file.get("sha")
+                      head_blob = head_file.get("sha")
+                      if not isinstance(base_blob, str) or not isinstance(head_blob, str):
+                          raise GateError(
+                              f"{workflow_path}: cannot resolve base/head Git blob identity"
+                          )
+
+                      base_allowed = base_inventory[workflow_path]
+                      head_allowed = head_inventory[workflow_path]
+                      if base_blob == head_blob:
+                          if not base_allowed.issubset(head_allowed):
+                              raise GateError(
+                                  f"{workflow_path}: unchanged workflow may only add "
+                                  "staged accepted blobs; existing trust cannot be removed"
+                              )
+                      else:
+                          if head_blob not in base_allowed:
+                              raise GateError(
+                                  f"{workflow_path}: changed workflow blob {head_blob!r} "
+                                  "was not pre-admitted by trusted-base policy"
+                              )
+                          if head_blob not in head_allowed:
+                              raise GateError(
+                                  f"{workflow_path}: PR-head policy does not retain its "
+                                  "active pre-admitted workflow blob"
+                              )
+                          if not head_allowed.issubset(base_allowed):
+                              raise GateError(
+                                  f"{workflow_path}: workflow replacement cannot admit "
+                                  "additional blobs in the same PR"
+                              )
+
               gate = policy.get("repository_merge_gate")
               if not isinstance(gate, dict) or gate.get("context") != EXPECTED_CONTEXT:
                   raise GateError("trusted-base policy does not declare the canonical repository merge gate")
