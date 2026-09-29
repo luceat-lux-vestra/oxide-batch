@@ -158,6 +158,81 @@ class MergeGateVerifierTest < Minitest::Test
         command = ["cargo", "test", "--workspace", "--all-features"]
         command.extend(["--test", name])
       PY
+      write(root, '.github/workflows/fast-branch.yml', <<~YAML)
+        name: Fast branch CI
+        on:
+          push:
+            branches-ignore: [main]
+        permissions:
+          contents: read
+        jobs:
+          fast:
+            name: fast
+            runs-on: ubuntu-latest
+            timeout-minutes: 15
+            steps:
+              - name: Check out repository
+                uses: actions/checkout@0000000000000000000000000000000000000001
+              - name: Check commit hygiene
+                run: git log -1 --check
+              - name: Resolve exact protected trusted base
+                id: resolve-trusted-base
+                continue-on-error: true
+                run: |
+                  echo 'base_sha=' >> "$GITHUB_OUTPUT"
+                  set -euo pipefail
+                  echo 'repos/${GITHUB_REPOSITORY}'
+                  echo '.full_name == $repo and .default_branch == $branch'
+                  echo 'repos/${GITHUB_REPOSITORY}/branches/${DEFAULT_BRANCH}'
+                  echo '[[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]'
+                  echo '[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]'
+                  echo 'base_sha=$base_sha'
+              - name: Check out exact trusted base for docs-only classification
+                id: fast-trusted-base
+                if: ${{ steps.resolve-trusted-base.outcome == 'success' }}
+                continue-on-error: true
+                uses: actions/checkout@0000000000000000000000000000000000000001
+                with:
+                  ref: ${{ steps.resolve-trusted-base.outputs.base_sha }}
+                  path: .fast-trusted-base
+                  fetch-depth: 1
+                  persist-credentials: false
+              - name: Classify documentation-only scope from trusted base
+                id: docs-only-scope
+                if: ${{ steps.resolve-trusted-base.outcome == 'success' && steps.fast-trusted-base.outcome == 'success' }}
+                continue-on-error: true
+                run: |
+                  echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+                  echo 'test "$TRUSTED_CHECKOUT" = "success"'
+                  echo 'compare/${BASE_SHA}...${HEAD_SHA}'
+                  echo '.head_commit.sha == $head'
+                  echo '(.files | length) > 0'
+                  echo '(.files | length) < 300'
+                  echo '@tsv'
+                  echo '.fast-trusted-base/.github/scripts/pr-scope.py'
+                  echo '--repo-root .fast-trusted-base'
+                  echo '--policy .github/merge-gate-policy.json'
+                  echo '--expected-count "$expected_count"'
+                  echo '--trusted-base-sha "$BASE_SHA"'
+                  echo '.classification_valid == true'
+                  echo '(.docs_only | type) == "boolean"'
+                  echo 'docs_only=$docs_only'
+              - name: Documentation-only fast path
+                if: ${{ steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
+                run: echo docs
+              - name: Show toolchain
+                if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+                run: rustup show
+              - name: Check formatting
+                if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+                run: cargo fmt --all -- --check
+              - name: Run Clippy
+                if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+                run: cargo clippy --workspace --all-targets --all-features --
+              - name: Run workspace unit tests
+                if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
+                run: cargo test --workspace --all-features --lib
+      YAML
       write(root, '.github/workflows/ci.yml', <<~YAML)
         name: Rust
         on:
@@ -170,13 +245,27 @@ class MergeGateVerifierTest < Minitest::Test
             runs-on: ubuntu-latest
             steps:
               - name: Resolve exact-SHA Fast evidence
-                run: echo 'actions/workflows/fast-branch.yml/runs?event=push&head_sha=$EXPECTED_SHA&per_page=100'
+                id: fast-evidence
+                run: |
+                  echo "mode=none" >> "$GITHUB_OUTPUT"
+                  echo 'actions/workflows/fast-branch.yml/runs?event=push&head_sha=$EXPECTED_SHA&per_page=100'
+                  echo 'mode=full'
+                  echo 'mode=docs-only'
+                  echo "step_conclusion 'Documentation-only fast path'"
+                  echo "step_conclusion 'Check formatting'"
+                  echo "step_conclusion 'Run Clippy'"
+                  echo "step_conclusion 'Run workspace unit tests'"
               - name: Check diff hygiene
                 run: git diff --check
               - name: Check formatting
+                if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
                 run: cargo fmt --all -- --check
               - name: Run Clippy
+                if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
                 run: cargo clippy --workspace --all-targets --all-features --
+              - name: Run workspace unit tests
+                if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+                run: cargo test --workspace --all-features --lib
               - name: Verify narrow audit-shape Clippy exceptions
                 run: cargo clippy -p oxide-batch-xtask --all-targets --all-features --message-format=json --
           quality-integration-0:
