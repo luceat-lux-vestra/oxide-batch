@@ -6,7 +6,7 @@
     "os": "linux",
     "profile": "debug",
     "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
-    "source_commit": "cb5cdf8b23eddb503b4fd859714b26d6bbca603c",
+    "source_commit": "2497693369b592392229f6d39b96ad27c830560d",
     "source_tree_clean": true
   },
   "fixtures": {
@@ -20,11 +20,11 @@
   ],
   "observation": {
     "execution_manifest": {
-      "execution_commit": "cb5cdf8b23eddb503b4fd859714b26d6bbca603c",
+      "execution_commit": "2497693369b592392229f6d39b96ad27c830560d",
       "execution_commit_note": "The tree this run actually executed against, read from the checkout the campaign is running in. In CI this is the pull-request merge commit rather than the branch head, and it is the authority: the objects below are its objects.",
       "objects": {
         ".cargo/config.toml": "61ccb311e2a6998a2f7066c8995ccbcd60494080",
-        ".github/workflows/m5-conformance.yml": "0a0f54e296c95f69789bfdf7334e314f26bfebad",
+        ".github/workflows/m5-conformance.yml": "5e8c3cba0ae1c9f3d7c454c5a6004e71ad58c0ae",
         "Cargo.toml": "5185b0a838ad767dd91796752e058c926b291544",
         "crates/oxide-batch-cli/Cargo.toml": "7a3b0f3e1540d0091a4d34b020a578ac70b16195",
         "crates/oxide-batch-cli/src": "6ab2d30f11024aaddc83f7a5bd82ef5db406c8d3",
@@ -81,13 +81,14 @@
         "spikes/m6-item-hot-path/Cargo.toml": "249d25eabdd4b3828236f3d2cb9b5d4d10031a1f",
         "spikes/m6-item-hot-path/src": "c0973696ed23ba1673fe26da12d25f18c06643a8",
         "tests/fixtures/conformance/accepted-scope.json": "2162beb5c91c125cb04b29d9936eefef8a662c66",
-        "tests/fixtures/conformance/campaign-semantics.json": "1ea8667119e756e2220fff8f0df8d088d068867f",
+        "tests/fixtures/conformance/campaign-semantics.json": "692567fb4ffa3ae58a14b369501c4293babeeb6f",
         "tests/fixtures/conformance/dependency-closure.json": "8d86a407f1fd856db741ef3fe2dbad223321b2e3",
-        "tests/fixtures/conformance/execution-contract.json": "89259da2e415775b55e72d32bf6c4c5dcd50b49c",
-        "tests/fixtures/conformance/run-ci-campaign.sh": "bb4adf4c7b3ee24c3395f6e9256a2533b489daa2",
-        "tests/fixtures/conformance/verify-ci-contract.sh": "e915dc1f5eaae625b1e4e828bc3d868cd49e4154",
+        "tests/fixtures/conformance/execution-contract.json": "53c3eb69a80ca0864079717cb497dd59772f5418",
+        "tests/fixtures/conformance/merge-ci-campaign.sh": "be228e6adcd1ff9981985b5179e553c494457f46",
+        "tests/fixtures/conformance/run-ci-campaign.sh": "367726d79cf96f9a109261df313b9544e92d77de",
+        "tests/fixtures/conformance/verify-ci-contract.sh": "06c193ef80f3f0f0cde32827f2c80e11cc9bcf53",
         "xtask/Cargo.toml": "66baa4116ac013dce114c313dc9f910be67373aa",
-        "xtask/src/conformance.rs": "6f3855b9d887d847df24747de995539c75767dee",
+        "xtask/src/conformance.rs": "9c201b353760b7a5273c422189d9c11b7496d5c5",
         "xtask/src/dependency_closure.rs": "2ed8c1ff0b1818f4a0e31cb9a4a0eee01d962c5b",
         "xtask/src/evidence.rs": "bf815eed31d84ca3290e3ab28d457d9980d05aa1",
         "xtask/src/main.rs": "532387eed2211aea77f2155b91144407a7f507cf",
