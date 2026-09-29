@@ -799,7 +799,9 @@ module MergeGateVerifier
       else
         command = classify['run'].to_s
         required_tokens = [
+          "echo 'legacy_base=unknown'",
           "echo 'legacy_base=true'",
+          "echo 'legacy_base=false'",
           "echo 'docs_only=false'",
           "echo 'supply_chain_impact=true'",
           "echo 'evidence_impact=true'",
@@ -838,8 +840,9 @@ module MergeGateVerifier
       end
       unless proof_command.include?('CLASSIFICATION_OUTCOME') &&
              proof_command.include?('DOCS_ONLY') &&
-             proof_command.include?('LEGACY_BASE')
-        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must bind trusted routing outputs"
+             proof_command.include?('LEGACY_BASE') &&
+             proof_command.include?('if [ "$LEGACY_BASE" = "true" ]; then')
+        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must bind trusted routing outputs and reserve the legacy shortcut for an explicit trusted legacy base"
       end
     end
 
