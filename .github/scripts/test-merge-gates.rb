@@ -1973,6 +1973,29 @@ end
         YAML
       end
 
+      write(root, '.github/workflows/supply-chain-audit.yml', <<~YAML)
+        name: Scheduled supply-chain audit
+        on:
+          schedule:
+            - cron: "17 18 * * 1"
+        permissions: {}
+        jobs:
+          supply-chain:
+            uses: ./.github/workflows/supply-chain.yml
+            permissions:
+              contents: read
+              pull-requests: read
+          report-failure:
+            needs:
+              - supply-chain
+            if: ${{ always() && needs.supply-chain.result == 'failure' }}
+            permissions:
+              contents: read
+              issues: write
+            steps:
+              - run: echo report
+      YAML
+
       policy = {
         'schema_version' => 7,
         'pr_topology' => {
