@@ -1821,6 +1821,8 @@ class MergeGateVerifierTest < Minitest::Test
   def with_v7_topology_contract
     Dir.mktmpdir do |root|
       FileUtils.mkdir_p(File.join(root, '.github/workflows'))
+      FileUtils.mkdir_p(File.join(root, '.github/scripts'))
+
       pr_ci = <<~YAML
         name: PR CI
         on:
@@ -1834,27 +1836,29 @@ class MergeGateVerifierTest < Minitest::Test
           scope:
             name: trusted-pr-scope
             outputs:
-              legacy_base: ${{ steps.classify.outputs.legacy_base }}
-              classification_outcome: ${{ steps.classify.outcome }}
-              docs_only: ${{ steps.classify.outputs.docs_only }}
-              supply_chain_impact: ${{ steps.classify.outputs.supply_chain_impact }}
-              evidence_impact: ${{ steps.classify.outputs.evidence_impact }}
+              legacy_base: __EXPR__{{ steps.classify.outputs.legacy_base }}
+              classification_outcome: __EXPR__{{ steps.classify.outcome }}
+              docs_only: __EXPR__{{ steps.classify.outputs.docs_only }}
+              supply_chain_impact: __EXPR__{{ steps.classify.outputs.supply_chain_impact }}
+              evidence_impact: __EXPR__{{ steps.classify.outputs.evidence_impact }}
             steps:
               - id: trusted-base
                 continue-on-error: true
                 uses: actions/checkout@0000000000000000000000000000000000000001
                 with:
-                  ref: ${{ github.event.pull_request.base.sha }}
+                  ref: __EXPR__{{ github.event.pull_request.base.sha }}
                   path: .trusted-base
                   fetch-depth: 1
                   persist-credentials: false
               - id: classify
                 continue-on-error: true
                 run: |
-                  echo 'legacy_base=true' >> "$GITHUB_OUTPUT"
-                  echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-                  echo 'supply_chain_impact=true' >> "$GITHUB_OUTPUT"
-                  echo 'evidence_impact=true' >> "$GITHUB_OUTPUT"
+                  {
+                    echo 'legacy_base=true'
+                    echo 'docs_only=false'
+                    echo 'supply_chain_impact=true'
+                    echo 'evidence_impact=true'
+                  } >> "$GITHUB_OUTPUT"
                   echo '.trusted-base/.github/merge-gate-policy.json schema_version'
                   echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
                   echo 'pulls/${PR_NUMBER}/files?per_page=100'
@@ -1863,86 +1867,41 @@ class MergeGateVerifierTest < Minitest::Test
                   echo '.docs_only .supply_chain_impact .evidence_impact'
           rust:
             needs: scope
-            if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
             uses: ./.github/workflows/ci.yml
           dependency:
             needs: scope
-            if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
             uses: ./.github/workflows/dependency-review.yml
           codeql:
             needs: scope
-            if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
             uses: ./.github/workflows/codeql.yml
           evidence:
             needs: scope
-            if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
             uses: ./.github/workflows/evidence.yml
           supply:
             needs: scope
-            if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
             uses: ./.github/workflows/supply-chain.yml
           campaigns:
             needs: scope
-            if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
             uses: ./.github/workflows/campaign-orchestrator.yml
           pr-proof:
             name: pr-proof
             needs: [scope, rust, dependency, codeql, evidence, supply]
-            if: ${{ always() }}
+            if: __EXPR__{{ always() }}
             steps:
               - run: |
                   echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
                   echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
                   echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
       YAML
-      pr_ci = pr_ci.gsub('    path = File.join(root, relative)
-    FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, content)
-  end
-
-  def write_json(root, relative, value)
-    write(root, relative, JSON.pretty_generate(value))
-  end
-
-  def ruleset_with(*contexts)
-    {
-      'id' => 7,
-      'name' => 'Protect main',
-      'enforcement' => 'active',
-      'rules' => [{
-        'type' => 'required_status_checks',
-        'parameters' => {
-          'required_status_checks' => contexts.map { |context| {'context' => context} }
-        }
-      }]
-    }
-  end
-end
-, '    path = File.join(root, relative)
-    FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, content)
-  end
-
-  def write_json(root, relative, value)
-    write(root, relative, JSON.pretty_generate(value))
-  end
-
-  def ruleset_with(*contexts)
-    {
-      'id' => 7,
-      'name' => 'Protect main',
-      'enforcement' => 'active',
-      'rules' => [{
-        'type' => 'required_status_checks',
-        'parameters' => {
-          'required_status_checks' => contexts.map { |context| {'context' => context} }
-        }
-      }]
-    }
-  end
-end
-)
+      pr_ci = pr_ci.gsub('__EXPR__', '$')
       write(root, '.github/workflows/pr-ci.yml', pr_ci)
+      write(root, '.github/ci-topology-v7-migration', "schema-v7 migration marker\n")
 
       authorities = %w[
         ci.yml
@@ -1983,13 +1942,15 @@ end
           report-failure:
             needs:
               - supply-chain
-            if: ${{ always() && needs.supply-chain.result == 'failure' }}
+            if: __EXPR__{{ always() && needs.supply-chain.result == 'failure' }}
             permissions:
               contents: read
               issues: write
             steps:
               - run: echo report
       YAML
+      audit_path = File.join(root, '.github/workflows/supply-chain-audit.yml')
+      File.write(audit_path, File.read(audit_path).gsub('__EXPR__', '$'))
 
       write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
         name: M5 Conformance
@@ -2000,7 +1961,7 @@ end
           workflow_dispatch:
         jobs:
           conformance-campaign:
-            name: postgres-${{ matrix.postgres }}-conformance-campaign
+            name: postgres-__EXPR__{{ matrix.postgres }}-conformance-campaign
             strategy:
               matrix:
                 postgres: ["15", "18"]
@@ -2008,6 +1969,8 @@ end
             steps:
               - run: echo conformance
       YAML
+      m5_path = File.join(root, '.github/workflows/m5-conformance.yml')
+      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '$'))
 
       policy = {
         'schema_version' => 7,
