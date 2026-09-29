@@ -52,6 +52,12 @@ jobs:
         continue-on-error: true
         run: python3 .github/scripts/test_validate_actions_security.py
 
+      - name: Test Rust CodeQL impact classifier
+        if: ${{ github.event.pull_request.draft == false }}
+        id: codeql-rust-impact-tests
+        continue-on-error: true
+        run: python3 .github/scripts/codeql-rust-impact.py --self-test
+
       - name: Test hardening drift audit orchestration and issue lifecycle
         if: ${{ github.event.pull_request.draft == false }}
         id: hardening-policy-tests
@@ -130,6 +136,7 @@ jobs:
           INSTALL_SCANNERS_OUTCOME: ${{ steps.install-scanners.outcome }}
           POLICY_TESTS_OUTCOME: ${{ steps.policy-tests.outcome }}
           HARDENING_POLICY_TESTS_OUTCOME: ${{ steps.hardening-policy-tests.outcome }}
+          CODEQL_RUST_IMPACT_TESTS_OUTCOME: ${{ steps.codeql-rust-impact-tests.outcome }}
           POLICY_OUTCOME: ${{ steps.policy.outcome }}
           REPOSITORY_SETTINGS_POLICY_OUTCOME: ${{ steps.repository-settings-policy.outcome }}
           ZIZMOR_OUTCOME: ${{ steps.zizmor.outcome }}
@@ -140,6 +147,7 @@ jobs:
           for result in \
             "policy-tests:${POLICY_TESTS_OUTCOME}" \
             "hardening-policy-tests:${HARDENING_POLICY_TESTS_OUTCOME}" \
+            "codeql-rust-impact-tests:${CODEQL_RUST_IMPACT_TESTS_OUTCOME}" \
             "repository-settings-policy:${REPOSITORY_SETTINGS_POLICY_OUTCOME}" \
             "scanner-install:${INSTALL_SCANNERS_OUTCOME}" \
             "actionlint:${ACTIONLINT_OUTCOME}" \

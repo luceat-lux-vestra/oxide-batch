@@ -91,6 +91,34 @@ Before the advanced-setup cutover is accepted:
 
 The historical #248 default-setup run identifiers below remain capability evidence only; they are no longer the current producer contract.
 
+## PR-impact routing after #348
+
+Rust CodeQL remains advisory; `Analyze (actions)` remains the repository Merge
+Gate member. The PR execution model is now deliberately asymmetric:
+
+- `Analyze (actions)` still runs on every ready pull request;
+- a metadata-only `codeql-rust-impact` job classifies Rust impact;
+- that job fetches `.github/scripts/codeql-rust-impact.py` from the exact PR
+  base SHA and never trusts a classifier introduced by the PR being classified;
+- the classifier re-reads live PR base/head identity and paginates/reconciles
+  the complete changed-file list before allowing Rust analysis to be skipped;
+- Rust source, Cargo manifest/lock, toolchain, Cargo configuration, and CodeQL
+  routing-control changes all force `Analyze (rust)`;
+- missing trusted classifier, API failure, malformed/incomplete metadata,
+  unsupported file status, or route-job failure all force Rust analysis rather
+  than suppress it;
+- scheduled and manually dispatched CodeQL runs always perform full Rust
+  analysis regardless of PR-impact routing.
+
+The implementation PR is a bootstrap case: its protected base predates the
+classifier, so the trusted-base lookup must fail closed to a full Rust analysis.
+Only later non-Rust-impact PRs are eligible for the runtime skip.
+
+The resource investigation did not introduce explicit `threads` or `ram`
+settings. CodeQL already defaults to the hardware threads and available memory
+of the selected GitHub-hosted runner, so setting those inputs without changing
+runner capacity would not constitute a resource upgrade.
+
 ## Future drift review
 
 #233 must treat GitHub CodeQL language/build-mode support and the repository's

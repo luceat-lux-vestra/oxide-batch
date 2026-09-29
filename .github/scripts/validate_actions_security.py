@@ -286,6 +286,95 @@ def check_issue_labeler_contract(root: Path) -> list[str]:
     return check_issue_labeler_contract_text(text, path.relative_to(root))
 
 
+def _job_block(text: str, job_id: str) -> str | None:
+    match = re.search(
+        rf"(?ms)^  {re.escape(job_id)}:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        text,
+    )
+    return match.group(0) if match else None
+
+
+def check_codeql_rust_routing_contract_text(
+    text: str, path: Path = Path(".github/workflows/codeql.yml")
+) -> list[str]:
+    """Bind trusted-base Rust-impact routing and its fail-closed fallback."""
+    violations: list[str] = []
+
+    required_top_level = (
+        "schedule:",
+        "workflow_dispatch:",
+        "languages: rust",
+        "build-mode: none",
+    )
+    for fragment in required_top_level:
+        if fragment not in text:
+            violations.append(f"{path}: Rust CodeQL contract missing: {fragment}")
+
+    route = _job_block(text, "rust-impact")
+    if route is None:
+        violations.append(f"{path}: Rust CodeQL trusted impact job is missing")
+    else:
+        required_route = (
+            "name: codeql-rust-impact",
+            "if: ${{ github.event_name == 'pull_request' }}",
+            "contents: read",
+            "pull-requests: read",
+            "run_rust: ${{ steps.route.outputs.run_rust }}",
+            'classifier_path = ".github/scripts/codeql-rust-impact.py"',
+            "contents/{encoded_path}",
+            "base_sha = os.environ[\"BASE_SHA\"]",
+            "run_rust=true",
+            "changed_files=unknown",
+            "subprocess.run(",
+        )
+        for fragment in required_route:
+            if fragment not in route:
+                violations.append(
+                    f"{path}: Rust CodeQL trusted impact job missing: {fragment}"
+                )
+        if "actions/checkout@" in route:
+            violations.append(
+                f"{path}: Rust CodeQL impact routing must not checkout PR-head repository code"
+            )
+        if "run_rust=false" in route:
+            violations.append(
+                f"{path}: Rust CodeQL routing fallback must never suppress analysis"
+            )
+
+    analyze = _job_block(text, "analyze-rust")
+    if analyze is None:
+        violations.append(f"{path}: Analyze (rust) job is missing")
+    else:
+        required_analyze = (
+            "name: Analyze (rust)",
+            "needs: rust-impact",
+            "always()",
+            "github.event_name != 'pull_request'",
+            "github.event.pull_request.draft == false",
+            "needs.rust-impact.result != 'success'",
+            "needs.rust-impact.outputs.run_rust != 'false'",
+            "languages: rust",
+            "build-mode: none",
+            "category: /language:rust",
+        )
+        for fragment in required_analyze:
+            if fragment not in analyze:
+                violations.append(
+                    f"{path}: Analyze (rust) fail-closed routing missing: {fragment}"
+                )
+
+    return violations
+
+
+def check_codeql_rust_routing_contract(root: Path) -> list[str]:
+    path = root / ".github" / "workflows" / "codeql.yml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"{path}: cannot read CodeQL workflow: {exc}"]
+    return check_codeql_rust_routing_contract_text(text, path.relative_to(root))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -299,6 +388,7 @@ def main() -> int:
     root = args.root.resolve()
     violations = validate(root)
     violations.extend(check_issue_labeler_contract(root))
+    violations.extend(check_codeql_rust_routing_contract(root))
     if violations:
         print("GitHub Actions security policy violations:", file=sys.stderr)
         for violation in violations:
