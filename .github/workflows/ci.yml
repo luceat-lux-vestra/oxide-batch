@@ -32,18 +32,17 @@ jobs:
           EXPECTED_JOB: fast
           SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
         run: |
+          echo "mode=none" >> "$GITHUB_OUTPUT"
           set -euo pipefail
           if [ "$SAME_REPOSITORY" != "true" ]; then
-            echo "reuse=false" >> "$GITHUB_OUTPUT"
-            echo "Fork PR has no trusted base-repository branch Fast run; Final will execute the local checks."
+            echo "Fork PR has no trusted base-repository branch Fast run; Final will execute local Fast obligations when needed."
             exit 0
           fi
 
           base_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$BASE_SHA" --jq '.sha')"
           head_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$EXPECTED_SHA" --jq '.sha')"
           if [ "$base_workflow_sha" != "$head_workflow_sha" ]; then
-            echo "reuse=false" >> "$GITHUB_OUTPUT"
-            echo "Fast producer workflow changed on this PR; Final will execute the local checks instead of trusting self-modified evidence."
+            echo "Fast producer workflow changed on this PR; Final will execute local Fast obligations instead of trusting self-modified evidence."
             exit 0
           fi
 
@@ -77,16 +76,43 @@ jobs:
               echo "::error::Canonical Fast run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
               exit 1
             fi
-            job_status="$(jq -r --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name) | .status' <<<"$jobs")"
-            job_conclusion="$(jq -r --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name) | (.conclusion // "")' <<<"$jobs")"
+            job="$(jq -c --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name)' <<<"$jobs")"
+            job_status="$(jq -r '.status' <<<"$job")"
+            job_conclusion="$(jq -r '.conclusion // ""' <<<"$job")"
             if [ "$job_status" != "completed" ] || [ "$job_conclusion" != "success" ]; then
               echo "::error::Canonical Fast job for exact HEAD $EXPECTED_SHA is not completed/success (status=$job_status conclusion=$job_conclusion)."
               exit 1
             fi
 
-            echo "reuse=true" >> "$GITHUB_OUTPUT"
-            echo "Reusing canonical successful Fast workflow evidence for exact HEAD $EXPECTED_SHA."
-            exit 0
+            step_conclusion() {
+              local name="$1"
+              local count
+              count="$(jq --arg name "$name" '[.steps[] | select(.name == $name)] | length' <<<"$job")"
+              if [ "$count" != "1" ]; then
+                echo "::error::Canonical Fast job must contain exactly one '$name' step; found $count." >&2
+                return 2
+              fi
+              jq -r --arg name "$name" '.steps[] | select(.name == $name) | (.conclusion // "")' <<<"$job"
+            }
+
+            docs_conclusion="$(step_conclusion 'Documentation-only fast path')"
+            fmt_conclusion="$(step_conclusion 'Check formatting')"
+            clippy_conclusion="$(step_conclusion 'Run Clippy')"
+            unit_conclusion="$(step_conclusion 'Run workspace unit tests')"
+
+            if [ "$fmt_conclusion" = "success" ] && [ "$clippy_conclusion" = "success" ] && [ "$unit_conclusion" = "success" ] && [ "$docs_conclusion" = "skipped" ]; then
+              echo "mode=full" >> "$GITHUB_OUTPUT"
+              echo "Reusing canonical full Fast evidence for exact HEAD $EXPECTED_SHA."
+              exit 0
+            fi
+            if [ "$docs_conclusion" = "success" ] && [ "$fmt_conclusion" = "skipped" ] && [ "$clippy_conclusion" = "skipped" ] && [ "$unit_conclusion" = "skipped" ]; then
+              echo "mode=docs-only" >> "$GITHUB_OUTPUT"
+              echo "Canonical Fast evidence for exact HEAD $EXPECTED_SHA is documentation-only; Final will independently confirm PR scope before suppressing local obligations."
+              exit 0
+            fi
+
+            echo "::error::Canonical Fast job for exact HEAD $EXPECTED_SHA has an invalid mixed execution mode (docs=$docs_conclusion fmt=$fmt_conclusion clippy=$clippy_conclusion unit=$unit_conclusion)."
+            exit 1
           done
           echo "::error::Timed out waiting for canonical exact-SHA Fast evidence at $EXPECTED_SHA; refusing duplicate fallback on a same-repository PR."
           exit 1
@@ -180,16 +206,20 @@ jobs:
 
 
       - name: Check formatting
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.reuse != 'true'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.reuse != 'true'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
         run: >-
           cargo clippy --workspace --all-targets --all-features --
           -D warnings
           -A clippy::too_many_arguments
           -A clippy::too_many_lines
+
+      - name: Run workspace unit tests
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        run: cargo test --workspace --all-features --lib
 
       - name: Verify narrow audit-shape Clippy exceptions
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
