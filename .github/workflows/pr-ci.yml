@@ -109,8 +109,7 @@ jobs:
     uses: ./.github/workflows/ci.yml
     permissions:
       actions: read # Inspect exact-SHA Fast evidence inside the reusable Rust authority.
-      contents: read # Read repository source and the trusted-base classifier.
-      pull-requests: read # Reconcile live PR identity and changed-file metadata.
+      contents: read # Read repository source and inspect the pinned Fast producer.
 
   dependency:
     name: dependency-authority
