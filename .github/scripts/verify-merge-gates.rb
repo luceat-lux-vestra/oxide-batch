@@ -1723,6 +1723,23 @@ module MergeGateVerifier
       'conclusion != "success"',
       'timed out waiting for exact-head merge authority'
     ]
+    if policy['schema_version'].to_i >= 7
+      required_tokens.concat([
+        'contents/.github/merge-gate-policy.json',
+        '{"ref": head_sha}',
+        'normalized_policy_without_blob_sets',
+        'PR-head merge-gate policy changes trust semantics outside',
+        'protected_inventory(policy, "trusted-base")',
+        'protected_inventory(head_policy, "PR-head")',
+        'base_allowed.issubset(head_allowed)',
+        'head_blob not in base_allowed',
+        'head_blob not in head_allowed',
+        'head_allowed.issubset(base_allowed)',
+        'was not pre-admitted by trusted-base policy',
+        'workflow replacement cannot admit additional blobs in the same PR'
+      ])
+    end
+
     missing = required_tokens.reject { |token| body.include?(token) }
     unless missing.empty?
       violations << "repository merge gate evaluator is missing fail-closed contract tokens: #{missing.join(', ')}"
