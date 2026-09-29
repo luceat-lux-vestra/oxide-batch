@@ -1423,6 +1423,73 @@ class MergeGateVerifierTest < Minitest::Test
       assert_includes verify(root).join('\n'), 'required context emitter must not declare services'
     end
   end
+  def test_fast_docs_only_true_guard_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/fast-branch.yml')
+      original = File.read(path)
+      body = original.sub(
+        "              - name: Documentation-only fast path\n                if: ${{ steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}",
+        "              - name: Documentation-only fast path\n                if: ${{ steps.docs-only-scope.outcome == 'success' }}"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/fast-branch.yml', body)
+      assert_includes verify(root).join('\n'), 'documentation-only fast path must require successful true trusted classification'
+    end
+  end
+
+  def test_fast_uncertain_full_fallback_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/fast-branch.yml')
+      original = File.read(path)
+      body = original.sub(
+        "              - name: Run workspace unit tests\n                if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}",
+        "              - name: Run workspace unit tests\n                if: ${{ steps.docs-only-scope.outputs.docs_only != 'true' }}"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/fast-branch.yml', body)
+      assert_includes verify(root).join('\n'), 'must run on every non-docs or uncertain classification'
+    end
+  end
+
+  def test_fast_head_classifier_substitution_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/fast-branch.yml')
+      original = File.read(path)
+      body = original.sub(
+        '.fast-trusted-base/.github/scripts/pr-scope.py',
+        '.github/scripts/pr-scope.py'
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/fast-branch.yml', body)
+      assert_includes verify(root).join('\n'), 'docs-only classifier is missing trusted/fail-closed tokens'
+    end
+  end
+
+  def test_quality_fast_non_docs_local_fallback_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        "              - name: Run workspace unit tests\n                if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}",
+        "              - name: Run workspace unit tests\n                if: ${{ steps.fast-evidence.outputs.mode != 'none' }}"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'must locally fall back unless full Fast evidence or trusted PR docs-only proof applies'
+    end
+  end
+
+  def test_quality_fast_mode_integrity_removal_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/ci.yml')
+      original = File.read(path)
+      body = original.sub("                  echo 'mode=full'\n", "                  echo 'mode=unknown'\n")
+      refute_equal original, body
+      write(root, '.github/workflows/ci.yml', body)
+      assert_includes verify(root).join('\n'), 'Fast evidence resolver is missing mode-integrity tokens'
+    end
+  end
+
   private
 
   def write(root, relative, content)
