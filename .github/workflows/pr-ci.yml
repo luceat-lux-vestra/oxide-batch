@@ -1,0 +1,270 @@
+name: PR CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read # Reconcile exact PR identity and changed-file metadata against the protected base.
+
+concurrency:
+  group: pr-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  scope:
+    name: trusted-pr-scope
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      legacy_base: ${{ steps.classify.outputs.legacy_base }}
+      classification_outcome: ${{ steps.classify.outcome }}
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+      supply_chain_impact: ${{ steps.classify.outputs.supply_chain_impact }}
+      evidence_impact: ${{ steps.classify.outputs.evidence_impact }}
+    steps:
+      - name: Check out exact trusted base
+        id: trusted-base
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Classify merge-time authority from trusted base
+        id: classify
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_CHECKOUT: ${{ steps.trusted-base.outcome }}
+        shell: bash
+        run: |
+          echo 'legacy_base=true' >> "$GITHUB_OUTPUT"
+          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+          echo 'supply_chain_impact=true' >> "$GITHUB_OUTPUT"
+          echo 'evidence_impact=true' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          test "$TRUSTED_CHECKOUT" = "success"
+
+          schema_version="$(jq -er '.schema_version | select(type == "number")' .trusted-base/.github/merge-gate-policy.json)"
+          if [ "$schema_version" -ge 7 ]; then
+            echo 'legacy_base=false' >> "$GITHUB_OUTPUT"
+          fi
+
+          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg base "$BASE_SHA" \
+            --arg head "$HEAD_SHA" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
+            <<<"$pr_json" >/dev/null
+          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
+
+          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
+          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
+          changed_file_records="$(mktemp)"
+          trap 'rm -f "$changed_file_records"' EXIT
+          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
+
+          classification="$(
+            python3 .trusted-base/.github/scripts/pr-scope.py \
+              --repo-root .trusted-base \
+              --policy .github/merge-gate-policy.json \
+              --expected-count "$expected_count" \
+              --trusted-base-sha "$BASE_SHA" \
+              <"$changed_file_records"
+          )"
+
+          docs_only="$(jq -er 'if .classification_valid == true and (.docs_only | type) == "boolean" then .docs_only else error("invalid docs_only") end' <<<"$classification")"
+          supply_chain_impact="$(jq -er 'if .classification_valid == true and (.supply_chain_impact | type) == "boolean" then .supply_chain_impact else error("invalid supply_chain_impact") end' <<<"$classification")"
+          evidence_impact="$(jq -er 'if .classification_valid == true and (.evidence_impact | type) == "boolean" then .evidence_impact else error("invalid evidence_impact") end' <<<"$classification")"
+
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "supply_chain_impact=$supply_chain_impact" >> "$GITHUB_OUTPUT"
+          echo "evidence_impact=$evidence_impact" >> "$GITHUB_OUTPUT"
+
+  rust:
+    name: rust-authority
+    needs: scope
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false &&
+          needs.scope.outputs.legacy_base != 'true' &&
+          (needs.scope.outputs.classification_outcome != 'success' ||
+           needs.scope.outputs.docs_only != 'true') }}
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+
+  dependency:
+    name: dependency-authority
+    needs: scope
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false &&
+          needs.scope.outputs.legacy_base != 'true' &&
+          (needs.scope.outputs.classification_outcome != 'success' ||
+           needs.scope.outputs.docs_only != 'true') }}
+    uses: ./.github/workflows/dependency-review.yml
+    permissions:
+      contents: read
+
+  codeql:
+    name: codeql-authority
+    needs: scope
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false &&
+          needs.scope.outputs.legacy_base != 'true' &&
+          (needs.scope.outputs.classification_outcome != 'success' ||
+           needs.scope.outputs.docs_only != 'true') }}
+    uses: ./.github/workflows/codeql.yml
+    permissions:
+      contents: read
+      pull-requests: read
+      security-events: write
+
+  evidence:
+    name: evidence-authority
+    needs: scope
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false &&
+          needs.scope.outputs.legacy_base != 'true' &&
+          (needs.scope.outputs.classification_outcome != 'success' ||
+           needs.scope.outputs.evidence_impact != 'false') }}
+    uses: ./.github/workflows/evidence.yml
+    permissions:
+      contents: read
+      pull-requests: read
+
+  supply:
+    name: supply-authority
+    needs: scope
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false &&
+          needs.scope.outputs.legacy_base != 'true' &&
+          (needs.scope.outputs.classification_outcome != 'success' ||
+           needs.scope.outputs.supply_chain_impact != 'false') }}
+    uses: ./.github/workflows/supply-chain.yml
+    permissions:
+      contents: read
+      pull-requests: read
+
+  conformance:
+    name: conformance-authority
+    needs: scope
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false &&
+          needs.scope.outputs.legacy_base != 'true' &&
+          (needs.scope.outputs.classification_outcome != 'success' ||
+           needs.scope.outputs.docs_only != 'true') }}
+    uses: ./.github/workflows/m5-conformance.yml
+    permissions:
+      contents: read
+      pull-requests: read
+
+  campaigns:
+    name: advisory-campaigns
+    needs: scope
+    if: >-
+      ${{ always() && github.event.pull_request.draft == false &&
+          needs.scope.outputs.legacy_base != 'true' &&
+          (needs.scope.outputs.classification_outcome != 'success' ||
+           needs.scope.outputs.docs_only != 'true') }}
+    uses: ./.github/workflows/campaign-orchestrator.yml
+    permissions:
+      contents: read
+      pull-requests: read
+
+  pr-proof:
+    name: pr-proof
+    needs: [scope, rust, dependency, codeql, evidence, supply, conformance]
+    if: ${{ always() }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    steps:
+      - name: Draft placeholder
+        if: ${{ github.event.pull_request.draft }}
+        run: echo "authoritative PR proof is deferred until ready_for_review"
+
+      - name: Require routed merge authorities
+        if: ${{ github.event.pull_request.draft == false }}
+        env:
+          LEGACY_BASE: ${{ needs.scope.outputs.legacy_base }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.classification_outcome }}
+          DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
+          SUPPLY_IMPACT: ${{ needs.scope.outputs.supply_chain_impact }}
+          EVIDENCE_IMPACT: ${{ needs.scope.outputs.evidence_impact }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency.result }}
+          CODEQL_RESULT: ${{ needs.codeql.result }}
+          EVIDENCE_RESULT: ${{ needs.evidence.result }}
+          SUPPLY_RESULT: ${{ needs.supply.result }}
+          CONFORMANCE_RESULT: ${{ needs.conformance.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$SCOPE_RESULT" != "success" ]; then
+            echo "::error::trusted scope job did not succeed: $SCOPE_RESULT"
+            exit 1
+          fi
+
+          if [ "$LEGACY_BASE" = "true" ]; then
+            echo "schema-v6 migration base detected; legacy direct workflows remain authoritative for this migration PR"
+            exit 0
+          fi
+
+          full_required=true
+          if [ "$CLASSIFICATION_OUTCOME" = "success" ] && [ "$DOCS_ONLY" = "true" ]; then
+            full_required=false
+          fi
+
+          require_result() {
+            local authority="$1"
+            local result="$2"
+            if [ "$result" != "success" ]; then
+              echo "::error::$authority authority did not succeed (result=$result)"
+              exit 1
+            fi
+          }
+
+          if [ "$full_required" = "true" ]; then
+            require_result rust "$RUST_RESULT"
+            require_result dependency "$DEPENDENCY_RESULT"
+            require_result codeql "$CODEQL_RESULT"
+            require_result conformance "$CONFORMANCE_RESULT"
+          else
+            for pair in "rust:$RUST_RESULT" "dependency:$DEPENDENCY_RESULT" "codeql:$CODEQL_RESULT" "conformance:$CONFORMANCE_RESULT"; do
+              result="${pair#*:}"
+              if [ "$result" != "skipped" ]; then
+                echo "::error::non-applicable authority unexpectedly materialized: $pair"
+                exit 1
+              fi
+            done
+          fi
+
+          if [ "$CLASSIFICATION_OUTCOME" != "success" ] || [ "$EVIDENCE_IMPACT" != "false" ]; then
+            require_result evidence "$EVIDENCE_RESULT"
+          elif [ "$EVIDENCE_RESULT" != "skipped" ]; then
+            echo "::error::non-applicable evidence authority unexpectedly materialized (result=$EVIDENCE_RESULT)"
+            exit 1
+          fi
+
+          if [ "$CLASSIFICATION_OUTCOME" != "success" ] || [ "$SUPPLY_IMPACT" != "false" ]; then
+            require_result supply "$SUPPLY_RESULT"
+          elif [ "$SUPPLY_RESULT" != "skipped" ]; then
+            echo "::error::non-applicable supply authority unexpectedly materialized (result=$SUPPLY_RESULT)"
+            exit 1
+          fi
+
+          echo "pr-proof: PASS"
