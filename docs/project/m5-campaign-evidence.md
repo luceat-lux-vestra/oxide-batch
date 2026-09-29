@@ -143,18 +143,19 @@ test process.
 ### Where it runs
 
 The dedicated [`.github/workflows/m5-conformance.yml`](../../.github/workflows/m5-conformance.yml)
-runs `deep-postgres-15-conformance-campaign` and
-`deep-postgres-18-conformance-campaign` on the two ends of the supported
-PostgreSQL `15`-`18` range. Those deep jobs retain the reports as build
-artifacts on success and failure alike. Lightweight
-`postgres-15-conformance-campaign` / `postgres-18-conformance-campaign`
-emitters preserve the merge-authority context names without provisioning a
-database when deep proof is not required. The committed copies in
+runs two deterministic target shards for each supported PostgreSQL endpoint
+(`15` and `18`). Per-major
+`deep-postgres-*-conformance-campaign` jobs then validate shard identity,
+ownership, and the exact 30-target cover before producing the canonical report
+artifact. Lightweight `postgres-15-conformance-campaign` /
+`postgres-18-conformance-campaign` emitters preserve the merge-authority
+context names without provisioning a database when deep proof is not required.
+The committed copies in
 [`docs/engineering/campaigns/m5`](../engineering/campaigns/m5/README.md) come
-from the deep jobs. See F36 below: the campaign was originally a job inside
-`.github/workflows/ci.yml` and has since been extracted into this dedicated
-workflow, with the same fail-closed retained-evidence provenance model the
-soak, cancellation, and performance campaigns already use.
+from those canonical merge jobs. See F36 below: the campaign was originally a
+job inside `.github/workflows/ci.yml` and has since been extracted into this
+dedicated workflow, with the same fail-closed retained-evidence provenance model
+the soak, cancellation, and performance campaigns already use.
 
 ### Results
 
@@ -176,24 +177,28 @@ campaign this one no longer is.
 | [`conformance-campaign-postgres-15.json`](../engineering/campaigns/m5/conformance-campaign-postgres-15.json) | PostgreSQL 15 | 30 | 339 | 339 `ok` | Passed |
 | [`conformance-campaign-postgres-18.json`](../engineering/campaigns/m5/conformance-campaign-postgres-18.json) | PostgreSQL 18 | 30 | 339 | 339 `ok` | Passed |
 
-Both current retained reports were produced by dedicated workflow run
-[36461176852](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/36461176852),
-which ran from branch head `1c7693341d8e740ec78b6a90a213163bb6bb68bd`
+Both current retained reports were produced by sharded workflow run
+[36501515972](https://github.com/luceat-lux-vestra/oxide-batch/actions/runs/36501515972),
+which ran from branch head `7351151c1c9b7fb1133494f722344b1c19ec08e9`
 and executed synthetic pull-request tree
-`cb5cdf8b23eddb503b4fd859714b26d6bbca603c`. The execution tree is the
-provenance root and the branch head is recorded separately as metadata. The
-reports record `rustc 1.97.1`, Linux `x86_64`, a clean source tree, the
-same 30-target execution envelope, and 339 observed tests/339 `ok` outcomes.
-PostgreSQL 15 deep job `109059891004` produced artifact `10987667300`
-(`sha256:b95b3d66fbb3ae3f741234f9c1069306ed985e309c18cfa3293c51ce67259a6b`);
-PostgreSQL 18 deep job `109059890999` produced artifact `10987642376`
-(`sha256:6fa3ae6b3e8fcb7bbe2f203627d9c0409c1ea68fcbc036742c513ddbf62d96e6`).
-Both archives were independently downloaded for #340, their ZIP SHA-256
-digests matched the GitHub API, and the extracted report bytes reproduced the
-retained Git blobs exactly. Comparing the producer execution tree with current
-`main` changes only `.github/merge-gate-policy.json`, which is outside the
-declared M5 Conformance semantic closure; the retained reports are therefore
-fresh for the current conformance campaign.
+`2497693369b592392229f6d39b96ad27c830560d`. The execution tree is the
+provenance root and the branch head is recorded separately as metadata. For
+each PostgreSQL major, two deterministic shards covered the exact 30-target
+envelope and the canonical merge job rejected missing, duplicate, foreign, or
+overlapping shard evidence before producing `conformance-campaign.json`. The
+canonical reports still record 339 observed tests/339 `ok` outcomes and all
+42 accepted rows/133 assigned scenarios.
+PostgreSQL 15 canonical job `109194438113` produced artifact `11005942016`
+(`sha256:456bdfc158fcae966c5c9042afccbb3c20d99da7f926020d1fb854b22bbb2397`);
+PostgreSQL 18 canonical job `109194434354` produced artifact `11005981964`
+(`sha256:bd3bef396bd4e23155b6fb584df06d06510cc45ef0f68e0a247c6fd9d977c6a3`).
+Both archives were independently downloaded for #344, their ZIP SHA-256
+digests matched the GitHub API, and the extracted report bytes reproduce the
+retained Git blobs exactly (`cb39c440cb512b2b9e43285c8259b2e25e601142`
+for PostgreSQL 15 and `28ef14be033afadf62b9ee8c555af394316e015e` for
+PostgreSQL 18). Subsequent #346 and #349 changes are outside the declared M5
+Conformance semantic closure; current-tree freshness is additionally enforced
+by `cargo xtask evidence-freshness`.
 
 **Sixth retention: PR #160.** `crates/oxide-batch/src` (the ADR-0008 item
 component contract closure for issue #143) and `crates/oxide-batch/Cargo.toml`
