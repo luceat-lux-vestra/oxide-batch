@@ -209,6 +209,44 @@ jobs:
               gate = policy.get("repository_merge_gate")
               if not isinstance(gate, dict) or gate.get("context") != EXPECTED_CONTEXT:
                   raise GateError("trusted-base policy does not declare the canonical repository merge gate")
+
+              protected_workflows = gate.get("protected_workflows", [])
+              if not isinstance(protected_workflows, list):
+                  raise GateError("trusted-base protected_workflows must be an array")
+              for protected in protected_workflows:
+                  if not isinstance(protected, dict):
+                      raise GateError("protected workflow entry is not an object")
+                  workflow_path = protected.get("workflow")
+                  accepted_blobs = protected.get("accepted_blobs")
+                  if (
+                      not isinstance(workflow_path, str)
+                      or not workflow_path.startswith(".github/workflows/")
+                      or not isinstance(accepted_blobs, list)
+                      or not accepted_blobs
+                      or any(
+                          not isinstance(blob, str)
+                          or len(blob) != 40
+                          or any(ch not in "0123456789abcdef" for ch in blob)
+                          for blob in accepted_blobs
+                      )
+                  ):
+                      raise GateError(f"malformed protected workflow contract: {protected!r}")
+                  encoded_path = urllib.parse.quote(workflow_path, safe="/")
+                  head_file = api(
+                      f"contents/{encoded_path}",
+                      {"ref": head_sha},
+                  )
+                  actual_blob = head_file.get("sha")
+                  if actual_blob not in accepted_blobs:
+                      raise GateError(
+                          f"{workflow_path}: PR-head blob {actual_blob!r} is not accepted "
+                          f"by trusted-base policy"
+                      )
+                  print(
+                      f"merge-gate: protected workflow accepted path={workflow_path} "
+                      f"blob={actual_blob}"
+                  )
+
               members = gate.get("members")
               if not isinstance(members, list) or not members:
                   raise GateError("trusted-base repository merge gate has no member inventory")
