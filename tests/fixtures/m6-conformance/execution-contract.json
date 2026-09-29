@@ -1,9 +1,9 @@
 {
-  "document": "How CI executes the M6 full component conformance campaign",
+  "document": "How CI executes and merges the sharded M6 full component conformance campaign",
   "workflow_path": ".github/workflows/m6-conformance.yml",
   "workflow_name": "M6 Full Component Conformance",
   "runner": "ubuntu-24.04",
-  "script": "./tests/fixtures/m6-conformance/run-ci-campaign.sh",
+  "script": "./tests/fixtures/m6-conformance/run-ci-campaign.sh \"$SHARD_INDEX\" 2",
   "script_path": "tests/fixtures/m6-conformance/run-ci-campaign.sh",
   "command": [
     "cargo",
@@ -29,9 +29,26 @@
     "15",
     "18"
   ],
-  "workflow_git_blob": "15e2b5c9e5b8a3baf9f30ecdd6eb3fcf106f6bd3",
+  "workflow_git_blob": "ba724dbedf759e189caeb3a3497d56c52f1b0d0d",
   "triggers": {
     "workflow_call": true,
     "workflow_dispatch": true
+  },
+  "merge_timeout_minutes": 15,
+  "sharding": {
+    "count": 2,
+    "shard_matrix": [
+      0,
+      1
+    ],
+    "shard_index_env": "OXIDEBATCH_M6_CONFORMANCE_SHARD_INDEX",
+    "shard_count_env": "OXIDEBATCH_M6_CONFORMANCE_SHARD_COUNT",
+    "merge_dir_env": "OXIDEBATCH_M6_CONFORMANCE_MERGE_DIR",
+    "partial_report_path": "target/m6-campaigns/m6-conformance-shard-${{ matrix.shard }}.json",
+    "partial_artifact_name": "m6-conformance-shard-postgres-${{ matrix.postgres }}-${{ matrix.shard }}",
+    "merge_script": "./tests/fixtures/m6-conformance/merge-ci-campaign.sh",
+    "merge_script_path": "tests/fixtures/m6-conformance/merge-ci-campaign.sh",
+    "merge_input_dir": "target/m6-conformance-shards",
+    "canonical_job_name": "postgres-${{ matrix.postgres }}-m6-conformance"
   }
 }
