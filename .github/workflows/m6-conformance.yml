@@ -12,16 +12,15 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  m6-conformance:
-    # Heavy final evidence: keep draft development on Fast branch CI only.
-    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-    name: postgres-${{ matrix.postgres }}-m6-conformance
+  m6-conformance-shard:
+    name: postgres-${{ matrix.postgres }}-m6-conformance-shard-${{ matrix.shard }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     strategy:
       fail-fast: false
       matrix:
         postgres: ["15", "18"]
+        shard: [0, 1]
     services:
       postgres:
         # matrix.postgres is a checked-in 15/18 allowlist. The matching official
@@ -54,10 +53,67 @@ jobs:
       - name: Fail closed if the execution contract drifts
         run: ./tests/fixtures/m6-conformance/verify-ci-contract.sh .github/workflows/m6-conformance.yml
 
-      - name: Run the M6 full component conformance campaign
-        run: ./tests/fixtures/m6-conformance/run-ci-campaign.sh
+      - name: Run the M6 conformance shard
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: ./tests/fixtures/m6-conformance/run-ci-campaign.sh "$SHARD_INDEX" 2
 
-      - name: Retain the campaign report
+      - name: Retain the M6 conformance shard report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: m6-conformance-shard-postgres-${{ matrix.postgres }}-${{ matrix.shard }}
+          path: target/m6-campaigns/m6-conformance-shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  m6-conformance:
+    name: postgres-${{ matrix.postgres }}-m6-conformance
+    needs: [m6-conformance-shard]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    env:
+      OXIDEBATCH_CAMPAIGN_DIR: target/m6-campaigns
+      OXIDEBATCH_CAMPAIGN_MATRIX: postgres-${{ matrix.postgres }}
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_m6_conformance
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_m6_conformance
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_m6_conformance
+    steps:
+      - name: Require all M6 conformance shards
+        env:
+          SHARD_RESULT: ${{ needs.m6-conformance-shard.result }}
+        run: |
+          set -euo pipefail
+          if [[ "$SHARD_RESULT" != "success" ]]; then
+            echo "M6 conformance shard family concluded: $SHARD_RESULT" >&2
+            exit 1
+          fi
+
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/m6-conformance/verify-ci-contract.sh .github/workflows/m6-conformance.yml
+
+      - name: Download M6 conformance shard evidence
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: m6-conformance-shard-postgres-${{ matrix.postgres }}-*
+          path: target/m6-conformance-shards
+          merge-multiple: true
+
+      - name: Merge the canonical M6 conformance report
+        run: ./tests/fixtures/m6-conformance/merge-ci-campaign.sh 2 target/m6-conformance-shards
+
+      - name: Retain the canonical M6 conformance report
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

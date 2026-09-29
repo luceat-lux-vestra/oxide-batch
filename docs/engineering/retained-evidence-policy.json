@@ -133,7 +133,8 @@
       "campaign": "M6 full component conformance, malformed/failure, lifecycle, and restart campaign",
       "storage": "github-actions",
       "classification": "informational",
-      "promotes_to": "m6"
+      "promotes_to": "m6",
+      "expected_upload_invocations": 2
     },
     {
       "workflow": ".github/workflows/m6-gate-b.yml",

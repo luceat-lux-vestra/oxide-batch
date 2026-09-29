@@ -38,11 +38,12 @@
       "pr_proof": "stale-only"
     },
     "campaign execution": {
-      "why": "The matrix workflow, its contract, script, and scope document are the exact execution envelope used to produce retained reports.",
+      "why": "The matrix workflow, shard runner, canonical merge, execution contract, and scope document are the exact execution envelope used to produce retained reports.",
       "paths": [
         "tests/fixtures/m6-conformance/campaign-semantics.json",
         "tests/fixtures/m6-conformance/execution-contract.json",
         "tests/fixtures/m6-conformance/run-ci-campaign.sh",
+        "tests/fixtures/m6-conformance/merge-ci-campaign.sh",
         "tests/fixtures/m6-conformance/verify-ci-contract.sh",
         ".github/workflows/m6-conformance.yml"
       ],
