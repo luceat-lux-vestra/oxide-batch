@@ -51,6 +51,11 @@
       "workflow": ".github/workflows/pr-ci.yml",
       "job": "pr-proof",
       "classification": "required"
+    },
+    {
+      "workflow": ".github/workflows/m5-conformance.yml",
+      "job": "conformance-campaign",
+      "classification": "required"
     }
   ],
   "managed_required_contexts": [],
