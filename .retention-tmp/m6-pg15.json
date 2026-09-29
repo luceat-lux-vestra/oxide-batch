@@ -311,4 +311,421 @@
         "stream_contract::open_applies_declared_codec_migration_before_user_stream_is_called": "ok",
         "stream_contract::open_applies_declared_schema_migration_before_user_stream_is_called": "ok",
         "stream_contract::open_rejects_newer_schema_before_user_stream_is_called": "ok",
-        "stream_contract::open_rejects_old
+        "stream_contract::open_rejects_older_external_codec_before_user_stream_is_called": "ok",
+        "stream_contract::open_rejects_older_external_schema_before_user_stream_is_called": "ok",
+        "stream_contract::open_rejects_unknown_codec_before_user_stream_is_called": "ok",
+        "stream_contract::open_rejects_unknown_schema_before_user_stream_is_called": "ok",
+        "stream_contract::restartable_stream_allows_restartable_plan": "ok",
+        "stream_contract::runtime_stream_missing_from_manifest_is_rejected": "ok",
+        "stream_contract::stateful_nonrestartable_stream_prevents_restartable_plan": "ok",
+        "terminal_known_rollback_commits_with_failed_step_lifecycle": "ok",
+        "unknown_chunk_commit_persists_unknown_lifecycle": "ok",
+        "unknown_commit_is_not_rolled_back_or_guessed": "ok",
+        "writer_failure_rolls_back_open_chunk": "ok"
+      },
+      "selector": [
+        "--test",
+        "chunk_runtime"
+      ],
+      "succeeded": true,
+      "target": "chunk_runtime",
+      "tests": 58
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "allow_start_if_complete_reruns_on_restart_path": "ok",
+        "committed_decider_is_not_reinvoked": "ok",
+        "committed_transition_survives_restart": "ok",
+        "completed_step_is_skipped_by_default": "ok",
+        "decider_input_change_records_new_path": "ok",
+        "decider_panic_is_redacted_failure": "ok",
+        "decider_result_and_target_commit_together": "ok",
+        "exit_status_selects_most_specific_transition": "ok",
+        "failed_start_consumes_limit": "ok",
+        "flow_event_sink_panic_is_non_authoritative": "ok",
+        "process_shutdown_stops_a_flow_without_selecting_another_target": "ok",
+        "start_limit_is_atomic_per_instance_and_logical_step": "ok",
+        "stop_fail_and_end_terminals_persist_lifecycle_status": "ok",
+        "unmapped_exit_fails_job": "ok"
+      },
+      "selector": [
+        "--test",
+        "flow"
+      ],
+      "succeeded": true,
+      "target": "flow",
+      "tests": 14
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "decorated_typed_path_allocation_count_does_not_scale_with_item_count": "ok"
+      },
+      "selector": [
+        "--test",
+        "item_components_allocation"
+      ],
+      "succeeded": true,
+      "target": "item_components_allocation",
+      "tests": 1
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "typed_and_erased_decorated_pipelines_agree_on_failure_classification": "ok",
+        "typed_and_erased_decorated_pipelines_agree_on_real_filtering": "ok",
+        "typed_and_erased_decorated_pipelines_agree_on_stop": "ok",
+        "typed_and_erased_decorated_pipelines_produce_identical_items_and_completion": "ok"
+      },
+      "selector": [
+        "--test",
+        "item_components_equivalence"
+      ],
+      "succeeded": true,
+      "target": "item_components_equivalence",
+      "tests": 4
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "flat_file_readers_do_not_retain_memory_proportional_to_file_size": "ok"
+      },
+      "selector": [
+        "--test",
+        "item_components_flat_file_allocation"
+      ],
+      "succeeded": true,
+      "target": "item_components_flat_file_allocation",
+      "tests": 1
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "json_readers_do_not_retain_memory_proportional_to_input_size": "ok"
+      },
+      "selector": [
+        "--test",
+        "item_components_json_allocation"
+      ],
+      "succeeded": true,
+      "target": "item_components_json_allocation",
+      "tests": 1
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "a_before_failure_prevents_its_component_call_and_unwinds_entered_listeners": "ok",
+        "a_panicking_listener_is_classified_exactly_like_an_error": "ok",
+        "an_after_failure_is_reported_for_an_uncommitted_chunk": "ok",
+        "default_listener_methods_observe_without_failing": "ok",
+        "every_entered_reverse_callback_runs_so_failures_aggregate": "ok",
+        "item_listeners_nest_and_reverse_after_order": "ok",
+        "listener_registration_is_bounded_per_family": "ok",
+        "retry_callbacks_run_forward_before_backoff_and_reverse_after_completion": "ok",
+        "skip_callbacks_run_in_registration_order_and_report_every_failure": "ok",
+        "stop_during_backoff_cancels_the_wait_without_wall_clock_time": "ok"
+      },
+      "selector": [
+        "--test",
+        "item_listeners"
+      ],
+      "succeeded": true,
+      "target": "item_listeners",
+      "tests": 10
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "close_failure_does_not_erase_committed_chunks": "ok",
+        "close_failure_does_not_erase_primary_failure": "ok",
+        "close_failure_does_not_skip_remaining_closes": "ok",
+        "item_stream_close_runs_after_runtime_completion": "ok",
+        "item_stream_opens_before_item_work": "ok",
+        "item_stream_update_prepares_state_before_accepting_commit": "ok",
+        "multiple_streams_close_in_reverse_successful_open_order": "ok",
+        "multiple_streams_open_in_registration_order": "ok",
+        "open_failure_cleanup_closes_all_previously_opened_streams": "ok",
+        "open_failure_closes_only_previously_opened_streams": "ok",
+        "open_failure_preserves_cleanup_close_failure": "ok",
+        "stream_update_namespace_mismatch_does_not_commit_checkpoint": "ok",
+        "stream_update_namespace_mismatch_does_not_replace_other_stream_state": "ok",
+        "stream_update_namespace_mismatch_is_rejected": "ok",
+        "validation_failure_preserves_cleanup_close_failure": "ok"
+      },
+      "selector": [
+        "--test",
+        "item_stream"
+      ],
+      "succeeded": true,
+      "target": "item_stream",
+      "tests": 15
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "checksum_is_verified_before_decode": "ok",
+        "content_identity_mismatch_is_rejected": "ok",
+        "corrupt_component_state_is_rejected_without_decode": "ok",
+        "corrupt_sensitive_state_never_reaches_diagnostics": "ok",
+        "equal_component_state_version_decodes_without_migration": "ok",
+        "external_state_reference_is_content_identified_and_bounded": "ok",
+        "missing_migration_path_is_rejected": "ok",
+        "newer_component_state_version_is_rejected": "ok",
+        "older_component_state_upgrades_through_one_directed_chain": "ok",
+        "older_external_versions_fail_closed_before_open": "ok",
+        "overdeep_component_state_is_rejected": "ok",
+        "oversized_component_state_is_rejected": "ok",
+        "oversized_state_is_not_silently_inlined": "ok",
+        "reconstructible_or_persisted_state_can_satisfy_restartability": "ok",
+        "sensitive_component_state_never_reaches_diagnostics": "ok",
+        "stateful_nonpersistent_component_cannot_claim_restartability": "ok",
+        "unknown_component_state_codec_is_rejected": "ok",
+        "unknown_component_state_schema_is_rejected": "ok"
+      },
+      "selector": [
+        "--test",
+        "item_stream_state"
+      ],
+      "succeeded": true,
+      "target": "item_stream_state",
+      "tests": 18
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "rollback_leaves_the_committed_adaptive_target_authoritative_and_restart_restores_it": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_completion_policy_restart"
+      ],
+      "succeeded": true,
+      "target": "postgres_completion_policy_restart",
+      "tests": 1
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "crash_before_reservation_replays_initial_call": "ok",
+        "crash_during_skip_callback_replays_before_atomic_skip_commit": "ok",
+        "fault_crash_worker_process": "ok",
+        "retry_reservation_survives_process_restart": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_fault_crash_recovery"
+      ],
+      "succeeded": true,
+      "target": "postgres_fault_crash_recovery",
+      "tests": 4
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "decisions_and_completed_step_reuse_survive_postgres_restart": "ok",
+        "postgres_failed_start_consumes_limit": "ok",
+        "postgres_flow_persists_custom_exit_mapping": "ok",
+        "postgres_flow_persists_stop_terminal": "ok",
+        "postgres_start_controls_survive_restart": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_flow"
+      ],
+      "succeeded": true,
+      "target": "postgres_flow",
+      "tests": 5
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "crash_after_decision_commit_reuses_durable_decision": "ok",
+        "crash_after_step_result_before_decision_reuses_durable_step": "ok",
+        "flow_crash_worker_process": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_flow_crash_recovery"
+      ],
+      "succeeded": true,
+      "target": "postgres_flow_crash_recovery",
+      "tests": 3
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "commit_ambiguity_after_writer_statements_already_executed_is_never_guessed": "ok",
+        "constraint_violation_rolls_back_the_whole_chunk_with_no_partial_write": "ok",
+        "disconnect_before_commit_leaves_writer_statements_uncommitted": "ok",
+        "empty_batch_and_stop_are_handled_without_touching_the_transaction": "ok",
+        "multi_row_values_writes_every_item_across_chunk_boundaries": "ok",
+        "non_enlisted_write_context_is_rejected_without_a_second_connection": "ok",
+        "per_row_statements_write_every_item": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_item_components_batch_writer"
+      ],
+      "succeeded": true,
+      "target": "postgres_item_components_batch_writer",
+      "tests": 7
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "crash_worker_process": "ok",
+        "cursor_reader_survives_a_real_process_kill_mid_chunk": "ok",
+        "paging_reader_survives_a_real_process_kill_mid_chunk": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_item_components_crash_recovery"
+      ],
+      "succeeded": true,
+      "target": "postgres_item_components_crash_recovery",
+      "tests": 3
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "close_rolls_back_and_leaves_no_idle_in_transaction_backend": "ok",
+        "empty_key_columns_are_rejected_at_construction": "ok",
+        "empty_result_reports_end_of_input_immediately": "ok",
+        "insert_after_declare_is_invisible_to_this_attempt_until_restart": "ok",
+        "malformed_row_fails_closed_without_advancing_the_checkpoint": "ok",
+        "restart_resumes_from_the_last_committed_key_without_gap_or_duplicate": "ok",
+        "statement_timeout_is_enforced_on_the_cursor_business_connection": "ok",
+        "streams_bounded_batches_without_materializing_the_full_result_set": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_item_components_cursor"
+      ],
+      "succeeded": true,
+      "target": "postgres_item_components_cursor",
+      "tests": 8
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "fetch_level_transient_failure_recovers_without_skip_or_duplicate_through_fault_runtime": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_item_components_cursor_fault"
+      ],
+      "succeeded": true,
+      "target": "postgres_item_components_cursor_fault",
+      "tests": 1
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "duplicate_primary_sort_key_is_resolved_by_the_unique_tiebreaker": "ok",
+        "empty_result_reports_end_of_input_immediately": "ok",
+        "insert_between_pages_is_visible_to_a_later_page_in_the_same_attempt": "ok",
+        "keyset_i64_column_kind_decodes_from_a_real_int4_column": "ok",
+        "no_server_side_resource_is_held_between_pages": "ok",
+        "page_boundaries_deliver_every_row_exactly_once": "ok",
+        "restart_resumes_from_the_last_committed_key_without_skip_or_duplicate": "ok",
+        "statement_timeout_is_enforced_on_the_paging_business_connection": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_item_components_paging"
+      ],
+      "succeeded": true,
+      "target": "postgres_item_components_paging",
+      "tests": 8
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "postgres_preserves_non_canonical_json_bytes_exactly": "ok",
+        "process_kill_after_commit_restores_new_stream_state": "ok",
+        "process_kill_before_commit_restores_previous_stream_state": "ok",
+        "restart_with_new_step_execution_id_inherits_committed_stream_state": "ok",
+        "stream_crash_worker": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_item_stream_crash_recovery"
+      ],
+      "succeeded": true,
+      "target": "postgres_item_stream_crash_recovery",
+      "tests": 5
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "restart_after_many_chunks_matches_an_uninterrupted_run": "ok",
+        "restart_after_many_chunks_worker_process": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_restart_after_many_chunks"
+      ],
+      "succeeded": true,
+      "target": "postgres_restart_after_many_chunks",
+      "tests": 2
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch",
+      "results": {
+        "purge_deletes_component_state_before_the_step_execution_it_references": "ok"
+      },
+      "selector": [
+        "--test",
+        "postgres_retention_component_state"
+      ],
+      "succeeded": true,
+      "target": "postgres_retention_component_state",
+      "tests": 1
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch-test",
+      "results": {
+        "failure_panic_and_stop_injection_are_available_to_application_tests": "ok",
+        "full_job_harness_launches_with_deterministic_clock_and_id": "ok",
+        "single_step_and_scoped_component_harness_construct_fixture_context": "ok"
+      },
+      "selector": [
+        "--test",
+        "gate_g_scenarios"
+      ],
+      "succeeded": true,
+      "target": "gate_g_scenarios",
+      "tests": 3
+    },
+    {
+      "ignored": 0,
+      "package": "oxide-batch-test",
+      "results": {
+        "filter_processor_uses_filtered_outcome_not_error_or_sentinel": "ok",
+        "identity_processor_observes_stop": "ok",
+        "identity_processor_passes_items_through_unchanged": "ok",
+        "iter_reader_yields_items_then_end_of_input": "ok",
+        "noop_writer_accepts_and_discards": "ok",
+        "noop_writer_never_touches_an_enlis
