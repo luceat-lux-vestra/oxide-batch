@@ -288,7 +288,7 @@ def check_issue_labeler_contract(root: Path) -> list[str]:
 
 def _job_block(text: str, job_id: str) -> str | None:
     match = re.search(
-        rf"(?ms)^  {re.escape(job_id)}:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\\Z)",
+        rf"(?ms)^  {re.escape(job_id)}:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
         text,
     )
     return match.group(0) if match else None
