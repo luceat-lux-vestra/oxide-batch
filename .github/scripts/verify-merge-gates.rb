@@ -307,6 +307,8 @@ module MergeGateVerifier
   M5_CONFORMANCE_DEEP_JOBS = {'15' => 'conformance-deep-15', '18' => 'conformance-deep-18'}.freeze
   M5_CONFORMANCE_CONTEXT_JOB = 'conformance-campaign'
   QUALITY_WORKFLOW = '.github/workflows/ci.yml'
+  FAST_WORKFLOW = '.github/workflows/fast-branch.yml'
+  FAST_JOB = 'fast'
   QUALITY_AGGREGATE_JOB = 'quality'
   QUALITY_INTEGRATION_SHARD_SCRIPT = '.github/scripts/run-integration-shard.py'
   QUALITY_INTEGRATION_JOBS = %w[quality-integration-0 quality-integration-1 quality-integration-2 quality-integration-3].freeze
@@ -329,6 +331,132 @@ module MergeGateVerifier
 
   def normalized_shell(command)
     command.to_s.split.join(' ')
+  end
+
+  def fast_branch_docs_contract(producer_summary:)
+    violations = []
+    doc = producer_summary.fetch('workflow_docs')[FAST_WORKFLOW]
+    unless doc.is_a?(Hash)
+      return ["#{FAST_WORKFLOW} is missing"]
+    end
+
+    unless workflow_event?(doc, 'push') && !push_targets_branch?(doc, 'main')
+      violations << "#{FAST_WORKFLOW} must run on non-main branch pushes and must not target main"
+    end
+    unless doc['permissions'] == {'contents' => 'read'}
+      violations << "#{FAST_WORKFLOW} must keep contents: read as its only workflow permission"
+    end
+
+    jobs = doc['jobs']
+    job = jobs.is_a?(Hash) ? jobs[FAST_JOB] : nil
+    unless job.is_a?(Hash)
+      return violations + ["#{FAST_WORKFLOW} must declare canonical #{FAST_JOB} job"]
+    end
+    violations << "#{FAST_WORKFLOW}##{FAST_JOB} must emit context fast" unless job['name'] == 'fast'
+    violations << "#{FAST_WORKFLOW}##{FAST_JOB} must run on ubuntu-latest" unless job['runs-on'] == 'ubuntu-latest'
+    violations << "#{FAST_WORKFLOW}##{FAST_JOB} timeout must remain 15 minutes" unless job['timeout-minutes'] == 15
+
+    steps = job['steps']
+    unless steps.is_a?(Array)
+      return violations + ["#{FAST_WORKFLOW}##{FAST_JOB} must declare steps"]
+    end
+    by_name = steps.select { |step| step.is_a?(Hash) && step['name'].is_a?(String) }
+                   .group_by { |step| step['name'] }
+    required_names = [
+      'Check out repository',
+      'Check commit hygiene',
+      'Resolve exact protected trusted base',
+      'Check out exact trusted base for docs-only classification',
+      'Classify documentation-only scope from trusted base',
+      'Documentation-only fast path',
+      'Show toolchain',
+      'Check formatting',
+      'Run Clippy',
+      'Run workspace unit tests'
+    ]
+    required_names.each do |name|
+      count = Array(by_name[name]).length
+      violations << "#{FAST_WORKFLOW}##{FAST_JOB} must contain exactly one #{name.inspect} step" unless count == 1
+    end
+    return violations unless required_names.all? { |name| Array(by_name[name]).length == 1 }
+
+    resolve = by_name['Resolve exact protected trusted base'].first
+    unless resolve['id'] == 'resolve-trusted-base' && resolve['continue-on-error'] == true
+      violations << "#{FAST_WORKFLOW} trusted-base resolver must be continue-on-error id resolve-trusted-base"
+    end
+    resolve_tokens = [
+      "echo 'base_sha=' >> \"$GITHUB_OUTPUT\"",
+      'set -euo pipefail',
+      'repos/${GITHUB_REPOSITORY}',
+      '.full_name == $repo and .default_branch == $branch',
+      'repos/${GITHUB_REPOSITORY}/branches/${DEFAULT_BRANCH}',
+      '[[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]',
+      '[[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]',
+      'base_sha=$base_sha'
+    ]
+    missing = resolve_tokens.reject { |token| resolve['run'].to_s.include?(token) }
+    violations << "#{FAST_WORKFLOW} trusted-base resolver is missing fail-closed tokens: #{missing.join(', ')}" unless missing.empty?
+
+    trusted = by_name['Check out exact trusted base for docs-only classification'].first
+    unless trusted['id'] == 'fast-trusted-base' &&
+           trusted['continue-on-error'] == true &&
+           normalized_shell(trusted['if']) == normalized_shell("${{ steps.resolve-trusted-base.outcome == 'success' }}")
+      violations << "#{FAST_WORKFLOW} trusted-base checkout must be conditional fail-closed id fast-trusted-base"
+    end
+    unless trusted['uses'].to_s.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/)
+      violations << "#{FAST_WORKFLOW} trusted-base checkout must use SHA-pinned actions/checkout"
+    end
+    expected_trusted_with = {
+      'ref' => '${{ steps.resolve-trusted-base.outputs.base_sha }}',
+      'path' => '.fast-trusted-base',
+      'fetch-depth' => 1,
+      'persist-credentials' => false
+    }
+    violations << "#{FAST_WORKFLOW} trusted-base checkout must target only the resolved exact base SHA" unless trusted['with'] == expected_trusted_with
+
+    classify = by_name['Classify documentation-only scope from trusted base'].first
+    expected_classify_if = "${{ steps.resolve-trusted-base.outcome == 'success' && steps.fast-trusted-base.outcome == 'success' }}"
+    unless classify['id'] == 'docs-only-scope' &&
+           classify['continue-on-error'] == true &&
+           normalized_shell(classify['if']) == normalized_shell(expected_classify_if)
+      violations << "#{FAST_WORKFLOW} docs-only classifier must be fail-closed id docs-only-scope"
+    end
+    classify_tokens = [
+      "echo 'docs_only=false' >> \"$GITHUB_OUTPUT\"",
+      'test "$TRUSTED_CHECKOUT" = "success"',
+      'compare/${BASE_SHA}...${HEAD_SHA}',
+      '.head_commit.sha == $head',
+      '(.files | length) > 0',
+      '(.files | length) < 300',
+      '@tsv',
+      '.fast-trusted-base/.github/scripts/pr-scope.py',
+      '--repo-root .fast-trusted-base',
+      '--policy .github/merge-gate-policy.json',
+      '--expected-count "$expected_count"',
+      '--trusted-base-sha "$BASE_SHA"',
+      '.classification_valid == true',
+      '(.docs_only | type) == "boolean"',
+      'docs_only=$docs_only'
+    ]
+    missing = classify_tokens.reject { |token| classify['run'].to_s.include?(token) }
+    violations << "#{FAST_WORKFLOW} docs-only classifier is missing trusted/fail-closed tokens: #{missing.join(', ')}" unless missing.empty?
+
+    docs_if = "${{ steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}"
+    unless normalized_shell(by_name['Documentation-only fast path'].first['if']) == normalized_shell(docs_if)
+      violations << "#{FAST_WORKFLOW} documentation-only fast path must require successful true trusted classification"
+    end
+
+    full_if = "${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}"
+    ['Show toolchain', 'Check formatting', 'Run Clippy', 'Run workspace unit tests'].each do |name|
+      unless normalized_shell(by_name[name].first['if']) == normalized_shell(full_if)
+        violations << "#{FAST_WORKFLOW} #{name.inspect} must run on every non-docs or uncertain classification"
+      end
+    end
+    violations << "#{FAST_WORKFLOW} must retain cargo fmt full-path proof" unless by_name['Check formatting'].first['run'].to_s.include?('cargo fmt --all -- --check')
+    violations << "#{FAST_WORKFLOW} must retain workspace Clippy full-path proof" unless by_name['Run Clippy'].first['run'].to_s.include?('cargo clippy --workspace --all-targets --all-features --')
+    violations << "#{FAST_WORKFLOW} must retain workspace lib-test full-path proof" unless by_name['Run workspace unit tests'].first['run'].to_s.include?('cargo test --workspace --all-features --lib')
+
+    violations
   end
 
   def pr_scope_contract(root:, policy:, producer_summary:)
@@ -775,6 +903,9 @@ module MergeGateVerifier
           'git diff --check',
           'cargo fmt --all -- --check',
           'cargo clippy --workspace --all-targets --all-features --',
+          'cargo test --workspace --all-features --lib',
+          'mode=full',
+          'mode=docs-only',
           'cargo clippy -p oxide-batch-xtask --all-targets --all-features --message-format=json --'
         ]
       },
@@ -828,6 +959,33 @@ module MergeGateVerifier
       missing = spec['tokens'].reject { |token| body.include?(token) }
       unless missing.empty?
         violations << "#{QUALITY_WORKFLOW}##{job_id} is missing quality obligations: #{missing.join(', ')}"
+      end
+    end
+
+    fast_job = jobs['quality-fast']
+    fast_steps = Array(fast_job['steps']).select { |step| step.is_a?(Hash) }
+    fast_resolver = fast_steps.find { |step| step['id'] == 'fast-evidence' }
+    unless fast_resolver.is_a?(Hash)
+      violations << "#{QUALITY_WORKFLOW}#quality-fast must keep id fast-evidence resolver"
+    else
+      resolver_tokens = [
+        'echo "mode=none" >> "$GITHUB_OUTPUT"',
+        'mode=full',
+        'mode=docs-only',
+        "step_conclusion 'Documentation-only fast path'",
+        "step_conclusion 'Check formatting'",
+        "step_conclusion 'Run Clippy'",
+        "step_conclusion 'Run workspace unit tests'"
+      ]
+      missing = resolver_tokens.reject { |token| fast_resolver['run'].to_s.include?(token) }
+      violations << "#{QUALITY_WORKFLOW}#quality-fast Fast evidence resolver is missing mode-integrity tokens: #{missing.join(', ')}" unless missing.empty?
+    end
+
+    fallback_if = "${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}"
+    ['Check formatting', 'Run Clippy', 'Run workspace unit tests'].each do |name|
+      step = fast_steps.find { |candidate| candidate['name'] == name }
+      unless step.is_a?(Hash) && normalized_shell(step['if']) == normalized_shell(fallback_if)
+        violations << "#{QUALITY_WORKFLOW}#quality-fast #{name.inspect} must locally fall back unless full Fast evidence or trusted PR docs-only proof applies"
       end
     end
 
@@ -1326,6 +1484,7 @@ module MergeGateVerifier
     violations.concat(aggregate_violations)
 
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
+    violations.concat(fast_branch_docs_contract(producer_summary: producer_summary))
     violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(m5_conformance_routing_contract(policy: policy, producer_summary: producer_summary))
     violations.concat(quality_parallel_contract(root: root, policy: policy, producer_summary: producer_summary))

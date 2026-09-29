@@ -504,6 +504,27 @@ def self_test(
         in result["stale_only_campaign_workflows"]
     )
 
+    manifest = [Change("modified", "Cargo.toml")]
+    result = classify(manifest, 1, policy, campaigns)
+    assert result is not None and result["docs_only"] is False
+
+    workflow_change = [
+        Change("modified", ".github/workflows/fast-branch.yml")
+    ]
+    result = classify(workflow_change, 1, policy, campaigns)
+    assert result is not None and result["docs_only"] is False
+
+    mixed = [
+        Change("modified", "README.md"),
+        Change("modified", "crates/oxide-batch/src/lib.rs"),
+    ]
+    result = classify(mixed, 2, policy, campaigns)
+    assert result is not None and result["docs_only"] is False
+
+    unknown = [Change("modified", "assets/logo.png")]
+    result = classify(unknown, 1, policy, campaigns)
+    assert result is not None and result["docs_only"] is False
+
     lock = [Change("modified", "Cargo.lock")]
     result = classify(lock, 1, policy, campaigns)
     assert result is not None
@@ -571,6 +592,16 @@ def self_test(
         ".github/workflows/m5-conformance.yml"
         in result["stale_only_campaign_workflows"]
     )
+
+    reverse_boundary_move = [
+        Change(
+            "renamed",
+            "crates/oxide-batch/src/moved.rs",
+            "docs/moved.md",
+        )
+    ]
+    result = classify(reverse_boundary_move, 1, policy, campaigns)
+    assert result is not None and result["docs_only"] is False
 
     assert parse_record("changed\tREADME.md\t\n") is None
     assert parse_record("renamed\tdocs/new.md\t\n") is None

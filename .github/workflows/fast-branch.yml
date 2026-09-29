@@ -26,13 +26,88 @@ jobs:
       - name: Check commit hygiene
         run: git log -1 --check
 
+      - name: Resolve exact protected trusted base
+        id: resolve-trusted-base
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_SHA: ${{ github.sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          echo 'base_sha=' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          repo_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}")"
+          jq -e             --arg repo "$GITHUB_REPOSITORY"             --arg branch "$DEFAULT_BRANCH"             '.full_name == $repo and .default_branch == $branch'             <<<"$repo_json" >/dev/null
+
+          base_sha="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/branches/${DEFAULT_BRANCH}" --jq '.commit.sha')"
+          [[ "$base_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          echo "base_sha=$base_sha" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact trusted base for docs-only classification
+        id: fast-trusted-base
+        if: ${{ steps.resolve-trusted-base.outcome == 'success' }}
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.resolve-trusted-base.outputs.base_sha }}
+          path: .fast-trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Classify documentation-only scope from trusted base
+        id: docs-only-scope
+        if: ${{ steps.resolve-trusted-base.outcome == 'success' && steps.fast-trusted-base.outcome == 'success' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ steps.resolve-trusted-base.outputs.base_sha }}
+          HEAD_SHA: ${{ github.sha }}
+          TRUSTED_CHECKOUT: ${{ steps.fast-trusted-base.outcome }}
+        shell: bash
+        run: |
+          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          test "$TRUSTED_CHECKOUT" = "success"
+
+          compare="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}")"
+          jq -e             --arg head "$HEAD_SHA"             '.head_commit.sha == $head and (.files | type) == "array" and (.files | length) > 0 and (.files | length) < 300'             <<<"$compare" >/dev/null
+          expected_count="$(jq -er '.files | length' <<<"$compare")"
+
+          changed_file_records="$(mktemp)"
+          trap 'rm -f "$changed_file_records"' EXIT
+          jq -r '.files[] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$compare" >"$changed_file_records"
+
+          classification="$(
+            python3 .fast-trusted-base/.github/scripts/pr-scope.py               --repo-root .fast-trusted-base               --policy .github/merge-gate-policy.json               --expected-count "$expected_count"               --trusted-base-sha "$BASE_SHA"               <"$changed_file_records"
+          )"
+          docs_only="$(
+            jq -er '
+              if .classification_valid == true and
+                 (.docs_only | type) == "boolean"
+              then .docs_only
+              else error("invalid docs-only classification output")
+              end
+            ' <<<"$classification"
+          )"
+          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "docs-only Fast path: $docs_only"
+
+      - name: Documentation-only fast path
+        if: ${{ steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
+        run: echo "Trusted protected-base classification proved documentation-only scope; Rust product validation is not applicable."
+
       - name: Show toolchain
+        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
         run: rustup show
 
       - name: Check formatting
+        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
+        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
         run: >-
           cargo clippy --workspace --all-targets --all-features --
           -D warnings
@@ -40,4 +115,5 @@ jobs:
           -A clippy::too_many_lines
 
       - name: Run workspace unit tests
+        if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
         run: cargo test --workspace --all-features --lib
