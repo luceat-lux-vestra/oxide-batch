@@ -327,13 +327,13 @@ module MergeGateVerifier
   PR_CI_PROOF_JOB = 'pr-proof'
   PR_TOPOLOGY_SCHEMA = 'single-pr-entrypoint-v1'
   PR_TOPOLOGY_MIGRATION_MARKER = '.github/ci-topology-v7-migration'
+  PR_TOPOLOGY_INDEPENDENT_M5 = '.github/workflows/m5-conformance.yml'
   PR_TOPOLOGY_REUSABLE_AUTHORITIES = [
     '.github/workflows/ci.yml',
     '.github/workflows/dependency-review.yml',
     '.github/workflows/codeql.yml',
     '.github/workflows/evidence.yml',
     '.github/workflows/supply-chain.yml',
-    '.github/workflows/m5-conformance.yml',
     '.github/workflows/campaign-orchestrator.yml'
   ].freeze
   REPOSITORY_MERGE_GATE_PERMISSIONS = {
@@ -685,7 +685,17 @@ module MergeGateVerifier
       'schema' => PR_TOPOLOGY_SCHEMA,
       'entrypoint' => PR_CI_WORKFLOW,
       'migration_marker' => PR_TOPOLOGY_MIGRATION_MARKER,
-      'reusable_authorities' => PR_TOPOLOGY_REUSABLE_AUTHORITIES
+      'reusable_authorities' => PR_TOPOLOGY_REUSABLE_AUTHORITIES,
+      'independent_pr_authorities' => [
+        {
+          'workflow' => PR_TOPOLOGY_INDEPENDENT_M5,
+          'reason' => 'retained-evidence-provenance',
+          'contexts' => [
+            'postgres-15-conformance-campaign',
+            'postgres-18-conformance-campaign'
+          ]
+        }
+      ]
     }
     unless topology == expected_topology
       violations << 'schema v7 pr_topology must exactly match the canonical single-entrypoint contract'
@@ -713,7 +723,7 @@ module MergeGateVerifier
     unless jobs.is_a?(Hash)
       return violations + ["#{PR_CI_WORKFLOW} must declare jobs"]
     end
-    expected_jobs = %w[scope rust dependency codeql evidence supply conformance campaigns pr-proof]
+    expected_jobs = %w[scope rust dependency codeql evidence supply campaigns pr-proof]
     missing_jobs = expected_jobs - jobs.keys.map(&:to_s)
     violations << "#{PR_CI_WORKFLOW} is missing canonical jobs: #{missing_jobs.join(', ')}" unless missing_jobs.empty?
 
@@ -723,7 +733,6 @@ module MergeGateVerifier
       'codeql' => '.github/workflows/codeql.yml',
       'evidence' => '.github/workflows/evidence.yml',
       'supply' => '.github/workflows/supply-chain.yml',
-      'conformance' => '.github/workflows/m5-conformance.yml',
       'campaigns' => '.github/workflows/campaign-orchestrator.yml'
     }
     call_contracts.each do |job_id, workflow|
@@ -742,7 +751,7 @@ module MergeGateVerifier
       end
     end
 
-    %w[rust dependency codeql conformance campaigns].each do |job_id|
+    %w[rust dependency codeql campaigns].each do |job_id|
       condition = normalized_shell(jobs.dig(job_id, 'if'))
       unless condition.include?("needs.scope.outputs.docs_only != 'true'")
         violations << "#{PR_CI_WORKFLOW}##{job_id} must suppress only proven docs-only scope"
@@ -807,14 +816,14 @@ module MergeGateVerifier
       violations << "#{PR_CI_WORKFLOW} must declare #{PR_CI_PROOF_JOB}"
     else
       violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must emit context pr-proof" unless proof['name'] == 'pr-proof'
-      expected_needs = %w[scope rust dependency codeql evidence supply conformance].sort
+      expected_needs = %w[scope rust dependency codeql evidence supply].sort
       actual_needs = normalize_needs(proof).sort
       unless actual_needs == expected_needs
         violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
       end
       violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must use always()" unless always_condition?(proof['if'])
       proof_command = Array(proof['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
-      %w[RUST_RESULT DEPENDENCY_RESULT CODEQL_RESULT EVIDENCE_RESULT SUPPLY_RESULT CONFORMANCE_RESULT].each do |token|
+      %w[RUST_RESULT DEPENDENCY_RESULT CODEQL_RESULT EVIDENCE_RESULT SUPPLY_RESULT].each do |token|
         violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} is missing #{token} authority check" unless proof_command.include?(token)
       end
       unless proof_command.include?('CLASSIFICATION_OUTCOME') &&
@@ -836,6 +845,18 @@ module MergeGateVerifier
              pr_config['paths'] == [PR_TOPOLOGY_MIGRATION_MARKER] &&
              !pr_config.key?('paths-ignore')
         violations << "#{workflow} direct pull_request trigger must be marker-only during v7 migration"
+      end
+    end
+
+    independent = docs[PR_TOPOLOGY_INDEPENDENT_M5]
+    unless independent.is_a?(Hash)
+      violations << "independent provenance authority #{PR_TOPOLOGY_INDEPENDENT_M5} is missing"
+    else
+      violations << "#{PR_TOPOLOGY_INDEPENDENT_M5} must remain directly pull_request-triggered" unless workflow_event?(independent, 'pull_request')
+      violations << "#{PR_TOPOLOGY_INDEPENDENT_M5} must not become a reusable workflow in schema v7" if workflow_event?(independent, 'workflow_call')
+      pr_present, pr_config = event_config(independent, 'pull_request')
+      if pr_present && pr_config.is_a?(Hash) && (pr_config.key?('paths') || pr_config.key?('paths-ignore'))
+        violations << "#{PR_TOPOLOGY_INDEPENDENT_M5} provenance authority must not be path-suppressed"
       end
     end
 
