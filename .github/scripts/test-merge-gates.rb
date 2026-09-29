@@ -1777,8 +1777,8 @@ class MergeGateVerifierTest < Minitest::Test
       path = File.join(root, '.github/workflows/pr-ci.yml')
       original = File.read(path)
       body = original.sub(
-        "needs.scope.outputs.classification_outcome != 'success' ||\n           needs.scope.outputs.docs_only != 'true'",
-        "needs.scope.outputs.docs_only != 'true'"
+        "if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}",
+        "if: ${{ needs.scope.outputs.legacy_base != 'true' && needs.scope.outputs.docs_only != 'true' }}"
       )
       refute_equal original, body
       write(root, '.github/workflows/pr-ci.yml', body)
