@@ -343,7 +343,8 @@ module MergeGateVerifier
     '.github/workflows/codeql.yml',
     '.github/workflows/evidence.yml',
     '.github/workflows/supply-chain.yml',
-    PR_TOPOLOGY_INDEPENDENT_M5
+    PR_TOPOLOGY_INDEPENDENT_M5,
+    REPOSITORY_MERGE_GATE_WORKFLOW
   ].freeze
   REPOSITORY_MERGE_GATE_PERMISSIONS = {
     'actions' => 'read',
