@@ -1,21 +1,25 @@
 {
-  "schema_version": 6,
+  "schema_version": 7,
   "ruleset": {
     "id": 19905142,
     "name": "Protect main"
   },
   "workflow_defaults": [
     {
+      "pattern": ".github/workflows/pr-ci.yml",
+      "classification": "advisory"
+    },
+    {
       "pattern": ".github/workflows/ci.yml",
-      "classification": "required"
+      "classification": "advisory"
     },
     {
       "pattern": ".github/workflows/evidence.yml",
-      "classification": "required"
+      "classification": "advisory"
     },
     {
       "pattern": ".github/workflows/dependency-review.yml",
-      "classification": "required"
+      "classification": "advisory"
     },
     {
       "pattern": ".github/workflows/codeql.yml",
@@ -44,83 +48,13 @@
   ],
   "job_overrides": [
     {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "postgresql-merge-gate",
-      "classification": "advisory"
-    },
-    {
-      "workflow": ".github/workflows/m5-conformance.yml",
-      "job": "conformance-campaign",
+      "workflow": ".github/workflows/pr-ci.yml",
+      "job": "pr-proof",
       "classification": "required"
-    },
-    {
-      "workflow": ".github/workflows/supply-chain.yml",
-      "job": "supply-chain",
-      "classification": "required"
-    },
-    {
-      "workflow": ".github/workflows/codeql.yml",
-      "job": "analyze-actions",
-      "classification": "required"
-    },
-    {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "quality-fast",
-      "classification": "advisory"
-    },
-    {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "quality-bin-doc",
-      "classification": "advisory"
-    },
-    {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "quality-contracts",
-      "classification": "advisory"
-    },
-    {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "quality-integration-0",
-      "classification": "advisory"
-    },
-    {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "quality-integration-1",
-      "classification": "advisory"
-    },
-    {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "quality-integration-2",
-      "classification": "advisory"
-    },
-    {
-      "workflow": ".github/workflows/ci.yml",
-      "job": "quality-integration-3",
-      "classification": "advisory"
     }
   ],
   "managed_required_contexts": [],
-  "aggregate_gates": [
-    {
-      "context": "postgresql",
-      "state": "active",
-      "migration_group": "postgresql",
-      "producer": {
-        "workflow": ".github/workflows/ci.yml",
-        "job": "postgresql-merge-gate"
-      },
-      "members": [
-        "postgres-15-design-gate",
-        "postgres-15-item-components",
-        "postgres-15-repository",
-        "postgres-16-design-gate",
-        "postgres-17-design-gate",
-        "postgres-18-design-gate",
-        "postgres-18-item-components",
-        "postgres-18-repository"
-      ]
-    }
-  ],
+  "aggregate_gates": [],
   "pending_ruleset_contexts": [],
   "pr_scope": {
     "docs_only": {
@@ -177,49 +111,31 @@
     },
     "members": [
       {
-        "context": "Analyze (actions)",
-        "workflow": ".github/workflows/codeql.yml"
-      },
-      {
-        "context": "actions-security",
-        "workflow": ".github/workflows/dependency-review.yml"
-      },
-      {
-        "context": "dependency-review",
-        "workflow": ".github/workflows/dependency-review.yml"
-      },
-      {
-        "context": "evidence-provenance",
-        "workflow": ".github/workflows/evidence.yml"
-      },
-      {
-        "context": "msrv",
-        "workflow": ".github/workflows/ci.yml"
-      },
-      {
-        "context": "packaging",
-        "workflow": ".github/workflows/ci.yml"
-      },
-      {
-        "context": "postgres-15-conformance-campaign",
-        "workflow": ".github/workflows/m5-conformance.yml"
-      },
-      {
-        "context": "postgres-18-conformance-campaign",
-        "workflow": ".github/workflows/m5-conformance.yml"
-      },
-      {
-        "context": "postgresql",
-        "workflow": ".github/workflows/ci.yml"
-      },
-      {
-        "context": "quality",
-        "workflow": ".github/workflows/ci.yml"
-      },
-      {
-        "context": "supply-chain",
-        "workflow": ".github/workflows/supply-chain.yml"
+        "context": "pr-proof",
+        "workflow": ".github/workflows/pr-ci.yml"
       }
+    ],
+    "protected_workflows": [
+      {
+        "workflow": ".github/workflows/pr-ci.yml",
+        "accepted_blobs": [
+          "a78acad310c18991af0ded05ed29863dbae5c81d"
+        ]
+      }
+    ]
+  },
+  "pr_topology": {
+    "schema": "single-pr-entrypoint-v1",
+    "entrypoint": ".github/workflows/pr-ci.yml",
+    "migration_marker": ".github/ci-topology-v7-migration",
+    "reusable_authorities": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/dependency-review.yml",
+      ".github/workflows/codeql.yml",
+      ".github/workflows/evidence.yml",
+      ".github/workflows/supply-chain.yml",
+      ".github/workflows/m5-conformance.yml",
+      ".github/workflows/campaign-orchestrator.yml"
     ]
   }
 }
