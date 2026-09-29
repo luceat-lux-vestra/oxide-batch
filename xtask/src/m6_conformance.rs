@@ -115,13 +115,7 @@ fn run_full() -> Result<Campaign, String> {
 
     let (manifest, manifest_violations) = execution_manifest(&root);
     violations.extend(manifest_violations);
-    let report = write_report(
-        &root,
-        &target_reports,
-        &violations,
-        &manifest,
-        &environment,
-    )?;
+    let report = write_report(&root, &target_reports, &violations, &manifest, &environment)?;
     Ok(Campaign { violations, report })
 }
 
@@ -245,13 +239,7 @@ fn merge_shards(count: &str, directory: &Path) -> Result<Campaign, String> {
         })
         .collect::<Result<Vec<_>, String>>()?;
 
-    let report = write_report(
-        &root,
-        &target_reports,
-        &[],
-        &manifest,
-        &environment,
-    )?;
+    let report = write_report(&root, &target_reports, &[], &manifest, &environment)?;
     Ok(Campaign {
         violations: Vec::new(),
         report,
@@ -361,9 +349,7 @@ fn partition_targets<'a>(
     let flattened = shards.iter().flatten().copied().collect::<Vec<_>>();
     let expected = targets.iter().copied().collect::<BTreeSet<_>>();
     let observed = flattened.iter().copied().collect::<BTreeSet<_>>();
-    if flattened.len() != targets.len()
-        || observed.len() != flattened.len()
-        || observed != expected
+    if flattened.len() != targets.len() || observed.len() != flattened.len() || observed != expected
     {
         return Err("M6 conformance shard partition is not an exact one-to-one cover".to_owned());
     }
@@ -470,9 +456,16 @@ fn read_validated_shard(
     if document.get("report").and_then(Value::as_str) != Some("m6-conformance-shard")
         || document.get("schema_version").and_then(Value::as_u64) != Some(1)
     {
-        return Err(format!("{} is not an M6 conformance shard v1 report", path.display()));
+        return Err(format!(
+            "{} is not an M6 conformance shard v1 report",
+            path.display()
+        ));
     }
-    if document.get("postgresql_major_version").and_then(Value::as_str) != Some(expected_major) {
+    if document
+        .get("postgresql_major_version")
+        .and_then(Value::as_str)
+        != Some(expected_major)
+    {
         return Err(format!(
             "{} was produced for another PostgreSQL major",
             path.display()
@@ -583,10 +576,12 @@ fn validate_target_report(
         .ok_or_else(|| format!("{} {package}/{target} has no selector", path.display()))?
         .iter()
         .map(|value| {
-            value
-                .as_str()
-                .map(str::to_owned)
-                .ok_or_else(|| format!("{} {package}/{target} selector is malformed", path.display()))
+            value.as_str().map(str::to_owned).ok_or_else(|| {
+                format!(
+                    "{} {package}/{target} selector is malformed",
+                    path.display()
+                )
+            })
         })
         .collect::<Result<Vec<_>, String>>()?;
     if selector != target_selector(target) {
@@ -596,10 +591,16 @@ fn validate_target_report(
         ));
     }
     if report.get("succeeded").and_then(Value::as_bool) != Some(true) {
-        return Err(format!("{} {package}/{target} did not succeed", path.display()));
+        return Err(format!(
+            "{} {package}/{target} did not succeed",
+            path.display()
+        ));
     }
     if report.get("ignored").and_then(Value::as_u64) != Some(0) {
-        return Err(format!("{} {package}/{target} reported ignored tests", path.display()));
+        return Err(format!(
+            "{} {package}/{target} reported ignored tests",
+            path.display()
+        ));
     }
     let tests = report
         .get("tests")
@@ -608,7 +609,12 @@ fn validate_target_report(
     let results = report
         .get("results")
         .and_then(Value::as_object)
-        .ok_or_else(|| format!("{} {package}/{target} has no results object", path.display()))?;
+        .ok_or_else(|| {
+            format!(
+                "{} {package}/{target} has no results object",
+                path.display()
+            )
+        })?;
     if tests == 0 || usize::try_from(tests).ok() != Some(results.len()) {
         return Err(format!(
             "{} {package}/{target} test count does not match non-empty results",
@@ -765,7 +771,6 @@ fn write_report(
     .map_err(|error| format!("could not write {}: {error}", path.display()))?;
     Ok(path)
 }
-
 
 #[cfg(test)]
 mod tests {
