@@ -48,10 +48,12 @@ jobs:
           TRUSTED_CHECKOUT: ${{ steps.trusted-base.outcome }}
         shell: bash
         run: |
-          echo 'legacy_base=true' >> "$GITHUB_OUTPUT"
-          echo 'docs_only=false' >> "$GITHUB_OUTPUT"
-          echo 'supply_chain_impact=true' >> "$GITHUB_OUTPUT"
-          echo 'evidence_impact=true' >> "$GITHUB_OUTPUT"
+          {
+            echo 'legacy_base=true'
+            echo 'docs_only=false'
+            echo 'supply_chain_impact=true'
+            echo 'evidence_impact=true'
+          } >> "$GITHUB_OUTPUT"
           set -euo pipefail
           test "$TRUSTED_CHECKOUT" = "success"
 
@@ -88,9 +90,11 @@ jobs:
           supply_chain_impact="$(jq -er 'if .classification_valid == true and (.supply_chain_impact | type) == "boolean" then .supply_chain_impact else error("invalid supply_chain_impact") end' <<<"$classification")"
           evidence_impact="$(jq -er 'if .classification_valid == true and (.evidence_impact | type) == "boolean" then .evidence_impact else error("invalid evidence_impact") end' <<<"$classification")"
 
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
-          echo "supply_chain_impact=$supply_chain_impact" >> "$GITHUB_OUTPUT"
-          echo "evidence_impact=$evidence_impact" >> "$GITHUB_OUTPUT"
+          {
+            echo "docs_only=$docs_only"
+            echo "supply_chain_impact=$supply_chain_impact"
+            echo "evidence_impact=$evidence_impact"
+          } >> "$GITHUB_OUTPUT"
 
   rust:
     name: rust-authority
@@ -102,9 +106,9 @@ jobs:
            needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/ci.yml
     permissions:
-      actions: read
-      contents: read
-      pull-requests: read
+      actions: read # Inspect exact-SHA Fast evidence inside the reusable Rust authority.
+      contents: read # Read repository source and the trusted-base classifier.
+      pull-requests: read # Reconcile live PR identity and changed-file metadata.
 
   dependency:
     name: dependency-authority
@@ -116,7 +120,7 @@ jobs:
            needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/dependency-review.yml
     permissions:
-      contents: read
+      contents: read # Review dependency changes and execute read-only Actions security policy.
 
   codeql:
     name: codeql-authority
@@ -128,9 +132,9 @@ jobs:
            needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/codeql.yml
     permissions:
-      contents: read
-      pull-requests: read
-      security-events: write
+      contents: read # Read Actions/Rust source for CodeQL analysis.
+      pull-requests: read # Route Rust CodeQL from exact PR metadata.
+      security-events: write # Upload CodeQL SARIF results for this PR.
 
   evidence:
     name: evidence-authority
@@ -142,8 +146,8 @@ jobs:
            needs.scope.outputs.evidence_impact != 'false') }}
     uses: ./.github/workflows/evidence.yml
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # Read repository source for the reusable authority.
+      pull-requests: read # Reconcile live PR identity and trusted routing metadata.
 
   supply:
     name: supply-authority
@@ -155,8 +159,8 @@ jobs:
            needs.scope.outputs.supply_chain_impact != 'false') }}
     uses: ./.github/workflows/supply-chain.yml
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # Read repository source for the reusable authority.
+      pull-requests: read # Reconcile live PR identity and trusted routing metadata.
 
   conformance:
     name: conformance-authority
@@ -168,8 +172,8 @@ jobs:
            needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/m5-conformance.yml
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # Read repository source for the reusable authority.
+      pull-requests: read # Reconcile live PR identity and trusted routing metadata.
 
   campaigns:
     name: advisory-campaigns
@@ -181,8 +185,8 @@ jobs:
            needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/campaign-orchestrator.yml
     permissions:
-      contents: read
-      pull-requests: read
+      contents: read # Read repository source for the reusable authority.
+      pull-requests: read # Reconcile live PR identity and trusted routing metadata.
 
   pr-proof:
     name: pr-proof
