@@ -39,6 +39,90 @@ def require_pass(name: str, workflow: str) -> None:
     assert not observed, f"{name}: valid fixture rejected: {observed!r}"
 
 
+def codeql_routing_violations(workflow: str) -> list[str]:
+    return MODULE.check_codeql_rust_routing_contract_text(textwrap.dedent(workflow).lstrip())
+
+
+CODEQL_ROUTING_FIXTURE = """
+name: CodeQL
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "47 18 * * 1"
+  workflow_dispatch:
+jobs:
+  rust-impact:
+    name: codeql-rust-impact
+    if: ${{ github.event_name == 'pull_request' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      run_rust: ${{ steps.route.outputs.run_rust }}
+    steps:
+      - name: Resolve exact-base Rust CodeQL impact
+        id: route
+        run: |
+          classifier_path = ".github/scripts/codeql-rust-impact.py"
+          encoded_path = classifier_path
+          base_sha = os.environ["BASE_SHA"]
+          url = f"contents/{encoded_path}?ref={base_sha}"
+          handle.write("run_rust=true\\n")
+          handle.write("changed_files=unknown\\n")
+          subprocess.run(["python3", classifier_path])
+  analyze-rust:
+    name: Analyze (rust)
+    needs: rust-impact
+    if: >-
+      ${{ always() &&
+          (github.event_name != 'pull_request' ||
+           (github.event.pull_request.draft == false &&
+            (needs.rust-impact.result != 'success' ||
+             needs.rust-impact.outputs.run_rust != 'false'))) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: github/codeql-action/init@0000000000000000000000000000000000000001
+        with:
+          languages: rust
+          build-mode: none
+      - uses: github/codeql-action/analyze@0000000000000000000000000000000000000001
+        with:
+          category: /language:rust
+"""
+
+
+observed = codeql_routing_violations(CODEQL_ROUTING_FIXTURE)
+assert not observed, f"valid CodeQL Rust route rejected: {observed!r}"
+
+broken = CODEQL_ROUTING_FIXTURE.replace(
+    'base_sha = os.environ["BASE_SHA"]',
+    'base_sha = "pr-head"',
+)
+observed = codeql_routing_violations(broken)
+assert any("base_sha" in item for item in observed), observed
+
+broken = CODEQL_ROUTING_FIXTURE.replace("run_rust=true", "run_rust=false")
+observed = codeql_routing_violations(broken)
+assert any("must never suppress analysis" in item for item in observed), observed
+
+broken = CODEQL_ROUTING_FIXTURE.replace(
+    "needs.rust-impact.result != 'success'",
+    "needs.rust-impact.result == 'success'",
+)
+observed = codeql_routing_violations(broken)
+assert any("needs.rust-impact.result != 'success'" in item for item in observed), observed
+
+broken = CODEQL_ROUTING_FIXTURE.replace(
+    "    steps:\n      - name: Resolve exact-base Rust CodeQL impact",
+    "    steps:\n      - uses: actions/checkout@0000000000000000000000000000000000000001\n"
+    "      - name: Resolve exact-base Rust CodeQL impact",
+)
+observed = codeql_routing_violations(broken)
+assert any("must not checkout PR-head" in item for item in observed), observed
+
+
 PINNED_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 PG15 = "926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561"
 PG18 = "4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
