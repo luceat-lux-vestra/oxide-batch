@@ -119,7 +119,7 @@
       {
         "workflow": ".github/workflows/pr-ci.yml",
         "accepted_blobs": [
-          "a78acad310c18991af0ded05ed29863dbae5c81d"
+          "f99deeb947c38d129d0d54c9f0538123edb37df3"
         ]
       }
     ]
