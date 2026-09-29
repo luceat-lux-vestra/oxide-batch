@@ -2009,7 +2009,98 @@ class MergeGateVerifierTest < Minitest::Test
               - run: echo conformance
       YAML
       m5_path = File.join(root, '.github/workflows/m5-conformance.yml')
-      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '$'))
+      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '        'schema_version' => 7,
+        'pr_topology' => {
+          'schema' => 'single-pr-entrypoint-v1',
+          'entrypoint' => '.github/workflows/pr-ci.yml',
+          'migration_marker' => '.github/ci-topology-v7-migration',
+          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" },
+          'independent_pr_authorities' => [
+            {
+              'workflow' => '.github/workflows/m5-conformance.yml',
+              'reason' => 'retained-evidence-provenance',
+              'contexts' => [
+                'postgres-15-conformance-campaign',
+                'postgres-18-conformance-campaign'
+              ]
+            }
+          ]
+        },
+        'repository_merge_gate' => {
+          'context' => 'merge-gate',
+          'state' => 'active',
+          'producer' => {
+            'workflow' => '.github/workflows/pr-labeler.yml',
+            'job' => 'merge-gate'
+          },
+          'members' => [
+            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'},
+            {'context' => 'postgres-15-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'},
+            {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
+          ],
+          'protected_workflows' => [
+            '.github/workflows/pr-ci.yml',
+            '.github/workflows/ci.yml',
+            '.github/workflows/dependency-review.yml',
+            '.github/workflows/codeql.yml',
+            '.github/workflows/evidence.yml',
+            '.github/workflows/supply-chain.yml',
+            '.github/workflows/m5-conformance.yml',
+            '.github/workflows/pr-labeler.yml'
+          ].map do |workflow|
+            {
+              'workflow' => workflow,
+              'accepted_blobs' => [
+                MergeGateVerifier.git_blob_sha(
+                  File.binread(File.join(root, workflow))
+                )
+              ]
+            }
+          end
+        }
+      }
+      yield root, policy
+    end
+  end
+
+  def write(root, relative, content)
+    path = File.join(root, relative)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, content)
+  end
+
+  def write_json(root, relative, value)
+    write(root, relative, JSON.pretty_generate(value))
+  end
+
+  def ruleset_with(*contexts)
+    {
+      'id' => 7,
+      'name' => 'Protect main',
+      'enforcement' => 'active',
+      'rules' => [{
+        'type' => 'required_status_checks',
+        'parameters' => {
+          'required_status_checks' => contexts.map { |context| {'context' => context} }
+        }
+      }]
+    }
+  end
+end
+))
+
+      write(root, '.github/workflows/pr-labeler.yml', <<~YAML)
+        name: Pull request labels
+        on:
+          pull_request_target:
+        permissions: {}
+        jobs:
+          merge-gate:
+            name: merge-gate
+            runs-on: ubuntu-latest
+            steps:
+              - run: echo trusted-base
+      YAML
 
       policy = {
         'schema_version' => 7,
