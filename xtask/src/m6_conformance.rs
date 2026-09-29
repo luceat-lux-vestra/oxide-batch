@@ -148,13 +148,15 @@ fn run_shard(index: &str, count: &str) -> Result<Campaign, String> {
 
     let report = write_shard_report(
         &root,
-        index,
-        count,
-        selected,
-        &target_reports,
-        &violations,
-        &manifest,
-        &environment,
+        ShardReportInput {
+            index,
+            count,
+            selected,
+            target_reports: &target_reports,
+            violations: &violations,
+            manifest: &manifest,
+            environment: &environment,
+        },
     )?;
     Ok(Campaign { violations, report })
 }
@@ -367,16 +369,29 @@ fn shard_report_name(index: usize) -> String {
     format!("{SHARD_REPORT_PREFIX}{index}.json")
 }
 
-fn write_shard_report(
-    root: &Path,
+struct ShardReportInput<'a> {
     index: usize,
     count: usize,
-    selected: &[(&str, &str)],
-    target_reports: &[Value],
-    violations: &[String],
-    manifest: &Value,
-    environment: &Value,
+    selected: &'a [(&'a str, &'a str)],
+    target_reports: &'a [Value],
+    violations: &'a [String],
+    manifest: &'a Value,
+    environment: &'a Value,
+}
+
+fn write_shard_report(
+    root: &Path,
+    input: ShardReportInput<'_>,
 ) -> Result<PathBuf, String> {
+    let ShardReportInput {
+        index,
+        count,
+        selected,
+        target_reports,
+        violations,
+        manifest,
+        environment,
+    } = input;
     let directory = suite::directory(root);
     fs::create_dir_all(&directory)
         .map_err(|error| format!("could not create {}: {error}", directory.display()))?;
