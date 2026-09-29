@@ -369,6 +369,7 @@ fn shard_report_name(index: usize) -> String {
     format!("{SHARD_REPORT_PREFIX}{index}.json")
 }
 
+#[derive(Clone, Copy)]
 struct ShardReportInput<'a> {
     index: usize,
     count: usize,
