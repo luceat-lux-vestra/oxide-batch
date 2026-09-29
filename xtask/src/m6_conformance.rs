@@ -774,6 +774,8 @@ fn write_report(
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::expect_used)]
+
     use std::collections::BTreeSet;
 
     use super::{TARGETS, partition_targets, target_pairs};
