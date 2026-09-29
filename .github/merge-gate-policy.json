@@ -113,13 +113,21 @@
       {
         "context": "pr-proof",
         "workflow": ".github/workflows/pr-ci.yml"
+      },
+      {
+        "context": "postgres-15-conformance-campaign",
+        "workflow": ".github/workflows/m5-conformance.yml"
+      },
+      {
+        "context": "postgres-18-conformance-campaign",
+        "workflow": ".github/workflows/m5-conformance.yml"
       }
     ],
     "protected_workflows": [
       {
         "workflow": ".github/workflows/pr-ci.yml",
         "accepted_blobs": [
-          "f99deeb947c38d129d0d54c9f0538123edb37df3"
+          "6a3e4d15b593728926a57f869ab0e18d2e7b33ea"
         ]
       }
     ]
@@ -134,8 +142,17 @@
       ".github/workflows/codeql.yml",
       ".github/workflows/evidence.yml",
       ".github/workflows/supply-chain.yml",
-      ".github/workflows/m5-conformance.yml",
       ".github/workflows/campaign-orchestrator.yml"
+    ],
+    "independent_pr_authorities": [
+      {
+        "workflow": ".github/workflows/m5-conformance.yml",
+        "reason": "retained-evidence-provenance",
+        "contexts": [
+          "postgres-15-conformance-campaign",
+          "postgres-18-conformance-campaign"
+        ]
+      }
     ]
   }
 }
