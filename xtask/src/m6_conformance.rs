@@ -379,10 +379,7 @@ struct ShardReportInput<'a> {
     environment: &'a Value,
 }
 
-fn write_shard_report(
-    root: &Path,
-    input: ShardReportInput<'_>,
-) -> Result<PathBuf, String> {
+fn write_shard_report(root: &Path, input: ShardReportInput<'_>) -> Result<PathBuf, String> {
     let ShardReportInput {
         index,
         count,
