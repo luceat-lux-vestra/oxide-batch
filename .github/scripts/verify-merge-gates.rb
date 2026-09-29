@@ -1614,27 +1614,34 @@ module MergeGateVerifier
       violations << "schema v7 internal PostgreSQL aggregate must keep #{AGGREGATE_PRODUCER_PERMISSIONS.inspect}"
     end
 
-    context_sources = producer_summary.fetch('context_sources')
-    member_sources = gate['members'].map { |member| [member, context_sources[member]] }
-    missing_members = member_sources.select { |_member, source| !source.is_a?(Hash) }.map(&:first)
-    unless missing_members.empty?
-      violations << "schema v7 internal PostgreSQL aggregate has unknown member contexts: #{missing_members.join(', ')}"
-    end
-
-    valid_sources = member_sources.filter_map { |_member, source| source if source.is_a?(Hash) }
-    foreign = valid_sources.reject { |source| source['kind'] == 'job' && source['workflow'] == workflow }
-    unless foreign.empty?
-      violations << 'schema v7 internal PostgreSQL aggregate members must all be jobs from the reusable Rust workflow'
-    end
-    valid_sources.each do |source|
-      unless job_policy(policy, workflow, source['job']).first == 'advisory'
-        violations << "schema v7 internal PostgreSQL aggregate member #{source['job']} must remain advisory to repository merge topology"
+    expected_needs = normalize_needs(job).sort
+    expanded_members = {}
+    expected_needs.each do |member_job_id|
+      member_job = doc.dig('jobs', member_job_id)
+      unless member_job.is_a?(Hash)
+        violations << "schema v7 internal PostgreSQL aggregate references missing member job #{member_job_id}"
+        next
+      end
+      unless job_policy(policy, workflow, member_job_id).first == 'advisory'
+        violations << "schema v7 internal PostgreSQL aggregate member #{member_job_id} must remain advisory to repository merge topology"
+      end
+      begin
+        required_job_contexts(member_job_id, member_job).each do |context|
+          if expanded_members.key?(context)
+            violations << "schema v7 internal PostgreSQL aggregate context #{context} is emitted by multiple member jobs"
+          else
+            expanded_members[context] = member_job_id
+          end
+        end
+      rescue StandardError => e
+        violations << "schema v7 internal PostgreSQL aggregate cannot expand #{member_job_id}: #{e.message}"
       end
     end
 
-    expected_needs = valid_sources.map { |source| source['job'] }.uniq.sort
-    unless normalize_needs(job).sort == expected_needs
-      violations << "schema v7 internal PostgreSQL aggregate needs mismatch: expected #{expected_needs.inspect}, got #{normalize_needs(job).sort.inspect}"
+    declared_members = gate['members'].sort
+    actual_members = expanded_members.keys.sort
+    unless declared_members == actual_members
+      violations << "schema v7 internal PostgreSQL aggregate member inventory mismatch: expected #{actual_members.inspect}, declared #{declared_members.inspect}"
     end
 
     steps = Array(job['steps']).select { |step| step.is_a?(Hash) }
