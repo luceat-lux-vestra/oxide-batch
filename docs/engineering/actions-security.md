@@ -1,6 +1,6 @@
 # GitHub Actions static security gate
 
-The repository's `actions-security` check is the fail-closed static audit for checked-in GitHub Actions workflows. It runs on every pull request and on pushes to `main` through `.github/workflows/dependency-review.yml`; it is intentionally not path-filtered.
+The repository's `actions-security` check is the fail-closed static audit for checked-in GitHub Actions workflows. It is a pull-request-time child authority produced by `.github/workflows/dependency-review.yml` and remains a canonical member of the active repository-level `merge-gate`. The workflow is intentionally not path-filtered.
 
 The gate combines three independent controls:
 
@@ -10,9 +10,11 @@ The gate combines three independent controls:
 
 The deterministic policy requires immutable full-SHA external `uses:` references, disabled checkout credential persistence unless explicitly justified, job-scoped write permissions, safe `pull_request_target` boundaries, no direct untrusted-context interpolation into program text, and digest-pinned service/container images where practical. Its negative fixtures live in `.github/scripts/test_validate_actions_security.py`.
 
-`dependency-review` remains a stable required context on both pull requests and `main`: pull requests run the real dependency diff review, while `main` pushes emit the same context without pretending that a dependency diff exists. Unsupported trigger types fail closed.
+`dependency-review` is the sibling pull-request-time dependency-diff authority in the same workflow. Both `dependency-review` and `actions-security` remain independently visible exact-HEAD checks and canonical `merge-gate` members, but neither is directly required by the live ruleset.
 
-Ruleset promotion is staged. `actions-security` must first be observed successfully on both workflow-changing and non-workflow-changing pull requests and on `main`; only then may the live `Protect main` ruleset require it and the corresponding `pending_ruleset_contexts` entry be removed.
+The repository-level aggregation cutover is complete: `.github/merge-gate-policy.json` records `repository_merge_gate.state = active`, `pending_ruleset_contexts` is empty, and the live `Protect main` ruleset directly requires only `merge-gate`. The protected-base gate fails closed unless every canonical child member's latest exact-HEAD execution succeeds.
+
+Ordinary pushes to `main` do not repeat this pull-request validation. The current post-main policy has an empty ordinary-push workflow allowlist, so dependency review and Actions security evidence is proved on the exact final pull-request HEAD rather than rerun after squash merge.
 
 
 ## Base-trusted repository merge gate
