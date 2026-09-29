@@ -646,6 +646,72 @@ module MergeGateVerifier
       violations << 'pr_scope docs_only_applicability must exactly match canonical supply/evidence ownership'
     end
 
+    if policy['schema_version'].to_i >= 7
+      full_if = "${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}"
+      routed = [
+        [
+          SUPPLY_CHAIN_WORKFLOW,
+          SUPPLY_CHAIN_JOB,
+          'supply-chain',
+          [
+            'Test supply-chain exception policy',
+            'Validate supply-chain exception registry',
+            'Check advisories, licenses, bans, and sources'
+          ],
+          %w[supply-trusted-base supply-impact],
+          ['Documentation-only supply-chain fast path']
+        ],
+        [
+          EVIDENCE_WORKFLOW,
+          EVIDENCE_JOB,
+          'evidence-provenance',
+          [
+            'Verify repository-wide retained evidence policy',
+            'Hydrate locked dependency graph for closure verification',
+            'Verify campaign dependency closure metadata',
+            'Verify retained campaign evidence integrity and provenance'
+          ],
+          %w[evidence-trusted-base evidence-impact],
+          ['Documentation-only evidence fast path']
+        ]
+      ]
+
+      routed.each do |workflow, job_id, context, heavy_names, forbidden_ids, forbidden_names|
+        doc = producer_summary.fetch('workflow_docs')[workflow]
+        unless doc.is_a?(Hash)
+          violations << "#{workflow} is missing"
+          next
+        end
+        unless doc['permissions'] == {'contents' => 'read'}
+          violations << "#{workflow} must keep contents: read as its only permission after central routing"
+        end
+        job = doc.dig('jobs', job_id)
+        unless job.is_a?(Hash)
+          violations << "#{workflow} must declare canonical #{job_id} job"
+          next
+        end
+        violations << "#{workflow}###{job_id} must emit context #{context}" unless job['name'] == context
+        steps = Array(job['steps']).select { |step| step.is_a?(Hash) }
+        forbidden_ids.each do |id|
+          violations << "#{workflow}###{job_id} must not duplicate trusted PR routing with step id #{id}" if steps.any? { |step| step['id'] == id }
+        end
+        forbidden_names.each do |name|
+          violations << "#{workflow}###{job_id} must not retain lightweight routing step #{name.inspect}" if steps.any? { |step| step['name'] == name }
+        end
+        heavy_names.each do |name|
+          step = steps.find { |candidate| candidate['name'] == name }
+          if !step.is_a?(Hash) || normalized_shell(step['if']) != normalized_shell(full_if)
+            violations << "#{workflow}###{job_id} #{name.inspect} must execute fully whenever the routed authority is invoked"
+          end
+        end
+        body = steps.map { |step| [step['run'], step['with']].inspect }.join("\n")
+        if body.include?('.github/scripts/pr-scope.py') || body.include?('pulls/${PR_NUMBER}/files')
+          violations << "#{workflow}###{job_id} must not re-run PR applicability classification after schema-v7 central routing"
+        end
+      end
+      return violations
+    end
+
     supply_classifier_if = "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}"
     supply_light_if = "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false && steps.supply-impact.outcome == 'success' && steps.supply-impact.outputs.impact == 'false' }}"
     supply_full_if = "${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}"
@@ -906,8 +972,7 @@ module MergeGateVerifier
       unless supply_job.is_a?(Hash) &&
              supply_job['uses'] == "./#{SUPPLY_CHAIN_WORKFLOW}" &&
              supply_job['permissions'] == {
-               'contents' => 'read',
-               'pull-requests' => 'read'
+               'contents' => 'read'
              }
         violations << "#{SUPPLY_CHAIN_AUDIT_WORKFLOW} must call the read-only reusable supply-chain authority"
       end
@@ -1493,7 +1558,23 @@ module MergeGateVerifier
       violations << "#{QUALITY_WORKFLOW}#quality-fast Fast evidence resolver is missing mode-integrity tokens: #{missing.join(', ')}" unless missing.empty?
     end
 
-    fallback_if = "${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}"
+    fallback_if = if policy['schema_version'].to_i >= 7
+                    "${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full' }}"
+                  else
+                    "${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full'  && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}"
+                  end
+    if policy['schema_version'].to_i >= 7
+      workflow_text = workflow.inspect
+      [
+        'docs-only-trusted-base',
+        'steps.docs-only-scope',
+        '.docs-only-trusted-base/.github/scripts/pr-scope.py',
+        'Classify documentation-only scope from trusted base'
+      ].each do |token|
+        violations << "#{QUALITY_WORKFLOW} must not duplicate schema-v7 PR scope routing token #{token.inspect}" if workflow_text.include?(token)
+      end
+    end
+
     ['Check formatting', 'Run Clippy', 'Run workspace unit tests'].each do |name|
       step = fast_steps.find { |candidate| candidate['name'] == name }
       unless step.is_a?(Hash) && normalized_shell(step['if']) == normalized_shell(fallback_if)
