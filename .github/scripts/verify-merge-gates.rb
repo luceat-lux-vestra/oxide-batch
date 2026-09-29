@@ -1736,7 +1736,8 @@ module MergeGateVerifier
         'head_blob not in head_allowed',
         'head_allowed.issubset(base_allowed)',
         'was not pre-admitted by trusted-base policy',
-        'workflow replacement cannot admit additional blobs in the same PR'
+        'workflow replacement cannot admit',
+        'additional blobs in the same PR'
       ])
     end
 
