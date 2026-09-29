@@ -1921,26 +1921,42 @@ class MergeGateVerifierTest < Minitest::Test
             needs: scope
             if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
             uses: ./.github/workflows/ci.yml
+            permissions:
+              actions: read
+              contents: read
           dependency:
             needs: scope
             if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
             uses: ./.github/workflows/dependency-review.yml
+            permissions:
+              contents: read
           codeql:
             needs: scope
             if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
             uses: ./.github/workflows/codeql.yml
+            permissions:
+              contents: read
+              pull-requests: read
+              security-events: write
           evidence:
             needs: scope
             if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
             uses: ./.github/workflows/evidence.yml
+            permissions:
+              contents: read
           supply:
             needs: scope
             if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
             uses: ./.github/workflows/supply-chain.yml
+            permissions:
+              contents: read
           campaigns:
             needs: scope
             if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
             uses: ./.github/workflows/campaign-orchestrator.yml
+            permissions:
+              contents: read
+              pull-requests: read
           pr-proof:
             name: pr-proof
             needs: [scope, rust, dependency, codeql, evidence, supply]
