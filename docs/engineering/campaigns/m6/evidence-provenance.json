@@ -189,10 +189,10 @@
       "matrix_point": "postgres-15",
       "postgres_major_version": "15",
       "producer": {
-        "execution_commit": "b98ed1f2049e4197454e7a0691d1b19d2b615c75",
-        "execution_commit_note": "Exact PR #306 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "ad4534d1c07e59d76623321986a1db134eb5a9c3",
-        "branch_head_note": "Exact PR #306 source candidate that triggered the successful producer run; recorded separately from the synthetic execution tree.",
+        "execution_commit": "5f0ec42ed08f0514387ca37785558c940f5fc1cd",
+        "execution_commit_note": "Exact PR #346 synthetic merge execution tree recorded by the successful canonical exact-cover sharded producer report; object-manifest identities remain the authority for later local verification.",
+        "branch_head_sha": "36cc7406bad31475e1ab2bdea7da2e7fa403049c",
+        "branch_head_note": "Exact PR #346 final source candidate that triggered the successful Campaign Orchestrator run; recorded separately from the synthetic merge execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -201,27 +201,27 @@
       "workflow_run": {
         "workflow": "M6 Full Component Conformance",
         "workflow_file": ".github/workflows/m6-conformance.yml",
-        "id": 36094532872,
+        "id": 36515668535,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
-        "name": "postgres-15-m6-conformance",
-        "id": 107943882526,
+        "name": "m6_conformance / postgres-15-m6-conformance",
+        "id": 109239288546,
         "conclusion": "success"
       },
       "artifact": {
         "name": "m6-conformance-campaign-postgres-15",
-        "id": 10846664285,
-        "digest": "sha256:c76b2700ca80456dfac00089f3ed2f985acd96146383c043ff90314b36f98511",
-        "size_bytes": 10960
+        "id": 11011615790,
+        "digest": "sha256:084c23d576002dbdc6b92bab9d6ddc817b7934e4e116df94f8ee68086df570f5",
+        "size_bytes": 10989
       },
-      "retained_report_git_blob": "b9239d8743e68f5eefd88309ad544b613b7582d4",
+      "retained_report_git_blob": "094b6cdcca8cd459565514af921c0b9f16c4b848",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-25T06:00:49Z",
-        "run_id": 36094532872,
+        "verified_at": "2026-09-29T07:52:11Z",
+        "run_id": 36515668535,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -229,7 +229,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #306 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #346 successful reusable M6 Full Component Conformance producer hosted by Campaign Orchestrator run 36515668535; producer-workflow semantic identity, top-level run/reusable-job identity and success, archive SHA-256, exact extracted canonical merged-report bytes, 45-target exact-cover result, runtime axis, and execution commit were independently verified before retention."
       },
       "server_version": null
     },
@@ -239,10 +239,10 @@
       "matrix_point": "postgres-18",
       "postgres_major_version": "18",
       "producer": {
-        "execution_commit": "b98ed1f2049e4197454e7a0691d1b19d2b615c75",
-        "execution_commit_note": "Exact PR #306 synthetic merge execution tree recorded by the successful producer report; object-manifest identities are the authority for later local verification.",
-        "branch_head_sha": "ad4534d1c07e59d76623321986a1db134eb5a9c3",
-        "branch_head_note": "Exact PR #306 source candidate that triggered the successful producer run; recorded separately from the synthetic execution tree.",
+        "execution_commit": "5f0ec42ed08f0514387ca37785558c940f5fc1cd",
+        "execution_commit_note": "Exact PR #346 synthetic merge execution tree recorded by the successful canonical exact-cover sharded producer report; object-manifest identities remain the authority for later local verification.",
+        "branch_head_sha": "36cc7406bad31475e1ab2bdea7da2e7fa403049c",
+        "branch_head_note": "Exact PR #346 final source candidate that triggered the successful Campaign Orchestrator run; recorded separately from the synthetic merge execution tree.",
         "source_tree_clean": true,
         "rustc": "rustc 1.97.1 (8bab26f4f 2026-07-14)",
         "os": "linux",
@@ -251,27 +251,27 @@
       "workflow_run": {
         "workflow": "M6 Full Component Conformance",
         "workflow_file": ".github/workflows/m6-conformance.yml",
-        "id": 36094532872,
+        "id": 36515668535,
         "attempt": 1,
         "event": "pull_request",
         "conclusion": "success"
       },
       "producing_job": {
-        "name": "postgres-18-m6-conformance",
-        "id": 107943882329,
+        "name": "m6_conformance / postgres-18-m6-conformance",
+        "id": 109239288600,
         "conclusion": "success"
       },
       "artifact": {
         "name": "m6-conformance-campaign-postgres-18",
-        "id": 10846867458,
-        "digest": "sha256:66edd4d4aa7de131f67bd511ebc1e8de8c8804a6d72b8254c5903504c42e1dba",
-        "size_bytes": 10960
+        "id": 11011386978,
+        "digest": "sha256:2bbf77850b721eccc3ce45eb5d4aa51ee599b2ed3162c20f36c18efff8db3adb",
+        "size_bytes": 10989
       },
-      "retained_report_git_blob": "bd613fa95b388e42f5251b07f1a72531c3b143e7",
+      "retained_report_git_blob": "25cc466316498a00ef51b971f4d1c3deef0329be",
       "remote_verification": {
         "verified": true,
-        "verified_at": "2026-09-25T06:00:49Z",
-        "run_id": 36094532872,
+        "verified_at": "2026-09-29T07:52:11Z",
+        "run_id": 36515668535,
         "workflow_run_identity": true,
         "workflow_run_conclusion": true,
         "producing_job_identity": true,
@@ -279,7 +279,7 @@
         "artifact_digest": true,
         "artifact_bytes_match_retained_report": true,
         "execution_commit_matches_report": true,
-        "note": "PR #306 successful Actions artifact independently fetched through the GitHub API; run/job identity and success, archive SHA-256, exact extracted report bytes, canonical report identity, runtime axis when declared, and execution commit were verified before retention."
+        "note": "PR #346 successful reusable M6 Full Component Conformance producer hosted by Campaign Orchestrator run 36515668535; producer-workflow semantic identity, top-level run/reusable-job identity and success, archive SHA-256, exact extracted canonical merged-report bytes, 45-target exact-cover result, runtime axis, and execution commit were independently verified before retention."
       },
       "server_version": null
     }

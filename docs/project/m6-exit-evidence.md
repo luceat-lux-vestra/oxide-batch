@@ -181,6 +181,34 @@ integration model. Candidate evidence is complete, but release-backed
 limitations and other support boundaries are recorded in
 `docs/release/support-matrix.md`.
 
+### Exact-cover sharding retention refresh (#347)
+
+After PR #346 moved M6 full-component Conformance to two deterministic
+exact-cover shards per PostgreSQL major, #347 promotes only the canonical
+PostgreSQL 15/18 merged artifacts from successful PR #346 Campaign Orchestrator
+run `36515668535`. The shard-local outputs are not retained as official
+evidence; the canonical merge is the authority.
+
+The refreshed PostgreSQL 15 and 18 reports each prove an exact `45`-target
+cover of the current declared denominator with `464` tests, zero ignored
+tests, zero non-success outcomes, and zero violations. Both bind execution tree
+`5f0ec42ed08f0514387ca37785558c940f5fc1cd` and the sharded
+`.github/workflows/m6-conformance.yml` / merge-contract object identities from
+that execution.
+
+Remote promotion verification independently checked Campaign Orchestrator run
+`36515668535`, canonical producer jobs `109239288546` (PostgreSQL 15) and
+`109239288600` (PostgreSQL 18), artifacts `11011615790` and
+`11011386978`, archive SHA-256 digests, and byte-for-byte identity between the
+downloaded canonical report and the Git-retained file. The resulting retained
+Git blob identities are `094b6cdcca8cd459565514af921c0b9f16c4b848` and
+`25cc466316498a00ef51b971f4d1c3deef0329be`.
+
+The earlier `441`-test statement above remains the historical M6 exit-candidate
+measurement. This retention refresh records the current sharded producer's
+expanded test inventory; it does not rewrite that historical claim. Gate B and
+Gate H retained evidence are unchanged.
+
 ## Compatibility ledger reconciliation
 
 All 23 M6-scoped rows in `docs/compatibility/conformance-matrix.md` were
