@@ -202,6 +202,38 @@ class AggregateEvaluatorTest < Minitest::Test
     end
   end
 
+  def test_v7_aggregate_members_reads_internal_catalog
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, 'policy.json')
+      File.write(path, JSON.generate(
+        'schema_version' => 7,
+        'aggregate_gates' => [
+          {'context' => 'postgresql', 'members' => ['stale-legacy-member']}
+        ],
+        'internal_aggregates' => [
+          {'context' => 'postgresql', 'members' => ['postgres-15-design-gate', 'postgres-18-design-gate']}
+        ]
+      ))
+      assert_equal MEMBERS, AggregateEvaluator.aggregate_members(policy_path: path, context: 'postgresql')
+    end
+  end
+
+  def test_v7_aggregate_members_fails_closed_without_internal_catalog
+    Dir.mktmpdir do |dir|
+      path = File.join(dir, 'policy.json')
+      File.write(path, JSON.generate(
+        'schema_version' => 7,
+        'aggregate_gates' => [
+          {'context' => 'postgresql', 'members' => ['postgres-15-design-gate', 'postgres-18-design-gate']}
+        ]
+      ))
+      error = assert_raises(AggregateEvaluator::EvaluationError) do
+        AggregateEvaluator.aggregate_members(policy_path: path, context: 'postgresql')
+      end
+      assert_match(/missing internal_aggregates array/, error.message)
+    end
+  end
+
   def test_aggregate_members_reads_real_repository_policy
     root = File.expand_path('../..', __dir__)
     members = AggregateEvaluator.aggregate_members(
