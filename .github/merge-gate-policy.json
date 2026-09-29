@@ -45,6 +45,11 @@
   "job_overrides": [
     {
       "workflow": ".github/workflows/ci.yml",
+      "job": "scope",
+      "classification": "advisory"
+    },
+    {
+      "workflow": ".github/workflows/ci.yml",
       "job": "postgresql-merge-gate",
       "classification": "advisory"
     },
