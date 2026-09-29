@@ -1637,6 +1637,84 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_docs_applicability_policy_weakening_is_rejected
+    with_repo do |root, policy|
+      policy['pr_scope']['docs_only_applicability']['evidence_provenance']['sensitive_prefixes'] = []
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join("\n"), 'docs_only_applicability must exactly match canonical supply/evidence ownership'
+    end
+  end
+
+  def test_supply_lightweight_guard_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/supply-chain.yml')
+      original = File.read(path)
+      body = original.sub(
+        "steps.supply-impact.outcome == 'success' && steps.supply-impact.outputs.impact == 'false'",
+        "steps.supply-impact.outputs.impact == 'false'"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/supply-chain.yml', body)
+      assert_includes verify(root).join("\n"), 'lightweight success must require successful false trusted impact'
+    end
+  end
+
+  def test_supply_uncertainty_fallback_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/supply-chain.yml')
+      original = File.read(path)
+      body = original.sub(
+        "steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false'",
+        "steps.supply-impact.outputs.impact != 'false'"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/supply-chain.yml', body)
+      assert_includes verify(root).join("\n"), 'must run on impact or classifier uncertainty'
+    end
+  end
+
+  def test_evidence_lightweight_guard_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      original = File.read(path)
+      body = original.sub(
+        "steps.evidence-impact.outcome == 'success' && steps.evidence-impact.outputs.impact == 'false'",
+        "steps.evidence-impact.outputs.impact == 'false'"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/evidence.yml', body)
+      assert_includes verify(root).join("\n"), 'lightweight success must require successful false trusted impact'
+    end
+  end
+
+  def test_evidence_uncertainty_fallback_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      original = File.read(path)
+      body = original.sub(
+        "steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false'",
+        "steps.evidence-impact.outputs.impact != 'false'"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/evidence.yml', body)
+      assert_includes verify(root).join("\n"), 'must run on impact or classifier uncertainty'
+    end
+  end
+
+  def test_supply_head_classifier_substitution_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/supply-chain.yml')
+      original = File.read(path)
+      body = original.sub(
+        '.supply-trusted-base/.github/scripts/pr-scope.py',
+        '.github/scripts/pr-scope.py'
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/supply-chain.yml', body)
+      assert_includes verify(root).join("\n"), 'classifier is missing fail-closed applicability tokens'
+    end
+  end
+
   private
 
   def write(root, relative, content)
