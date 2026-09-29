@@ -370,7 +370,6 @@ fn shard_report_name(index: usize) -> String {
 }
 
 #[derive(Clone, Copy)]
-#[derive(Clone, Copy)]
 struct ShardReportInput<'a> {
     index: usize,
     count: usize,
