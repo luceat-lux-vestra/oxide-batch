@@ -8,6 +8,9 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
     branches:
       - main
+    paths:
+      - .github/ci-topology-v7-migration
+  workflow_call:
   schedule:
     - cron: "47 18 * * 1"
   workflow_dispatch:
