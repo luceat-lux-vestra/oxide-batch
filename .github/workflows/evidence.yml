@@ -19,6 +19,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read
 
 concurrency:
   group: evidence-${{ github.workflow }}-${{ github.ref }}
@@ -41,21 +42,87 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check out exact trusted base for evidence applicability
+        id: evidence-trusted-base
+        if: ${{ github.event.pull_request.draft == false }}
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .evidence-trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Classify evidence applicability from trusted base
+        id: evidence-impact
+        if: ${{ github.event.pull_request.draft == false }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_CHECKOUT: ${{ steps.evidence-trusted-base.outcome }}
+        shell: bash
+        run: |
+          echo 'impact=true' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          test "$TRUSTED_CHECKOUT" = "success"
+
+          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg base "$BASE_SHA" \
+            --arg head "$HEAD_SHA" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
+            <<<"$pr_json" >/dev/null
+          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
+
+          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
+          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
+          changed_file_records="$(mktemp)"
+          trap 'rm -f "$changed_file_records"' EXIT
+          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
+
+          classification="$(
+            python3 .evidence-trusted-base/.github/scripts/pr-scope.py \
+              --repo-root .evidence-trusted-base \
+              --policy .github/merge-gate-policy.json \
+              --expected-count "$expected_count" \
+              --trusted-base-sha "$BASE_SHA" \
+              <"$changed_file_records"
+          )"
+          impact="$(
+            jq -er '
+              if .classification_valid == true and
+                 (.evidence_impact | type) == "boolean"
+              then .evidence_impact
+              else error("invalid evidence applicability output")
+              end
+            ' <<<"$classification"
+          )"
+          echo "impact=$impact" >> "$GITHUB_OUTPUT"
+          echo "evidence impact: $impact"
+
+      - name: Documentation-only evidence fast path
+        if: ${{ github.event.pull_request.draft == false && steps.evidence-impact.outcome == 'success' && steps.evidence-impact.outputs.impact == 'false' }}
+        run: echo "Trusted-base policy proves this documentation-only diff cannot alter retained evidence bytes, provenance, producer contracts, or dependency-closure authority."
+
       - name: Verify repository-wide retained evidence policy
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false')) }}
         run: cargo run --package oxide-batch-xtask --bin retained_evidence_policy
 
       # dependency-closure.json is current semantic metadata, not an old report.
       # Keep it deterministic and merge-blocking even though report freshness is
       # now a separate authority.
       - name: Hydrate locked dependency graph for closure verification
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false')) }}
         run: cargo fetch --locked
 
       - name: Verify campaign dependency closure metadata
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false')) }}
         run: cargo run --package oxide-batch-xtask -- dependency-closures
 
       - name: Verify retained campaign evidence integrity and provenance
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false')) }}
         run: cargo run --package oxide-batch-xtask -- evidence
