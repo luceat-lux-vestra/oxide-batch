@@ -10,6 +10,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: read # Reconcile exact live PR identity and changed-file metadata before trusted-base applicability decisions.
 
 concurrency:
   group: supply-chain-${{ github.event_name }}-${{ github.workflow }}-${{ github.ref }}
@@ -27,16 +28,82 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Check out exact trusted base for supply-chain applicability
+        id: supply-trusted-base
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .supply-trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Classify supply-chain applicability from trusted base
+        id: supply-impact
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_CHECKOUT: ${{ steps.supply-trusted-base.outcome }}
+        shell: bash
+        run: |
+          echo 'impact=true' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          test "$TRUSTED_CHECKOUT" = "success"
+
+          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg base "$BASE_SHA" \
+            --arg head "$HEAD_SHA" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
+            <<<"$pr_json" >/dev/null
+          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
+
+          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
+          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
+          changed_file_records="$(mktemp)"
+          trap 'rm -f "$changed_file_records"' EXIT
+          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
+
+          classification="$(
+            python3 .supply-trusted-base/.github/scripts/pr-scope.py \
+              --repo-root .supply-trusted-base \
+              --policy .github/merge-gate-policy.json \
+              --expected-count "$expected_count" \
+              --trusted-base-sha "$BASE_SHA" \
+              <"$changed_file_records"
+          )"
+          impact="$(
+            jq -er '
+              if .classification_valid == true and
+                 (.supply_chain_impact | type) == "boolean"
+              then .supply_chain_impact
+              else error("invalid supply-chain applicability output")
+              end
+            ' <<<"$classification"
+          )"
+          echo "impact=$impact" >> "$GITHUB_OUTPUT"
+          echo "supply-chain impact: $impact"
+
+      - name: Documentation-only supply-chain fast path
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false && steps.supply-impact.outcome == 'success' && steps.supply-impact.outputs.impact == 'false' }}
+        run: echo "Trusted-base policy proves this documentation-only diff cannot affect dependency, license, advisory, source, or supply-chain exception authority."
+
       - name: Test supply-chain exception policy
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}
         run: python3 .github/scripts/test_validate_supply_chain_exceptions.py
 
       - name: Validate supply-chain exception registry
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}
         run: python3 .github/scripts/validate_supply_chain_exceptions.py
 
       - name: Check advisories, licenses, bans, and sources
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}
         uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
 
   report-failure:

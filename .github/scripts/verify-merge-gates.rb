@@ -309,6 +309,10 @@ module MergeGateVerifier
   QUALITY_WORKFLOW = '.github/workflows/ci.yml'
   FAST_WORKFLOW = '.github/workflows/fast-branch.yml'
   FAST_JOB = 'fast'
+  SUPPLY_CHAIN_WORKFLOW = '.github/workflows/supply-chain.yml'
+  SUPPLY_CHAIN_JOB = 'supply-chain'
+  EVIDENCE_WORKFLOW = '.github/workflows/evidence.yml'
+  EVIDENCE_JOB = 'evidence-provenance'
   QUALITY_AGGREGATE_JOB = 'quality'
   QUALITY_INTEGRATION_SHARD_SCRIPT = '.github/scripts/run-integration-shard.py'
   QUALITY_INTEGRATION_JOBS = %w[quality-integration-0 quality-integration-1 quality-integration-2 quality-integration-3].freeze
@@ -328,6 +332,16 @@ module MergeGateVerifier
     CAMPAIGN_ORCHESTRATOR_WORKFLOW,
     PR_SCOPE_RETAINED_POLICY
   ].freeze
+  PR_SCOPE_DOCS_APPLICABILITY = {
+    'supply_chain' => {
+      'sensitive_exact_paths' => ['docs/engineering/dependency-policy.md'],
+      'sensitive_prefixes' => []
+    },
+    'evidence_provenance' => {
+      'sensitive_exact_paths' => [],
+      'sensitive_prefixes' => ['docs/engineering/campaigns/']
+    }
+  }.freeze
 
   def normalized_shell(command)
     command.to_s.split.join(' ')
@@ -456,6 +470,190 @@ module MergeGateVerifier
     violations << "#{FAST_WORKFLOW} must retain workspace Clippy full-path proof" unless by_name['Run Clippy'].first['run'].to_s.include?('cargo clippy --workspace --all-targets --all-features --')
     violations << "#{FAST_WORKFLOW} must retain workspace lib-test full-path proof" unless by_name['Run workspace unit tests'].first['run'].to_s.include?('cargo test --workspace --all-features --lib')
 
+    violations
+  end
+
+  def docs_applicability_workflow_contract(
+    producer_summary:,
+    workflow:,
+    job_id:,
+    context:,
+    checkout_id:,
+    checkout_path:,
+    classify_id:,
+    impact_key:,
+    light_step_name:,
+    heavy_step_names:,
+    classifier_if:,
+    light_if:,
+    full_if:,
+    require_schedule: false
+  )
+    violations = []
+    doc = producer_summary.fetch('workflow_docs')[workflow]
+    unless doc.is_a?(Hash)
+      return ["#{workflow} is missing"]
+    end
+    violations << "#{workflow} must remain pull_request-triggered" unless workflow_event?(doc, 'pull_request')
+    if require_schedule && !workflow_event?(doc, 'schedule')
+      violations << "#{workflow} must retain scheduled full validation"
+    end
+    expected_permissions = {'contents' => 'read', 'pull-requests' => 'read'}
+    unless doc['permissions'] == expected_permissions
+      violations << "#{workflow} must keep only contents/pull-requests read permissions"
+    end
+
+    jobs = doc['jobs']
+    job = jobs.is_a?(Hash) ? jobs[job_id] : nil
+    unless job.is_a?(Hash)
+      return violations + ["#{workflow} must declare canonical #{job_id} job"]
+    end
+    violations << "#{workflow}##{job_id} must emit context #{context}" unless job['name'] == context
+    steps = Array(job['steps']).select { |step| step.is_a?(Hash) }
+    by_name = steps.select { |step| step['name'].is_a?(String) }.group_by { |step| step['name'] }
+
+    trusted = steps.find { |step| step['id'] == checkout_id }
+    unless trusted.is_a?(Hash)
+      violations << "#{workflow}##{job_id} is missing exact trusted-base applicability checkout"
+    else
+      violations << "#{workflow}##{job_id} trusted-base checkout must continue on error for full fallback" unless trusted['continue-on-error'] == true
+      unless normalized_shell(trusted['if']) == normalized_shell(classifier_if)
+        violations << "#{workflow}##{job_id} trusted-base checkout must use the canonical PR condition"
+      end
+      unless trusted['uses'].to_s.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/)
+        violations << "#{workflow}##{job_id} trusted-base checkout must use SHA-pinned actions/checkout"
+      end
+      expected_with = {
+        'ref' => '${{ github.event.pull_request.base.sha }}',
+        'path' => checkout_path,
+        'fetch-depth' => 1,
+        'persist-credentials' => false
+      }
+      unless trusted['with'] == expected_with
+        violations << "#{workflow}##{job_id} trusted-base checkout must target exact PR base SHA in #{checkout_path}"
+      end
+    end
+
+    classify = steps.find { |step| step['id'] == classify_id }
+    unless classify.is_a?(Hash)
+      return violations + ["#{workflow}##{job_id} is missing trusted applicability classifier"]
+    end
+    violations << "#{workflow}##{job_id} classifier must continue on error for full fallback" unless classify['continue-on-error'] == true
+    unless normalized_shell(classify['if']) == normalized_shell(classifier_if)
+      violations << "#{workflow}##{job_id} classifier must use the canonical PR condition"
+    end
+    expected_env = {
+      'GH_TOKEN' => '${{ github.token }}',
+      'BASE_SHA' => '${{ github.event.pull_request.base.sha }}',
+      'HEAD_SHA' => '${{ github.event.pull_request.head.sha }}',
+      'PR_NUMBER' => '${{ github.event.pull_request.number }}',
+      'TRUSTED_CHECKOUT' => "${{ steps.#{checkout_id}.outcome }}"
+    }
+    unless classify['env'] == expected_env
+      violations << "#{workflow}##{job_id} classifier must bind canonical exact base/head/PR inputs"
+    end
+    command = classify['run'].to_s
+    required_tokens = [
+      "echo 'impact=true' >> \"$GITHUB_OUTPUT\"",
+      'set -euo pipefail',
+      'test "$TRUSTED_CHECKOUT" = "success"',
+      'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}',
+      '.base.sha == $base',
+      '.head.sha == $head',
+      '.base.repo.full_name == $repo',
+      '.changed_files > 0',
+      '--paginate --slurp',
+      'pulls/${PR_NUMBER}/files?per_page=100',
+      '@tsv',
+      "#{checkout_path}/.github/scripts/pr-scope.py",
+      "--repo-root #{checkout_path}",
+      '--policy .github/merge-gate-policy.json',
+      '--expected-count "$expected_count"',
+      '--trusted-base-sha "$BASE_SHA"',
+      ".#{impact_key}",
+      'type) == "boolean"',
+      'impact=$impact'
+    ]
+    missing = required_tokens.reject { |token| command.include?(token) }
+    unless missing.empty?
+      violations << "#{workflow}##{job_id} classifier is missing fail-closed applicability tokens: #{missing.join(', ')}"
+    end
+
+    light = by_name[light_step_name]&.first
+    unless light.is_a?(Hash) && normalized_shell(light['if']) == normalized_shell(light_if)
+      violations << "#{workflow}##{job_id} lightweight success must require successful false trusted impact"
+    end
+
+    heavy_step_names.each do |name|
+      candidates = by_name[name]
+      if !candidates || candidates.length != 1
+        violations << "#{workflow}##{job_id} must contain exactly one #{name.inspect} heavy step"
+        next
+      end
+      unless normalized_shell(candidates.first['if']) == normalized_shell(full_if)
+        violations << "#{workflow}##{job_id} #{name.inspect} must run on impact or classifier uncertainty"
+      end
+    end
+    violations
+  end
+
+  def docs_applicability_contract(policy:, producer_summary:)
+    violations = []
+    unless policy.dig('pr_scope', 'docs_only_applicability') == PR_SCOPE_DOCS_APPLICABILITY
+      violations << 'pr_scope docs_only_applicability must exactly match canonical supply/evidence ownership'
+    end
+
+    supply_classifier_if = "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}"
+    supply_light_if = "${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false && steps.supply-impact.outcome == 'success' && steps.supply-impact.outputs.impact == 'false' }}"
+    supply_full_if = "${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}"
+    violations.concat(
+      docs_applicability_workflow_contract(
+        producer_summary: producer_summary,
+        workflow: SUPPLY_CHAIN_WORKFLOW,
+        job_id: SUPPLY_CHAIN_JOB,
+        context: 'supply-chain',
+        checkout_id: 'supply-trusted-base',
+        checkout_path: '.supply-trusted-base',
+        classify_id: 'supply-impact',
+        impact_key: 'supply_chain_impact',
+        light_step_name: 'Documentation-only supply-chain fast path',
+        heavy_step_names: [
+          'Test supply-chain exception policy',
+          'Validate supply-chain exception registry',
+          'Check advisories, licenses, bans, and sources'
+        ],
+        classifier_if: supply_classifier_if,
+        light_if: supply_light_if,
+        full_if: supply_full_if,
+        require_schedule: true
+      )
+    )
+
+    evidence_classifier_if = "${{ github.event.pull_request.draft == false }}"
+    evidence_light_if = "${{ github.event.pull_request.draft == false && steps.evidence-impact.outcome == 'success' && steps.evidence-impact.outputs.impact == 'false' }}"
+    evidence_full_if = "${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false')) }}"
+    violations.concat(
+      docs_applicability_workflow_contract(
+        producer_summary: producer_summary,
+        workflow: EVIDENCE_WORKFLOW,
+        job_id: EVIDENCE_JOB,
+        context: 'evidence-provenance',
+        checkout_id: 'evidence-trusted-base',
+        checkout_path: '.evidence-trusted-base',
+        classify_id: 'evidence-impact',
+        impact_key: 'evidence_impact',
+        light_step_name: 'Documentation-only evidence fast path',
+        heavy_step_names: [
+          'Verify repository-wide retained evidence policy',
+          'Hydrate locked dependency graph for closure verification',
+          'Verify campaign dependency closure metadata',
+          'Verify retained campaign evidence integrity and provenance'
+        ],
+        classifier_if: evidence_classifier_if,
+        light_if: evidence_light_if,
+        full_if: evidence_full_if
+      )
+    )
     violations
   end
 
@@ -1484,6 +1682,7 @@ module MergeGateVerifier
     violations.concat(aggregate_violations)
 
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
+    violations.concat(docs_applicability_contract(policy: policy, producer_summary: producer_summary))
     violations.concat(fast_branch_docs_contract(producer_summary: producer_summary))
     violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(m5_conformance_routing_contract(policy: policy, producer_summary: producer_summary))

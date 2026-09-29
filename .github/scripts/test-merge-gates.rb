@@ -33,6 +33,8 @@ class MergeGateVerifierTest < Minitest::Test
         'ruleset' => {'id' => 7, 'name' => 'Protect main'},
         'workflow_defaults' => [
           {'pattern' => '.github/workflows/ci.yml', 'classification' => 'required'},
+          {'pattern' => '.github/workflows/evidence.yml', 'classification' => 'advisory'},
+          {'pattern' => '.github/workflows/supply-chain.yml', 'classification' => 'advisory'},
           {'pattern' => '.github/workflows/campaign-orchestrator.yml', 'classification' => 'advisory'},
           {'pattern' => '.github/workflows/m5-*.yml', 'classification' => 'advisory'},
           {'pattern' => '.github/workflows/deep-*.yml', 'classification' => 'advisory'},
@@ -141,7 +143,17 @@ class MergeGateVerifierTest < Minitest::Test
             '.github/workflows/campaign-orchestrator.yml',
             'docs/engineering/retained-evidence-policy.json'
           ],
-          'trusted_tree_contract' => 'exact-git-base-sha'
+          'trusted_tree_contract' => 'exact-git-base-sha',
+          'docs_only_applicability' => {
+            'supply_chain' => {
+              'sensitive_exact_paths' => ['docs/engineering/dependency-policy.md'],
+              'sensitive_prefixes' => []
+            },
+            'evidence_provenance' => {
+              'sensitive_exact_paths' => [],
+              'sensitive_prefixes' => ['docs/engineering/campaigns/']
+            }
+          }
         },
         'post_main' => {
           'default_branch' => 'main',
@@ -158,6 +170,141 @@ class MergeGateVerifierTest < Minitest::Test
         command = ["cargo", "test", "--workspace", "--all-features"]
         command.extend(["--test", name])
       PY
+      write(root, '.github/workflows/supply-chain.yml', <<~YAML)
+        name: Supply chain
+        on:
+          pull_request:
+          schedule:
+            - cron: "17 18 * * 1"
+        permissions:
+          contents: read
+          pull-requests: read
+        jobs:
+          supply-chain:
+            name: supply-chain
+            steps:
+              - name: Check out exact trusted base for supply-chain applicability
+                id: supply-trusted-base
+                if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+                continue-on-error: true
+                uses: actions/checkout@0000000000000000000000000000000000000001
+                with:
+                  ref: ${{ github.event.pull_request.base.sha }}
+                  path: .supply-trusted-base
+                  fetch-depth: 1
+                  persist-credentials: false
+              - name: Classify supply-chain applicability from trusted base
+                id: supply-impact
+                if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+                continue-on-error: true
+                env:
+                  GH_TOKEN: ${{ github.token }}
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+                  TRUSTED_CHECKOUT: ${{ steps.supply-trusted-base.outcome }}
+                run: |
+                  echo 'impact=true' >> "$GITHUB_OUTPUT"
+                  echo 'set -euo pipefail'
+                  echo 'test "$TRUSTED_CHECKOUT" = "success"'
+                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
+                  echo '.base.sha == $base'
+                  echo '.head.sha == $head'
+                  echo '.base.repo.full_name == $repo'
+                  echo '.changed_files > 0'
+                  echo '--paginate --slurp'
+                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
+                  echo '@tsv'
+                  echo '.supply-trusted-base/.github/scripts/pr-scope.py'
+                  echo '--repo-root .supply-trusted-base'
+                  echo '--policy .github/merge-gate-policy.json'
+                  echo '--expected-count "$expected_count"'
+                  echo '--trusted-base-sha "$BASE_SHA"'
+                  echo '.supply_chain_impact'
+                  echo 'type) == "boolean"'
+                  echo 'impact=$impact'
+              - name: Documentation-only supply-chain fast path
+                if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false && steps.supply-impact.outcome == 'success' && steps.supply-impact.outputs.impact == 'false' }}
+                run: echo light
+              - name: Test supply-chain exception policy
+                if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}
+                run: echo full
+              - name: Validate supply-chain exception registry
+                if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}
+                run: echo full
+              - name: Check advisories, licenses, bans, and sources
+                if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false')) }}
+                run: echo full
+      YAML
+
+      write(root, '.github/workflows/evidence.yml', <<~YAML)
+        name: Evidence
+        on:
+          pull_request:
+        permissions:
+          contents: read
+          pull-requests: read
+        jobs:
+          evidence-provenance:
+            name: evidence-provenance
+            steps:
+              - name: Check out exact trusted base for evidence applicability
+                id: evidence-trusted-base
+                if: ${{ github.event.pull_request.draft == false }}
+                continue-on-error: true
+                uses: actions/checkout@0000000000000000000000000000000000000001
+                with:
+                  ref: ${{ github.event.pull_request.base.sha }}
+                  path: .evidence-trusted-base
+                  fetch-depth: 1
+                  persist-credentials: false
+              - name: Classify evidence applicability from trusted base
+                id: evidence-impact
+                if: ${{ github.event.pull_request.draft == false }}
+                continue-on-error: true
+                env:
+                  GH_TOKEN: ${{ github.token }}
+                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
+                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+                  PR_NUMBER: ${{ github.event.pull_request.number }}
+                  TRUSTED_CHECKOUT: ${{ steps.evidence-trusted-base.outcome }}
+                run: |
+                  echo 'impact=true' >> "$GITHUB_OUTPUT"
+                  echo 'set -euo pipefail'
+                  echo 'test "$TRUSTED_CHECKOUT" = "success"'
+                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
+                  echo '.base.sha == $base'
+                  echo '.head.sha == $head'
+                  echo '.base.repo.full_name == $repo'
+                  echo '.changed_files > 0'
+                  echo '--paginate --slurp'
+                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
+                  echo '@tsv'
+                  echo '.evidence-trusted-base/.github/scripts/pr-scope.py'
+                  echo '--repo-root .evidence-trusted-base'
+                  echo '--policy .github/merge-gate-policy.json'
+                  echo '--expected-count "$expected_count"'
+                  echo '--trusted-base-sha "$BASE_SHA"'
+                  echo '.evidence_impact'
+                  echo 'type) == "boolean"'
+                  echo 'impact=$impact'
+              - name: Documentation-only evidence fast path
+                if: ${{ github.event.pull_request.draft == false && steps.evidence-impact.outcome == 'success' && steps.evidence-impact.outputs.impact == 'false' }}
+                run: echo light
+              - name: Verify repository-wide retained evidence policy
+                if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false')) }}
+                run: echo full
+              - name: Hydrate locked dependency graph for closure verification
+                if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false')) }}
+                run: echo full
+              - name: Verify campaign dependency closure metadata
+                if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false')) }}
+                run: echo full
+              - name: Verify retained campaign evidence integrity and provenance
+                if: ${{ github.event_name != 'pull_request' || (github.event.pull_request.draft == false && (steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false')) }}
+                run: echo full
+      YAML
+
       write(root, '.github/workflows/fast-branch.yml', <<~YAML)
         name: Fast branch CI
         on:
@@ -1487,6 +1634,84 @@ class MergeGateVerifierTest < Minitest::Test
       refute_equal original, body
       write(root, '.github/workflows/ci.yml', body)
       assert_includes verify(root).join('\n'), 'Fast evidence resolver is missing mode-integrity tokens'
+    end
+  end
+
+  def test_docs_applicability_policy_weakening_is_rejected
+    with_repo do |root, policy|
+      policy['pr_scope']['docs_only_applicability']['evidence_provenance']['sensitive_prefixes'] = []
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      assert_includes verify(root).join("\n"), 'docs_only_applicability must exactly match canonical supply/evidence ownership'
+    end
+  end
+
+  def test_supply_lightweight_guard_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/supply-chain.yml')
+      original = File.read(path)
+      body = original.sub(
+        "steps.supply-impact.outcome == 'success' && steps.supply-impact.outputs.impact == 'false'",
+        "steps.supply-impact.outputs.impact == 'false'"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/supply-chain.yml', body)
+      assert_includes verify(root).join("\n"), 'lightweight success must require successful false trusted impact'
+    end
+  end
+
+  def test_supply_uncertainty_fallback_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/supply-chain.yml')
+      original = File.read(path)
+      body = original.sub(
+        "steps.supply-impact.outcome != 'success' || steps.supply-impact.outputs.impact != 'false'",
+        "steps.supply-impact.outputs.impact != 'false'"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/supply-chain.yml', body)
+      assert_includes verify(root).join("\n"), 'must run on impact or classifier uncertainty'
+    end
+  end
+
+  def test_evidence_lightweight_guard_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      original = File.read(path)
+      body = original.sub(
+        "steps.evidence-impact.outcome == 'success' && steps.evidence-impact.outputs.impact == 'false'",
+        "steps.evidence-impact.outputs.impact == 'false'"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/evidence.yml', body)
+      assert_includes verify(root).join("\n"), 'lightweight success must require successful false trusted impact'
+    end
+  end
+
+  def test_evidence_uncertainty_fallback_weakening_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      original = File.read(path)
+      body = original.sub(
+        "steps.evidence-impact.outcome != 'success' || steps.evidence-impact.outputs.impact != 'false'",
+        "steps.evidence-impact.outputs.impact != 'false'"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/evidence.yml', body)
+      assert_includes verify(root).join("\n"), 'must run on impact or classifier uncertainty'
+    end
+  end
+
+  def test_supply_head_classifier_substitution_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/supply-chain.yml')
+      original = File.read(path)
+      body = original.sub(
+        '.supply-trusted-base/.github/scripts/pr-scope.py',
+        '.github/scripts/pr-scope.py'
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/supply-chain.yml', body)
+      assert_includes verify(root).join("\n"), 'classifier is missing fail-closed applicability tokens'
     end
   end
 

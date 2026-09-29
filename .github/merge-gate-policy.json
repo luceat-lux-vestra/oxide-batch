@@ -148,7 +148,21 @@
       ".github/merge-gate-policy.json",
       ".github/workflows/campaign-orchestrator.yml",
       "docs/engineering/retained-evidence-policy.json"
-    ]
+    ],
+    "docs_only_applicability": {
+      "supply_chain": {
+        "sensitive_exact_paths": [
+          "docs/engineering/dependency-policy.md"
+        ],
+        "sensitive_prefixes": []
+      },
+      "evidence_provenance": {
+        "sensitive_exact_paths": [],
+        "sensitive_prefixes": [
+          "docs/engineering/campaigns/"
+        ]
+      }
+    }
   },
   "post_main": {
     "default_branch": "main",

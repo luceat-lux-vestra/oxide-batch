@@ -45,6 +45,12 @@ class Campaign:
 
 
 @dataclass(frozen=True)
+class DocsApplicabilityPolicy:
+    sensitive_exact_paths: frozenset[str]
+    sensitive_prefixes: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class ScopePolicy:
     docs: DocsPolicy
     semantics_glob: str
@@ -52,6 +58,8 @@ class ScopePolicy:
     global_campaign_paths: tuple[str, ...]
     global_direct_proof_paths: tuple[str, ...]
     trusted_tree_contract: str
+    supply_chain: DocsApplicabilityPolicy
+    evidence_provenance: DocsApplicabilityPolicy
 
 
 def safe_path(path: str) -> bool:
@@ -71,6 +79,32 @@ def _require_path(value: object, label: str, *, prefix: bool = False) -> str:
         raise ValueError(f"{label} must end with '/': {value!r}")
     return value
 
+
+
+def _load_docs_applicability_policy(
+    value: object,
+    label: str,
+) -> DocsApplicabilityPolicy:
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be an object")
+    exact_raw = value.get("sensitive_exact_paths")
+    prefixes_raw = value.get("sensitive_prefixes")
+    if not isinstance(exact_raw, list) or not isinstance(prefixes_raw, list):
+        raise ValueError(
+            f"{label} must declare sensitive_exact_paths and sensitive_prefixes lists"
+        )
+    exact = tuple(
+        _require_path(v, f"{label} sensitive exact path") for v in exact_raw
+    )
+    prefixes = tuple(
+        _require_path(v, f"{label} sensitive prefix", prefix=True)
+        for v in prefixes_raw
+    )
+    if len(set(exact)) != len(exact):
+        raise ValueError(f"{label} sensitive exact paths contain duplicates")
+    if len(set(prefixes)) != len(prefixes):
+        raise ValueError(f"{label} sensitive prefixes contain duplicates")
+    return DocsApplicabilityPolicy(frozenset(exact), prefixes)
 
 def load_policy(path: Path) -> ScopePolicy:
     raw_document = json.loads(path.read_text(encoding="utf-8"))
@@ -149,6 +183,18 @@ def load_policy(path: Path) -> ScopePolicy:
             "pr_scope.trusted_tree_contract must remain exact-git-base-sha"
         )
 
+    applicability_raw = raw.get("docs_only_applicability")
+    if not isinstance(applicability_raw, dict):
+        raise ValueError("pr_scope.docs_only_applicability must be an object")
+    supply_chain = _load_docs_applicability_policy(
+        applicability_raw.get("supply_chain"),
+        "pr_scope.docs_only_applicability.supply_chain",
+    )
+    evidence_provenance = _load_docs_applicability_policy(
+        applicability_raw.get("evidence_provenance"),
+        "pr_scope.docs_only_applicability.evidence_provenance",
+    )
+
     return ScopePolicy(
         docs=DocsPolicy(frozenset(exact), prefixes, excluded),
         semantics_glob=semantics_glob,
@@ -156,6 +202,8 @@ def load_policy(path: Path) -> ScopePolicy:
         global_campaign_paths=global_paths,
         global_direct_proof_paths=global_direct_paths,
         trusted_tree_contract=trusted_tree_contract,
+        supply_chain=supply_chain,
+        evidence_provenance=evidence_provenance,
     )
 
 
@@ -190,6 +238,20 @@ def is_docs_path(path: str, policy: DocsPolicy) -> bool:
         return False
     return path.endswith(".md") and any(
         path.startswith(prefix) for prefix in policy.markdown_prefixes
+    )
+
+
+def docs_applicability_impact(
+    all_paths: tuple[str, ...],
+    docs_only: bool,
+    policy: DocsApplicabilityPolicy,
+) -> bool:
+    if not docs_only:
+        return True
+    return any(
+        path in policy.sensitive_exact_paths
+        or any(path.startswith(prefix) for prefix in policy.sensitive_prefixes)
+        for path in all_paths
     )
 
 
@@ -427,9 +489,22 @@ def classify(
             "direct_proof_reasons": sorted(set(direct_reasons)),
         }
 
+    supply_chain_impact = docs_applicability_impact(
+        all_paths,
+        docs_only,
+        policy.supply_chain,
+    )
+    evidence_impact = docs_applicability_impact(
+        all_paths,
+        docs_only,
+        policy.evidence_provenance,
+    )
+
     return {
         "classification_valid": True,
         "docs_only": docs_only,
+        "supply_chain_impact": supply_chain_impact,
+        "evidence_impact": evidence_impact,
         "affected_campaign_workflows": affected,
         "direct_proof_campaign_workflows": direct_proof,
         "stale_only_campaign_workflows": stale_only,
@@ -476,6 +551,8 @@ def self_test(
     docs = [Change("modified", "README.md")]
     result = classify(docs, 1, policy, campaigns)
     assert result is not None and result["docs_only"] is True
+    assert result["supply_chain_impact"] is False
+    assert result["evidence_impact"] is False
     assert result["affected_campaign_workflows"] == []
     assert result["direct_proof_campaign_workflows"] == []
     assert result["stale_only_campaign_workflows"] == []
@@ -485,12 +562,54 @@ def self_test(
     ]
     result = classify(docs_rename, 1, policy, campaigns)
     assert result is not None and result["docs_only"] is True
+    assert result["supply_chain_impact"] is False
+    assert result["evidence_impact"] is False
+
+    supply_policy_doc = [
+        Change("modified", "docs/engineering/dependency-policy.md")
+    ]
+    result = classify(supply_policy_doc, 1, policy, campaigns)
+    assert result is not None and result["docs_only"] is True
+    assert result["supply_chain_impact"] is True
+    assert result["evidence_impact"] is False
+
+    retained_campaign_doc = [
+        Change("modified", "docs/engineering/campaigns/m5/README.md")
+    ]
+    result = classify(retained_campaign_doc, 1, policy, campaigns)
+    assert result is not None and result["docs_only"] is True
+    assert result["supply_chain_impact"] is False
+    assert result["evidence_impact"] is True
+
+    ordinary_to_sensitive = [
+        Change(
+            "renamed",
+            "docs/engineering/dependency-policy.md",
+            "docs/engineering/ordinary.md",
+        )
+    ]
+    result = classify(ordinary_to_sensitive, 1, policy, campaigns)
+    assert result is not None and result["docs_only"] is True
+    assert result["supply_chain_impact"] is True
+
+    sensitive_to_ordinary = [
+        Change(
+            "renamed",
+            "docs/engineering/ordinary.md",
+            "docs/engineering/campaigns/m5/old.md",
+        )
+    ]
+    result = classify(sensitive_to_ordinary, 1, policy, campaigns)
+    assert result is not None and result["docs_only"] is True
+    assert result["evidence_impact"] is True
 
     source = [
         Change("modified", "crates/oxide-batch/src/lib.rs")
     ]
     result = classify(source, 1, policy, campaigns)
     assert result is not None and result["docs_only"] is False
+    assert result["supply_chain_impact"] is True
+    assert result["evidence_impact"] is True
     assert (
         ".github/workflows/m5-conformance.yml"
         in result["affected_campaign_workflows"]
@@ -524,6 +643,8 @@ def self_test(
     unknown = [Change("modified", "assets/logo.png")]
     result = classify(unknown, 1, policy, campaigns)
     assert result is not None and result["docs_only"] is False
+    assert result["supply_chain_impact"] is True
+    assert result["evidence_impact"] is True
 
     lock = [Change("modified", "Cargo.lock")]
     result = classify(lock, 1, policy, campaigns)
