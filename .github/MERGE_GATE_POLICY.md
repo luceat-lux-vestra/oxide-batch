@@ -122,21 +122,24 @@ permissions:
 
 No write permission is granted. The job authenticates to the Jobs API with `GITHUB_TOKEN: ${{ github.token }}` passed as an explicit step environment variable; it never publishes a custom commit status, never polls or waits on other workflows, and never uses `pull_request_target`. The aggregate's own pass/fail is still communicated exclusively through GitHub's native check-run status for the `postgresql` job, the same as before.
 
-Aggregate membership lives only in `merge-gate-policy.json`. The verifier maps every aggregate member context back to its checked-in required producer and requires all members to belong to the aggregate producer's workflow. It also requires:
+Schema v7 deliberately separates this internal workflow aggregate from repository merge topology. `aggregate_gates` is empty because the branch ruleset no longer consumes `postgresql` directly; `internal_aggregates` retains the eight-member inventory because the reusable Rust authority still needs selective-rerun-safe reconciliation internally. The verifier expands the three PostgreSQL member-producing matrix jobs from `.github/workflows/ci.yml`, requires that expansion to equal the declared internal inventory exactly, and requires both the members and the aggregate producer to remain advisory to repository-level topology.
 
-- the aggregate workflow to remain PR-triggered without path suppression;
-- the aggregate job's `needs` set to match the member-producing job ids exactly;
-- the emitted context name to match policy exactly;
+It also requires:
+
+- the Rust authority to remain reusable through `workflow_call`;
+- the aggregate job's `needs` set to identify the member-producing jobs exactly;
+- the emitted internal context name to remain `postgresql`;
 - no matrix or `continue-on-error` on the aggregate producer;
 - `if: ${{ always() }}`;
 - the bounded runner/timeout shape;
 - exact least-privilege `permissions: {actions: read, contents: read}`;
-- a checkout step that reuses the same `actions/checkout` SHA already pinned elsewhere in the workflow (no second, independently-drifting pin); and
-- the canonical evaluator invocation (`ruby .github/scripts/evaluate-aggregate-run.rb <context>`) with the `GITHUB_TOKEN` environment wired.
+- a checkout step that reuses the same `actions/checkout` SHA already pinned elsewhere in the workflow;
+- the canonical evaluator invocation (`ruby .github/scripts/evaluate-aggregate-run.rb postgresql`) with `GITHUB_TOKEN` wired; and
+- evaluator support for schema-v7 `internal_aggregates` plus fail-closed v6 compatibility through `aggregate_gates`.
 
-A removed/renamed member, matrix drift, dependency omission, weakened permissions, an unpinned or diverging checkout SHA, an altered/missing evaluator invocation, duplicate context, producer suppression, or producer reclassification therefore fails closed in required `quality` CI.
+A removed/renamed member, matrix drift, dependency omission, missing internal catalog, accidental reuse of branch-level `aggregate_gates`, weakened permissions, checkout drift, or an altered evaluator invocation therefore fails closed inside the reusable Rust authority and its static contract tests.
 
-The two M5 PostgreSQL conformance contexts (`postgres-15-conformance-campaign`, `postgres-18-conformance-campaign`) are produced by a different workflow (`.github/workflows/m5-conformance.yml`) and are not members of this aggregate; they remain independently required, unchanged by this evaluator.
+The two M5 PostgreSQL conformance contexts (`postgres-15-conformance-campaign`, `postgres-18-conformance-campaign`) are intentionally outside this internal aggregate. They remain independent repository merge authorities because their workflow blob is retained-evidence provenance.
 
 ## Repository merge gate bootstrap
 
