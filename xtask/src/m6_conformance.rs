@@ -444,20 +444,13 @@ fn ensure_exact_shard_report_set(directory: &Path, count: usize) -> Result<(), S
     Ok(())
 }
 
-fn read_validated_shard(
+fn validate_shard_metadata(
+    document: &Value,
     path: &Path,
-    index: usize,
-    count: usize,
     expected_major: &str,
-    expected_targets: &[(&str, &str)],
     manifest: &Value,
     environment: &Value,
-) -> Result<Vec<Value>, String> {
-    let source = fs::read_to_string(path)
-        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
-    let document: Value = serde_json::from_str(&source)
-        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
-
+) -> Result<(), String> {
     if document.get("report").and_then(Value::as_str) != Some("m6-conformance-shard")
         || document.get("schema_version").and_then(Value::as_u64) != Some(1)
     {
@@ -500,6 +493,16 @@ fn read_validated_shard(
     if document.get("passed").and_then(Value::as_bool) != Some(true) {
         return Err(format!("{} did not pass", path.display()));
     }
+    Ok(())
+}
+
+fn validate_shard_identity(
+    document: &Value,
+    path: &Path,
+    index: usize,
+    count: usize,
+    expected_targets: &[(&str, &str)],
+) -> Result<(), String> {
     let shard = document
         .get("shard")
         .and_then(Value::as_object)
@@ -540,6 +543,25 @@ fn read_validated_shard(
     if !shard_violations.is_empty() {
         return Err(format!("{} reports shard violations", path.display()));
     }
+    Ok(())
+}
+
+fn read_validated_shard(
+    path: &Path,
+    index: usize,
+    count: usize,
+    expected_major: &str,
+    expected_targets: &[(&str, &str)],
+    manifest: &Value,
+    environment: &Value,
+) -> Result<Vec<Value>, String> {
+    let source = fs::read_to_string(path)
+        .map_err(|error| format!("could not read {}: {error}", path.display()))?;
+    let document: Value = serde_json::from_str(&source)
+        .map_err(|error| format!("could not parse {}: {error}", path.display()))?;
+
+    validate_shard_metadata(&document, path, expected_major, manifest, environment)?;
+    validate_shard_identity(&document, path, index, count, expected_targets)?;
 
     let reports = document
         .get("targets")
