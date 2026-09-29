@@ -17,7 +17,6 @@ jobs:
     uses: ./.github/workflows/supply-chain.yml
     permissions:
       contents: read # Read repository contents for cargo-deny and policy validation.
-      pull-requests: read # Satisfy the reusable workflow's read-only permission ceiling; no PR mutation is performed.
 
   report-failure:
     name: report-scheduled-failure
