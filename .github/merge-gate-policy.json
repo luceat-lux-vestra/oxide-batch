@@ -134,6 +134,42 @@
         "accepted_blobs": [
           "6a3e4d15b593728926a57f869ab0e18d2e7b33ea"
         ]
+      },
+      {
+        "workflow": ".github/workflows/ci.yml",
+        "accepted_blobs": [
+          "fed6ddaa28816c5e2579cc1b08df24ce8c6505ca"
+        ]
+      },
+      {
+        "workflow": ".github/workflows/dependency-review.yml",
+        "accepted_blobs": [
+          "631bf08c7be9704b633cb4d0210db10fba832fec"
+        ]
+      },
+      {
+        "workflow": ".github/workflows/codeql.yml",
+        "accepted_blobs": [
+          "6b9df4e63ffd3ca2c696c1e300b7f7e1cf659639"
+        ]
+      },
+      {
+        "workflow": ".github/workflows/evidence.yml",
+        "accepted_blobs": [
+          "22453abf3982f9f887f47d7adb6ed2af4b8f031b"
+        ]
+      },
+      {
+        "workflow": ".github/workflows/supply-chain.yml",
+        "accepted_blobs": [
+          "9506a99ab7e52ee156321d3f0cdac8c3eb38b717"
+        ]
+      },
+      {
+        "workflow": ".github/workflows/m5-conformance.yml",
+        "accepted_blobs": [
+          "5e8c3cba0ae1c9f3d7c454c5a6004e71ad58c0ae"
+        ]
       }
     ]
   },
