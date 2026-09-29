@@ -47,7 +47,7 @@ The next CI topology uses one fail-closed scope model rather than separate path 
 
 Documentation-only scope is intentionally narrow: only the explicitly listed root documentation files and Markdown under `docs/**` qualify. Rename/copy provenance is evaluated on both source and destination.
 
-Documentation-only does not by itself mean that every required authority is inapplicable. The same trusted classifier emits `supply_chain_impact` and `evidence_impact` from the machine-readable `pr_scope.docs_only_applicability` policy. Both bits default conservatively to impact for every non-documentation or mixed change. Within documentation-only scope, `docs/engineering/dependency-policy.md` retains full supply-chain validation, while `docs/engineering/campaigns/**` retains full evidence-provenance validation. Ordinary documentation outside those owned control/evidence paths may emit the same required context through a lightweight success path. Missing, malformed, or unavailable applicability evidence always falls back to the full authority.
+Documentation-only does not by itself mean that every authority is inapplicable. Schema v7 computes `docs_only`, `supply_chain_impact`, and `evidence_impact` exactly once in `.github/workflows/pr-ci.yml` from the exact trusted base. The impact bits default conservatively to true for every non-documentation or mixed change. Within documentation-only scope, `docs/engineering/dependency-policy.md` still routes the full supply-chain authority, while `docs/engineering/campaigns/**` still routes the full evidence-provenance authority. Ordinary documentation outside those owned paths does not materialize those reusable authorities at all. Missing, malformed, or unavailable scope evidence routes the full authority set. Once Rust, evidence, or supply-chain is invoked, it executes its full validation contract and never reclassifies the PR independently.
 
 Campaign applicability does **not** duplicate M5/M6 path lists here. The classifier discovers `tests/fixtures/**/campaign-semantics.json`, validates every closure, derives its dedicated workflow from that closure, and requires the resulting workflow inventory to match `docs/engineering/retained-evidence-policy.json`'s artifact producers exactly. A changed path intersects a campaign when it equals a declared semantic path or is below a declared semantic directory.
 
@@ -57,19 +57,19 @@ Each semantic category also declares `pr_proof: direct | stale-only`. `direct` i
 
 Retained evidence now has two explicit authorities. Required `evidence-provenance` continuously verifies retained bytes, producer/provenance identity, canonical verdict, matrix/inventory, execution-manifest structure, and the determinism of the current campaign dependency-closure metadata. `cargo xtask evidence-freshness` is the separate fail-closed current-HEAD authority that compares a retained report's recorded semantic objects with the checkout that would run now. Semantic-impact/deep/release routing may require that freshness proof; an ordinary source PR does not turn a trustworthy historical artifact into forged evidence merely because a bound source object moved. Missing or malformed provenance, manifests, closure metadata, or applicability evidence remains a failure rather than an implicit non-impact decision.
 
-The trusted-classifier foundation is already on `main`. The current migration stage additionally separates direct same-PR campaign proof from stale-only semantic impact without yet suppressing campaign execution or altering the live required-context topology. Routing control-plane paths are a separate fail-closed class: changes to `.github/scripts/pr-scope.py`, `.github/merge-gate-policy.json`, `.github/workflows/campaign-orchestrator.yml`, or `docs/engineering/retained-evidence-policy.json` make every retained campaign direct-proof. The merge-gate verifier requires this exact inventory, so a router/classifier/policy change cannot classify itself as non-impact. A later routing PR may consume only this base-trusted classification to condition deep campaigns safely; retained evidence that is stale-only remains a refresh obligation for scheduled/deep/release execution rather than a reason to trust PR-head routing code.
+Schema v7 consumes this trusted classification directly. Coarse merge-time routing is centralized in `PR CI`; campaign-specific direct-proof routing remains inside the campaign authority because it operates on a finer semantic closure than docs/product applicability. Routing control-plane paths are a separate fail-closed class: changes to `.github/scripts/pr-scope.py`, `.github/merge-gate-policy.json`, `.github/workflows/campaign-orchestrator.yml`, or `docs/engineering/retained-evidence-policy.json` make every retained campaign direct-proof. The verifier requires this exact inventory, so a router/classifier/policy change cannot classify itself as non-impact. Retained evidence that is stale-only remains a refresh obligation for scheduled/deep/release execution rather than a reason to trust PR-head routing code.
 
 ## PostgreSQL aggregate decision
 
 #223 originally evaluated all eleven then-current `postgres-*` required contexts rather than assuming that every PostgreSQL-looking check should be hidden behind one cosmetic status. #323 later retired the completed M0 `postgres-spike` experiment from merge-time CI after its production invariants had moved to the repository/crash-recovery suites.
 
-The accepted current boundary is one native GitHub Actions aggregate context, `postgresql`, over the eight production PostgreSQL jobs emitted by `.github/workflows/ci.yml`:
+Inside the reusable Rust authority, the accepted boundary is one native GitHub Actions internal aggregate, `postgresql`, over the eight production PostgreSQL jobs emitted by `.github/workflows/ci.yml`. It is not a branch-ruleset context under schema v7:
 
 - four PostgreSQL design-gate matrix contexts;
 - two item-component matrix contexts; and
 - two repository matrix contexts.
 
-The two M5 conformance contexts remain independently required:
+The two M5 conformance contexts remain independent repository merge authorities:
 
 - `postgres-15-conformance-campaign`;
 - `postgres-18-conformance-campaign`.
