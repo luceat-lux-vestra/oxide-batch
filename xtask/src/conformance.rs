@@ -724,10 +724,7 @@ fn parse_shard_suite(document: &Value, path: &Path) -> Result<ShardSuitePayload,
     })
 }
 
-fn parse_shard_fixtures(
-    document: &Value,
-    path: &Path,
-) -> Result<BTreeMap<String, bool>, String> {
+fn parse_shard_fixtures(document: &Value, path: &Path) -> Result<BTreeMap<String, bool>, String> {
     document
         .get("fixtures")
         .and_then(Value::as_object)
