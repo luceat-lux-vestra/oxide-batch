@@ -174,7 +174,7 @@
       {
         "workflow": ".github/workflows/pr-labeler.yml",
         "accepted_blobs": [
-          "c93abb489a8466e54be676944c57571fe274cf1a"
+          "a0ddc26dd84e4cf99e2b6b50addedf6e4e86aeb8"
         ]
       }
     ]
