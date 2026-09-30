@@ -206,15 +206,11 @@ jobs:
               except Exception as exc:
                   raise GateError(f"trusted-base merge-gate policy is invalid: {exc}") from exc
 
-              # Schema v7+ freezes trust semantics at the protected base.
-              # Workflow and control-plane implementation changes use staged Git
-              # blob admission: an unchanged artifact may stage a future blob,
-              # while a changed artifact must already have been admitted by the
-              # trusted base. Schema 7 -> 8 is a one-time bootstrap that adds the
-              # canonical protected-file inventory without allowing those files to
-              # change in the same PR.
-              base_schema = policy.get("schema_version", 0)
-              if base_schema >= 7:
+              # Schema v7 freezes trust semantics at the protected base. A PR may
+              # only stage or retire pre-approved workflow blob identities; it may
+              # not weaken routing, members, scope policy, or the protected inventory
+              # in the same change that asks this base-trusted gate to approve it.
+              if policy.get("schema_version", 0) >= 7:
                   head_policy_file = api(
                       "contents/.github/merge-gate-policy.json",
                       {"ref": head_sha},
@@ -231,36 +227,48 @@ jobs:
                           f"PR-head merge-gate policy is invalid: {exc}"
                       ) from exc
 
-                  REQUIRED_PROTECTED_FILES = {
-                      ".github/scripts/pr-scope.py",
-                      ".github/scripts/verify-merge-gates.rb",
-                      ".github/scripts/test-merge-gates.rb",
-                      ".github/scripts/validate_actions_security.py",
-                      ".github/scripts/validate_supply_chain_exceptions.py",
-                      "docs/engineering/retained-evidence-policy.json",
-                  }
+                  def normalized_policy_without_blob_sets(document):
+                      normalized = json.loads(json.dumps(document))
+                      protected = (
+                          normalized.get("repository_merge_gate", {})
+                          .get("protected_workflows")
+                      )
+                      if isinstance(protected, list):
+                          for entry in protected:
+                              if isinstance(entry, dict):
+                                  entry["accepted_blobs"] = ["<staged>"]
+                      return normalized
 
-                  def blob_inventory(document, label, field, path_key, validator):
+                  if (
+                      normalized_policy_without_blob_sets(head_policy)
+                      != normalized_policy_without_blob_sets(policy)
+                  ):
+                      raise GateError(
+                          "PR-head merge-gate policy changes trust semantics outside "
+                          "staged protected-workflow blob admission"
+                      )
+
+                  def protected_inventory(document, label):
                       protected = (
                           document.get("repository_merge_gate", {})
-                          .get(field)
+                          .get("protected_workflows")
                       )
                       if not isinstance(protected, list) or not protected:
                           raise GateError(
-                              f"{label} {field} must be a non-empty array"
+                              f"{label} protected_workflows must be a non-empty array"
                           )
                       inventory = {}
                       for entry in protected:
                           if not isinstance(entry, dict):
                               raise GateError(
-                                  f"{label} {field} entry is not an object"
+                                  f"{label} protected workflow entry is not an object"
                               )
-                          path = entry.get(path_key)
+                          workflow = entry.get("workflow")
                           accepted = entry.get("accepted_blobs")
                           if (
-                              not isinstance(path, str)
-                              or not validator(path)
-                              or path in inventory
+                              not isinstance(workflow, str)
+                              or not workflow.startswith(".github/workflows/")
+                              or workflow in inventory
                               or not isinstance(accepted, list)
                               or not accepted
                               or len(set(accepted)) != len(accepted)
@@ -275,210 +283,61 @@ jobs:
                               )
                           ):
                               raise GateError(
-                                  f"{label} {field} contract is malformed: {entry!r}"
+                                  f"{label} protected workflow contract is malformed: "
+                                  f"{entry!r}"
                               )
-                          inventory[path] = set(accepted)
+                          inventory[workflow] = set(accepted)
                       return inventory
 
-                  def workflow_path(path):
-                      return path.startswith(".github/workflows/")
-
-                  def protected_file_path(path):
-                      return (
-                          not path.startswith("/")
-                          and "\\" not in path
-                          and ".." not in path.split("/")
-                          and path not in {"", "."}
-                          and not path.startswith(".github/workflows/")
-                      )
-
-                  def normalize_blob_sets(document, include_files):
-                      normalized = json.loads(json.dumps(document))
-                      gate_doc = normalized.get("repository_merge_gate", {})
-                      fields = [("protected_workflows", "workflow")]
-                      if include_files:
-                          fields.append(("protected_files", "path"))
-                      for field, _ in fields:
-                          entries = gate_doc.get(field)
-                          if isinstance(entries, list):
-                              for entry in entries:
-                                  if isinstance(entry, dict):
-                                      entry["accepted_blobs"] = ["<staged>"]
-                      return normalized
-
-                  def artifact_blob(path, ref):
-                      encoded_path = urllib.parse.quote(path, safe="/")
-                      payload = api(
-                          f"contents/{encoded_path}",
-                          {"ref": ref},
-                      )
-                      blob = payload.get("sha")
-                      if (
-                          not isinstance(blob, str)
-                          or len(blob) != 40
-                          or any(ch not in "0123456789abcdef" for ch in blob)
-                      ):
-                          raise GateError(
-                              f"{path}: cannot resolve Git blob identity at {ref}"
-                          )
-                      return blob
-
-                  def enforce_staged_transition(
-                      base_inventory,
-                      head_inventory,
-                      label,
-                  ):
-                      if set(head_inventory) != set(base_inventory):
-                          raise GateError(
-                              f"PR-head {label} inventory differs from trusted-base inventory"
-                          )
-                      for path in sorted(base_inventory):
-                          base_blob = artifact_blob(path, base_sha)
-                          head_blob = artifact_blob(path, head_sha)
-                          base_allowed = base_inventory[path]
-                          head_allowed = head_inventory[path]
-                          if base_blob == head_blob:
-                              if not base_allowed.issubset(head_allowed):
-                                  raise GateError(
-                                      f"{path}: unchanged {label} may only add staged "
-                                      "accepted blobs; existing trust cannot be removed"
-                                  )
-                          else:
-                              if head_blob not in base_allowed:
-                                  raise GateError(
-                                      f"{path}: changed {label} blob {head_blob!r} "
-                                      "was not pre-admitted by trusted-base policy"
-                                  )
-                              if head_blob not in head_allowed:
-                                  raise GateError(
-                                      f"{path}: PR-head policy does not retain its "
-                                      f"active pre-admitted {label} blob"
-                                  )
-                              if not head_allowed.issubset(base_allowed):
-                                  raise GateError(
-                                      f"{path}: {label} replacement cannot admit "
-                                      "additional blobs in the same PR"
-                                  )
-
-                  base_workflows = blob_inventory(
-                      policy,
-                      "trusted-base",
-                      "protected_workflows",
-                      "workflow",
-                      workflow_path,
-                  )
-                  head_workflows = blob_inventory(
-                      head_policy,
-                      "PR-head",
-                      "protected_workflows",
-                      "workflow",
-                      workflow_path,
-                  )
-
-                  head_schema = head_policy.get("schema_version", 0)
-                  if base_schema == 7 and head_schema == 8:
-                      bootstrap_head = json.loads(json.dumps(head_policy))
-                      bootstrap_head["schema_version"] = 7
-                      bootstrap_gate = bootstrap_head.get("repository_merge_gate", {})
-                      protected_files = bootstrap_gate.pop("protected_files", None)
-                      if (
-                          normalize_blob_sets(bootstrap_head, False)
-                          != normalize_blob_sets(policy, False)
-                      ):
-                          raise GateError(
-                              "schema 7 -> 8 bootstrap may only add canonical "
-                              "protected_files and staged blob identities"
-                          )
-                      if not isinstance(protected_files, list):
-                          raise GateError(
-                              "schema 7 -> 8 bootstrap must add protected_files"
-                          )
-                      head_files = blob_inventory(
-                          head_policy,
-                          "PR-head",
-                          "protected_files",
-                          "path",
-                          protected_file_path,
-                      )
-                      if set(head_files) != REQUIRED_PROTECTED_FILES:
-                          raise GateError(
-                              "schema 7 -> 8 bootstrap protected_files must exactly "
-                              "match the canonical control-plane inventory"
-                          )
-                      for path in sorted(REQUIRED_PROTECTED_FILES):
-                          base_blob = artifact_blob(path, base_sha)
-                          head_blob = artifact_blob(path, head_sha)
-                          if base_blob != head_blob:
-                              raise GateError(
-                                  f"{path}: protected-file bootstrap cannot modify "
-                                  "the file in the same PR"
-                              )
-                          if base_blob not in head_files[path]:
-                              raise GateError(
-                                  f"{path}: protected-file bootstrap must admit "
-                                  "the current trusted blob"
-                              )
-                      enforce_staged_transition(
-                          base_workflows,
-                          head_workflows,
-                          "protected workflow",
-                      )
-                  elif base_schema == 7 and head_schema == 7:
-                      if (
-                          normalize_blob_sets(head_policy, False)
-                          != normalize_blob_sets(policy, False)
-                      ):
-                          raise GateError(
-                              "PR-head merge-gate policy changes trust semantics "
-                              "outside staged protected-workflow blob admission"
-                          )
-                      enforce_staged_transition(
-                          base_workflows,
-                          head_workflows,
-                          "protected workflow",
-                      )
-                  elif base_schema >= 8 and head_schema == base_schema:
-                      if (
-                          normalize_blob_sets(head_policy, True)
-                          != normalize_blob_sets(policy, True)
-                      ):
-                          raise GateError(
-                              "PR-head merge-gate policy changes schema-v8 trust "
-                              "semantics outside staged blob admission"
-                          )
-                      base_files = blob_inventory(
-                          policy,
-                          "trusted-base",
-                          "protected_files",
-                          "path",
-                          protected_file_path,
-                      )
-                      head_files = blob_inventory(
-                          head_policy,
-                          "PR-head",
-                          "protected_files",
-                          "path",
-                          protected_file_path,
-                      )
-                      if set(base_files) != REQUIRED_PROTECTED_FILES:
-                          raise GateError(
-                              "trusted-base protected_files inventory is not canonical"
-                          )
-                      enforce_staged_transition(
-                          base_workflows,
-                          head_workflows,
-                          "protected workflow",
-                      )
-                      enforce_staged_transition(
-                          base_files,
-                          head_files,
-                          "protected file",
-                      )
-                  else:
+                  base_inventory = protected_inventory(policy, "trusted-base")
+                  head_inventory = protected_inventory(head_policy, "PR-head")
+                  if set(head_inventory) != set(base_inventory):
                       raise GateError(
-                          f"unsupported merge-gate schema transition "
-                          f"{base_schema!r} -> {head_schema!r}"
+                          "PR-head protected workflow inventory differs from "
+                          "trusted-base inventory"
                       )
+
+                  for workflow_path in sorted(base_inventory):
+                      encoded_path = urllib.parse.quote(workflow_path, safe="/")
+                      base_file = api(
+                          f"contents/{encoded_path}",
+                          {"ref": base_sha},
+                      )
+                      head_file = api(
+                          f"contents/{encoded_path}",
+                          {"ref": head_sha},
+                      )
+                      base_blob = base_file.get("sha")
+                      head_blob = head_file.get("sha")
+                      if not isinstance(base_blob, str) or not isinstance(head_blob, str):
+                          raise GateError(
+                              f"{workflow_path}: cannot resolve base/head Git blob identity"
+                          )
+
+                      base_allowed = base_inventory[workflow_path]
+                      head_allowed = head_inventory[workflow_path]
+                      if base_blob == head_blob:
+                          if not base_allowed.issubset(head_allowed):
+                              raise GateError(
+                                  f"{workflow_path}: unchanged workflow may only add "
+                                  "staged accepted blobs; existing trust cannot be removed"
+                              )
+                      else:
+                          if head_blob not in base_allowed:
+                              raise GateError(
+                                  f"{workflow_path}: changed workflow blob {head_blob!r} "
+                                  "was not pre-admitted by trusted-base policy"
+                              )
+                          if head_blob not in head_allowed:
+                              raise GateError(
+                                  f"{workflow_path}: PR-head policy does not retain its "
+                                  "active pre-admitted workflow blob"
+                              )
+                          if not head_allowed.issubset(base_allowed):
+                              raise GateError(
+                                  f"{workflow_path}: workflow replacement cannot admit "
+                                  "additional blobs in the same PR"
+                              )
 
               gate = policy.get("repository_merge_gate")
               if not isinstance(gate, dict) or gate.get("context") != EXPECTED_CONTEXT:
@@ -520,55 +379,6 @@ jobs:
                       f"merge-gate: protected workflow accepted path={workflow_path} "
                       f"blob={actual_blob}"
                   )
-
-              if policy.get("schema_version", 0) >= 8:
-                  protected_files = gate.get("protected_files", [])
-                  if not isinstance(protected_files, list) or not protected_files:
-                      raise GateError(
-                          "trusted-base protected_files must be a non-empty array"
-                      )
-                  seen_paths = set()
-                  for protected in protected_files:
-                      if not isinstance(protected, dict):
-                          raise GateError("protected file entry is not an object")
-                      path = protected.get("path")
-                      accepted_blobs = protected.get("accepted_blobs")
-                      if (
-                          not isinstance(path, str)
-                          or not path
-                          or path.startswith("/")
-                          or "\\" in path
-                          or ".." in path.split("/")
-                          or path.startswith(".github/workflows/")
-                          or path in seen_paths
-                          or not isinstance(accepted_blobs, list)
-                          or not accepted_blobs
-                          or any(
-                              not isinstance(blob, str)
-                              or len(blob) != 40
-                              or any(ch not in "0123456789abcdef" for ch in blob)
-                              for blob in accepted_blobs
-                          )
-                      ):
-                          raise GateError(
-                              f"malformed protected file contract: {protected!r}"
-                          )
-                      seen_paths.add(path)
-                      encoded_path = urllib.parse.quote(path, safe="/")
-                      head_file = api(
-                          f"contents/{encoded_path}",
-                          {"ref": head_sha},
-                      )
-                      actual_blob = head_file.get("sha")
-                      if actual_blob not in accepted_blobs:
-                          raise GateError(
-                              f"{path}: PR-head blob {actual_blob!r} is not accepted "
-                              "by trusted-base protected-file policy"
-                          )
-                      print(
-                          f"merge-gate: protected file accepted path={path} "
-                          f"blob={actual_blob}"
-                      )
 
               members = gate.get("members")
               if not isinstance(members, list) or not members:
