@@ -816,7 +816,7 @@ module MergeGateVerifier
     unless jobs.is_a?(Hash)
       return violations + ["#{PR_CI_WORKFLOW} must declare jobs"]
     end
-    expected_jobs = %w[scope rust dependency codeql evidence supply campaigns pr-proof]
+    expected_jobs = %w[scope rust dependency codeql evidence supply pr-proof]
     missing_jobs = expected_jobs - jobs.keys.map(&:to_s)
     violations << "#{PR_CI_WORKFLOW} is missing canonical jobs: #{missing_jobs.join(', ')}" unless missing_jobs.empty?
 
@@ -825,16 +825,14 @@ module MergeGateVerifier
       'dependency' => '.github/workflows/dependency-review.yml',
       'codeql' => '.github/workflows/codeql.yml',
       'evidence' => '.github/workflows/evidence.yml',
-      'supply' => '.github/workflows/supply-chain.yml',
-      'campaigns' => '.github/workflows/campaign-orchestrator.yml'
+      'supply' => '.github/workflows/supply-chain.yml'
     }
     call_permissions = {
       'rust' => {'actions' => 'read', 'contents' => 'read'},
       'dependency' => {'contents' => 'read'},
       'codeql' => {'contents' => 'read', 'pull-requests' => 'read', 'security-events' => 'write'},
       'evidence' => {'contents' => 'read'},
-      'supply' => {'contents' => 'read'},
-      'campaigns' => {'contents' => 'read', 'pull-requests' => 'read'}
+      'supply' => {'contents' => 'read'}
     }
     call_contracts.each do |job_id, workflow|
       job = jobs[job_id]
@@ -855,12 +853,34 @@ module MergeGateVerifier
       end
     end
 
-    %w[rust dependency codeql campaigns].each do |job_id|
+    %w[rust dependency codeql].each do |job_id|
       condition = normalized_shell(jobs.dig(job_id, 'if'))
       unless condition.include?("needs.scope.outputs.docs_only != 'true'")
         violations << "#{PR_CI_WORKFLOW}##{job_id} must suppress only proven docs-only scope"
       end
     end
+
+    campaigns = jobs['campaigns']
+    if campaigns
+      unless campaigns.is_a?(Hash) &&
+             campaigns['uses'] == "./#{CAMPAIGN_ORCHESTRATOR_WORKFLOW}" &&
+             normalize_needs(campaigns).include?(PR_CI_SCOPE_JOB) &&
+             campaigns['permissions'] == {'contents' => 'read', 'pull-requests' => 'read'}
+        violations << "#{PR_CI_WORKFLOW}#campaigns compatibility job must retain its canonical reusable-call contract"
+      end
+      campaigns_if = normalized_shell(campaigns['if'])
+      required_campaign_tokens = [
+        "needs.scope.outputs.legacy_base != 'true'",
+        "needs.scope.outputs.classification_outcome != 'success'",
+        "needs.scope.outputs.docs_only != 'true'"
+      ]
+      missing_campaign_tokens = required_campaign_tokens.reject { |token| campaigns_if.include?(token) }
+      compact_campaigns_if = campaigns_if.gsub(/\s+/, '')
+      unless missing_campaign_tokens.empty? && compact_campaigns_if.end_with?('&&false}}')
+        violations << "#{PR_CI_WORKFLOW}#campaigns compatibility job must remain permanently disabled while present"
+      end
+    end
+
     evidence_if = normalized_shell(jobs.dig('evidence', 'if'))
     unless evidence_if.include?("needs.scope.outputs.evidence_impact != 'false'")
       violations << "#{PR_CI_WORKFLOW}#evidence must run unless trusted evidence impact is false"

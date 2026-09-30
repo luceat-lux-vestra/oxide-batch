@@ -1725,6 +1725,45 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v7_topology_accepts_campaign_free_entrypoint
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/pr-ci.yml')
+      original = File.read(path)
+      body = original.sub(
+        /  campaigns:\n.*?(?=  pr-proof:\n)/m,
+        ''
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/pr-ci.yml', body)
+      policy.dig('repository_merge_gate', 'protected_workflows')
+            .find { |entry| entry['workflow'] == '.github/workflows/pr-ci.yml' }['accepted_blobs'] << MergeGateVerifier.git_blob_sha(body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_empty violations
+    end
+  end
+
+  def test_v7_topology_rejects_reactivated_campaign_compatibility_job
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/pr-ci.yml')
+      original = File.read(path)
+      body = original.sub(') && false }}', ') && (false || true) }}')
+      refute_equal original, body
+      write(root, '.github/workflows/pr-ci.yml', body)
+      policy.dig('repository_merge_gate', 'protected_workflows')
+            .find { |entry| entry['workflow'] == '.github/workflows/pr-ci.yml' }['accepted_blobs'] << MergeGateVerifier.git_blob_sha(body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'campaigns compatibility job must remain permanently disabled while present'
+    end
+  end
+
   def test_v7_topology_rejects_entrypoint_path_filter
     with_v7_topology_contract do |root, policy|
       path = File.join(root, '.github/workflows/pr-ci.yml')
@@ -1952,7 +1991,7 @@ class MergeGateVerifierTest < Minitest::Test
               contents: read
           campaigns:
             needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') && false }}
             uses: ./.github/workflows/campaign-orchestrator.yml
             permissions:
               contents: read
