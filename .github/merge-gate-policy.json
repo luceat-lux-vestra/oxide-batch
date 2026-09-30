@@ -140,7 +140,8 @@
       {
         "workflow": ".github/workflows/ci.yml",
         "accepted_blobs": [
-          "82705875b20a0ca62ed069b69ab3eea8ac47d4cb"
+          "82705875b20a0ca62ed069b69ab3eea8ac47d4cb",
+          "33384ad8e9bb8d30d83c0552c84da501caba93c5"
         ]
       },
       {
