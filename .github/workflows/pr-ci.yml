@@ -22,6 +22,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       legacy_base: ${{ steps.classify.outputs.legacy_base }}
+      schema8_bootstrap: ${{ steps.classify.outputs.schema8_bootstrap }}
       classification_outcome: ${{ steps.classify.outcome }}
       docs_only: ${{ steps.classify.outputs.docs_only }}
       supply_chain_impact: ${{ steps.classify.outputs.supply_chain_impact }}
@@ -50,6 +51,7 @@ jobs:
         run: |
           {
             echo 'legacy_base=unknown'
+            echo 'schema8_bootstrap=false'
             echo 'docs_only=false'
             echo 'supply_chain_impact=true'
             echo 'evidence_impact=true'
@@ -79,6 +81,20 @@ jobs:
           trap 'rm -f "$changed_file_records"' EXIT
           jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
 
+          schema8_bootstrap=false
+          if [ "$schema_version" = "7" ] && [ "$expected_count" = "1" ]; then
+            bootstrap_status="$(jq -er '[.[][]] | if length == 1 then .[0].status else error("bootstrap requires exactly one changed file") end' <<<"$pages")"
+            bootstrap_path="$(jq -er '[.[][]] | if length == 1 then .[0].filename else error("bootstrap requires exactly one changed file") end' <<<"$pages")"
+            bootstrap_previous="$(jq -r '[.[][]] | if length == 1 then (.[0].previous_filename // "") else "" end' <<<"$pages")"
+            if [ "$bootstrap_status" = "modified" ] && [ "$bootstrap_path" = ".github/merge-gate-policy.json" ] && [ -z "$bootstrap_previous" ]; then
+              head_policy="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/contents/.github/merge-gate-policy.json?ref=${HEAD_SHA}")"
+              head_schema="$(jq -er '.content | @base64d | fromjson | .schema_version | select(type == "number")' <<<"$head_policy")"
+              if [ "$head_schema" = "8" ]; then
+                schema8_bootstrap=true
+              fi
+            fi
+          fi
+
           classification="$(
             python3 .trusted-base/.github/scripts/pr-scope.py \
               --repo-root .trusted-base \
@@ -93,6 +109,7 @@ jobs:
           evidence_impact="$(jq -er 'if .classification_valid == true and (.evidence_impact | type) == "boolean" then .evidence_impact else error("invalid evidence_impact") end' <<<"$classification")"
 
           {
+            echo "schema8_bootstrap=$schema8_bootstrap"
             echo "docs_only=$docs_only"
             echo "supply_chain_impact=$supply_chain_impact"
             echo "evidence_impact=$evidence_impact"
@@ -104,6 +121,7 @@ jobs:
     if: >-
       ${{ always() && github.event.pull_request.draft == false &&
           needs.scope.outputs.legacy_base != 'true' &&
+          needs.scope.outputs.schema8_bootstrap != 'true' &&
           (needs.scope.outputs.classification_outcome != 'success' ||
            needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/ci.yml
@@ -117,6 +135,7 @@ jobs:
     if: >-
       ${{ always() && github.event.pull_request.draft == false &&
           needs.scope.outputs.legacy_base != 'true' &&
+          needs.scope.outputs.schema8_bootstrap != 'true' &&
           (needs.scope.outputs.classification_outcome != 'success' ||
            needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/dependency-review.yml
@@ -129,6 +148,7 @@ jobs:
     if: >-
       ${{ always() && github.event.pull_request.draft == false &&
           needs.scope.outputs.legacy_base != 'true' &&
+          needs.scope.outputs.schema8_bootstrap != 'true' &&
           (needs.scope.outputs.classification_outcome != 'success' ||
            needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/codeql.yml
@@ -143,6 +163,7 @@ jobs:
     if: >-
       ${{ always() && github.event.pull_request.draft == false &&
           needs.scope.outputs.legacy_base != 'true' &&
+          needs.scope.outputs.schema8_bootstrap != 'true' &&
           (needs.scope.outputs.classification_outcome != 'success' ||
            needs.scope.outputs.evidence_impact != 'false') }}
     uses: ./.github/workflows/evidence.yml
@@ -155,6 +176,7 @@ jobs:
     if: >-
       ${{ always() && github.event.pull_request.draft == false &&
           needs.scope.outputs.legacy_base != 'true' &&
+          needs.scope.outputs.schema8_bootstrap != 'true' &&
           (needs.scope.outputs.classification_outcome != 'success' ||
            needs.scope.outputs.supply_chain_impact != 'false') }}
     uses: ./.github/workflows/supply-chain.yml
@@ -167,6 +189,7 @@ jobs:
     if: >-
       ${{ always() && github.event.pull_request.draft == false &&
           needs.scope.outputs.legacy_base != 'true' &&
+          needs.scope.outputs.schema8_bootstrap != 'true' &&
           (needs.scope.outputs.classification_outcome != 'success' ||
            needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/campaign-orchestrator.yml
@@ -189,6 +212,7 @@ jobs:
         if: ${{ github.event.pull_request.draft == false }}
         env:
           LEGACY_BASE: ${{ needs.scope.outputs.legacy_base }}
+          SCHEMA8_BOOTSTRAP: ${{ needs.scope.outputs.schema8_bootstrap }}
           SCOPE_RESULT: ${{ needs.scope.result }}
           CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.classification_outcome }}
           DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
@@ -210,6 +234,22 @@ jobs:
 
           if [ "$LEGACY_BASE" = "true" ]; then
             echo "schema-v6 migration base detected; legacy direct workflows remain authoritative for this migration PR"
+            exit 0
+          fi
+
+          if [ "$SCHEMA8_BOOTSTRAP" = "true" ]; then
+            if [ "$CLASSIFICATION_OUTCOME" != "success" ] || [ "$LEGACY_BASE" != "false" ]; then
+              echo "::error::schema-v8 bootstrap shortcut requires successful trusted schema-v7 scope"
+              exit 1
+            fi
+            for pair in "rust:$RUST_RESULT" "dependency:$DEPENDENCY_RESULT" "codeql:$CODEQL_RESULT" "evidence:$EVIDENCE_RESULT" "supply:$SUPPLY_RESULT"; do
+              result="${pair#*:}"
+              if [ "$result" != "skipped" ]; then
+                echo "::error::schema-v8 bootstrap candidate unexpectedly materialized authority: $pair"
+                exit 1
+              fi
+            done
+            echo "schema-v8 policy-only bootstrap candidate; final trust decision is owned by the protected-base merge-gate"
             exit 0
           fi
 
