@@ -876,7 +876,7 @@ module MergeGateVerifier
       ]
       missing_campaign_tokens = required_campaign_tokens.reject { |token| campaigns_if.include?(token) }
       compact_campaigns_if = campaigns_if.gsub(/\s+/, '')
-      unless missing_campaign_tokens.empty? || !compact_campaigns_if.end_with?('&&false}}')
+      unless missing_campaign_tokens.empty? && compact_campaigns_if.end_with?('&&false}}')
         violations << "#{PR_CI_WORKFLOW}#campaigns compatibility job must remain permanently disabled while present"
       end
     end
