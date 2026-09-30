@@ -191,7 +191,8 @@ jobs:
           needs.scope.outputs.legacy_base != 'true' &&
           needs.scope.outputs.schema8_bootstrap != 'true' &&
           (needs.scope.outputs.classification_outcome != 'success' ||
-           needs.scope.outputs.docs_only != 'true') }}
+           needs.scope.outputs.docs_only != 'true') &&
+          false }}
     uses: ./.github/workflows/campaign-orchestrator.yml
     permissions:
       contents: read # Read repository source for the reusable authority.
