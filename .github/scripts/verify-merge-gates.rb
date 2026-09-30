@@ -872,11 +872,10 @@ module MergeGateVerifier
       required_campaign_tokens = [
         "needs.scope.outputs.legacy_base != 'true'",
         "needs.scope.outputs.classification_outcome != 'success'",
-        "needs.scope.outputs.docs_only != 'true'",
-        'false'
+        "needs.scope.outputs.docs_only != 'true'"
       ]
       missing_campaign_tokens = required_campaign_tokens.reject { |token| campaigns_if.include?(token) }
-      unless missing_campaign_tokens.empty?
+      unless missing_campaign_tokens.empty? || !campaigns_if.end_with?('&&false}}')
         violations << "#{PR_CI_WORKFLOW}#campaigns compatibility job must remain permanently disabled while present"
       end
     end
