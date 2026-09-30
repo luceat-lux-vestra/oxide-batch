@@ -1725,6 +1725,35 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v7_topology_accepts_pre_admitted_campaign_free_entrypoint
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/pr-ci.yml')
+      original = File.read(path)
+      start = original.index("\n  campaigns:\n")
+      finish = original.index("\n  pr-proof:\n")
+      refute_nil start
+      refute_nil finish
+      assert_operator finish, :>, start
+
+      body = original[0...start] + original[finish..]
+      refute_equal original, body
+      refute_includes body, "\n  campaigns:\n"
+      write(root, '.github/workflows/pr-ci.yml', body)
+
+      entry = policy.dig('repository_merge_gate', 'protected_workflows').find do |item|
+        item['workflow'] == '.github/workflows/pr-ci.yml'
+      end
+      refute_nil entry
+      entry['accepted_blobs'] << MergeGateVerifier.git_blob_sha(body)
+
+      assert_empty MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+    end
+  end
+
   def test_v7_topology_rejects_entrypoint_path_filter
     with_v7_topology_contract do |root, policy|
       path = File.join(root, '.github/workflows/pr-ci.yml')
