@@ -1730,7 +1730,7 @@ class MergeGateVerifierTest < Minitest::Test
       path = File.join(root, '.github/workflows/pr-ci.yml')
       original = File.read(path)
       body = original.sub(
-        /          campaigns:\n.*?              pull-requests: read\n/m,
+        /  campaigns:\n.*?(?=  pr-proof:\n)/m,
         ''
       )
       refute_equal original, body
