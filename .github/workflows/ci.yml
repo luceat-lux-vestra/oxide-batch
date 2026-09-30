@@ -303,6 +303,25 @@ jobs:
           persist-credentials: false
 
 
+      - name: Check out exact trusted base for merge-gate verification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .merge-gate-trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify merge topology with trusted-base verifier
+        env:
+          RULESET_PATH: ${{ runner.temp }}/protect-main-ruleset.json
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-all-errors \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/rulesets/19905142" \
+            -o "$RULESET_PATH"
+          ruby .merge-gate-trusted-base/.github/scripts/verify-merge-gates.rb \
+            .github/merge-gate-policy.json "$RULESET_PATH"
+
       - name: Check facade without optional adapters
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo check -p oxide-batch --no-default-features
