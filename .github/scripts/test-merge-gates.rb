@@ -1750,7 +1750,7 @@ class MergeGateVerifierTest < Minitest::Test
     with_v7_topology_contract do |root, policy|
       path = File.join(root, '.github/workflows/pr-ci.yml')
       original = File.read(path)
-      body = original.sub(') && false }}', ') }}')
+      body = original.sub(') && false }}', ') && (false || true) }}')
       refute_equal original, body
       write(root, '.github/workflows/pr-ci.yml', body)
       policy.dig('repository_merge_gate', 'protected_workflows')
