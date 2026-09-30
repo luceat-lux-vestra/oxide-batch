@@ -188,6 +188,87 @@ class AggregateEvaluatorTest < Minitest::Test
     assert_raises(AggregateEvaluator::EvaluationError) { AggregateEvaluator.evaluate(members: MEMBERS, jobs: nil) }
   end
 
+  # --- reusable-workflow namespace ---------------------------------------
+
+  def test_standalone_aggregate_uses_empty_namespace
+    jobs = [
+      job('postgresql', 1, 'in_progress', nil),
+      job('postgres-15-design-gate', 1, 'completed', 'success')
+    ]
+    assert_equal '', AggregateEvaluator.aggregate_namespace(
+      aggregate_context: 'postgresql',
+      jobs: jobs
+    )
+  end
+
+  def test_reusable_aggregate_derives_caller_namespace
+    jobs = [
+      job('rust-authority / postgresql', 1, 'in_progress', nil),
+      job('rust-authority / postgres-15-design-gate', 1, 'completed', 'success')
+    ]
+    assert_equal 'rust-authority', AggregateEvaluator.aggregate_namespace(
+      aggregate_context: 'postgresql',
+      jobs: jobs
+    )
+  end
+
+  def test_reusable_namespace_normalizes_only_its_own_jobs
+    jobs = [
+      job('rust-authority / postgresql', 1, 'in_progress', nil),
+      job('rust-authority / postgres-15-design-gate', 1, 'completed', 'success', id: 10),
+      job('rust-authority / postgres-18-design-gate', 1, 'completed', 'success', id: 11),
+      job('other-authority / postgres-15-design-gate', 1, 'completed', 'failure', id: 12)
+    ]
+    namespace = AggregateEvaluator.aggregate_namespace(
+      aggregate_context: 'postgresql',
+      jobs: jobs
+    )
+    scoped = AggregateEvaluator.jobs_in_namespace(jobs: jobs, namespace: namespace)
+    passed, diagnostics = AggregateEvaluator.evaluate(members: MEMBERS, jobs: scoped)
+
+    assert passed
+    assert_equal(
+      %w[postgres-15-design-gate postgres-18-design-gate postgresql].sort,
+      scoped.map { |entry| entry['name'] }.sort
+    )
+    assert(diagnostics.all? { |d| d['reason'] == 'pass' })
+  end
+
+  def test_namespace_resolution_fails_closed_without_aggregate_job
+    error = assert_raises(AggregateEvaluator::EvaluationError) do
+      AggregateEvaluator.aggregate_namespace(
+        aggregate_context: 'postgresql',
+        jobs: MEMBERS.map { |name| job("rust-authority / #{name}", 1, 'completed', 'success') }
+      )
+    end
+    assert_match(/no Jobs API entry for aggregate context/, error.message)
+  end
+
+  def test_namespace_resolution_fails_closed_on_duplicate_latest_aggregate
+    jobs = [
+      job('rust-authority / postgresql', 2, 'in_progress', nil, id: 1),
+      job('other-authority / postgresql', 2, 'in_progress', nil, id: 2)
+    ]
+    error = assert_raises(AggregateEvaluator::EvaluationError) do
+      AggregateEvaluator.aggregate_namespace(
+        aggregate_context: 'postgresql',
+        jobs: jobs
+      )
+    end
+    assert_match(/2 aggregate jobs share latest run_attempt=2/, error.message)
+  end
+
+  def test_namespace_resolution_uses_latest_aggregate_attempt
+    jobs = [
+      job('legacy-authority / postgresql', 1, 'completed', 'failure', id: 1),
+      job('rust-authority / postgresql', 2, 'in_progress', nil, id: 2)
+    ]
+    assert_equal 'rust-authority', AggregateEvaluator.aggregate_namespace(
+      aggregate_context: 'postgresql',
+      jobs: jobs
+    )
+  end
+
   # --- policy loading -----------------------------------------------------
 
   def test_aggregate_members_reads_canonical_list_from_policy

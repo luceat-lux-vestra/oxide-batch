@@ -73,6 +73,55 @@ module AggregateEvaluator
     member_diagnostic(member: member, reason: 'pass', status: status, conclusion: conclusion, attempt: max_attempt, job_id: job['id'])
   end
 
+  def aggregate_namespace(aggregate_context:, jobs:)
+    raise EvaluationError, 'jobs must be an array' unless jobs.is_a?(Array)
+
+    suffix = " / #{aggregate_context}"
+    entries = jobs.select do |job|
+      next false unless job.is_a?(Hash)
+
+      name = job['name']
+      name == aggregate_context || (name.is_a?(String) && name.end_with?(suffix))
+    end
+    raise EvaluationError, "no Jobs API entry for aggregate context #{aggregate_context.inspect}" if entries.empty?
+
+    attempts = entries.map { |entry| entry['run_attempt'] }
+    if attempts.any? { |attempt| !attempt.is_a?(Integer) }
+      raise EvaluationError, "aggregate context #{aggregate_context.inspect} is missing an integer run_attempt"
+    end
+
+    latest_attempt = attempts.max
+    latest = entries.select { |entry| entry['run_attempt'] == latest_attempt }
+    if latest.length != 1
+      raise EvaluationError,
+            "#{latest.length} aggregate jobs share latest run_attempt=#{latest_attempt} for #{aggregate_context.inspect}"
+    end
+
+    name = latest.first['name']
+    return '' if name == aggregate_context
+
+    name.delete_suffix(suffix)
+  end
+
+  def jobs_in_namespace(jobs:, namespace:)
+    raise EvaluationError, 'jobs must be an array' unless jobs.is_a?(Array)
+    raise EvaluationError, 'namespace must be a string' unless namespace.is_a?(String)
+
+    return jobs if namespace.empty?
+
+    prefix = "#{namespace} / "
+    jobs.filter_map do |job|
+      next unless job.is_a?(Hash)
+
+      name = job['name']
+      next unless name.is_a?(String) && name.start_with?(prefix)
+
+      normalized = job.dup
+      normalized['name'] = name.delete_prefix(prefix)
+      normalized
+    end
+  end
+
   def member_diagnostic(member:, reason:, detail: nil, status: nil, conclusion: nil, attempt: nil, job_id: nil)
     {
       'member' => member,
@@ -173,7 +222,9 @@ module AggregateEvaluator
     token = env_fetch('GITHUB_TOKEN')
 
     jobs = fetch_all_jobs(api_url: api_url, repository: repository, run_id: run_id, token: token)
-    evaluate(members: members, jobs: jobs)
+    namespace = aggregate_namespace(aggregate_context: aggregate_context, jobs: jobs)
+    scoped_jobs = jobs_in_namespace(jobs: jobs, namespace: namespace)
+    evaluate(members: members, jobs: scoped_jobs)
   end
 end
 
