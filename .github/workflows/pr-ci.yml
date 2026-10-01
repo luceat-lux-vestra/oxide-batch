@@ -183,21 +183,6 @@ jobs:
     permissions:
       contents: read # Read repository source for the routed full authority.
 
-  campaigns:
-    name: advisory-campaigns
-    needs: scope
-    if: >-
-      ${{ always() && github.event.pull_request.draft == false &&
-          needs.scope.outputs.legacy_base != 'true' &&
-          needs.scope.outputs.schema8_bootstrap != 'true' &&
-          (needs.scope.outputs.classification_outcome != 'success' ||
-           needs.scope.outputs.docs_only != 'true') &&
-          false }}
-    uses: ./.github/workflows/campaign-orchestrator.yml
-    permissions:
-      contents: read # Read repository source for the reusable authority.
-      pull-requests: read # Reconcile live PR identity and trusted routing metadata.
-
   pr-proof:
     name: pr-proof
     needs: [scope, rust, dependency, codeql, evidence, supply]
