@@ -122,8 +122,8 @@ jobs:
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions:
-      actions: write
-      contents: read
+      actions: write # Dispatch only the protected-base authority workflows selected by trusted scope.
+      contents: read # Read the exact protected-base policy/runtime used for dispatch planning.
     steps:
       - name: Check out exact trusted base for dispatch planning
         id: dispatch-trusted-base
@@ -166,6 +166,8 @@ jobs:
           while IFS= read -r workflow_path; do
             workflow="${workflow_path##*/}"
             test -n "$workflow"
+            # Globbing is disabled above with set -f; keep canonical nested gh-api field tokens literal.
+            # shellcheck disable=SC2102
             gh api --method POST               "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches"               -f ref="$DEFAULT_BRANCH"               -f inputs[base_sha]="$BASE_SHA"               -f inputs[head_sha]="$HEAD_SHA"               -f inputs[head_repo]="$HEAD_REPO"               -f inputs[pr_number]="$PR_NUMBER"               -f inputs[caller_run_id]="$CALLER_RUN_ID"               -f inputs[caller_run_attempt]="$CALLER_RUN_ATTEMPT"
           done < <(jq -r '.required[].workflow' <<<"$plan")
 
@@ -176,8 +178,8 @@ jobs:
     runs-on: ubuntu-slim
     timeout-minutes: 5
     permissions:
-      actions: read
-      contents: read
+      actions: read # Poll and verify the exact correlated authority workflow runs.
+      contents: read # Read the exact protected-base policy/runtime used for proof verification.
     steps:
       - name: Draft placeholder
         if: ${{ github.event.pull_request.draft }}
