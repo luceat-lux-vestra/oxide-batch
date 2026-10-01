@@ -1786,98 +1786,92 @@ class MergeGateVerifierTest < Minitest::Test
     assert_equal ['evidence'], actual
   end
 
-  def test_v7_topology_accepts_dispatched_optional_authority_runtime
-    with_v7_dispatched_topology_contract do |root, policy|
-      assert_empty MergeGateVerifier.pr_topology_v7_contract(
-        root: root,
-        policy: policy,
-        producer_summary: v7_producer_summary(root)
-      )
-    end
+  def test_v7_dispatched_runtime_accepts_canonical_contract
+    jobs = canonical_dispatched_runtime_jobs
+    docs = canonical_dispatched_authority_docs
+    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
+    assert_empty MergeGateVerifier.pr_proof_dispatch_runtime_contract(
+      jobs: jobs,
+      docs: docs,
+      policy: policy
+    )
   end
 
   def test_v7_dispatched_runtime_rejects_static_optional_authority_job
-    with_v7_dispatched_topology_contract do |root, policy|
-      path = File.join(root, '.github/workflows/pr-ci.yml')
-      original = File.read(path)
-      injected = <<~YAML
-          rust:
-            needs: scope
-            uses: ./.github/workflows/ci.yml
-            permissions:
-              actions: read
-              contents: read
-      YAML
-      body = original.sub("  dispatch-authorities:\n", injected + "  dispatch-authorities:\n")
-      refute_equal original, body
-      write(root, '.github/workflows/pr-ci.yml', body)
-      refresh_v7_protected_blob(policy, root, '.github/workflows/pr-ci.yml')
-      violations = MergeGateVerifier.pr_topology_v7_contract(
-        root: root,
-        policy: policy,
-        producer_summary: v7_producer_summary(root)
-      )
-      assert_includes violations.join("\n"), 'must not materialize static optional-authority jobs: rust'
-    end
+    jobs = canonical_dispatched_runtime_jobs
+    jobs['rust'] = {'uses' => './.github/workflows/ci.yml'}
+    docs = canonical_dispatched_authority_docs
+    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
+    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
+      jobs: jobs,
+      docs: docs,
+      policy: policy
+    )
+    assert_includes violations.join("\n"), 'must not materialize static optional-authority jobs: rust'
   end
 
   def test_v7_dispatched_runtime_rejects_actions_write_weakening
-    with_v7_dispatched_topology_contract do |root, policy|
-      path = File.join(root, '.github/workflows/pr-ci.yml')
-      original = File.read(path)
-      body = original.sub(
-        "      actions: write\n      contents: read\n",
-        "      actions: read\n      contents: read\n"
-      )
-      refute_equal original, body
-      write(root, '.github/workflows/pr-ci.yml', body)
-      refresh_v7_protected_blob(policy, root, '.github/workflows/pr-ci.yml')
-      violations = MergeGateVerifier.pr_topology_v7_contract(
-        root: root,
-        policy: policy,
-        producer_summary: v7_producer_summary(root)
-      )
-      assert_includes violations.join("\n"), 'must keep exact Actions-write dispatch permissions'
-    end
+    jobs = canonical_dispatched_runtime_jobs
+    jobs['dispatch-authorities']['permissions']['actions'] = 'read'
+    docs = canonical_dispatched_authority_docs
+    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
+    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
+      jobs: jobs,
+      docs: docs,
+      policy: policy
+    )
+    assert_includes violations.join("\n"), 'must keep exact Actions-write dispatch permissions'
   end
 
   def test_v7_dispatched_runtime_rejects_missing_caller_attempt_proof
-    with_v7_dispatched_topology_contract do |root, policy|
-      path = File.join(root, '.github/workflows/pr-ci.yml')
-      original = File.read(path)
-      body = original.sub(
-        '            --caller-run-attempt "$CALLER_RUN_ATTEMPT"',
-        '            --caller-run-attempt omitted'
-      )
-      refute_equal original, body
-      write(root, '.github/workflows/pr-ci.yml', body)
-      refresh_v7_protected_blob(policy, root, '.github/workflows/pr-ci.yml')
-      violations = MergeGateVerifier.pr_topology_v7_contract(
-        root: root,
-        policy: policy,
-        producer_summary: v7_producer_summary(root)
-      )
-      assert_includes violations.join("\n"), 'is missing dispatched proof tokens'
-    end
+    jobs = canonical_dispatched_runtime_jobs
+    proof_step = jobs['pr-proof']['steps'].find { |step| step['name'] == 'Verify dispatched authorities' }
+    proof_step['run'] = proof_step['run'].sub(
+      '--caller-run-attempt "$CALLER_RUN_ATTEMPT"',
+      '--caller-run-attempt omitted'
+    )
+    docs = canonical_dispatched_authority_docs
+    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
+    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
+      jobs: jobs,
+      docs: docs,
+      policy: policy
+    )
+    assert_includes violations.join("\n"), 'is missing dispatched proof tokens'
   end
 
   def test_v7_dispatched_runtime_rejects_optional_authority_input_weakening
-    with_v7_dispatched_topology_contract do |root, policy|
-      path = File.join(root, '.github/workflows/evidence.yml')
+    jobs = canonical_dispatched_runtime_jobs
+    docs = canonical_dispatched_authority_docs
+    docs['.github/workflows/evidence.yml']['on']['workflow_dispatch']['inputs']['caller_run_attempt']['required'] = false
+    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
+    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
+      jobs: jobs,
+      docs: docs,
+      policy: policy
+    )
+    assert_includes violations.join("\n"), 'workflow_dispatch input caller_run_attempt must be required string'
+  end
+
+  def test_v7_topology_dispatch_marker_selects_dispatched_contract
+    with_v7_topology_contract do |root, policy|
+      policy['pr_proof'] = canonical_pr_proof_policy
+      path = File.join(root, '.github/workflows/pr-ci.yml')
       original = File.read(path)
       body = original.sub(
-        "      caller_run_attempt:\n        required: true\n",
-        "      caller_run_attempt:\n        required: false\n"
+        "  pr-proof:\n",
+        "  dispatch-authorities:\n    name: dispatch-required-authorities\n  pr-proof:\n"
       )
       refute_equal original, body
-      write(root, '.github/workflows/evidence.yml', body)
-      refresh_v7_protected_blob(policy, root, '.github/workflows/evidence.yml')
+      write(root, '.github/workflows/pr-ci.yml', body)
+      policy.dig('repository_merge_gate', 'protected_workflows')
+            .find { |entry| entry['workflow'] == '.github/workflows/pr-ci.yml' }['accepted_blobs'] << MergeGateVerifier.git_blob_sha(body)
       violations = MergeGateVerifier.pr_topology_v7_contract(
         root: root,
         policy: policy,
         producer_summary: v7_producer_summary(root)
       )
-      assert_includes violations.join("\n"), 'workflow_dispatch input caller_run_attempt must be required string'
+      assert_includes violations.join("\n"), 'must not materialize static optional-authority jobs'
     end
   end
 
@@ -2082,1937 +2076,137 @@ class MergeGateVerifierTest < Minitest::Test
     {'workflow_docs' => workflow_docs}
   end
 
-  def with_v7_dispatched_topology_contract
-    with_v7_topology_contract do |root, policy|
-      policy['pr_proof'] = canonical_pr_proof_policy
+  def canonical_dispatched_runtime_jobs
+    dispatch_env = {
+      'GH_TOKEN' => '${{ github.token }}',
+      'BASE_SHA' => '${{ github.event.pull_request.base.sha }}',
+      'HEAD_SHA' => '${{ github.event.pull_request.head.sha }}',
+      'HEAD_REPO' => '${{ github.event.pull_request.head.repo.full_name }}',
+      'PR_NUMBER' => '${{ github.event.pull_request.number }}',
+      'DEFAULT_BRANCH' => '${{ github.event.repository.default_branch }}',
+      'CALLER_RUN_ID' => '${{ github.run_id }}',
+      'CALLER_RUN_ATTEMPT' => '${{ github.run_attempt }}',
+      'SCOPE_RESULT' => '${{ needs.scope.result }}',
+      'CLASSIFICATION_OUTCOME' => '${{ needs.scope.outputs.classification_outcome }}',
+      'LEGACY_BASE' => '${{ needs.scope.outputs.legacy_base }}',
+      'DOCS_ONLY' => '${{ needs.scope.outputs.docs_only }}',
+      'EVIDENCE_IMPACT' => '${{ needs.scope.outputs.evidence_impact }}',
+      'SUPPLY_IMPACT' => '${{ needs.scope.outputs.supply_chain_impact }}'
+    }
+    dispatch_run = [
+      'python3 .dispatch-trusted-base/.github/scripts/pr-authority-runtime.py plan',
+      '--policy .dispatch-trusted-base/.github/merge-gate-policy.json',
+      '--scope-result "$SCOPE_RESULT"',
+      '--classification-outcome "$CLASSIFICATION_OUTCOME"',
+      '--legacy-base "$LEGACY_BASE"',
+      '--docs-only "$DOCS_ONLY"',
+      '--evidence-impact "$EVIDENCE_IMPACT"',
+      '--supply-chain-impact "$SUPPLY_IMPACT"',
+      'gh api actions/workflows/${workflow}/dispatches',
+      '-f ref="$DEFAULT_BRANCH"',
+      '-f inputs[base_sha]="$BASE_SHA"',
+      '-f inputs[head_sha]="$HEAD_SHA"',
+      '-f inputs[head_repo]="$HEAD_REPO"',
+      '-f inputs[pr_number]="$PR_NUMBER"',
+      '-f inputs[caller_run_id]="$CALLER_RUN_ID"',
+      '-f inputs[caller_run_attempt]="$CALLER_RUN_ATTEMPT"'
+    ].join("\n")
+    proof_env = dispatch_env.reject { |key, _| key == 'DEFAULT_BRANCH' }.merge(
+      'DISPATCH_RESULT' => '${{ needs.dispatch-authorities.result }}'
+    )
+    proof_run = [
+      'python3 .proof-trusted-base/.github/scripts/pr-authority-runtime.py verify',
+      '--policy .proof-trusted-base/.github/merge-gate-policy.json',
+      '--scope-result "$SCOPE_RESULT"',
+      '--classification-outcome "$CLASSIFICATION_OUTCOME"',
+      '--legacy-base "$LEGACY_BASE"',
+      '--docs-only "$DOCS_ONLY"',
+      '--evidence-impact "$EVIDENCE_IMPACT"',
+      '--supply-chain-impact "$SUPPLY_IMPACT"',
+      '--dispatch-result "$DISPATCH_RESULT"',
+      '--base-sha "$BASE_SHA"',
+      '--head-sha "$HEAD_SHA"',
+      '--head-repo "$HEAD_REPO"',
+      '--pr-number "$PR_NUMBER"',
+      '--caller-run-id "$CALLER_RUN_ID"',
+      '--caller-run-attempt "$CALLER_RUN_ATTEMPT"'
+    ].join("\n")
 
-      pr_ci = <<~YAML
-        name: PR CI
-        on:
-          pull_request:
-            branches:
-              - main
-        permissions:
-          contents: read
-          pull-requests: read
-        jobs:
-          scope:
-            name: trusted-pr-scope
-            outputs:
-              legacy_base: ${{ steps.classify.outputs.legacy_base }}
-              classification_outcome: ${{ steps.classify.outcome }}
-              docs_only: ${{ steps.classify.outputs.docs_only }}
-              supply_chain_impact: ${{ steps.classify.outputs.supply_chain_impact }}
-              evidence_impact: ${{ steps.classify.outputs.evidence_impact }}
-            steps:
-              - id: trusted-base
-                continue-on-error: true
-                uses: actions/checkout@0000000000000000000000000000000000000001
-                with:
-                  ref: ${{ github.event.pull_request.base.sha }}
-                  path: .trusted-base
-                  fetch-depth: 1
-                  persist-credentials: false
-              - id: classify
-                continue-on-error: true
-                run: |
-                  {
-                    echo 'legacy_base=unknown'
-                    echo 'docs_only=false'
-                    echo 'supply_chain_impact=true'
-                    echo 'evidence_impact=true'
-                  } >> "$GITHUB_OUTPUT"
-                  echo '.trusted-base/.github/merge-gate-policy.json schema_version'
-                  schema_version=7
-                  if [ "$schema_version" -ge 7 ]; then
-                    echo 'legacy_base=false'
-                  else
-                    echo 'legacy_base=true'
-                  fi
-                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
-                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
-                  echo '.trusted-base/.github/scripts/pr-scope.py'
-                  echo '--trusted-base-sha "$BASE_SHA"'
-                  echo '.docs_only .supply_chain_impact .evidence_impact'
-          dispatch-authorities:
-            name: dispatch-required-authorities
-            needs: scope
-            if: ${{ always() && github.event.pull_request.draft == false }}
-            runs-on: ubuntu-slim
-            timeout-minutes: 5
-            permissions:
-              actions: write
-              contents: read
-            steps:
-              - id: dispatch-trusted-base
-                uses: actions/checkout@0000000000000000000000000000000000000001
-                with:
-                  ref: ${{ github.event.pull_request.base.sha }}
-                  path: .dispatch-trusted-base
-                  fetch-depth: 1
-                  persist-credentials: false
-              - name: Dispatch required authorities
-                env:
-                  GH_TOKEN: ${{ github.token }}
-                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
-                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-                  HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-                  PR_NUMBER: ${{ github.event.pull_request.number }}
-                  DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-                  CALLER_RUN_ID: ${{ github.run_id }}
-                  CALLER_RUN_ATTEMPT: ${{ github.run_attempt }}
-                  SCOPE_RESULT: ${{ needs.scope.result }}
-                  CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.classification_outcome }}
-                  LEGACY_BASE: ${{ needs.scope.outputs.legacy_base }}
-                  DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
-                  EVIDENCE_IMPACT: ${{ needs.scope.outputs.evidence_impact }}
-                  SUPPLY_IMPACT: ${{ needs.scope.outputs.supply_chain_impact }}
-                run: |
-                  python3 .dispatch-trusted-base/.github/scripts/pr-authority-runtime.py plan                     --policy .dispatch-trusted-base/.github/merge-gate-policy.json                     --scope-result "$SCOPE_RESULT"                     --classification-outcome "$CLASSIFICATION_OUTCOME"                     --legacy-base "$LEGACY_BASE"                     --docs-only "$DOCS_ONLY"                     --evidence-impact "$EVIDENCE_IMPACT"                     --supply-chain-impact "$SUPPLY_IMPACT"
-                  workflow="ci.yml"
-                  gh api --method POST "repos/$GITHUB_REPOSITORY/actions/workflows/${workflow}/dispatches"                     -f ref="$DEFAULT_BRANCH"                     -f inputs[base_sha]="$BASE_SHA"                     -f inputs[head_sha]="$HEAD_SHA"                     -f inputs[head_repo]="$HEAD_REPO"                     -f inputs[pr_number]="$PR_NUMBER"                     -f inputs[caller_run_id]="$CALLER_RUN_ID"                     -f inputs[caller_run_attempt]="$CALLER_RUN_ATTEMPT"
-          pr-proof:
-            name: pr-proof
-            needs: [scope, dispatch-authorities]
-            if: ${{ always() }}
-            runs-on: ubuntu-slim
-            timeout-minutes: 5
-            permissions:
-              actions: read
-              contents: read
-            steps:
-              - id: proof-trusted-base
-                uses: actions/checkout@0000000000000000000000000000000000000001
-                with:
-                  ref: ${{ github.event.pull_request.base.sha }}
-                  path: .proof-trusted-base
-                  fetch-depth: 1
-                  persist-credentials: false
-              - name: Verify dispatched authorities
-                env:
-                  GH_TOKEN: ${{ github.token }}
-                  BASE_SHA: ${{ github.event.pull_request.base.sha }}
-                  HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-                  HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-                  PR_NUMBER: ${{ github.event.pull_request.number }}
-                  CALLER_RUN_ID: ${{ github.run_id }}
-                  CALLER_RUN_ATTEMPT: ${{ github.run_attempt }}
-                  SCOPE_RESULT: ${{ needs.scope.result }}
-                  CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.classification_outcome }}
-                  LEGACY_BASE: ${{ needs.scope.outputs.legacy_base }}
-                  DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
-                  EVIDENCE_IMPACT: ${{ needs.scope.outputs.evidence_impact }}
-                  SUPPLY_IMPACT: ${{ needs.scope.outputs.supply_chain_impact }}
-                  DISPATCH_RESULT: ${{ needs.dispatch-authorities.result }}
-                run: |
-                  python3 .proof-trusted-base/.github/scripts/pr-authority-runtime.py verify                     --policy .proof-trusted-base/.github/merge-gate-policy.json                     --scope-result "$SCOPE_RESULT"                     --classification-outcome "$CLASSIFICATION_OUTCOME"                     --legacy-base "$LEGACY_BASE"                     --docs-only "$DOCS_ONLY"                     --evidence-impact "$EVIDENCE_IMPACT"                     --supply-chain-impact "$SUPPLY_IMPACT"                     --dispatch-result "$DISPATCH_RESULT"                     --base-sha "$BASE_SHA"                     --head-sha "$HEAD_SHA"                     --head-repo "$HEAD_REPO"                     --pr-number "$PR_NUMBER"                     --caller-run-id "$CALLER_RUN_ID"                     --caller-run-attempt "$CALLER_RUN_ATTEMPT"
-      YAML
-      pr_ci = pr_ci.gsub('    Dir.mktmpdir do |root|
-      FileUtils.mkdir_p(File.join(root, '.github/workflows'))
-      FileUtils.mkdir_p(File.join(root, '.github/scripts'))
-
-      pr_ci = <<~YAML
-        name: PR CI
-        on:
-          pull_request:
-            branches:
-              - main
-        permissions:
-          contents: read
-          pull-requests: read
-        jobs:
-          scope:
-            name: trusted-pr-scope
-            outputs:
-              legacy_base: __EXPR__{{ steps.classify.outputs.legacy_base }}
-              classification_outcome: __EXPR__{{ steps.classify.outcome }}
-              docs_only: __EXPR__{{ steps.classify.outputs.docs_only }}
-              supply_chain_impact: __EXPR__{{ steps.classify.outputs.supply_chain_impact }}
-              evidence_impact: __EXPR__{{ steps.classify.outputs.evidence_impact }}
-            steps:
-              - id: trusted-base
-                continue-on-error: true
-                uses: actions/checkout@0000000000000000000000000000000000000001
-                with:
-                  ref: __EXPR__{{ github.event.pull_request.base.sha }}
-                  path: .trusted-base
-                  fetch-depth: 1
-                  persist-credentials: false
-              - id: classify
-                continue-on-error: true
-                run: |
-                  {
-                    echo 'legacy_base=unknown'
-                    echo 'docs_only=false'
-                    echo 'supply_chain_impact=true'
-                    echo 'evidence_impact=true'
-                  } >> "$GITHUB_OUTPUT"
-                  echo '.trusted-base/.github/merge-gate-policy.json schema_version'
-                  schema_version=7
-                  if [ "$schema_version" -ge 7 ]; then
-                    echo 'legacy_base=false'
-                  else
-                    echo 'legacy_base=true'
-                  fi
-                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
-                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
-                  echo '.trusted-base/.github/scripts/pr-scope.py'
-                  echo '--trusted-base-sha "$BASE_SHA"'
-                  echo '.docs_only .supply_chain_impact .evidence_impact'
-          rust:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/ci.yml
-            permissions:
-              actions: read
-              contents: read
-          dependency:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/dependency-review.yml
-            permissions:
-              contents: read
-          codeql:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/codeql.yml
-            permissions:
-              contents: read
-              pull-requests: read
-              security-events: write
-          evidence:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
-            uses: ./.github/workflows/evidence.yml
-            permissions:
-              contents: read
-          supply:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          campaigns:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') && false }}
-            uses: ./.github/workflows/campaign-orchestrator.yml
-            permissions:
-              contents: read
-              pull-requests: read
-          pr-proof:
-            name: pr-proof
-            needs: [scope, rust, dependency, codeql, evidence, supply]
-            if: __EXPR__{{ always() }}
-            steps:
-              - run: |
-                  if [ "$LEGACY_BASE" = "true" ]; then
-                    echo legacy
-                  fi
-                  echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
-                  echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
-                  echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
-      YAML
-      pr_ci = pr_ci.gsub('__EXPR__', '$')
-      write(root, '.github/workflows/pr-ci.yml', pr_ci)
-      write(root, '.github/ci-topology-v7-migration', "schema-v7 migration marker\n")
-
-      authorities = %w[
-        ci.yml
-        dependency-review.yml
-        codeql.yml
-        evidence.yml
-        supply-chain.yml
-        campaign-orchestrator.yml
-      ]
-      authorities.each do |name|
-        write(root, ".github/workflows/#{name}", <<~YAML)
-          name: #{name}
-          on:
-            pull_request:
-              paths:
-                - .github/ci-topology-v7-migration
-            workflow_call:
-          jobs:
-            noop:
-              runs-on: ubuntu-latest
-              steps:
-                - run: echo ok
-        YAML
-      end
-
-      write(root, '.github/workflows/supply-chain-audit.yml', <<~YAML)
-        name: Scheduled supply-chain audit
-        on:
-          schedule:
-            - cron: "17 18 * * 1"
-        permissions: {}
-        jobs:
-          supply-chain:
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          report-failure:
-            needs:
-              - supply-chain
-            if: __EXPR__{{ always() && needs.supply-chain.result == 'failure' }}
-            permissions:
-              contents: read
-              issues: write
-            steps:
-              - run: echo report
-      YAML
-      audit_path = File.join(root, '.github/workflows/supply-chain-audit.yml')
-      File.write(audit_path, File.read(audit_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
-        name: M5 Conformance
-        on:
-          pull_request:
-            branches:
-              - main
-          workflow_dispatch:
-        jobs:
-          conformance-campaign:
-            name: postgres-__EXPR__{{ matrix.postgres }}-conformance-campaign
-            strategy:
-              matrix:
-                postgres: ["15", "18"]
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo conformance
-      YAML
-      m5_path = File.join(root, '.github/workflows/m5-conformance.yml')
-      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/pr-labeler.yml', <<~YAML)
-        name: Pull request labels
-        on:
-          pull_request_target:
-        permissions: {}
-        jobs:
-          merge-gate:
-            name: merge-gate
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo trusted-base
-      YAML
-
-      protected_workflows = [
-        '.github/workflows/pr-ci.yml',
-        '.github/workflows/ci.yml',
-        '.github/workflows/dependency-review.yml',
-        '.github/workflows/codeql.yml',
-        '.github/workflows/evidence.yml',
-        '.github/workflows/supply-chain.yml',
-        '.github/workflows/m5-conformance.yml',
-        '.github/workflows/pr-labeler.yml'
-      ]
-
-      policy = {
-        'schema_version' => 7,
-        'pr_topology' => {
-          'schema' => 'single-pr-entrypoint-v1',
-          'entrypoint' => '.github/workflows/pr-ci.yml',
-          'migration_marker' => '.github/ci-topology-v7-migration',
-          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" },
-          'independent_pr_authorities' => [
-            {
-              'workflow' => '.github/workflows/m5-conformance.yml',
-              'reason' => 'retained-evidence-provenance',
-              'contexts' => [
-                'postgres-15-conformance-campaign',
-                'postgres-18-conformance-campaign'
-              ]
-            }
-          ]
-        },
-        'aggregate_gates' => [],
-        'internal_aggregates' => [
-          {
-            'context' => 'postgresql',
-            'producer' => {
-              'workflow' => '.github/workflows/ci.yml',
-              'job' => 'postgresql-merge-gate'
-            },
-            'members' => [
-              'postgres-15-design-gate',
-              'postgres-15-item-components',
-              'postgres-15-repository',
-              'postgres-16-design-gate',
-              'postgres-17-design-gate',
-              'postgres-18-design-gate',
-              'postgres-18-item-components',
-              'postgres-18-repository'
-            ]
-          }
-        ],
-        'repository_merge_gate' => {
-          'context' => 'merge-gate',
-          'state' => 'active',
-          'producer' => {
-            'workflow' => '.github/workflows/pr-labeler.yml',
-            'job' => 'merge-gate'
-          },
-          'members' => [
-            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'},
-            {'context' => 'postgres-15-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'},
-            {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
-          ],
-          'protected_workflows' => protected_workflows.map do |workflow|
-            {
-              'workflow' => workflow,
-              'accepted_blobs' => [
-                MergeGateVerifier.git_blob_sha(
-                  File.binread(File.join(root, workflow))
-                )
-              ]
-            }
-          end
-        }
-      }
-      yield root, policy
-    end
-  end
-
-  def write(root, relative, content)
-    path = File.join(root, relative)
-    FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, content)
-  end
-
-  def write_json(root, relative, value)
-    write(root, relative, JSON.pretty_generate(value))
-  end
-
-  def ruleset_with(*contexts)
     {
-      'id' => 7,
-      'name' => 'Protect main',
-      'enforcement' => 'active',
-      'rules' => [{
-        'type' => 'required_status_checks',
-        'parameters' => {
-          'required_status_checks' => contexts.map { |context| {'context' => context} }
-        }
-      }]
+      'scope' => {},
+      'dispatch-authorities' => {
+        'name' => 'dispatch-required-authorities',
+        'needs' => 'scope',
+        'if' => '${{ always() && github.event.pull_request.draft == false }}',
+        'runs-on' => 'ubuntu-slim',
+        'timeout-minutes' => 5,
+        'permissions' => {'actions' => 'write', 'contents' => 'read'},
+        'steps' => [
+          {
+            'id' => 'dispatch-trusted-base',
+            'uses' => 'actions/checkout@0000000000000000000000000000000000000001',
+            'with' => {
+              'ref' => '${{ github.event.pull_request.base.sha }}',
+              'path' => '.dispatch-trusted-base',
+              'fetch-depth' => 1,
+              'persist-credentials' => false
+            }
+          },
+          {
+            'name' => 'Dispatch required authorities',
+            'env' => dispatch_env,
+            'run' => dispatch_run
+          }
+        ]
+      },
+      'pr-proof' => {
+        'name' => 'pr-proof',
+        'needs' => ['scope', 'dispatch-authorities'],
+        'if' => '${{ always() }}',
+        'runs-on' => 'ubuntu-slim',
+        'timeout-minutes' => 5,
+        'permissions' => {'actions' => 'read', 'contents' => 'read'},
+        'steps' => [
+          {
+            'id' => 'proof-trusted-base',
+            'uses' => 'actions/checkout@0000000000000000000000000000000000000001',
+            'with' => {
+              'ref' => '${{ github.event.pull_request.base.sha }}',
+              'path' => '.proof-trusted-base',
+              'fetch-depth' => 1,
+              'persist-credentials' => false
+            }
+          },
+          {
+            'name' => 'Verify dispatched authorities',
+            'env' => proof_env,
+            'run' => proof_run
+          }
+        ]
+      }
     }
   end
-end
-, '    Dir.mktmpdir do |root|
-      FileUtils.mkdir_p(File.join(root, '.github/workflows'))
-      FileUtils.mkdir_p(File.join(root, '.github/scripts'))
 
-      pr_ci = <<~YAML
-        name: PR CI
-        on:
-          pull_request:
-            branches:
-              - main
-        permissions:
-          contents: read
-          pull-requests: read
-        jobs:
-          scope:
-            name: trusted-pr-scope
-            outputs:
-              legacy_base: __EXPR__{{ steps.classify.outputs.legacy_base }}
-              classification_outcome: __EXPR__{{ steps.classify.outcome }}
-              docs_only: __EXPR__{{ steps.classify.outputs.docs_only }}
-              supply_chain_impact: __EXPR__{{ steps.classify.outputs.supply_chain_impact }}
-              evidence_impact: __EXPR__{{ steps.classify.outputs.evidence_impact }}
-            steps:
-              - id: trusted-base
-                continue-on-error: true
-                uses: actions/checkout@0000000000000000000000000000000000000001
-                with:
-                  ref: __EXPR__{{ github.event.pull_request.base.sha }}
-                  path: .trusted-base
-                  fetch-depth: 1
-                  persist-credentials: false
-              - id: classify
-                continue-on-error: true
-                run: |
-                  {
-                    echo 'legacy_base=unknown'
-                    echo 'docs_only=false'
-                    echo 'supply_chain_impact=true'
-                    echo 'evidence_impact=true'
-                  } >> "$GITHUB_OUTPUT"
-                  echo '.trusted-base/.github/merge-gate-policy.json schema_version'
-                  schema_version=7
-                  if [ "$schema_version" -ge 7 ]; then
-                    echo 'legacy_base=false'
-                  else
-                    echo 'legacy_base=true'
-                  fi
-                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
-                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
-                  echo '.trusted-base/.github/scripts/pr-scope.py'
-                  echo '--trusted-base-sha "$BASE_SHA"'
-                  echo '.docs_only .supply_chain_impact .evidence_impact'
-          rust:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/ci.yml
-            permissions:
-              actions: read
-              contents: read
-          dependency:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/dependency-review.yml
-            permissions:
-              contents: read
-          codeql:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/codeql.yml
-            permissions:
-              contents: read
-              pull-requests: read
-              security-events: write
-          evidence:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
-            uses: ./.github/workflows/evidence.yml
-            permissions:
-              contents: read
-          supply:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          campaigns:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') && false }}
-            uses: ./.github/workflows/campaign-orchestrator.yml
-            permissions:
-              contents: read
-              pull-requests: read
-          pr-proof:
-            name: pr-proof
-            needs: [scope, rust, dependency, codeql, evidence, supply]
-            if: __EXPR__{{ always() }}
-            steps:
-              - run: |
-                  if [ "$LEGACY_BASE" = "true" ]; then
-                    echo legacy
-                  fi
-                  echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
-                  echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
-                  echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
-      YAML
-      pr_ci = pr_ci.gsub('__EXPR__', '$')
-      write(root, '.github/workflows/pr-ci.yml', pr_ci)
-      write(root, '.github/ci-topology-v7-migration', "schema-v7 migration marker\n")
-
-      authorities = %w[
-        ci.yml
-        dependency-review.yml
-        codeql.yml
-        evidence.yml
-        supply-chain.yml
-        campaign-orchestrator.yml
-      ]
-      authorities.each do |name|
-        write(root, ".github/workflows/#{name}", <<~YAML)
-          name: #{name}
-          on:
-            pull_request:
-              paths:
-                - .github/ci-topology-v7-migration
-            workflow_call:
-          jobs:
-            noop:
-              runs-on: ubuntu-latest
-              steps:
-                - run: echo ok
-        YAML
-      end
-
-      write(root, '.github/workflows/supply-chain-audit.yml', <<~YAML)
-        name: Scheduled supply-chain audit
-        on:
-          schedule:
-            - cron: "17 18 * * 1"
-        permissions: {}
-        jobs:
-          supply-chain:
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          report-failure:
-            needs:
-              - supply-chain
-            if: __EXPR__{{ always() && needs.supply-chain.result == 'failure' }}
-            permissions:
-              contents: read
-              issues: write
-            steps:
-              - run: echo report
-      YAML
-      audit_path = File.join(root, '.github/workflows/supply-chain-audit.yml')
-      File.write(audit_path, File.read(audit_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
-        name: M5 Conformance
-        on:
-          pull_request:
-            branches:
-              - main
-          workflow_dispatch:
-        jobs:
-          conformance-campaign:
-            name: postgres-__EXPR__{{ matrix.postgres }}-conformance-campaign
-            strategy:
-              matrix:
-                postgres: ["15", "18"]
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo conformance
-      YAML
-      m5_path = File.join(root, '.github/workflows/m5-conformance.yml')
-      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/pr-labeler.yml', <<~YAML)
-        name: Pull request labels
-        on:
-          pull_request_target:
-        permissions: {}
-        jobs:
-          merge-gate:
-            name: merge-gate
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo trusted-base
-      YAML
-
-      protected_workflows = [
-        '.github/workflows/pr-ci.yml',
-        '.github/workflows/ci.yml',
-        '.github/workflows/dependency-review.yml',
-        '.github/workflows/codeql.yml',
-        '.github/workflows/evidence.yml',
-        '.github/workflows/supply-chain.yml',
-        '.github/workflows/m5-conformance.yml',
-        '.github/workflows/pr-labeler.yml'
-      ]
-
-      policy = {
-        'schema_version' => 7,
-        'pr_topology' => {
-          'schema' => 'single-pr-entrypoint-v1',
-          'entrypoint' => '.github/workflows/pr-ci.yml',
-          'migration_marker' => '.github/ci-topology-v7-migration',
-          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" },
-          'independent_pr_authorities' => [
-            {
-              'workflow' => '.github/workflows/m5-conformance.yml',
-              'reason' => 'retained-evidence-provenance',
-              'contexts' => [
-                'postgres-15-conformance-campaign',
-                'postgres-18-conformance-campaign'
-              ]
+  def canonical_dispatched_authority_docs
+    inputs = %w[base_sha head_sha head_repo pr_number caller_run_id caller_run_attempt].to_h do |name|
+      [name, {'required' => true, 'type' => 'string'}]
+    end
+    canonical_pr_proof_policy.fetch('members').to_h do |member|
+      authority_id = member.fetch('id')
+      workflow = member.fetch('workflow')
+      run_name = "pr-authority/#{authority_id}/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}"
+      [
+        workflow,
+        {
+          'run-name' => run_name,
+          'on' => {
+            'workflow_dispatch' => {
+              'inputs' => Marshal.load(Marshal.dump(inputs))
             }
-          ]
-        },
-        'aggregate_gates' => [],
-        'internal_aggregates' => [
-          {
-            'context' => 'postgresql',
-            'producer' => {
-              'workflow' => '.github/workflows/ci.yml',
-              'job' => 'postgresql-merge-gate'
-            },
-            'members' => [
-              'postgres-15-design-gate',
-              'postgres-15-item-components',
-              'postgres-15-repository',
-              'postgres-16-design-gate',
-              'postgres-17-design-gate',
-              'postgres-18-design-gate',
-              'postgres-18-item-components',
-              'postgres-18-repository'
-            ]
           }
-        ],
-        'repository_merge_gate' => {
-          'context' => 'merge-gate',
-          'state' => 'active',
-          'producer' => {
-            'workflow' => '.github/workflows/pr-labeler.yml',
-            'job' => 'merge-gate'
-          },
-          'members' => [
-            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'},
-            {'context' => 'postgres-15-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'},
-            {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
-          ],
-          'protected_workflows' => protected_workflows.map do |workflow|
-            {
-              'workflow' => workflow,
-              'accepted_blobs' => [
-                MergeGateVerifier.git_blob_sha(
-                  File.binread(File.join(root, workflow))
-                )
-              ]
-            }
-          end
         }
-      }
-      yield root, policy
+      ]
     end
-  end
-
-  def write(root, relative, content)
-    path = File.join(root, relative)
-    FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, content)
-  end
-
-  def write_json(root, relative, value)
-    write(root, relative, JSON.pretty_generate(value))
-  end
-
-  def ruleset_with(*contexts)
-    {
-      'id' => 7,
-      'name' => 'Protect main',
-      'enforcement' => 'active',
-      'rules' => [{
-        'type' => 'required_status_checks',
-        'parameters' => {
-          'required_status_checks' => contexts.map { |context| {'context' => context} }
-        }
-      }]
-    }
-  end
-end
-).gsub('    Dir.mktmpdir do |root|
-      FileUtils.mkdir_p(File.join(root, '.github/workflows'))
-      FileUtils.mkdir_p(File.join(root, '.github/scripts'))
-
-      pr_ci = <<~YAML
-        name: PR CI
-        on:
-          pull_request:
-            branches:
-              - main
-        permissions:
-          contents: read
-          pull-requests: read
-        jobs:
-          scope:
-            name: trusted-pr-scope
-            outputs:
-              legacy_base: __EXPR__{{ steps.classify.outputs.legacy_base }}
-              classification_outcome: __EXPR__{{ steps.classify.outcome }}
-              docs_only: __EXPR__{{ steps.classify.outputs.docs_only }}
-              supply_chain_impact: __EXPR__{{ steps.classify.outputs.supply_chain_impact }}
-              evidence_impact: __EXPR__{{ steps.classify.outputs.evidence_impact }}
-            steps:
-              - id: trusted-base
-                continue-on-error: true
-                uses: actions/checkout@0000000000000000000000000000000000000001
-                with:
-                  ref: __EXPR__{{ github.event.pull_request.base.sha }}
-                  path: .trusted-base
-                  fetch-depth: 1
-                  persist-credentials: false
-              - id: classify
-                continue-on-error: true
-                run: |
-                  {
-                    echo 'legacy_base=unknown'
-                    echo 'docs_only=false'
-                    echo 'supply_chain_impact=true'
-                    echo 'evidence_impact=true'
-                  } >> "$GITHUB_OUTPUT"
-                  echo '.trusted-base/.github/merge-gate-policy.json schema_version'
-                  schema_version=7
-                  if [ "$schema_version" -ge 7 ]; then
-                    echo 'legacy_base=false'
-                  else
-                    echo 'legacy_base=true'
-                  fi
-                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
-                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
-                  echo '.trusted-base/.github/scripts/pr-scope.py'
-                  echo '--trusted-base-sha "$BASE_SHA"'
-                  echo '.docs_only .supply_chain_impact .evidence_impact'
-          rust:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/ci.yml
-            permissions:
-              actions: read
-              contents: read
-          dependency:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/dependency-review.yml
-            permissions:
-              contents: read
-          codeql:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/codeql.yml
-            permissions:
-              contents: read
-              pull-requests: read
-              security-events: write
-          evidence:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
-            uses: ./.github/workflows/evidence.yml
-            permissions:
-              contents: read
-          supply:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          campaigns:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') && false }}
-            uses: ./.github/workflows/campaign-orchestrator.yml
-            permissions:
-              contents: read
-              pull-requests: read
-          pr-proof:
-            name: pr-proof
-            needs: [scope, rust, dependency, codeql, evidence, supply]
-            if: __EXPR__{{ always() }}
-            steps:
-              - run: |
-                  if [ "$LEGACY_BASE" = "true" ]; then
-                    echo legacy
-                  fi
-                  echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
-                  echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
-                  echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
-      YAML
-      pr_ci = pr_ci.gsub('__EXPR__', '$')
-      write(root, '.github/workflows/pr-ci.yml', pr_ci)
-      write(root, '.github/ci-topology-v7-migration', "schema-v7 migration marker\n")
-
-      authorities = %w[
-        ci.yml
-        dependency-review.yml
-        codeql.yml
-        evidence.yml
-        supply-chain.yml
-        campaign-orchestrator.yml
-      ]
-      authorities.each do |name|
-        write(root, ".github/workflows/#{name}", <<~YAML)
-          name: #{name}
-          on:
-            pull_request:
-              paths:
-                - .github/ci-topology-v7-migration
-            workflow_call:
-          jobs:
-            noop:
-              runs-on: ubuntu-latest
-              steps:
-                - run: echo ok
-        YAML
-      end
-
-      write(root, '.github/workflows/supply-chain-audit.yml', <<~YAML)
-        name: Scheduled supply-chain audit
-        on:
-          schedule:
-            - cron: "17 18 * * 1"
-        permissions: {}
-        jobs:
-          supply-chain:
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          report-failure:
-            needs:
-              - supply-chain
-            if: __EXPR__{{ always() && needs.supply-chain.result == 'failure' }}
-            permissions:
-              contents: read
-              issues: write
-            steps:
-              - run: echo report
-      YAML
-      audit_path = File.join(root, '.github/workflows/supply-chain-audit.yml')
-      File.write(audit_path, File.read(audit_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
-        name: M5 Conformance
-        on:
-          pull_request:
-            branches:
-              - main
-          workflow_dispatch:
-        jobs:
-          conformance-campaign:
-            name: postgres-__EXPR__{{ matrix.postgres }}-conformance-campaign
-            strategy:
-              matrix:
-                postgres: ["15", "18"]
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo conformance
-      YAML
-      m5_path = File.join(root, '.github/workflows/m5-conformance.yml')
-      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/pr-labeler.yml', <<~YAML)
-        name: Pull request labels
-        on:
-          pull_request_target:
-        permissions: {}
-        jobs:
-          merge-gate:
-            name: merge-gate
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo trusted-base
-      YAML
-
-      protected_workflows = [
-        '.github/workflows/pr-ci.yml',
-        '.github/workflows/ci.yml',
-        '.github/workflows/dependency-review.yml',
-        '.github/workflows/codeql.yml',
-        '.github/workflows/evidence.yml',
-        '.github/workflows/supply-chain.yml',
-        '.github/workflows/m5-conformance.yml',
-        '.github/workflows/pr-labeler.yml'
-      ]
-
-      policy = {
-        'schema_version' => 7,
-        'pr_topology' => {
-          'schema' => 'single-pr-entrypoint-v1',
-          'entrypoint' => '.github/workflows/pr-ci.yml',
-          'migration_marker' => '.github/ci-topology-v7-migration',
-          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" },
-          'independent_pr_authorities' => [
-            {
-              'workflow' => '.github/workflows/m5-conformance.yml',
-              'reason' => 'retained-evidence-provenance',
-              'contexts' => [
-                'postgres-15-conformance-campaign',
-                'postgres-18-conformance-campaign'
-              ]
-            }
-          ]
-        },
-        'aggregate_gates' => [],
-        'internal_aggregates' => [
-          {
-            'context' => 'postgresql',
-            'producer' => {
-              'workflow' => '.github/workflows/ci.yml',
-              'job' => 'postgresql-merge-gate'
-            },
-            'members' => [
-              'postgres-15-design-gate',
-              'postgres-15-item-components',
-              'postgres-15-repository',
-              'postgres-16-design-gate',
-              'postgres-17-design-gate',
-              'postgres-18-design-gate',
-              'postgres-18-item-components',
-              'postgres-18-repository'
-            ]
-          }
-        ],
-        'repository_merge_gate' => {
-          'context' => 'merge-gate',
-          'state' => 'active',
-          'producer' => {
-            'workflow' => '.github/workflows/pr-labeler.yml',
-            'job' => 'merge-gate'
-          },
-          'members' => [
-            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'},
-            {'context' => 'postgres-15-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'},
-            {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
-          ],
-          'protected_workflows' => protected_workflows.map do |workflow|
-            {
-              'workflow' => workflow,
-              'accepted_blobs' => [
-                MergeGateVerifier.git_blob_sha(
-                  File.binread(File.join(root, workflow))
-                )
-              ]
-            }
-          end
-        }
-      }
-      yield root, policy
-    end
-  end
-
-  def write(root, relative, content)
-    path = File.join(root, relative)
-    FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, content)
-  end
-
-  def write_json(root, relative, value)
-    write(root, relative, JSON.pretty_generate(value))
-  end
-
-  def ruleset_with(*contexts)
-    {
-      'id' => 7,
-      'name' => 'Protect main',
-      'enforcement' => 'active',
-      'rules' => [{
-        'type' => 'required_status_checks',
-        'parameters' => {
-          'required_status_checks' => contexts.map { |context| {'context' => context} }
-        }
-      }]
-    }
-  end
-end
-, '    Dir.mktmpdir do |root|
-      FileUtils.mkdir_p(File.join(root, '.github/workflows'))
-      FileUtils.mkdir_p(File.join(root, '.github/scripts'))
-
-      pr_ci = <<~YAML
-        name: PR CI
-        on:
-          pull_request:
-            branches:
-              - main
-        permissions:
-          contents: read
-          pull-requests: read
-        jobs:
-          scope:
-            name: trusted-pr-scope
-            outputs:
-              legacy_base: __EXPR__{{ steps.classify.outputs.legacy_base }}
-              classification_outcome: __EXPR__{{ steps.classify.outcome }}
-              docs_only: __EXPR__{{ steps.classify.outputs.docs_only }}
-              supply_chain_impact: __EXPR__{{ steps.classify.outputs.supply_chain_impact }}
-              evidence_impact: __EXPR__{{ steps.classify.outputs.evidence_impact }}
-            steps:
-              - id: trusted-base
-                continue-on-error: true
-                uses: actions/checkout@0000000000000000000000000000000000000001
-                with:
-                  ref: __EXPR__{{ github.event.pull_request.base.sha }}
-                  path: .trusted-base
-                  fetch-depth: 1
-                  persist-credentials: false
-              - id: classify
-                continue-on-error: true
-                run: |
-                  {
-                    echo 'legacy_base=unknown'
-                    echo 'docs_only=false'
-                    echo 'supply_chain_impact=true'
-                    echo 'evidence_impact=true'
-                  } >> "$GITHUB_OUTPUT"
-                  echo '.trusted-base/.github/merge-gate-policy.json schema_version'
-                  schema_version=7
-                  if [ "$schema_version" -ge 7 ]; then
-                    echo 'legacy_base=false'
-                  else
-                    echo 'legacy_base=true'
-                  fi
-                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
-                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
-                  echo '.trusted-base/.github/scripts/pr-scope.py'
-                  echo '--trusted-base-sha "$BASE_SHA"'
-                  echo '.docs_only .supply_chain_impact .evidence_impact'
-          rust:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/ci.yml
-            permissions:
-              actions: read
-              contents: read
-          dependency:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/dependency-review.yml
-            permissions:
-              contents: read
-          codeql:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/codeql.yml
-            permissions:
-              contents: read
-              pull-requests: read
-              security-events: write
-          evidence:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
-            uses: ./.github/workflows/evidence.yml
-            permissions:
-              contents: read
-          supply:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          campaigns:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') && false }}
-            uses: ./.github/workflows/campaign-orchestrator.yml
-            permissions:
-              contents: read
-              pull-requests: read
-          pr-proof:
-            name: pr-proof
-            needs: [scope, rust, dependency, codeql, evidence, supply]
-            if: __EXPR__{{ always() }}
-            steps:
-              - run: |
-                  if [ "$LEGACY_BASE" = "true" ]; then
-                    echo legacy
-                  fi
-                  echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
-                  echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
-                  echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
-      YAML
-      pr_ci = pr_ci.gsub('__EXPR__', '$')
-      write(root, '.github/workflows/pr-ci.yml', pr_ci)
-      write(root, '.github/ci-topology-v7-migration', "schema-v7 migration marker\n")
-
-      authorities = %w[
-        ci.yml
-        dependency-review.yml
-        codeql.yml
-        evidence.yml
-        supply-chain.yml
-        campaign-orchestrator.yml
-      ]
-      authorities.each do |name|
-        write(root, ".github/workflows/#{name}", <<~YAML)
-          name: #{name}
-          on:
-            pull_request:
-              paths:
-                - .github/ci-topology-v7-migration
-            workflow_call:
-          jobs:
-            noop:
-              runs-on: ubuntu-latest
-              steps:
-                - run: echo ok
-        YAML
-      end
-
-      write(root, '.github/workflows/supply-chain-audit.yml', <<~YAML)
-        name: Scheduled supply-chain audit
-        on:
-          schedule:
-            - cron: "17 18 * * 1"
-        permissions: {}
-        jobs:
-          supply-chain:
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          report-failure:
-            needs:
-              - supply-chain
-            if: __EXPR__{{ always() && needs.supply-chain.result == 'failure' }}
-            permissions:
-              contents: read
-              issues: write
-            steps:
-              - run: echo report
-      YAML
-      audit_path = File.join(root, '.github/workflows/supply-chain-audit.yml')
-      File.write(audit_path, File.read(audit_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
-        name: M5 Conformance
-        on:
-          pull_request:
-            branches:
-              - main
-          workflow_dispatch:
-        jobs:
-          conformance-campaign:
-            name: postgres-__EXPR__{{ matrix.postgres }}-conformance-campaign
-            strategy:
-              matrix:
-                postgres: ["15", "18"]
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo conformance
-      YAML
-      m5_path = File.join(root, '.github/workflows/m5-conformance.yml')
-      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/pr-labeler.yml', <<~YAML)
-        name: Pull request labels
-        on:
-          pull_request_target:
-        permissions: {}
-        jobs:
-          merge-gate:
-            name: merge-gate
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo trusted-base
-      YAML
-
-      protected_workflows = [
-        '.github/workflows/pr-ci.yml',
-        '.github/workflows/ci.yml',
-        '.github/workflows/dependency-review.yml',
-        '.github/workflows/codeql.yml',
-        '.github/workflows/evidence.yml',
-        '.github/workflows/supply-chain.yml',
-        '.github/workflows/m5-conformance.yml',
-        '.github/workflows/pr-labeler.yml'
-      ]
-
-      policy = {
-        'schema_version' => 7,
-        'pr_topology' => {
-          'schema' => 'single-pr-entrypoint-v1',
-          'entrypoint' => '.github/workflows/pr-ci.yml',
-          'migration_marker' => '.github/ci-topology-v7-migration',
-          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" },
-          'independent_pr_authorities' => [
-            {
-              'workflow' => '.github/workflows/m5-conformance.yml',
-              'reason' => 'retained-evidence-provenance',
-              'contexts' => [
-                'postgres-15-conformance-campaign',
-                'postgres-18-conformance-campaign'
-              ]
-            }
-          ]
-        },
-        'aggregate_gates' => [],
-        'internal_aggregates' => [
-          {
-            'context' => 'postgresql',
-            'producer' => {
-              'workflow' => '.github/workflows/ci.yml',
-              'job' => 'postgresql-merge-gate'
-            },
-            'members' => [
-              'postgres-15-design-gate',
-              'postgres-15-item-components',
-              'postgres-15-repository',
-              'postgres-16-design-gate',
-              'postgres-17-design-gate',
-              'postgres-18-design-gate',
-              'postgres-18-item-components',
-              'postgres-18-repository'
-            ]
-          }
-        ],
-        'repository_merge_gate' => {
-          'context' => 'merge-gate',
-          'state' => 'active',
-          'producer' => {
-            'workflow' => '.github/workflows/pr-labeler.yml',
-            'job' => 'merge-gate'
-          },
-          'members' => [
-            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'},
-            {'context' => 'postgres-15-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'},
-            {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
-          ],
-          'protected_workflows' => protected_workflows.map do |workflow|
-            {
-              'workflow' => workflow,
-              'accepted_blobs' => [
-                MergeGateVerifier.git_blob_sha(
-                  File.binread(File.join(root, workflow))
-                )
-              ]
-            }
-          end
-        }
-      }
-      yield root, policy
-    end
-  end
-
-  def write(root, relative, content)
-    path = File.join(root, relative)
-    FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, content)
-  end
-
-  def write_json(root, relative, value)
-    write(root, relative, JSON.pretty_generate(value))
-  end
-
-  def ruleset_with(*contexts)
-    {
-      'id' => 7,
-      'name' => 'Protect main',
-      'enforcement' => 'active',
-      'rules' => [{
-        'type' => 'required_status_checks',
-        'parameters' => {
-          'required_status_checks' => contexts.map { |context| {'context' => context} }
-        }
-      }]
-    }
-  end
-end
-)
-      write(root, '.github/workflows/pr-ci.yml', pr_ci)
-
-      canonical_pr_proof_policy.fetch('members').each do |member|
-        authority_id = member.fetch('id')
-        workflow = member.fetch('workflow')
-        name = File.basename(workflow)
-        run_name = "pr-authority/#{authority_id}/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}"
-        body = <<~YAML
-          name: #{name}
-          run-name: #{run_name}
-          on:
-            pull_request:
-              paths:
-                - .github/ci-topology-v7-migration
-            workflow_call:
-            workflow_dispatch:
-              inputs:
-                base_sha:
-                  required: true
-                  type: string
-                head_sha:
-                  required: true
-                  type: string
-                head_repo:
-                  required: true
-                  type: string
-                pr_number:
-                  required: true
-                  type: string
-                caller_run_id:
-                  required: true
-                  type: string
-                caller_run_attempt:
-                  required: true
-                  type: string
-          jobs:
-            noop:
-              runs-on: ubuntu-latest
-              steps:
-                - run: echo ok
-        YAML
-        write(root, workflow, body.gsub('    Dir.mktmpdir do |root|
-      FileUtils.mkdir_p(File.join(root, '.github/workflows'))
-      FileUtils.mkdir_p(File.join(root, '.github/scripts'))
-
-      pr_ci = <<~YAML
-        name: PR CI
-        on:
-          pull_request:
-            branches:
-              - main
-        permissions:
-          contents: read
-          pull-requests: read
-        jobs:
-          scope:
-            name: trusted-pr-scope
-            outputs:
-              legacy_base: __EXPR__{{ steps.classify.outputs.legacy_base }}
-              classification_outcome: __EXPR__{{ steps.classify.outcome }}
-              docs_only: __EXPR__{{ steps.classify.outputs.docs_only }}
-              supply_chain_impact: __EXPR__{{ steps.classify.outputs.supply_chain_impact }}
-              evidence_impact: __EXPR__{{ steps.classify.outputs.evidence_impact }}
-            steps:
-              - id: trusted-base
-                continue-on-error: true
-                uses: actions/checkout@0000000000000000000000000000000000000001
-                with:
-                  ref: __EXPR__{{ github.event.pull_request.base.sha }}
-                  path: .trusted-base
-                  fetch-depth: 1
-                  persist-credentials: false
-              - id: classify
-                continue-on-error: true
-                run: |
-                  {
-                    echo 'legacy_base=unknown'
-                    echo 'docs_only=false'
-                    echo 'supply_chain_impact=true'
-                    echo 'evidence_impact=true'
-                  } >> "$GITHUB_OUTPUT"
-                  echo '.trusted-base/.github/merge-gate-policy.json schema_version'
-                  schema_version=7
-                  if [ "$schema_version" -ge 7 ]; then
-                    echo 'legacy_base=false'
-                  else
-                    echo 'legacy_base=true'
-                  fi
-                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
-                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
-                  echo '.trusted-base/.github/scripts/pr-scope.py'
-                  echo '--trusted-base-sha "$BASE_SHA"'
-                  echo '.docs_only .supply_chain_impact .evidence_impact'
-          rust:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/ci.yml
-            permissions:
-              actions: read
-              contents: read
-          dependency:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/dependency-review.yml
-            permissions:
-              contents: read
-          codeql:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/codeql.yml
-            permissions:
-              contents: read
-              pull-requests: read
-              security-events: write
-          evidence:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
-            uses: ./.github/workflows/evidence.yml
-            permissions:
-              contents: read
-          supply:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          campaigns:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') && false }}
-            uses: ./.github/workflows/campaign-orchestrator.yml
-            permissions:
-              contents: read
-              pull-requests: read
-          pr-proof:
-            name: pr-proof
-            needs: [scope, rust, dependency, codeql, evidence, supply]
-            if: __EXPR__{{ always() }}
-            steps:
-              - run: |
-                  if [ "$LEGACY_BASE" = "true" ]; then
-                    echo legacy
-                  fi
-                  echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
-                  echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
-                  echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
-      YAML
-      pr_ci = pr_ci.gsub('__EXPR__', '$')
-      write(root, '.github/workflows/pr-ci.yml', pr_ci)
-      write(root, '.github/ci-topology-v7-migration', "schema-v7 migration marker\n")
-
-      authorities = %w[
-        ci.yml
-        dependency-review.yml
-        codeql.yml
-        evidence.yml
-        supply-chain.yml
-        campaign-orchestrator.yml
-      ]
-      authorities.each do |name|
-        write(root, ".github/workflows/#{name}", <<~YAML)
-          name: #{name}
-          on:
-            pull_request:
-              paths:
-                - .github/ci-topology-v7-migration
-            workflow_call:
-          jobs:
-            noop:
-              runs-on: ubuntu-latest
-              steps:
-                - run: echo ok
-        YAML
-      end
-
-      write(root, '.github/workflows/supply-chain-audit.yml', <<~YAML)
-        name: Scheduled supply-chain audit
-        on:
-          schedule:
-            - cron: "17 18 * * 1"
-        permissions: {}
-        jobs:
-          supply-chain:
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          report-failure:
-            needs:
-              - supply-chain
-            if: __EXPR__{{ always() && needs.supply-chain.result == 'failure' }}
-            permissions:
-              contents: read
-              issues: write
-            steps:
-              - run: echo report
-      YAML
-      audit_path = File.join(root, '.github/workflows/supply-chain-audit.yml')
-      File.write(audit_path, File.read(audit_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
-        name: M5 Conformance
-        on:
-          pull_request:
-            branches:
-              - main
-          workflow_dispatch:
-        jobs:
-          conformance-campaign:
-            name: postgres-__EXPR__{{ matrix.postgres }}-conformance-campaign
-            strategy:
-              matrix:
-                postgres: ["15", "18"]
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo conformance
-      YAML
-      m5_path = File.join(root, '.github/workflows/m5-conformance.yml')
-      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/pr-labeler.yml', <<~YAML)
-        name: Pull request labels
-        on:
-          pull_request_target:
-        permissions: {}
-        jobs:
-          merge-gate:
-            name: merge-gate
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo trusted-base
-      YAML
-
-      protected_workflows = [
-        '.github/workflows/pr-ci.yml',
-        '.github/workflows/ci.yml',
-        '.github/workflows/dependency-review.yml',
-        '.github/workflows/codeql.yml',
-        '.github/workflows/evidence.yml',
-        '.github/workflows/supply-chain.yml',
-        '.github/workflows/m5-conformance.yml',
-        '.github/workflows/pr-labeler.yml'
-      ]
-
-      policy = {
-        'schema_version' => 7,
-        'pr_topology' => {
-          'schema' => 'single-pr-entrypoint-v1',
-          'entrypoint' => '.github/workflows/pr-ci.yml',
-          'migration_marker' => '.github/ci-topology-v7-migration',
-          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" },
-          'independent_pr_authorities' => [
-            {
-              'workflow' => '.github/workflows/m5-conformance.yml',
-              'reason' => 'retained-evidence-provenance',
-              'contexts' => [
-                'postgres-15-conformance-campaign',
-                'postgres-18-conformance-campaign'
-              ]
-            }
-          ]
-        },
-        'aggregate_gates' => [],
-        'internal_aggregates' => [
-          {
-            'context' => 'postgresql',
-            'producer' => {
-              'workflow' => '.github/workflows/ci.yml',
-              'job' => 'postgresql-merge-gate'
-            },
-            'members' => [
-              'postgres-15-design-gate',
-              'postgres-15-item-components',
-              'postgres-15-repository',
-              'postgres-16-design-gate',
-              'postgres-17-design-gate',
-              'postgres-18-design-gate',
-              'postgres-18-item-components',
-              'postgres-18-repository'
-            ]
-          }
-        ],
-        'repository_merge_gate' => {
-          'context' => 'merge-gate',
-          'state' => 'active',
-          'producer' => {
-            'workflow' => '.github/workflows/pr-labeler.yml',
-            'job' => 'merge-gate'
-          },
-          'members' => [
-            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'},
-            {'context' => 'postgres-15-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'},
-            {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
-          ],
-          'protected_workflows' => protected_workflows.map do |workflow|
-            {
-              'workflow' => workflow,
-              'accepted_blobs' => [
-                MergeGateVerifier.git_blob_sha(
-                  File.binread(File.join(root, workflow))
-                )
-              ]
-            }
-          end
-        }
-      }
-      yield root, policy
-    end
-  end
-
-  def write(root, relative, content)
-    path = File.join(root, relative)
-    FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, content)
-  end
-
-  def write_json(root, relative, value)
-    write(root, relative, JSON.pretty_generate(value))
-  end
-
-  def ruleset_with(*contexts)
-    {
-      'id' => 7,
-      'name' => 'Protect main',
-      'enforcement' => 'active',
-      'rules' => [{
-        'type' => 'required_status_checks',
-        'parameters' => {
-          'required_status_checks' => contexts.map { |context| {'context' => context} }
-        }
-      }]
-    }
-  end
-end
-, '    Dir.mktmpdir do |root|
-      FileUtils.mkdir_p(File.join(root, '.github/workflows'))
-      FileUtils.mkdir_p(File.join(root, '.github/scripts'))
-
-      pr_ci = <<~YAML
-        name: PR CI
-        on:
-          pull_request:
-            branches:
-              - main
-        permissions:
-          contents: read
-          pull-requests: read
-        jobs:
-          scope:
-            name: trusted-pr-scope
-            outputs:
-              legacy_base: __EXPR__{{ steps.classify.outputs.legacy_base }}
-              classification_outcome: __EXPR__{{ steps.classify.outcome }}
-              docs_only: __EXPR__{{ steps.classify.outputs.docs_only }}
-              supply_chain_impact: __EXPR__{{ steps.classify.outputs.supply_chain_impact }}
-              evidence_impact: __EXPR__{{ steps.classify.outputs.evidence_impact }}
-            steps:
-              - id: trusted-base
-                continue-on-error: true
-                uses: actions/checkout@0000000000000000000000000000000000000001
-                with:
-                  ref: __EXPR__{{ github.event.pull_request.base.sha }}
-                  path: .trusted-base
-                  fetch-depth: 1
-                  persist-credentials: false
-              - id: classify
-                continue-on-error: true
-                run: |
-                  {
-                    echo 'legacy_base=unknown'
-                    echo 'docs_only=false'
-                    echo 'supply_chain_impact=true'
-                    echo 'evidence_impact=true'
-                  } >> "$GITHUB_OUTPUT"
-                  echo '.trusted-base/.github/merge-gate-policy.json schema_version'
-                  schema_version=7
-                  if [ "$schema_version" -ge 7 ]; then
-                    echo 'legacy_base=false'
-                  else
-                    echo 'legacy_base=true'
-                  fi
-                  echo 'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}'
-                  echo 'pulls/${PR_NUMBER}/files?per_page=100'
-                  echo '.trusted-base/.github/scripts/pr-scope.py'
-                  echo '--trusted-base-sha "$BASE_SHA"'
-                  echo '.docs_only .supply_chain_impact .evidence_impact'
-          rust:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/ci.yml
-            permissions:
-              actions: read
-              contents: read
-          dependency:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/dependency-review.yml
-            permissions:
-              contents: read
-          codeql:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-            uses: ./.github/workflows/codeql.yml
-            permissions:
-              contents: read
-              pull-requests: read
-              security-events: write
-          evidence:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
-            uses: ./.github/workflows/evidence.yml
-            permissions:
-              contents: read
-          supply:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          campaigns:
-            needs: scope
-            if: __EXPR__{{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') && false }}
-            uses: ./.github/workflows/campaign-orchestrator.yml
-            permissions:
-              contents: read
-              pull-requests: read
-          pr-proof:
-            name: pr-proof
-            needs: [scope, rust, dependency, codeql, evidence, supply]
-            if: __EXPR__{{ always() }}
-            steps:
-              - run: |
-                  if [ "$LEGACY_BASE" = "true" ]; then
-                    echo legacy
-                  fi
-                  echo "$LEGACY_BASE $CLASSIFICATION_OUTCOME $DOCS_ONLY"
-                  echo "$RUST_RESULT $DEPENDENCY_RESULT $CODEQL_RESULT"
-                  echo "$EVIDENCE_RESULT $SUPPLY_RESULT"
-      YAML
-      pr_ci = pr_ci.gsub('__EXPR__', '$')
-      write(root, '.github/workflows/pr-ci.yml', pr_ci)
-      write(root, '.github/ci-topology-v7-migration', "schema-v7 migration marker\n")
-
-      authorities = %w[
-        ci.yml
-        dependency-review.yml
-        codeql.yml
-        evidence.yml
-        supply-chain.yml
-        campaign-orchestrator.yml
-      ]
-      authorities.each do |name|
-        write(root, ".github/workflows/#{name}", <<~YAML)
-          name: #{name}
-          on:
-            pull_request:
-              paths:
-                - .github/ci-topology-v7-migration
-            workflow_call:
-          jobs:
-            noop:
-              runs-on: ubuntu-latest
-              steps:
-                - run: echo ok
-        YAML
-      end
-
-      write(root, '.github/workflows/supply-chain-audit.yml', <<~YAML)
-        name: Scheduled supply-chain audit
-        on:
-          schedule:
-            - cron: "17 18 * * 1"
-        permissions: {}
-        jobs:
-          supply-chain:
-            uses: ./.github/workflows/supply-chain.yml
-            permissions:
-              contents: read
-          report-failure:
-            needs:
-              - supply-chain
-            if: __EXPR__{{ always() && needs.supply-chain.result == 'failure' }}
-            permissions:
-              contents: read
-              issues: write
-            steps:
-              - run: echo report
-      YAML
-      audit_path = File.join(root, '.github/workflows/supply-chain-audit.yml')
-      File.write(audit_path, File.read(audit_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/m5-conformance.yml', <<~YAML)
-        name: M5 Conformance
-        on:
-          pull_request:
-            branches:
-              - main
-          workflow_dispatch:
-        jobs:
-          conformance-campaign:
-            name: postgres-__EXPR__{{ matrix.postgres }}-conformance-campaign
-            strategy:
-              matrix:
-                postgres: ["15", "18"]
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo conformance
-      YAML
-      m5_path = File.join(root, '.github/workflows/m5-conformance.yml')
-      File.write(m5_path, File.read(m5_path).gsub('__EXPR__', '$'))
-
-      write(root, '.github/workflows/pr-labeler.yml', <<~YAML)
-        name: Pull request labels
-        on:
-          pull_request_target:
-        permissions: {}
-        jobs:
-          merge-gate:
-            name: merge-gate
-            runs-on: ubuntu-latest
-            steps:
-              - run: echo trusted-base
-      YAML
-
-      protected_workflows = [
-        '.github/workflows/pr-ci.yml',
-        '.github/workflows/ci.yml',
-        '.github/workflows/dependency-review.yml',
-        '.github/workflows/codeql.yml',
-        '.github/workflows/evidence.yml',
-        '.github/workflows/supply-chain.yml',
-        '.github/workflows/m5-conformance.yml',
-        '.github/workflows/pr-labeler.yml'
-      ]
-
-      policy = {
-        'schema_version' => 7,
-        'pr_topology' => {
-          'schema' => 'single-pr-entrypoint-v1',
-          'entrypoint' => '.github/workflows/pr-ci.yml',
-          'migration_marker' => '.github/ci-topology-v7-migration',
-          'reusable_authorities' => authorities.map { |name| ".github/workflows/#{name}" },
-          'independent_pr_authorities' => [
-            {
-              'workflow' => '.github/workflows/m5-conformance.yml',
-              'reason' => 'retained-evidence-provenance',
-              'contexts' => [
-                'postgres-15-conformance-campaign',
-                'postgres-18-conformance-campaign'
-              ]
-            }
-          ]
-        },
-        'aggregate_gates' => [],
-        'internal_aggregates' => [
-          {
-            'context' => 'postgresql',
-            'producer' => {
-              'workflow' => '.github/workflows/ci.yml',
-              'job' => 'postgresql-merge-gate'
-            },
-            'members' => [
-              'postgres-15-design-gate',
-              'postgres-15-item-components',
-              'postgres-15-repository',
-              'postgres-16-design-gate',
-              'postgres-17-design-gate',
-              'postgres-18-design-gate',
-              'postgres-18-item-components',
-              'postgres-18-repository'
-            ]
-          }
-        ],
-        'repository_merge_gate' => {
-          'context' => 'merge-gate',
-          'state' => 'active',
-          'producer' => {
-            'workflow' => '.github/workflows/pr-labeler.yml',
-            'job' => 'merge-gate'
-          },
-          'members' => [
-            {'context' => 'pr-proof', 'workflow' => '.github/workflows/pr-ci.yml'},
-            {'context' => 'postgres-15-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'},
-            {'context' => 'postgres-18-conformance-campaign', 'workflow' => '.github/workflows/m5-conformance.yml'}
-          ],
-          'protected_workflows' => protected_workflows.map do |workflow|
-            {
-              'workflow' => workflow,
-              'accepted_blobs' => [
-                MergeGateVerifier.git_blob_sha(
-                  File.binread(File.join(root, workflow))
-                )
-              ]
-            }
-          end
-        }
-      }
-      yield root, policy
-    end
-  end
-
-  def write(root, relative, content)
-    path = File.join(root, relative)
-    FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, content)
-  end
-
-  def write_json(root, relative, value)
-    write(root, relative, JSON.pretty_generate(value))
-  end
-
-  def ruleset_with(*contexts)
-    {
-      'id' => 7,
-      'name' => 'Protect main',
-      'enforcement' => 'active',
-      'rules' => [{
-        'type' => 'required_status_checks',
-        'parameters' => {
-          'required_status_checks' => contexts.map { |context| {'context' => context} }
-        }
-      }]
-    }
-  end
-end
-))
-      end
-
-      refresh_v7_protected_blob(policy, root, '.github/workflows/pr-ci.yml')
-      canonical_pr_proof_policy.fetch('members').each do |member|
-        refresh_v7_protected_blob(policy, root, member.fetch('workflow'))
-      end
-      yield root, policy
-    end
-  end
-
-  def refresh_v7_protected_blob(policy, root, workflow)
-    entry = policy.dig('repository_merge_gate', 'protected_workflows')
-                  .find { |candidate| candidate['workflow'] == workflow }
-    raise "missing protected workflow #{workflow}" unless entry
-
-    blob = MergeGateVerifier.git_blob_sha(File.binread(File.join(root, workflow)))
-    entry['accepted_blobs'] << blob unless entry['accepted_blobs'].include?(blob)
   end
 
   def with_v7_topology_contract
