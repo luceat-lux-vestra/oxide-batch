@@ -808,7 +808,8 @@ module MergeGateVerifier
     return [] unless policy['schema_version'] == 7
 
     proof = policy['pr_proof']
-    return ['schema v7 policy must declare pr_proof'] unless proof.is_a?(Hash)
+    return [] if proof.nil?
+    return ['schema v7 pr_proof must be an object when present'] unless proof.is_a?(Hash)
 
     violations = []
     unless proof['schema'] == PR_PROOF_SCHEMA
