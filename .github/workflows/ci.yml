@@ -1,4 +1,5 @@
 name: Rust
+run-name: pr-authority/rust/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}
 
 on:
   pull_request:
@@ -8,19 +9,39 @@ on:
     paths:
       - .github/ci-topology-v7-migration
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      head_repo:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      caller_run_id:
+        required: true
+        type: string
+      caller_run_attempt:
+        required: true
+        type: string
 
 permissions:
   actions: read # Needed to inspect the canonical exact-SHA Fast workflow run.
   contents: read
 
 concurrency:
-  group: rust-${{ github.workflow }}-${{ github.ref }}
+  group: rust-${{ github.event_name }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.caller_run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
   quality-fast:
     name: quality-fast-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -29,7 +50,7 @@ jobs:
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
         env:
           GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
           EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
           EXPECTED_JOB: fast
           SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
@@ -122,6 +143,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -129,7 +152,7 @@ jobs:
       - name: Check diff hygiene
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
         run: |
           if [ -n "${BASE_SHA}" ]; then
             git diff --check "${BASE_SHA}...HEAD"
@@ -209,13 +232,15 @@ jobs:
 
   quality-integration-0:
     name: quality-integration-0-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -225,13 +250,15 @@ jobs:
 
   quality-integration-1:
     name: quality-integration-1-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -241,13 +268,15 @@ jobs:
 
   quality-integration-2:
     name: quality-integration-2-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -257,13 +286,15 @@ jobs:
 
   quality-integration-3:
     name: quality-integration-3-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -273,13 +304,15 @@ jobs:
 
   quality-bin-doc:
     name: quality-bin-doc-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -293,20 +326,22 @@ jobs:
 
   quality-contracts:
     name: quality-contracts-internal
-    if: ${{ github.event.pull_request.draft == false }}
+    if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
       - name: Check out exact trusted base for merge-gate verification
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
           path: .merge-gate-trusted-base
           fetch-depth: 1
           persist-credentials: false
@@ -356,17 +391,19 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Draft final-gate placeholder
-        if: ${{ github.event.pull_request.draft }}
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
         run: echo "full quality validation is deferred until the pull request is ready for review"
 
       - name: Check out repository
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Test trusted PR scope classifier
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
           python3 .github/scripts/pr-scope.py
           --repo-root .
@@ -374,7 +411,7 @@ jobs:
           --self-test
 
       - name: Require all quality components
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
           FAST_RESULT: ${{ needs.quality-fast.result }}
           INTEGRATION_0_RESULT: ${{ needs.quality-integration-0.result }}
@@ -402,6 +439,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -418,6 +457,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -443,6 +484,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -483,6 +526,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -672,6 +717,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
 
@@ -780,6 +827,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Evaluate selective-rerun-safe PostgreSQL aggregate
