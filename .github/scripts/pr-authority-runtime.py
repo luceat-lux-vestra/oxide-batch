@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -185,7 +186,10 @@ class GitHubActionsClient:
         self.opener = opener
 
     def workflow_runs(self, workflow: str) -> list[dict[str, object]]:
-        encoded = urllib.parse.quote(workflow, safe="")
+        workflow_id = Path(workflow).name
+        if not workflow_id:
+            raise ContractError("workflow path must contain a file name")
+        encoded = urllib.parse.quote(workflow_id, safe="")
         url = (
             f"{self.api_url}/repos/{self.repository}/actions/workflows/{encoded}/runs"
             "?event=workflow_dispatch&per_page=100"
@@ -371,6 +375,31 @@ def _run(authority: Authority, *, conclusion: str = "success", run_id: int = 10)
 
 
 class RuntimeContractTests(unittest.TestCase):
+    def test_workflow_runs_uses_workflow_filename_endpoint(self) -> None:
+        seen: dict[str, object] = {}
+
+        def opener(request: urllib.request.Request, timeout: int) -> io.StringIO:
+            seen["url"] = request.full_url
+            seen["timeout"] = timeout
+            return io.StringIO('{"workflow_runs":[]}')
+
+        client = GitHubActionsClient(
+            api_url="https://api.github.test",
+            repository="owner/repo",
+            token="token",
+            opener=opener,
+        )
+        self.assertEqual(
+            [],
+            client.workflow_runs(".github/workflows/supply-chain.yml"),
+        )
+        self.assertEqual(
+            "https://api.github.test/repos/owner/repo/actions/workflows/"
+            "supply-chain.yml/runs?event=workflow_dispatch&per_page=100",
+            seen["url"],
+        )
+        self.assertEqual(20, seen["timeout"])
+
     def test_docs_only_without_impacts_requires_no_optional_authority(self) -> None:
         required = required_authorities(
             _test_authorities(),
