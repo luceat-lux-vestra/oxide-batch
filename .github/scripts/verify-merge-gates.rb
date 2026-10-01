@@ -960,7 +960,7 @@ module MergeGateVerifier
       violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} dispatched needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
     end
     violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must use always()" unless always_condition?(proof['if'])
-    unless proof['runs-on'] == 'ubuntu-slim' && proof['timeout-minutes'] == 5
+    unless proof['runs-on'] == 'ubuntu-slim' && proof['timeout-minutes'] == 10
       violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must keep the bounded ubuntu-slim proof job"
     end
     unless proof['permissions'] == PR_PROOF_VERIFY_PERMISSIONS

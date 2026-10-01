@@ -2164,7 +2164,7 @@ class MergeGateVerifierTest < Minitest::Test
         'needs' => ['scope', 'dispatch-authorities'],
         'if' => '${{ always() }}',
         'runs-on' => 'ubuntu-slim',
-        'timeout-minutes' => 5,
+        'timeout-minutes' => 10,
         'permissions' => {'actions' => 'read', 'contents' => 'read'},
         'steps' => [
           {
