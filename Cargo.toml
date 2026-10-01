@@ -29,3 +29,5 @@ pedantic = { level = "warn", priority = -1 }
 expect_used = "deny"
 panic = "deny"
 unwrap_used = "deny"
+
+# post-merge Rust dispatch dedup validation
