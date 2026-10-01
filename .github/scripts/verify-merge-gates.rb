@@ -360,6 +360,18 @@ module MergeGateVerifier
     'evidence' => {'contents' => 'read'},
     'supply' => {'contents' => 'read'}
   }.freeze
+  PR_PROOF_DISPATCH_JOB = 'dispatch-authorities'
+  PR_PROOF_RUNTIME_SCRIPT = '.github/scripts/pr-authority-runtime.py'
+  PR_PROOF_DISPATCH_PERMISSIONS = {'actions' => 'write', 'contents' => 'read'}.freeze
+  PR_PROOF_VERIFY_PERMISSIONS = {'actions' => 'read', 'contents' => 'read'}.freeze
+  PR_PROOF_DISPATCH_INPUTS = %w[
+    base_sha
+    head_sha
+    head_repo
+    pr_number
+    caller_run_id
+    caller_run_attempt
+  ].freeze
   PR_TOPOLOGY_SCHEMA = 'single-pr-entrypoint-v1'
   PR_TOPOLOGY_MIGRATION_MARKER = '.github/ci-topology-v7-migration'
   PR_TOPOLOGY_INDEPENDENT_M5 = '.github/workflows/m5-conformance.yml'
@@ -821,6 +833,213 @@ module MergeGateVerifier
     violations
   end
 
+  def required_pr_proof_authority_ids(
+    scope_result:,
+    classification_outcome:,
+    legacy_base:,
+    docs_only:,
+    evidence_impact:,
+    supply_chain_impact:
+  )
+    all_ids = PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }
+    boolean_outputs = [docs_only, evidence_impact, supply_chain_impact]
+    trusted = scope_result == 'success' &&
+              classification_outcome == 'success' &&
+              legacy_base == 'false' &&
+              boolean_outputs.all? { |value| %w[true false].include?(value) }
+    return all_ids unless trusted
+
+    required = []
+    required.concat(%w[rust dependency codeql]) unless docs_only == 'true'
+    required << 'evidence' unless evidence_impact == 'false'
+    required << 'supply' unless supply_chain_impact == 'false'
+    required
+  end
+
+  def pr_proof_dispatch_runtime_contract(jobs:, docs:, policy:)
+    violations = []
+    policy_violations = pr_proof_policy_contract(policy: policy)
+    policy_violations.each do |violation|
+      violations << "dispatched pr-proof runtime requires canonical policy: #{violation}"
+    end
+
+    authority_ids = PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }
+    materialized = authority_ids.select { |job_id| jobs.key?(job_id) }
+    unless materialized.empty?
+      violations << "#{PR_CI_WORKFLOW} dispatched runtime must not materialize static optional-authority jobs: #{materialized.join(', ')}"
+    end
+
+    expected_jobs = [PR_CI_SCOPE_JOB, PR_PROOF_DISPATCH_JOB, PR_CI_PROOF_JOB]
+    missing_jobs = expected_jobs.reject { |job_id| jobs[job_id].is_a?(Hash) }
+    unless missing_jobs.empty?
+      violations << "#{PR_CI_WORKFLOW} dispatched runtime is missing canonical jobs: #{missing_jobs.join(', ')}"
+      return violations
+    end
+
+    dispatch = jobs.fetch(PR_PROOF_DISPATCH_JOB)
+    unless dispatch['name'] == 'dispatch-required-authorities'
+      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must emit dispatch-required-authorities"
+    end
+    unless normalize_needs(dispatch) == [PR_CI_SCOPE_JOB]
+      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must depend only on trusted scope"
+    end
+    dispatch_if = normalized_shell(dispatch['if'])
+    unless dispatch_if.include?('always()') && dispatch_if.include?('github.event.pull_request.draft == false')
+      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must run fail-closed after scope for ready PRs"
+    end
+    unless dispatch['runs-on'] == 'ubuntu-slim' && dispatch['timeout-minutes'] == 5
+      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must use the bounded ubuntu-slim dispatcher"
+    end
+    unless dispatch['permissions'] == PR_PROOF_DISPATCH_PERMISSIONS
+      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must keep exact Actions-write dispatch permissions"
+    end
+
+    dispatch_steps = Array(dispatch['steps']).select { |step| step.is_a?(Hash) }
+    trusted_checkout = dispatch_steps.find { |step| step['id'] == 'dispatch-trusted-base' }
+    unless trusted_checkout.is_a?(Hash) &&
+           trusted_checkout['uses'].to_s.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/) &&
+           trusted_checkout.dig('with', 'ref') == '${{ github.event.pull_request.base.sha }}' &&
+           trusted_checkout.dig('with', 'path') == '.dispatch-trusted-base' &&
+           trusted_checkout.dig('with', 'fetch-depth') == 1 &&
+           trusted_checkout.dig('with', 'persist-credentials') == false
+      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must check out the exact trusted base for dispatch planning"
+    end
+
+    dispatch_command = dispatch_steps.filter_map { |step| step['run'] }.join("\n")
+    dispatch_tokens = [
+      "#{PR_PROOF_RUNTIME_SCRIPT} plan",
+      '--policy .dispatch-trusted-base/.github/merge-gate-policy.json',
+      '--scope-result "$SCOPE_RESULT"',
+      '--classification-outcome "$CLASSIFICATION_OUTCOME"',
+      '--legacy-base "$LEGACY_BASE"',
+      '--docs-only "$DOCS_ONLY"',
+      '--evidence-impact "$EVIDENCE_IMPACT"',
+      '--supply-chain-impact "$SUPPLY_IMPACT"',
+      'actions/workflows/${workflow}/dispatches',
+      '-f ref="$DEFAULT_BRANCH"',
+      '-f inputs[base_sha]="$BASE_SHA"',
+      '-f inputs[head_sha]="$HEAD_SHA"',
+      '-f inputs[head_repo]="$HEAD_REPO"',
+      '-f inputs[pr_number]="$PR_NUMBER"',
+      '-f inputs[caller_run_id]="$CALLER_RUN_ID"',
+      '-f inputs[caller_run_attempt]="$CALLER_RUN_ATTEMPT"'
+    ]
+    missing_dispatch_tokens = dispatch_tokens.reject { |token| dispatch_command.include?(token) }
+    unless missing_dispatch_tokens.empty?
+      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} is missing trusted dispatch tokens: #{missing_dispatch_tokens.join(', ')}"
+    end
+
+    dispatch_env = dispatch_steps.filter_map { |step| step['env'] if step['run'] }.reduce({}) { |memo, env| memo.merge(env || {}) }
+    expected_dispatch_env = {
+      'GH_TOKEN' => '${{ github.token }}',
+      'BASE_SHA' => '${{ github.event.pull_request.base.sha }}',
+      'HEAD_SHA' => '${{ github.event.pull_request.head.sha }}',
+      'HEAD_REPO' => '${{ github.event.pull_request.head.repo.full_name }}',
+      'PR_NUMBER' => '${{ github.event.pull_request.number }}',
+      'DEFAULT_BRANCH' => '${{ github.event.repository.default_branch }}',
+      'CALLER_RUN_ID' => '${{ github.run_id }}',
+      'CALLER_RUN_ATTEMPT' => '${{ github.run_attempt }}',
+      'SCOPE_RESULT' => '${{ needs.scope.result }}',
+      'CLASSIFICATION_OUTCOME' => '${{ needs.scope.outputs.classification_outcome }}',
+      'LEGACY_BASE' => '${{ needs.scope.outputs.legacy_base }}',
+      'DOCS_ONLY' => '${{ needs.scope.outputs.docs_only }}',
+      'EVIDENCE_IMPACT' => '${{ needs.scope.outputs.evidence_impact }}',
+      'SUPPLY_IMPACT' => '${{ needs.scope.outputs.supply_chain_impact }}'
+    }
+    expected_dispatch_env.each do |key, value|
+      unless dispatch_env[key] == value
+        violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must bind #{key} to #{value}"
+      end
+    end
+
+    proof = jobs.fetch(PR_CI_PROOF_JOB)
+    violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must emit context pr-proof" unless proof['name'] == 'pr-proof'
+    expected_needs = [PR_CI_SCOPE_JOB, PR_PROOF_DISPATCH_JOB].sort
+    actual_needs = normalize_needs(proof).sort
+    unless actual_needs == expected_needs
+      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} dispatched needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
+    end
+    violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must use always()" unless always_condition?(proof['if'])
+    unless proof['runs-on'] == 'ubuntu-slim' && proof['timeout-minutes'] == 5
+      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must keep the bounded ubuntu-slim proof job"
+    end
+    unless proof['permissions'] == PR_PROOF_VERIFY_PERMISSIONS
+      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must keep exact Actions-read proof permissions"
+    end
+
+    proof_steps = Array(proof['steps']).select { |step| step.is_a?(Hash) }
+    proof_checkout = proof_steps.find { |step| step['id'] == 'proof-trusted-base' }
+    unless proof_checkout.is_a?(Hash) &&
+           proof_checkout['uses'].to_s.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/) &&
+           proof_checkout.dig('with', 'ref') == '${{ github.event.pull_request.base.sha }}' &&
+           proof_checkout.dig('with', 'path') == '.proof-trusted-base' &&
+           proof_checkout.dig('with', 'fetch-depth') == 1 &&
+           proof_checkout.dig('with', 'persist-credentials') == false
+      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must check out the exact trusted base for proof verification"
+    end
+
+    proof_command = proof_steps.filter_map { |step| step['run'] }.join("\n")
+    proof_tokens = [
+      "#{PR_PROOF_RUNTIME_SCRIPT} verify",
+      '--policy .proof-trusted-base/.github/merge-gate-policy.json',
+      '--scope-result "$SCOPE_RESULT"',
+      '--classification-outcome "$CLASSIFICATION_OUTCOME"',
+      '--legacy-base "$LEGACY_BASE"',
+      '--docs-only "$DOCS_ONLY"',
+      '--evidence-impact "$EVIDENCE_IMPACT"',
+      '--supply-chain-impact "$SUPPLY_IMPACT"',
+      '--dispatch-result "$DISPATCH_RESULT"',
+      '--base-sha "$BASE_SHA"',
+      '--head-sha "$HEAD_SHA"',
+      '--head-repo "$HEAD_REPO"',
+      '--pr-number "$PR_NUMBER"',
+      '--caller-run-id "$CALLER_RUN_ID"',
+      '--caller-run-attempt "$CALLER_RUN_ATTEMPT"'
+    ]
+    missing_proof_tokens = proof_tokens.reject { |token| proof_command.include?(token) }
+    unless missing_proof_tokens.empty?
+      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} is missing dispatched proof tokens: #{missing_proof_tokens.join(', ')}"
+    end
+
+    proof_env = proof_steps.filter_map { |step| step['env'] if step['run'] }.reduce({}) { |memo, env| memo.merge(env || {}) }
+    expected_proof_env = expected_dispatch_env.merge(
+      'DISPATCH_RESULT' => '${{ needs.dispatch-authorities.result }}'
+    ).reject { |key, _| key == 'DEFAULT_BRANCH' }
+    expected_proof_env.each do |key, value|
+      unless proof_env[key] == value
+        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must bind #{key} to #{value}"
+      end
+    end
+
+    PR_PROOF_AUTHORITIES.each do |member|
+      workflow = member.fetch('workflow')
+      authority_id = member.fetch('id')
+      doc = docs[workflow]
+      unless doc.is_a?(Hash)
+        violations << "dispatched authority #{workflow} is missing"
+        next
+      end
+      present, config = event_config(doc, 'workflow_dispatch')
+      inputs = config.is_a?(Hash) ? config['inputs'] : nil
+      unless present && inputs.is_a?(Hash) && inputs.keys.map(&:to_s).sort == PR_PROOF_DISPATCH_INPUTS.sort
+        violations << "#{workflow} must expose only canonical dispatched PR inputs"
+      else
+        PR_PROOF_DISPATCH_INPUTS.each do |input|
+          definition = inputs[input]
+          unless definition.is_a?(Hash) && definition['required'] == true && definition['type'] == 'string'
+            violations << "#{workflow} workflow_dispatch input #{input} must be required string"
+          end
+        end
+      end
+      expected_run_name = "pr-authority/#{authority_id}/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}"
+      unless doc['run-name'] == expected_run_name
+        violations << "#{workflow} must expose canonical dispatched run-name correlation"
+      end
+    end
+
+    violations
+  end
+
   def pr_topology_v7_contract(root:, policy:, producer_summary:)
     return [] unless policy['schema_version'] == 7
 
@@ -868,141 +1087,152 @@ module MergeGateVerifier
     unless jobs.is_a?(Hash)
       return violations + ["#{PR_CI_WORKFLOW} must declare jobs"]
     end
-    proof_authority_ids = PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }
-    expected_jobs = ([PR_CI_SCOPE_JOB] + proof_authority_ids + [PR_CI_PROOF_JOB])
-    missing_jobs = expected_jobs - jobs.keys.map(&:to_s)
-    violations << "#{PR_CI_WORKFLOW} is missing canonical jobs: #{missing_jobs.join(', ')}" unless missing_jobs.empty?
-
-    call_contracts = PR_PROOF_AUTHORITIES.to_h do |member|
-      [member.fetch('id'), member.fetch('workflow')]
-    end
-    call_contracts.each do |job_id, workflow|
-      job = jobs[job_id]
-      unless job.is_a?(Hash) && job['uses'] == "./#{workflow}"
-        violations << "#{PR_CI_WORKFLOW}##{job_id} must call #{workflow}"
-        next
-      end
-      unless normalize_needs(job).include?(PR_CI_SCOPE_JOB)
-        violations << "#{PR_CI_WORKFLOW}##{job_id} must depend on trusted scope"
-      end
-      unless job['permissions'] == PR_PROOF_PERMISSIONS.fetch(job_id)
-        violations << "#{PR_CI_WORKFLOW}##{job_id} must keep exact reusable-authority permissions #{PR_PROOF_PERMISSIONS.fetch(job_id).inspect}"
-      end
-      condition = normalized_shell(job['if'])
-      unless condition.include?("needs.scope.outputs.legacy_base != 'true'") &&
-             condition.include?("needs.scope.outputs.classification_outcome != 'success'")
-        violations << "#{PR_CI_WORKFLOW}##{job_id} must fail closed on legacy/uncertain scope"
-      end
-    end
-
-    PR_PROOF_AUTHORITIES.each do |member|
-      job_id = member.fetch('id')
-      condition = normalized_shell(jobs.dig(job_id, 'if'))
-      required_token = case member.fetch('applicability')
-                       when 'non_docs'
-                         "needs.scope.outputs.docs_only != 'true'"
-                       when 'evidence_impact'
-                         "needs.scope.outputs.evidence_impact != 'false'"
-                       when 'supply_chain_impact'
-                         "needs.scope.outputs.supply_chain_impact != 'false'"
-                       else
-                         raise "unsupported pr_proof applicability #{member.fetch('applicability').inspect}"
-                       end
-      unless condition.include?(required_token)
-        violations << "#{PR_CI_WORKFLOW}##{job_id} must enforce trusted applicability #{member.fetch('applicability').inspect}"
-      end
-    end
-
-    campaigns = jobs['campaigns']
-    if campaigns
-      unless campaigns.is_a?(Hash) &&
-             campaigns['uses'] == "./#{CAMPAIGN_ORCHESTRATOR_WORKFLOW}" &&
-             normalize_needs(campaigns).include?(PR_CI_SCOPE_JOB) &&
-             campaigns['permissions'] == {'contents' => 'read', 'pull-requests' => 'read'}
-        violations << "#{PR_CI_WORKFLOW}#campaigns compatibility job must retain its canonical reusable-call contract"
-      end
-      campaigns_if = normalized_shell(campaigns['if'])
-      required_campaign_tokens = [
-        "needs.scope.outputs.legacy_base != 'true'",
-        "needs.scope.outputs.classification_outcome != 'success'",
-        "needs.scope.outputs.docs_only != 'true'"
-      ]
-      missing_campaign_tokens = required_campaign_tokens.reject { |token| campaigns_if.include?(token) }
-      compact_campaigns_if = campaigns_if.gsub(/\s+/, '')
-      unless missing_campaign_tokens.empty? && compact_campaigns_if.end_with?('&&false}}')
-        violations << "#{PR_CI_WORKFLOW}#campaigns compatibility job must remain permanently disabled while present"
-      end
-    end
-
-    scope = jobs[PR_CI_SCOPE_JOB]
-    unless scope.is_a?(Hash)
-      violations << "#{PR_CI_WORKFLOW} must declare trusted scope job"
+    if jobs.key?(PR_PROOF_DISPATCH_JOB)
+      violations.concat(
+        pr_proof_dispatch_runtime_contract(
+          jobs: jobs,
+          docs: docs,
+          policy: policy
+        )
+      )
     else
-      outputs = scope['outputs']
-      expected_outputs = %w[legacy_base classification_outcome docs_only supply_chain_impact evidence_impact]
-      missing_outputs = expected_outputs.reject { |name| outputs.is_a?(Hash) && outputs.key?(name) }
-      violations << "#{PR_CI_WORKFLOW} scope is missing outputs: #{missing_outputs.join(', ')}" unless missing_outputs.empty?
-      steps = Array(scope['steps']).select { |step| step.is_a?(Hash) }
-      checkout = steps.find { |step| step['id'] == 'trusted-base' }
-      classify = steps.find { |step| step['id'] == 'classify' }
-      unless checkout.is_a?(Hash) &&
-             checkout['continue-on-error'] == true &&
-             checkout['uses'].to_s.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/) &&
-             checkout.dig('with', 'ref') == '${{ github.event.pull_request.base.sha }}' &&
-             checkout.dig('with', 'path') == '.trusted-base' &&
-             checkout.dig('with', 'persist-credentials') == false
-        violations << "#{PR_CI_WORKFLOW} scope must establish the exact trusted base fail-closed"
+      proof_authority_ids = PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }
+      expected_jobs = ([PR_CI_SCOPE_JOB] + proof_authority_ids + [PR_CI_PROOF_JOB])
+      missing_jobs = expected_jobs - jobs.keys.map(&:to_s)
+      violations << "#{PR_CI_WORKFLOW} is missing canonical jobs: #{missing_jobs.join(', ')}" unless missing_jobs.empty?
+
+      call_contracts = PR_PROOF_AUTHORITIES.to_h do |member|
+        [member.fetch('id'), member.fetch('workflow')]
       end
-      unless classify.is_a?(Hash) && classify['continue-on-error'] == true
-        violations << "#{PR_CI_WORKFLOW} scope classifier must continue on error for full fallback"
-      else
-        command = classify['run'].to_s
-        required_tokens = [
-          "echo 'legacy_base=unknown'",
-          "echo 'legacy_base=true'",
-          "echo 'legacy_base=false'",
-          "echo 'docs_only=false'",
-          "echo 'supply_chain_impact=true'",
-          "echo 'evidence_impact=true'",
-          '>> "$GITHUB_OUTPUT"',
-          '.trusted-base/.github/merge-gate-policy.json',
-          'schema_version',
-          'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}',
-          'pulls/${PR_NUMBER}/files?per_page=100',
-          '.trusted-base/.github/scripts/pr-scope.py',
-          '--trusted-base-sha "$BASE_SHA"',
-          '.docs_only',
-          '.supply_chain_impact',
-          '.evidence_impact'
-        ]
-        missing = required_tokens.reject { |token| command.include?(token) }
-        unless missing.empty?
-          violations << "#{PR_CI_WORKFLOW} scope classifier is missing trusted/fail-closed tokens: #{missing.join(', ')}"
+      call_contracts.each do |job_id, workflow|
+        job = jobs[job_id]
+        unless job.is_a?(Hash) && job['uses'] == "./#{workflow}"
+          violations << "#{PR_CI_WORKFLOW}##{job_id} must call #{workflow}"
+          next
+        end
+        unless normalize_needs(job).include?(PR_CI_SCOPE_JOB)
+          violations << "#{PR_CI_WORKFLOW}##{job_id} must depend on trusted scope"
+        end
+        unless job['permissions'] == PR_PROOF_PERMISSIONS.fetch(job_id)
+          violations << "#{PR_CI_WORKFLOW}##{job_id} must keep exact reusable-authority permissions #{PR_PROOF_PERMISSIONS.fetch(job_id).inspect}"
+        end
+        condition = normalized_shell(job['if'])
+        unless condition.include?("needs.scope.outputs.legacy_base != 'true'") &&
+               condition.include?("needs.scope.outputs.classification_outcome != 'success'")
+          violations << "#{PR_CI_WORKFLOW}##{job_id} must fail closed on legacy/uncertain scope"
         end
       end
-    end
 
-    proof = jobs[PR_CI_PROOF_JOB]
-    unless proof.is_a?(Hash)
-      violations << "#{PR_CI_WORKFLOW} must declare #{PR_CI_PROOF_JOB}"
-    else
-      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must emit context pr-proof" unless proof['name'] == 'pr-proof'
-      expected_needs = ([PR_CI_SCOPE_JOB] + PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }).sort
-      actual_needs = normalize_needs(proof).sort
-      unless actual_needs == expected_needs
-        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
+      PR_PROOF_AUTHORITIES.each do |member|
+        job_id = member.fetch('id')
+        condition = normalized_shell(jobs.dig(job_id, 'if'))
+        required_token = case member.fetch('applicability')
+                         when 'non_docs'
+                           "needs.scope.outputs.docs_only != 'true'"
+                         when 'evidence_impact'
+                           "needs.scope.outputs.evidence_impact != 'false'"
+                         when 'supply_chain_impact'
+                           "needs.scope.outputs.supply_chain_impact != 'false'"
+                         else
+                           raise "unsupported pr_proof applicability #{member.fetch('applicability').inspect}"
+                         end
+        unless condition.include?(required_token)
+          violations << "#{PR_CI_WORKFLOW}##{job_id} must enforce trusted applicability #{member.fetch('applicability').inspect}"
+        end
       end
-      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must use always()" unless always_condition?(proof['if'])
-      proof_command = Array(proof['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
-      %w[RUST_RESULT DEPENDENCY_RESULT CODEQL_RESULT EVIDENCE_RESULT SUPPLY_RESULT].each do |token|
-        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} is missing #{token} authority check" unless proof_command.include?(token)
+
+      campaigns = jobs['campaigns']
+      if campaigns
+        unless campaigns.is_a?(Hash) &&
+               campaigns['uses'] == "./#{CAMPAIGN_ORCHESTRATOR_WORKFLOW}" &&
+               normalize_needs(campaigns).include?(PR_CI_SCOPE_JOB) &&
+               campaigns['permissions'] == {'contents' => 'read', 'pull-requests' => 'read'}
+          violations << "#{PR_CI_WORKFLOW}#campaigns compatibility job must retain its canonical reusable-call contract"
+        end
+        campaigns_if = normalized_shell(campaigns['if'])
+        required_campaign_tokens = [
+          "needs.scope.outputs.legacy_base != 'true'",
+          "needs.scope.outputs.classification_outcome != 'success'",
+          "needs.scope.outputs.docs_only != 'true'"
+        ]
+        missing_campaign_tokens = required_campaign_tokens.reject { |token| campaigns_if.include?(token) }
+        compact_campaigns_if = campaigns_if.gsub(/\s+/, '')
+        unless missing_campaign_tokens.empty? && compact_campaigns_if.end_with?('&&false}}')
+          violations << "#{PR_CI_WORKFLOW}#campaigns compatibility job must remain permanently disabled while present"
+        end
       end
-      unless proof_command.include?('CLASSIFICATION_OUTCOME') &&
-             proof_command.include?('DOCS_ONLY') &&
-             proof_command.include?('LEGACY_BASE') &&
-             proof_command.include?('if [ "$LEGACY_BASE" = "true" ]; then')
-        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must bind trusted routing outputs and reserve the legacy shortcut for an explicit trusted legacy base"
+
+      scope = jobs[PR_CI_SCOPE_JOB]
+      unless scope.is_a?(Hash)
+        violations << "#{PR_CI_WORKFLOW} must declare trusted scope job"
+      else
+        outputs = scope['outputs']
+        expected_outputs = %w[legacy_base classification_outcome docs_only supply_chain_impact evidence_impact]
+        missing_outputs = expected_outputs.reject { |name| outputs.is_a?(Hash) && outputs.key?(name) }
+        violations << "#{PR_CI_WORKFLOW} scope is missing outputs: #{missing_outputs.join(', ')}" unless missing_outputs.empty?
+        steps = Array(scope['steps']).select { |step| step.is_a?(Hash) }
+        checkout = steps.find { |step| step['id'] == 'trusted-base' }
+        classify = steps.find { |step| step['id'] == 'classify' }
+        unless checkout.is_a?(Hash) &&
+               checkout['continue-on-error'] == true &&
+               checkout['uses'].to_s.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/) &&
+               checkout.dig('with', 'ref') == '${{ github.event.pull_request.base.sha }}' &&
+               checkout.dig('with', 'path') == '.trusted-base' &&
+               checkout.dig('with', 'persist-credentials') == false
+          violations << "#{PR_CI_WORKFLOW} scope must establish the exact trusted base fail-closed"
+        end
+        unless classify.is_a?(Hash) && classify['continue-on-error'] == true
+          violations << "#{PR_CI_WORKFLOW} scope classifier must continue on error for full fallback"
+        else
+          command = classify['run'].to_s
+          required_tokens = [
+            "echo 'legacy_base=unknown'",
+            "echo 'legacy_base=true'",
+            "echo 'legacy_base=false'",
+            "echo 'docs_only=false'",
+            "echo 'supply_chain_impact=true'",
+            "echo 'evidence_impact=true'",
+            '>> "$GITHUB_OUTPUT"',
+            '.trusted-base/.github/merge-gate-policy.json',
+            'schema_version',
+            'repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}',
+            'pulls/${PR_NUMBER}/files?per_page=100',
+            '.trusted-base/.github/scripts/pr-scope.py',
+            '--trusted-base-sha "$BASE_SHA"',
+            '.docs_only',
+            '.supply_chain_impact',
+            '.evidence_impact'
+          ]
+          missing = required_tokens.reject { |token| command.include?(token) }
+          unless missing.empty?
+            violations << "#{PR_CI_WORKFLOW} scope classifier is missing trusted/fail-closed tokens: #{missing.join(', ')}"
+          end
+        end
       end
+
+      proof = jobs[PR_CI_PROOF_JOB]
+      unless proof.is_a?(Hash)
+        violations << "#{PR_CI_WORKFLOW} must declare #{PR_CI_PROOF_JOB}"
+      else
+        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must emit context pr-proof" unless proof['name'] == 'pr-proof'
+        expected_needs = ([PR_CI_SCOPE_JOB] + PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }).sort
+        actual_needs = normalize_needs(proof).sort
+        unless actual_needs == expected_needs
+          violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
+        end
+        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must use always()" unless always_condition?(proof['if'])
+        proof_command = Array(proof['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
+        %w[RUST_RESULT DEPENDENCY_RESULT CODEQL_RESULT EVIDENCE_RESULT SUPPLY_RESULT].each do |token|
+          violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} is missing #{token} authority check" unless proof_command.include?(token)
+        end
+        unless proof_command.include?('CLASSIFICATION_OUTCOME') &&
+               proof_command.include?('DOCS_ONLY') &&
+               proof_command.include?('LEGACY_BASE') &&
+               proof_command.include?('if [ "$LEGACY_BASE" = "true" ]; then')
+          violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must bind trusted routing outputs and reserve the legacy shortcut for an explicit trusted legacy base"
+        end
+      end
+
     end
 
     PR_TOPOLOGY_REUSABLE_AUTHORITIES.each do |workflow|
