@@ -115,170 +115,104 @@ jobs:
             echo "evidence_impact=$evidence_impact"
           } >> "$GITHUB_OUTPUT"
 
-  rust:
-    name: rust-authority
+  dispatch-authorities:
+    name: dispatch-required-authorities
     needs: scope
-    if: >-
-      ${{ always() && github.event.pull_request.draft == false &&
-          needs.scope.outputs.legacy_base != 'true' &&
-          needs.scope.outputs.schema8_bootstrap != 'true' &&
-          (needs.scope.outputs.classification_outcome != 'success' ||
-           needs.scope.outputs.docs_only != 'true') }}
-    uses: ./.github/workflows/ci.yml
+    if: ${{ always() && github.event.pull_request.draft == false }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
     permissions:
-      actions: read # Inspect exact-SHA Fast evidence inside the reusable Rust authority.
-      contents: read # Read repository source and inspect the pinned Fast producer.
+      actions: write # Dispatch only the protected-base authority workflows selected by trusted scope.
+      contents: read # Read the exact protected-base policy/runtime used for dispatch planning.
+    steps:
+      - name: Check out exact trusted base for dispatch planning
+        id: dispatch-trusted-base
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .dispatch-trusted-base
+          fetch-depth: 1
+          persist-credentials: false
 
-  dependency:
-    name: dependency-authority
-    needs: scope
-    if: >-
-      ${{ always() && github.event.pull_request.draft == false &&
-          needs.scope.outputs.legacy_base != 'true' &&
-          needs.scope.outputs.schema8_bootstrap != 'true' &&
-          (needs.scope.outputs.classification_outcome != 'success' ||
-           needs.scope.outputs.docs_only != 'true') }}
-    uses: ./.github/workflows/dependency-review.yml
-    permissions:
-      contents: read # Review dependency changes and execute read-only Actions security policy.
+      - name: Dispatch required authorities
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          CALLER_RUN_ID: ${{ github.run_id }}
+          CALLER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.classification_outcome }}
+          LEGACY_BASE: ${{ needs.scope.outputs.legacy_base }}
+          DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
+          EVIDENCE_IMPACT: ${{ needs.scope.outputs.evidence_impact }}
+          SUPPLY_IMPACT: ${{ needs.scope.outputs.supply_chain_impact }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -f
+          plan="$(
+            python3 .dispatch-trusted-base/.github/scripts/pr-authority-runtime.py plan               --policy .dispatch-trusted-base/.github/merge-gate-policy.json               --scope-result "$SCOPE_RESULT"               --classification-outcome "$CLASSIFICATION_OUTCOME"               --legacy-base "$LEGACY_BASE"               --docs-only "$DOCS_ONLY"               --evidence-impact "$EVIDENCE_IMPACT"               --supply-chain-impact "$SUPPLY_IMPACT"
+          )"
+          jq -e '
+            .schema == "trusted-scope-authorities-v1" and
+            (.required | type) == "array" and
+            all(.required[]; (.workflow | type) == "string")
+          ' <<<"$plan" >/dev/null
 
-  codeql:
-    name: codeql-authority
-    needs: scope
-    if: >-
-      ${{ always() && github.event.pull_request.draft == false &&
-          needs.scope.outputs.legacy_base != 'true' &&
-          needs.scope.outputs.schema8_bootstrap != 'true' &&
-          (needs.scope.outputs.classification_outcome != 'success' ||
-           needs.scope.outputs.docs_only != 'true') }}
-    uses: ./.github/workflows/codeql.yml
-    permissions:
-      contents: read # Read Actions/Rust source for CodeQL analysis.
-      pull-requests: read # Route Rust CodeQL from exact PR metadata.
-      security-events: write # Upload CodeQL SARIF results for this PR.
-
-  evidence:
-    name: evidence-authority
-    needs: scope
-    if: >-
-      ${{ always() && github.event.pull_request.draft == false &&
-          needs.scope.outputs.legacy_base != 'true' &&
-          needs.scope.outputs.schema8_bootstrap != 'true' &&
-          (needs.scope.outputs.classification_outcome != 'success' ||
-           needs.scope.outputs.evidence_impact != 'false') }}
-    uses: ./.github/workflows/evidence.yml
-    permissions:
-      contents: read # Read repository source for the routed full authority.
-
-  supply:
-    name: supply-authority
-    needs: scope
-    if: >-
-      ${{ always() && github.event.pull_request.draft == false &&
-          needs.scope.outputs.legacy_base != 'true' &&
-          needs.scope.outputs.schema8_bootstrap != 'true' &&
-          (needs.scope.outputs.classification_outcome != 'success' ||
-           needs.scope.outputs.supply_chain_impact != 'false') }}
-    uses: ./.github/workflows/supply-chain.yml
-    permissions:
-      contents: read # Read repository source for the routed full authority.
+          while IFS= read -r workflow_path; do
+            workflow="${workflow_path##*/}"
+            test -n "$workflow"
+            # Globbing is disabled above with set -f; keep canonical nested gh-api field tokens literal.
+            # shellcheck disable=SC2102
+            gh api --method POST               "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches"               -f ref="$DEFAULT_BRANCH"               -f inputs[base_sha]="$BASE_SHA"               -f inputs[head_sha]="$HEAD_SHA"               -f inputs[head_repo]="$HEAD_REPO"               -f inputs[pr_number]="$PR_NUMBER"               -f inputs[caller_run_id]="$CALLER_RUN_ID"               -f inputs[caller_run_attempt]="$CALLER_RUN_ATTEMPT"
+          done < <(jq -r '.required[].workflow' <<<"$plan")
 
   pr-proof:
     name: pr-proof
-    needs: [scope, rust, dependency, codeql, evidence, supply]
+    needs: [scope, dispatch-authorities]
     if: ${{ always() }}
     runs-on: ubuntu-slim
     timeout-minutes: 5
+    permissions:
+      actions: read # Poll and verify the exact correlated authority workflow runs.
+      contents: read # Read the exact protected-base policy/runtime used for proof verification.
     steps:
       - name: Draft placeholder
         if: ${{ github.event.pull_request.draft }}
         run: echo "authoritative PR proof is deferred until ready_for_review"
 
-      - name: Require routed merge authorities
+      - name: Check out exact trusted base for proof verification
+        id: proof-trusted-base
+        if: ${{ github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .proof-trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify dispatched authorities
         if: ${{ github.event.pull_request.draft == false }}
         env:
-          LEGACY_BASE: ${{ needs.scope.outputs.legacy_base }}
-          SCHEMA8_BOOTSTRAP: ${{ needs.scope.outputs.schema8_bootstrap }}
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          CALLER_RUN_ID: ${{ github.run_id }}
+          CALLER_RUN_ATTEMPT: ${{ github.run_attempt }}
           SCOPE_RESULT: ${{ needs.scope.result }}
           CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.classification_outcome }}
+          LEGACY_BASE: ${{ needs.scope.outputs.legacy_base }}
           DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
-          SUPPLY_IMPACT: ${{ needs.scope.outputs.supply_chain_impact }}
           EVIDENCE_IMPACT: ${{ needs.scope.outputs.evidence_impact }}
-          RUST_RESULT: ${{ needs.rust.result }}
-          DEPENDENCY_RESULT: ${{ needs.dependency.result }}
-          CODEQL_RESULT: ${{ needs.codeql.result }}
-          EVIDENCE_RESULT: ${{ needs.evidence.result }}
-          SUPPLY_RESULT: ${{ needs.supply.result }}
+          SUPPLY_IMPACT: ${{ needs.scope.outputs.supply_chain_impact }}
+          DISPATCH_RESULT: ${{ needs.dispatch-authorities.result }}
         shell: bash
         run: |
           set -euo pipefail
-
-          if [ "$SCOPE_RESULT" != "success" ]; then
-            echo "::error::trusted scope job did not succeed: $SCOPE_RESULT"
-            exit 1
-          fi
-
-          if [ "$LEGACY_BASE" = "true" ]; then
-            echo "schema-v6 migration base detected; legacy direct workflows remain authoritative for this migration PR"
-            exit 0
-          fi
-
-          if [ "$SCHEMA8_BOOTSTRAP" = "true" ]; then
-            if [ "$CLASSIFICATION_OUTCOME" != "success" ] || [ "$LEGACY_BASE" != "false" ]; then
-              echo "::error::schema-v8 bootstrap shortcut requires successful trusted schema-v7 scope"
-              exit 1
-            fi
-            for pair in "rust:$RUST_RESULT" "dependency:$DEPENDENCY_RESULT" "codeql:$CODEQL_RESULT" "evidence:$EVIDENCE_RESULT" "supply:$SUPPLY_RESULT"; do
-              result="${pair#*:}"
-              if [ "$result" != "skipped" ]; then
-                echo "::error::schema-v8 bootstrap candidate unexpectedly materialized authority: $pair"
-                exit 1
-              fi
-            done
-            echo "schema-v8 policy-only bootstrap candidate; final trust decision is owned by the protected-base merge-gate"
-            exit 0
-          fi
-
-          full_required=true
-          if [ "$CLASSIFICATION_OUTCOME" = "success" ] && [ "$DOCS_ONLY" = "true" ]; then
-            full_required=false
-          fi
-
-          require_result() {
-            local authority="$1"
-            local result="$2"
-            if [ "$result" != "success" ]; then
-              echo "::error::$authority authority did not succeed (result=$result)"
-              exit 1
-            fi
-          }
-
-          if [ "$full_required" = "true" ]; then
-            require_result rust "$RUST_RESULT"
-            require_result dependency "$DEPENDENCY_RESULT"
-            require_result codeql "$CODEQL_RESULT"
-          else
-            for pair in "rust:$RUST_RESULT" "dependency:$DEPENDENCY_RESULT" "codeql:$CODEQL_RESULT"; do
-              result="${pair#*:}"
-              if [ "$result" != "skipped" ]; then
-                echo "::error::non-applicable authority unexpectedly materialized: $pair"
-                exit 1
-              fi
-            done
-          fi
-
-          if [ "$CLASSIFICATION_OUTCOME" != "success" ] || [ "$EVIDENCE_IMPACT" != "false" ]; then
-            require_result evidence "$EVIDENCE_RESULT"
-          elif [ "$EVIDENCE_RESULT" != "skipped" ]; then
-            echo "::error::non-applicable evidence authority unexpectedly materialized (result=$EVIDENCE_RESULT)"
-            exit 1
-          fi
-
-          if [ "$CLASSIFICATION_OUTCOME" != "success" ] || [ "$SUPPLY_IMPACT" != "false" ]; then
-            require_result supply "$SUPPLY_RESULT"
-          elif [ "$SUPPLY_RESULT" != "skipped" ]; then
-            echo "::error::non-applicable supply authority unexpectedly materialized (result=$SUPPLY_RESULT)"
-            exit 1
-          fi
-
-          echo "pr-proof: PASS"
+          python3 .proof-trusted-base/.github/scripts/pr-authority-runtime.py verify             --policy .proof-trusted-base/.github/merge-gate-policy.json             --scope-result "$SCOPE_RESULT"             --classification-outcome "$CLASSIFICATION_OUTCOME"             --legacy-base "$LEGACY_BASE"             --docs-only "$DOCS_ONLY"             --evidence-impact "$EVIDENCE_IMPACT"             --supply-chain-impact "$SUPPLY_IMPACT"             --dispatch-result "$DISPATCH_RESULT"             --base-sha "$BASE_SHA"             --head-sha "$HEAD_SHA"             --head-repo "$HEAD_REPO"             --pr-number "$PR_NUMBER"             --caller-run-id "$CALLER_RUN_ID"             --caller-run-attempt "$CALLER_RUN_ATTEMPT"             --timeout-seconds 275             --poll-interval-seconds 5
