@@ -1,4 +1,5 @@
 name: Dependency review
+run-name: pr-authority/dependency/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}
 
 on:
   pull_request:
@@ -8,12 +9,32 @@ on:
     paths:
       - .github/ci-topology-v7-migration
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      head_repo:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      caller_run_id:
+        required: true
+        type: string
+      caller_run_attempt:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: dependency-review-${{ github.workflow }}-${{ github.ref }}
+  group: dependency-review-${{ github.event_name }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.caller_run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -23,9 +44,11 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Review dependency changes
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
+          base-ref: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          head-ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
           fail-on-severity: moderate
           license-check: true
           allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MIT, Unicode-3.0, Zlib
@@ -44,37 +67,39 @@ jobs:
         run: echo "Actions security analysis is deferred until the pull request is ready for review"
 
       - name: Check out repository
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Test deterministic Actions security policy
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         id: policy-tests
         continue-on-error: true
         run: python3 .github/scripts/test_validate_actions_security.py
 
       - name: Test Rust CodeQL impact classifier
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         id: codeql-rust-impact-tests
         continue-on-error: true
         run: python3 .github/scripts/codeql-rust-impact.py --self-test
 
       - name: Test hardening drift audit orchestration and issue lifecycle
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         id: hardening-policy-tests
         continue-on-error: true
         run: python3 .github/scripts/test-hardening-drift-audit.py
 
       - name: Validate repository settings policy JSON
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         id: repository-settings-policy
         continue-on-error: true
         run: python3 -m json.tool .github/repository-settings-policy.json >/dev/null
 
       - name: Install pinned static-analysis binaries
-        if: ${{ github.event.pull_request.draft == false }}
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         id: install-scanners
         continue-on-error: true
         shell: bash
@@ -108,7 +133,7 @@ jobs:
 
       - name: Run actionlint
         id: actionlint
-        if: ${{ github.event.pull_request.draft == false && always() && steps.install-scanners.outcome == 'success' }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.install-scanners.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -116,7 +141,7 @@ jobs:
 
       - name: Run zizmor full audit
         id: zizmor
-        if: ${{ github.event.pull_request.draft == false && always() && steps.install-scanners.outcome == 'success' }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.install-scanners.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
