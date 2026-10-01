@@ -1715,14 +1715,23 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v7_pr_proof_policy_accepts_legacy_absence
+    with_v7_topology_contract do |_root, policy|
+      refute policy.key?('pr_proof')
+      assert_empty MergeGateVerifier.pr_proof_policy_contract(policy: policy)
+    end
+  end
+
   def test_v7_pr_proof_policy_accepts_canonical_optional_authorities
     with_v7_topology_contract do |_root, policy|
+      policy['pr_proof'] = canonical_pr_proof_policy
       assert_empty MergeGateVerifier.pr_proof_policy_contract(policy: policy)
     end
   end
 
   def test_v7_pr_proof_policy_rejects_missing_optional_authority
     with_v7_topology_contract do |_root, policy|
+      policy['pr_proof'] = canonical_pr_proof_policy
       policy['pr_proof']['members'].reject! { |member| member['id'] == 'codeql' }
       violations = MergeGateVerifier.pr_proof_policy_contract(policy: policy)
       assert_includes violations.join("\n"), 'canonical trusted-scope optional-authority inventory'
@@ -1731,6 +1740,7 @@ class MergeGateVerifierTest < Minitest::Test
 
   def test_v7_pr_proof_policy_rejects_weakened_applicability
     with_v7_topology_contract do |_root, policy|
+      policy['pr_proof'] = canonical_pr_proof_policy
       policy['pr_proof']['members']
             .find { |member| member['id'] == 'evidence' }['applicability'] = 'non_docs'
       violations = MergeGateVerifier.pr_proof_policy_contract(policy: policy)
@@ -1916,6 +1926,19 @@ class MergeGateVerifierTest < Minitest::Test
   end
 
   private
+
+  def canonical_pr_proof_policy
+    {
+      'schema' => 'trusted-scope-authorities-v1',
+      'members' => [
+        {'id' => 'rust', 'workflow' => '.github/workflows/ci.yml', 'applicability' => 'non_docs'},
+        {'id' => 'dependency', 'workflow' => '.github/workflows/dependency-review.yml', 'applicability' => 'non_docs'},
+        {'id' => 'codeql', 'workflow' => '.github/workflows/codeql.yml', 'applicability' => 'non_docs'},
+        {'id' => 'evidence', 'workflow' => '.github/workflows/evidence.yml', 'applicability' => 'evidence_impact'},
+        {'id' => 'supply', 'workflow' => '.github/workflows/supply-chain.yml', 'applicability' => 'supply_chain_impact'}
+      ]
+    }
+  end
 
   def v7_producer_summary(root)
     workflow_docs = {}
@@ -2143,36 +2166,6 @@ class MergeGateVerifierTest < Minitest::Test
                 'postgres-15-conformance-campaign',
                 'postgres-18-conformance-campaign'
               ]
-            }
-          ]
-        },
-        'pr_proof' => {
-          'schema' => 'trusted-scope-authorities-v1',
-          'members' => [
-            {
-              'id' => 'rust',
-              'workflow' => '.github/workflows/ci.yml',
-              'applicability' => 'non_docs'
-            },
-            {
-              'id' => 'dependency',
-              'workflow' => '.github/workflows/dependency-review.yml',
-              'applicability' => 'non_docs'
-            },
-            {
-              'id' => 'codeql',
-              'workflow' => '.github/workflows/codeql.yml',
-              'applicability' => 'non_docs'
-            },
-            {
-              'id' => 'evidence',
-              'workflow' => '.github/workflows/evidence.yml',
-              'applicability' => 'evidence_impact'
-            },
-            {
-              'id' => 'supply',
-              'workflow' => '.github/workflows/supply-chain.yml',
-              'applicability' => 'supply_chain_impact'
             }
           ]
         },
