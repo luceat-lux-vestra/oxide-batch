@@ -1,4 +1,5 @@
 name: CodeQL
+run-name: pr-authority/codeql/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}
 
 # Pull requests are the merge-time authority. The same exact tree is not
 # re-analysed after squash merge. Weekly analysis still picks up new CodeQL
@@ -14,12 +15,31 @@ on:
   schedule:
     - cron: "47 18 * * 1"
   workflow_dispatch:
+    inputs:
+      base_sha:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      head_repo:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      caller_run_id:
+        required: true
+        type: string
+      caller_run_attempt:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  group: codeql-${{ github.event_name }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.caller_run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -39,6 +59,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Initialize CodeQL
@@ -158,6 +180,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
           persist-credentials: false
 
       - name: Initialize CodeQL
