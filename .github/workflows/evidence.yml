@@ -1,4 +1,5 @@
 name: Evidence
+run-name: pr-authority/evidence/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}
 
 # This required context owns retained-evidence integrity, not current-HEAD
 # freshness. Every PR must prove that committed reports are still the exact
@@ -19,12 +20,32 @@ on:
     paths:
       - .github/ci-topology-v7-migration
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      head_repo:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      caller_run_id:
+        required: true
+        type: string
+      caller_run_attempt:
+        required: true
+        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: evidence-${{ github.workflow }}-${{ github.ref }}
+  group: evidence-${{ github.event_name }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.caller_run_id || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -42,6 +63,9 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          fetch-depth: 1
           persist-credentials: false
 
 
