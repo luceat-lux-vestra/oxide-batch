@@ -382,6 +382,49 @@ jobs:
                       workflow_path,
                   )
 
+                  CANONICAL_PR_PROOF = {
+                      "schema": "trusted-scope-authorities-v1",
+                      "members": [
+                          {
+                              "id": "rust",
+                              "workflow": ".github/workflows/ci.yml",
+                              "applicability": "non_docs",
+                          },
+                          {
+                              "id": "dependency",
+                              "workflow": ".github/workflows/dependency-review.yml",
+                              "applicability": "non_docs",
+                          },
+                          {
+                              "id": "codeql",
+                              "workflow": ".github/workflows/codeql.yml",
+                              "applicability": "non_docs",
+                          },
+                          {
+                              "id": "evidence",
+                              "workflow": ".github/workflows/evidence.yml",
+                              "applicability": "evidence_impact",
+                          },
+                          {
+                              "id": "supply",
+                              "workflow": ".github/workflows/supply-chain.yml",
+                              "applicability": "supply_chain_impact",
+                          },
+                      ],
+                  }
+
+                  def canonical_pr_proof_bootstrap(base_document, head_document):
+                      if "pr_proof" in base_document:
+                          return False
+                      if head_document.get("pr_proof") != CANONICAL_PR_PROOF:
+                          return False
+                      without_pr_proof = json.loads(json.dumps(head_document))
+                      without_pr_proof.pop("pr_proof", None)
+                      return (
+                          normalize_blob_sets(without_pr_proof, False)
+                          == normalize_blob_sets(base_document, False)
+                      )
+
                   head_schema = head_policy.get("schema_version", 0)
                   if base_schema == 7 and head_schema == 8:
                       bootstrap_head = json.loads(json.dumps(head_policy))
@@ -434,10 +477,12 @@ jobs:
                       if (
                           normalize_blob_sets(head_policy, False)
                           != normalize_blob_sets(policy, False)
+                          and not canonical_pr_proof_bootstrap(policy, head_policy)
                       ):
                           raise GateError(
                               "PR-head merge-gate policy changes trust semantics "
-                              "outside staged protected-workflow blob admission"
+                              "outside staged protected-workflow blob admission "
+                              "or canonical pr_proof bootstrap"
                           )
                       enforce_staged_transition(
                           base_workflows,
