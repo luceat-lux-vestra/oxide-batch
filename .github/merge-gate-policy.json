@@ -142,19 +142,22 @@
         "workflow": ".github/workflows/ci.yml",
         "accepted_blobs": [
           "82705875b20a0ca62ed069b69ab3eea8ac47d4cb",
-          "33384ad8e9bb8d30d83c0552c84da501caba93c5"
+          "33384ad8e9bb8d30d83c0552c84da501caba93c5",
+          "969d668707ed08687018a04e565a24d5da8e29b4"
         ]
       },
       {
         "workflow": ".github/workflows/dependency-review.yml",
         "accepted_blobs": [
-          "631bf08c7be9704b633cb4d0210db10fba832fec"
+          "631bf08c7be9704b633cb4d0210db10fba832fec",
+          "999a160fd0c15680d5fcd46818da68c59b6c3f3d"
         ]
       },
       {
         "workflow": ".github/workflows/codeql.yml",
         "accepted_blobs": [
-          "6b9df4e63ffd3ca2c696c1e300b7f7e1cf659639"
+          "6b9df4e63ffd3ca2c696c1e300b7f7e1cf659639",
+          "08b5c85af7ae6cbf5642a0928664a5e64d61eba8"
         ]
       },
       {
