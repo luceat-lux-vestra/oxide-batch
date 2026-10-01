@@ -209,6 +209,36 @@
       }
     ]
   },
+  "pr_proof": {
+    "schema": "trusted-scope-authorities-v1",
+    "members": [
+      {
+        "id": "rust",
+        "workflow": ".github/workflows/ci.yml",
+        "applicability": "non_docs"
+      },
+      {
+        "id": "dependency",
+        "workflow": ".github/workflows/dependency-review.yml",
+        "applicability": "non_docs"
+      },
+      {
+        "id": "codeql",
+        "workflow": ".github/workflows/codeql.yml",
+        "applicability": "non_docs"
+      },
+      {
+        "id": "evidence",
+        "workflow": ".github/workflows/evidence.yml",
+        "applicability": "evidence_impact"
+      },
+      {
+        "id": "supply",
+        "workflow": ".github/workflows/supply-chain.yml",
+        "applicability": "supply_chain_impact"
+      }
+    ]
+  },
   "internal_aggregates": [
     {
       "context": "postgresql",
