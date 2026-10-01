@@ -325,6 +325,41 @@ module MergeGateVerifier
   PR_CI_WORKFLOW = '.github/workflows/pr-ci.yml'
   PR_CI_SCOPE_JOB = 'scope'
   PR_CI_PROOF_JOB = 'pr-proof'
+  PR_PROOF_SCHEMA = 'trusted-scope-authorities-v1'
+  PR_PROOF_AUTHORITIES = [
+    {
+      'id' => 'rust',
+      'workflow' => '.github/workflows/ci.yml',
+      'applicability' => 'non_docs'
+    },
+    {
+      'id' => 'dependency',
+      'workflow' => '.github/workflows/dependency-review.yml',
+      'applicability' => 'non_docs'
+    },
+    {
+      'id' => 'codeql',
+      'workflow' => '.github/workflows/codeql.yml',
+      'applicability' => 'non_docs'
+    },
+    {
+      'id' => 'evidence',
+      'workflow' => '.github/workflows/evidence.yml',
+      'applicability' => 'evidence_impact'
+    },
+    {
+      'id' => 'supply',
+      'workflow' => '.github/workflows/supply-chain.yml',
+      'applicability' => 'supply_chain_impact'
+    }
+  ].freeze
+  PR_PROOF_PERMISSIONS = {
+    'rust' => {'actions' => 'read', 'contents' => 'read'},
+    'dependency' => {'contents' => 'read'},
+    'codeql' => {'contents' => 'read', 'pull-requests' => 'read', 'security-events' => 'write'},
+    'evidence' => {'contents' => 'read'},
+    'supply' => {'contents' => 'read'}
+  }.freeze
   PR_TOPOLOGY_SCHEMA = 'single-pr-entrypoint-v1'
   PR_TOPOLOGY_MIGRATION_MARKER = '.github/ci-topology-v7-migration'
   PR_TOPOLOGY_INDEPENDENT_M5 = '.github/workflows/m5-conformance.yml'
@@ -769,6 +804,23 @@ module MergeGateVerifier
     Digest::SHA1.hexdigest("blob #{content.bytesize}\0#{content}")
   end
 
+  def pr_proof_policy_contract(policy:)
+    return [] unless policy['schema_version'] == 7
+
+    proof = policy['pr_proof']
+    return [] if proof.nil?
+    return ['schema v7 pr_proof must be an object when present'] unless proof.is_a?(Hash)
+
+    violations = []
+    unless proof['schema'] == PR_PROOF_SCHEMA
+      violations << "schema v7 pr_proof schema must be #{PR_PROOF_SCHEMA.inspect}"
+    end
+    unless proof['members'] == PR_PROOF_AUTHORITIES
+      violations << 'schema v7 pr_proof members must exactly match the canonical trusted-scope optional-authority inventory'
+    end
+    violations
+  end
+
   def pr_topology_v7_contract(root:, policy:, producer_summary:)
     return [] unless policy['schema_version'] == 7
 
@@ -816,24 +868,14 @@ module MergeGateVerifier
     unless jobs.is_a?(Hash)
       return violations + ["#{PR_CI_WORKFLOW} must declare jobs"]
     end
-    expected_jobs = %w[scope rust dependency codeql evidence supply pr-proof]
+    proof_authority_ids = PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }
+    expected_jobs = ([PR_CI_SCOPE_JOB] + proof_authority_ids + [PR_CI_PROOF_JOB])
     missing_jobs = expected_jobs - jobs.keys.map(&:to_s)
     violations << "#{PR_CI_WORKFLOW} is missing canonical jobs: #{missing_jobs.join(', ')}" unless missing_jobs.empty?
 
-    call_contracts = {
-      'rust' => '.github/workflows/ci.yml',
-      'dependency' => '.github/workflows/dependency-review.yml',
-      'codeql' => '.github/workflows/codeql.yml',
-      'evidence' => '.github/workflows/evidence.yml',
-      'supply' => '.github/workflows/supply-chain.yml'
-    }
-    call_permissions = {
-      'rust' => {'actions' => 'read', 'contents' => 'read'},
-      'dependency' => {'contents' => 'read'},
-      'codeql' => {'contents' => 'read', 'pull-requests' => 'read', 'security-events' => 'write'},
-      'evidence' => {'contents' => 'read'},
-      'supply' => {'contents' => 'read'}
-    }
+    call_contracts = PR_PROOF_AUTHORITIES.to_h do |member|
+      [member.fetch('id'), member.fetch('workflow')]
+    end
     call_contracts.each do |job_id, workflow|
       job = jobs[job_id]
       unless job.is_a?(Hash) && job['uses'] == "./#{workflow}"
@@ -843,8 +885,8 @@ module MergeGateVerifier
       unless normalize_needs(job).include?(PR_CI_SCOPE_JOB)
         violations << "#{PR_CI_WORKFLOW}##{job_id} must depend on trusted scope"
       end
-      unless job['permissions'] == call_permissions.fetch(job_id)
-        violations << "#{PR_CI_WORKFLOW}##{job_id} must keep exact reusable-authority permissions #{call_permissions.fetch(job_id).inspect}"
+      unless job['permissions'] == PR_PROOF_PERMISSIONS.fetch(job_id)
+        violations << "#{PR_CI_WORKFLOW}##{job_id} must keep exact reusable-authority permissions #{PR_PROOF_PERMISSIONS.fetch(job_id).inspect}"
       end
       condition = normalized_shell(job['if'])
       unless condition.include?("needs.scope.outputs.legacy_base != 'true'") &&
@@ -853,10 +895,21 @@ module MergeGateVerifier
       end
     end
 
-    %w[rust dependency codeql].each do |job_id|
+    PR_PROOF_AUTHORITIES.each do |member|
+      job_id = member.fetch('id')
       condition = normalized_shell(jobs.dig(job_id, 'if'))
-      unless condition.include?("needs.scope.outputs.docs_only != 'true'")
-        violations << "#{PR_CI_WORKFLOW}##{job_id} must suppress only proven docs-only scope"
+      required_token = case member.fetch('applicability')
+                       when 'non_docs'
+                         "needs.scope.outputs.docs_only != 'true'"
+                       when 'evidence_impact'
+                         "needs.scope.outputs.evidence_impact != 'false'"
+                       when 'supply_chain_impact'
+                         "needs.scope.outputs.supply_chain_impact != 'false'"
+                       else
+                         raise "unsupported pr_proof applicability #{member.fetch('applicability').inspect}"
+                       end
+      unless condition.include?(required_token)
+        violations << "#{PR_CI_WORKFLOW}##{job_id} must enforce trusted applicability #{member.fetch('applicability').inspect}"
       end
     end
 
@@ -879,15 +932,6 @@ module MergeGateVerifier
       unless missing_campaign_tokens.empty? && compact_campaigns_if.end_with?('&&false}}')
         violations << "#{PR_CI_WORKFLOW}#campaigns compatibility job must remain permanently disabled while present"
       end
-    end
-
-    evidence_if = normalized_shell(jobs.dig('evidence', 'if'))
-    unless evidence_if.include?("needs.scope.outputs.evidence_impact != 'false'")
-      violations << "#{PR_CI_WORKFLOW}#evidence must run unless trusted evidence impact is false"
-    end
-    supply_if = normalized_shell(jobs.dig('supply', 'if'))
-    unless supply_if.include?("needs.scope.outputs.supply_chain_impact != 'false'")
-      violations << "#{PR_CI_WORKFLOW}#supply must run unless trusted supply impact is false"
     end
 
     scope = jobs[PR_CI_SCOPE_JOB]
@@ -943,7 +987,7 @@ module MergeGateVerifier
       violations << "#{PR_CI_WORKFLOW} must declare #{PR_CI_PROOF_JOB}"
     else
       violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must emit context pr-proof" unless proof['name'] == 'pr-proof'
-      expected_needs = %w[scope rust dependency codeql evidence supply].sort
+      expected_needs = ([PR_CI_SCOPE_JOB] + PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }).sort
       actual_needs = normalize_needs(proof).sort
       unless actual_needs == expected_needs
         violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
@@ -2232,6 +2276,7 @@ module MergeGateVerifier
     aggregate_violations, aggregates = aggregate_inventory(root: root, policy: policy, producer_summary: producer_summary)
     violations.concat(aggregate_violations)
 
+    violations.concat(pr_proof_policy_contract(policy: policy))
     violations.concat(pr_topology_v7_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(docs_applicability_contract(policy: policy, producer_summary: producer_summary))
