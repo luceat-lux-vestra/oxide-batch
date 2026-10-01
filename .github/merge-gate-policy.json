@@ -160,7 +160,8 @@
       {
         "workflow": ".github/workflows/evidence.yml",
         "accepted_blobs": [
-          "122e3b9671bbbbb69d77011c52b323e028e2fbb1"
+          "122e3b9671bbbbb69d77011c52b323e028e2fbb1",
+          "60e5af0c901d84ae02eed5c3ad0d7927e7302eba"
         ]
       },
       {
