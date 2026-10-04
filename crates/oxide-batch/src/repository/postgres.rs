@@ -3216,7 +3216,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     .ok_or(RepositoryError::RepeatStateCorrupt)?;
             }
 
-            if let Some(existing) = same_current_lineage.as_ref() {
+            if let Some(existing) = same_current_lineage {
                 let exact_replay = existing.job_instance_id() == request.job_instance_id()
                     && existing.node_id() == request.node_id()
                     && existing.ordinal() == request.ordinal()
