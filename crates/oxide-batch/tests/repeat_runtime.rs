@@ -802,13 +802,18 @@ async fn nested_parent_continue_reenters_child_with_exact_parent_lineage()
         .with_repeat_registration(node.clone(), registration)?;
 
     let (clock, ids, repository) = infrastructure();
+    repository.inject_next_repeat_commit_unknown();
     let (_source, stop) = StopSource::new();
     let report = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref())
         .launch(&job, &JobParameters::new(), &stop)
         .await?;
 
     assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
-    assert_eq!(tasklet_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(
+        tasklet_calls.load(Ordering::SeqCst),
+        4,
+        "an unknown child-repeat commit must reconcile from durable state without replaying the body",
+    );
     assert_eq!(inner_policy_calls.load(Ordering::SeqCst), 4);
     assert_eq!(outer_policy_calls.load(Ordering::SeqCst), 2);
 
