@@ -136,11 +136,6 @@ pub enum RepeatFailureCause {
     Body(TaskletFailure),
     /// A repeat policy/interceptor callback is primary.
     Callback(RepeatCallbackFailure),
-    /// A non-leaf repeat requested another outer iteration without durable parent lineage.
-    NestedContinuationUnsupported {
-        /// Repeat whose committed child cycle cannot be safely re-entered yet.
-        repeat_id: RepeatId,
-    },
 }
 
 /// Bounded value-redacted repeat failure aggregation.
@@ -163,16 +158,6 @@ impl RepeatFailure {
     pub(crate) fn callback(primary: RepeatCallbackFailure) -> Self {
         Self {
             primary: RepeatFailureCause::Callback(primary),
-            secondary: Vec::new(),
-            secondary_truncated: false,
-        }
-    }
-
-    pub(crate) fn nested_continuation_unsupported(repeat_id: &RepeatId) -> Self {
-        Self {
-            primary: RepeatFailureCause::NestedContinuationUnsupported {
-                repeat_id: repeat_id.clone(),
-            },
             secondary: Vec::new(),
             secondary_truncated: false,
         }
