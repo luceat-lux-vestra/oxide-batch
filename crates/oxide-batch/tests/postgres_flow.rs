@@ -10,12 +10,16 @@ use std::time::{Duration, SystemTime};
 
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DeciderError, DeciderRevision, DecisionInput,
-    DecisionInputVersion, DecisionNode, DefinitionRevision, ExitCode, ExitPattern, ExitStatus,
-    FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
-    FlowTransition, FlowTransitionKind, JobExecutionDecider, JobName, JobParameters, JobRepository,
-    NodeId, PostgresConfig, PostgresJobRepository, SequentialIdGenerator, StartControls,
-    StartLimit, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
-    TaskletError, TaskletOutcome, TaskletStep, TerminalKind, TlsMode,
+    DecisionInputVersion, DecisionNode, DefinitionRevision, ExecutionContext, ExitCode,
+    ExitPattern, ExitStatus, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher,
+    FlowNode, FlowTarget, FlowTransition, FlowTransitionKind, JobExecutionDecider, JobName,
+    JobParameters, JobRepository, NodeId, PostgresConfig, PostgresJobRepository,
+    RepeatCallbackError, RepeatContext, RepeatDecision, RepeatDefinition, RepeatId, RepeatPolicy,
+    RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind, RepeatPolicyOutcome,
+    RepeatPolicyRegistration, RepeatRuntimeRegistration, RepeatStateSchema, SequentialIdGenerator,
+    StartControls, StartLimit, StateLimits, StateSchemaId, StateSchemaVersion, StepComponents,
+    StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome,
+    TaskletStep, TerminalKind, TlsMode,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -55,6 +59,97 @@ impl Tasklet for StatefulTasklet {
             }
         })
     }
+}
+
+struct RepeatRestartTasklet {
+    calls: Arc<AtomicUsize>,
+}
+
+impl Tasklet for RepeatRestartTasklet {
+    fn execute<'a>(
+        &'a self,
+        _context: TaskletContext<'a>,
+    ) -> BoxFuture<'a, Result<TaskletOutcome, TaskletError>> {
+        Box::pin(async move {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            if call == 1 {
+                Ok(TaskletOutcome::Stopped)
+            } else {
+                Ok(TaskletOutcome::Completed)
+            }
+        })
+    }
+}
+
+struct RepeatCountPolicy;
+
+impl RepeatPolicy for RepeatCountPolicy {
+    fn decide<'a>(
+        &'a self,
+        context: RepeatContext<'a>,
+    ) -> BoxFuture<'a, Result<RepeatPolicyOutcome, RepeatCallbackError>> {
+        Box::pin(async move {
+            let bytes = format!(
+                r#"{{"format":"oxide-batch.execution-context","format_version":1,"schema":"repeat.flow.state","schema_version":1,"payload":{{"ordinal":{}}}}}"#,
+                context.ordinal().get()
+            );
+            let state = ExecutionContext::from_json(bytes.as_bytes(), StateLimits::default())
+                .map_err(|_| RepeatCallbackError::new())?;
+            if context.ordinal().get() >= 1 {
+                Ok(RepeatPolicyOutcome::complete_with(state))
+            } else {
+                Ok(RepeatPolicyOutcome::continue_with(state))
+            }
+        })
+    }
+}
+
+fn repeat_restart_job(calls: Arc<AtomicUsize>) -> Result<FlowJob, Box<dyn Error>> {
+    const JOB: &str = "postgres_m7_repeat_runtime_restart";
+    let node = NodeId::new("repeat-step")?;
+    let repeat = RepeatDefinition::new(
+        RepeatId::new("window")?,
+        RepeatPolicyDefinition::new(
+            RepeatPolicyKind::new("bounded-count")?,
+            ComponentRevision::new("policy-v1")?,
+            RepeatPolicyConfiguration::new("limit-2")?,
+        ),
+        Vec::new(),
+        RepeatStateSchema::new(
+            StateSchemaId::new("repeat.flow.state")?,
+            StateSchemaVersion::new(1)?,
+        ),
+    )?;
+    let plan = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(
+            StepNode::new(
+                node.clone(),
+                StepName::new("repeat-step")?,
+                StepComponents::Tasklet(ComponentRevision::new("tasklet-v1")?),
+            )
+            .with_repeat_definition(repeat),
+        ))
+        .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(&JobName::new(JOB)?, DefinitionRevision::new("v1")?)?;
+    let registration = RepeatRuntimeRegistration::new(
+        RepeatId::new("window")?,
+        RepeatPolicyRegistration::new(
+            RepeatPolicyKind::new("bounded-count")?,
+            ComponentRevision::new("policy-v1")?,
+            RepeatPolicyConfiguration::new("limit-2")?,
+            Arc::new(RepeatCountPolicy),
+        ),
+        Vec::new(),
+    );
+    Ok(FlowJob::new(JobName::new(JOB)?, plan)?
+        .with_tasklet_step(
+            node.clone(),
+            TaskletStep::new(
+                StepName::new("repeat-step")?,
+                Arc::new(RepeatRestartTasklet { calls }),
+            ),
+        )?
+        .with_repeat_registration(node, registration)?)
 }
 
 struct CountingDecider(Arc<AtomicUsize>);
@@ -135,6 +230,72 @@ fn step(
         StepName::new(name)?,
         Arc::new(StatefulTasklet { calls, kind }),
     ))
+}
+
+#[test]
+fn repeat_runtime_reuses_committed_continue_on_postgres_restart() -> Result<(), Box<dyn Error>> {
+    const JOB: &str = "postgres_m7_repeat_runtime_restart";
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        remove_job(&url, JOB).await?;
+        let clock = Arc::new(FixedClock(SystemTime::UNIX_EPOCH + Duration::from_mins(25)));
+        let repository = PostgresJobRepository::connect(
+            PostgresConfig::new(url.clone())?.with_tls_mode(TlsMode::Plaintext),
+            clock.clone(),
+        )
+        .await?;
+        let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+        let calls = Arc::new(AtomicUsize::new(0));
+        let job = repeat_restart_job(Arc::clone(&calls))?;
+        let (_, stop) = StopSource::new();
+        let parameters = JobParameters::new();
+        let launcher = FlowLauncher::new(&repository, clock.as_ref(), &ids);
+
+        let first = launcher.launch(&job, &parameters, &stop).await?;
+        assert_eq!(first.outcome(), &FlowExecutionOutcome::Stopped);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        let mut inspect = repository.begin().await?;
+        let committed = inspect
+            .latest_repeat_execution(
+                first.instance().id(),
+                &NodeId::new("repeat-step")?,
+                &RepeatId::new("window")?,
+            )
+            .await?
+            .ok_or_else(|| std::io::Error::other("committed repeat state missing"))?;
+        inspect.rollback().await?;
+        assert_eq!(committed.ordinal().get(), 0);
+        assert_eq!(committed.decision(), RepeatDecision::Continue);
+
+        let restarted = launcher.launch(&job, &parameters, &stop).await?;
+        assert_eq!(restarted.outcome(), &FlowExecutionOutcome::Completed);
+        assert_eq!(restarted.instance().id(), first.instance().id());
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+
+        let mut inspect = repository.begin().await?;
+        let completed = inspect
+            .latest_repeat_execution(
+                restarted.instance().id(),
+                &NodeId::new("repeat-step")?,
+                &RepeatId::new("window")?,
+            )
+            .await?
+            .ok_or_else(|| std::io::Error::other("completed repeat state missing"))?;
+        inspect.rollback().await?;
+        assert_eq!(completed.ordinal().get(), 1);
+        assert_eq!(completed.decision(), RepeatDecision::Complete);
+
+        repository.close().await?;
+        remove_job(&url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
 }
 
 #[test]

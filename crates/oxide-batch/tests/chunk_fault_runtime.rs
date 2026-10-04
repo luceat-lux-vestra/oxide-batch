@@ -24,6 +24,7 @@ mod secrets;
 
 use std::collections::VecDeque;
 use std::num::NonZeroU64;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, UNIX_EPOCH};
 
@@ -40,14 +41,20 @@ use oxide_batch::{
     ClassifierRevision, ComponentRevision, DefinitionRevision, ExecutionAttempt, ExecutionContext,
     ExecutionCorrelation, FailureCategory, FaultAction, FaultClassifier, FaultDescriptor,
     FaultPhase, FaultPolicy, FaultPolicyError, FaultProgress, FaultRule, FaultRuntime,
-    FaultStateStore, InMemoryFaultState, InMemoryJobRepository, InheritedStepProgress,
-    ItemListenerContext, ItemListenerSet, ItemProcessor, ItemReader, ItemWriter, JobExecutionId,
-    JobInstanceId, JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind,
-    LifecycleEventSink, ListenerError, ProcessContext, ProcessListener, ProcessOutcome,
-    ProcessorError, ReadContext, ReadListener, ReadOutcome, ReaderError, RetryCounts, RetryLimit,
-    RetryOrdinal, RetryOutcome, RetryReservation, RetryStateLimit, RollbackDisposition, SkipCounts,
-    SkipLimit, SkipListener, StateLimits, StateSchemaId, StateSchemaVersion, StepExecutionId,
-    StepName, StopSource, StopToken, WriteContext, WriteListener, WriteOutcome, WriterError,
+    FaultStateStore, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
+    InMemoryFaultState, InMemoryJobRepository, InheritedStepProgress, ItemListenerContext,
+    ItemListenerSet, ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId,
+    JobLauncher, JobName, JobParameters, LifecycleEvent, LifecycleEventKind, LifecycleEventSink,
+    ListenerError, NodeId, ProcessContext, ProcessListener, ProcessOutcome, ProcessorError,
+    ReadContext, ReadListener, ReadOutcome, ReaderError, RepeatCallbackError, RepeatContext,
+    RepeatDefinition, RepeatId, RepeatInterceptor, RepeatInterceptorDefinition,
+    RepeatInterceptorId, RepeatInterceptorKind, RepeatInterceptorRegistration, RepeatPolicy,
+    RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind, RepeatPolicyOutcome,
+    RepeatPolicyRegistration, RepeatRuntimeRegistration, RepeatStateSchema, RetryCounts,
+    RetryLimit, RetryOrdinal, RetryOutcome, RetryReservation, RetryStateLimit, RollbackDisposition,
+    SkipCounts, SkipLimit, SkipListener, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepComponents, StepExecutionId, StepName, StepNode, StopSource, StopToken, TerminalKind,
+    WriteContext, WriteListener, WriteOutcome, WriterError,
 };
 use secrets::assert_sentinel_absent;
 
@@ -471,7 +478,303 @@ fn block_on<F: Future>(future: F) -> F::Output {
     futures_executor::block_on(future)
 }
 
+struct CompleteRepeatPolicy {
+    calls: Arc<AtomicUsize>,
+}
+
+impl RepeatPolicy for CompleteRepeatPolicy {
+    fn decide<'a>(
+        &'a self,
+        _context: RepeatContext<'a>,
+    ) -> BoxFuture<'a, Result<RepeatPolicyOutcome, RepeatCallbackError>> {
+        Box::pin(async move {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let state = ExecutionContext::from_json(
+                br#"{"format":"oxide-batch.execution-context","format_version":1,"schema":"test.repeat","schema_version":1,"payload":{}}"#,
+                StateLimits::default(),
+            )
+            .expect("static repeat state is valid");
+            Ok(RepeatPolicyOutcome::complete_with(state))
+        })
+    }
+}
+
+struct CountingRepeatInterceptor {
+    before: Arc<AtomicUsize>,
+    after: Arc<AtomicUsize>,
+}
+
+impl RepeatInterceptor for CountingRepeatInterceptor {
+    fn before<'a>(
+        &'a self,
+        _context: RepeatContext<'a>,
+    ) -> BoxFuture<'a, Result<(), RepeatCallbackError>> {
+        Box::pin(async move {
+            self.before.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+
+    fn after<'a>(
+        &'a self,
+        _context: RepeatContext<'a>,
+        _outcome: oxide_batch::TaskletExecutionOutcome,
+    ) -> BoxFuture<'a, Result<(), RepeatCallbackError>> {
+        Box::pin(async move {
+            self.after.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+}
+
+fn one_iteration_repeat_definition() -> RepeatDefinition {
+    RepeatDefinition::new(
+        RepeatId::new("fault-repeat").expect("static repeat id is valid"),
+        RepeatPolicyDefinition::new(
+            RepeatPolicyKind::new("test-complete").expect("static policy kind is valid"),
+            ComponentRevision::new("repeat-policy-v1").expect("static revision is valid"),
+            RepeatPolicyConfiguration::new("complete").expect("static configuration is valid"),
+        ),
+        vec![RepeatInterceptorDefinition::new(
+            RepeatInterceptorId::new("entry").expect("static interceptor id is valid"),
+            RepeatInterceptorKind::new("test-counting").expect("static interceptor kind is valid"),
+            ComponentRevision::new("repeat-interceptor-v1").expect("static revision is valid"),
+        )],
+        RepeatStateSchema::new(
+            StateSchemaId::new("test.repeat").expect("static schema is valid"),
+            StateSchemaVersion::new(1).expect("static schema version is valid"),
+        ),
+    )
+    .expect("static repeat definition is valid")
+}
+
+fn one_iteration_repeat_registration(
+    before: Arc<AtomicUsize>,
+    after: Arc<AtomicUsize>,
+    policy_calls: Arc<AtomicUsize>,
+) -> RepeatRuntimeRegistration {
+    RepeatRuntimeRegistration::new(
+        RepeatId::new("fault-repeat").expect("static repeat id is valid"),
+        RepeatPolicyRegistration::new(
+            RepeatPolicyKind::new("test-complete").expect("static policy kind is valid"),
+            ComponentRevision::new("repeat-policy-v1").expect("static revision is valid"),
+            RepeatPolicyConfiguration::new("complete").expect("static configuration is valid"),
+            Arc::new(CompleteRepeatPolicy {
+                calls: policy_calls,
+            }),
+        ),
+        vec![RepeatInterceptorRegistration::new(
+            RepeatInterceptorId::new("entry").expect("static interceptor id is valid"),
+            RepeatInterceptorKind::new("test-counting").expect("static interceptor kind is valid"),
+            ComponentRevision::new("repeat-interceptor-v1").expect("static revision is valid"),
+            Arc::new(CountingRepeatInterceptor { before, after }),
+        )],
+    )
+}
+
 // ------------------------------------------------------------- retry --------
+
+#[tokio::test]
+async fn retry_inside_repeat_iteration_does_not_reenter_repeat_before() {
+    let trace = Trace::default();
+    let (writer, batches) = Writer::new(trace.clone());
+    let writer = writer.failing(1, WriterError::with_category(FailureCategory::Timeout));
+    let transactions = Arc::new(Transactions::new(trace.clone()));
+    let fault_policy = policy(
+        [rule(
+            FaultPhase::Write,
+            FailureCategory::Timeout,
+            FaultAction::retry(),
+        )],
+        1,
+        0,
+        BackoffPolicy::none(),
+    );
+    let step = ChunkStep::new(
+        step_name(),
+        chunk_size(1),
+        Reader::new([1], trace.clone()),
+        Processor::new(trace.clone()),
+        writer,
+        transactions,
+        Arc::new(Completion),
+    )
+    .with_fault_runtime(runtime(
+        fault_policy.clone(),
+        Arc::new(RecordingSleeper::new()),
+        ChunkDeliveryMode::AtLeastOnce,
+    ));
+    let revisions = chunk_revisions(ChunkDeliveryMode::AtLeastOnce);
+    let node = NodeId::new("fault-repeat-step").expect("static node id is valid");
+    let name = JobName::new("fault_repeat_job").expect("static job name is valid");
+    let compiled_step = StepNode::new(
+        node.clone(),
+        step_name(),
+        StepComponents::Chunk {
+            size: chunk_size(1),
+            revisions: Box::new(revisions.clone()),
+        },
+    )
+    .with_fault_policy(fault_policy)
+    .with_repeat_definition(one_iteration_repeat_definition());
+    let plan = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(compiled_step))
+        .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))
+        .expect("static sequence is valid")
+        .compile(
+            &name,
+            DefinitionRevision::new("repeat-fault-v1").expect("static revision is valid"),
+        )
+        .expect("static flow compiles");
+
+    let before = Arc::new(AtomicUsize::new(0));
+    let after = Arc::new(AtomicUsize::new(0));
+    let policy_calls = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(name, plan)
+        .expect("repeat flow is valid")
+        .with_chunk_step(node.clone(), step, &revisions)
+        .expect("chunk declaration matches the plan")
+        .with_repeat_registration(
+            node,
+            one_iteration_repeat_registration(
+                Arc::clone(&before),
+                Arc::clone(&after),
+                Arc::clone(&policy_calls),
+            ),
+        )
+        .expect("repeat registration matches the plan");
+    let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(75));
+    let ids = DeterministicIds::new(NonZeroU64::MIN);
+    let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
+    let (_source, stop) = StopSource::new();
+
+    let report = FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await
+        .expect("repeat-wrapped chunk launch completes");
+
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(before.load(Ordering::SeqCst), 1);
+    assert_eq!(policy_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(after.load(Ordering::SeqCst), 1);
+    assert_eq!(trace.count("writer"), 2);
+    // One rollback closes the failed write attempt; the second closes the empty EOF probe
+    // transaction after the committed item. Neither re-enters the repeat wrapper.
+    assert_eq!(trace.count("rollback"), 2);
+    assert_eq!(trace.count("commit"), 1);
+    assert_eq!(
+        batches.lock().expect("batch lock poisoned").as_slice(),
+        &[vec![10]]
+    );
+}
+
+#[tokio::test]
+async fn retry_skip_and_rollback_stay_inside_one_repeat_iteration() {
+    let trace = Trace::default();
+    let (writer, batches) = Writer::new(trace.clone());
+    let listeners = ItemListenerSet::<i32, i32>::new()
+        .with_skip_listener(Arc::new(TracingListener::new("repeat", trace.clone())))
+        .expect("registration is bounded");
+    let fault_policy = policy(
+        [
+            rule(
+                FaultPhase::Process,
+                FailureCategory::Timeout,
+                FaultAction::retry(),
+            ),
+            rule(
+                FaultPhase::Process,
+                FailureCategory::UserComponent,
+                FaultAction::skip(RollbackDisposition::Rollback),
+            ),
+        ],
+        1,
+        1,
+        BackoffPolicy::none(),
+    );
+    let step = ChunkStep::new(
+        step_name(),
+        chunk_size(2),
+        Reader::new([1, 2], trace.clone()),
+        DualFaultProcessor {
+            retry_once_for: 1,
+            skip_for: 2,
+            retried: Mutex::new(false),
+            trace: trace.clone(),
+        },
+        writer,
+        Arc::new(Transactions::new(trace.clone())),
+        Arc::new(Completion),
+    )
+    .with_item_listeners(listeners)
+    .with_fault_runtime(runtime(
+        fault_policy.clone(),
+        Arc::new(RecordingSleeper::new()),
+        ChunkDeliveryMode::AtLeastOnce,
+    ));
+    let revisions = chunk_revisions(ChunkDeliveryMode::AtLeastOnce);
+    let node = NodeId::new("fault-repeat-skip-step").expect("static node id is valid");
+    let name = JobName::new("fault_repeat_skip_job").expect("static job name is valid");
+    let compiled_step = StepNode::new(
+        node.clone(),
+        step_name(),
+        StepComponents::Chunk {
+            size: chunk_size(2),
+            revisions: Box::new(revisions.clone()),
+        },
+    )
+    .with_fault_policy(fault_policy)
+    .with_repeat_definition(one_iteration_repeat_definition());
+    let plan = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(compiled_step))
+        .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))
+        .expect("static sequence is valid")
+        .compile(
+            &name,
+            DefinitionRevision::new("repeat-fault-skip-v1").expect("static revision is valid"),
+        )
+        .expect("static flow compiles");
+
+    let before = Arc::new(AtomicUsize::new(0));
+    let after = Arc::new(AtomicUsize::new(0));
+    let policy_calls = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(name, plan)
+        .expect("repeat flow is valid")
+        .with_chunk_step(node.clone(), step, &revisions)
+        .expect("chunk declaration matches the plan")
+        .with_repeat_registration(
+            node,
+            one_iteration_repeat_registration(
+                Arc::clone(&before),
+                Arc::clone(&after),
+                Arc::clone(&policy_calls),
+            ),
+        )
+        .expect("repeat registration matches the plan");
+    let clock = ManualClock::new(UNIX_EPOCH + Duration::from_secs(76));
+    let ids = DeterministicIds::new(NonZeroU64::MIN);
+    let repository = InMemoryJobRepository::new(Arc::new(clock.clone()), Arc::new(ids.clone()));
+    let (_source, stop) = StopSource::new();
+
+    let report = FlowLauncher::new(&repository, &clock, &ids)
+        .launch(&job, &JobParameters::new(), &stop)
+        .await
+        .expect("repeat-wrapped chunk launch completes");
+
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(before.load(Ordering::SeqCst), 1);
+    assert_eq!(policy_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(after.load(Ordering::SeqCst), 1);
+    assert_eq!(trace.count("repeat:skip_process"), 1);
+    assert!(
+        trace.count("rollback") >= 2,
+        "retry and rollback-skip must stay inside the one logical repeat iteration"
+    );
+    assert_eq!(
+        batches.lock().expect("batch lock poisoned").as_slice(),
+        &[vec![10]]
+    );
+}
 
 #[test]
 fn retryable_failure_succeeds_within_limit() {

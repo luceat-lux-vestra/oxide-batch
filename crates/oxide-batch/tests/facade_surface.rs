@@ -149,14 +149,18 @@ mod resolves {
 
     pub use oxide_batch::{
         LateBindingDefinitionError, LateBoundInput, LateBoundSource, MAX_LATE_BOUND_INPUTS,
-        MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH, MAX_SCOPED_COMPONENTS,
-        MAX_SCOPED_DEPENDENCY_DEPTH, RepeatDefinition, RepeatDefinitionError, RepeatId,
-        RepeatInterceptorDefinition, RepeatInterceptorId, RepeatInterceptorKind,
-        RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind, RepeatStateSchema,
-        ScopeBuildFailureKind, ScopeFactoryKind, ScopeFrameworkSource, ScopeKind,
-        ScopeRegistrationError, ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition,
-        ScopedComponentFactory, ScopedComponentHandle, ScopedComponentId,
-        ScopedComponentRegistration, ScopedFactoryContext, ScopedFactoryError,
+        MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH, MAX_REPEAT_SECONDARY_FAILURES,
+        MAX_SCOPED_COMPONENTS, MAX_SCOPED_DEPENDENCY_DEPTH, RepeatCallbackError,
+        RepeatCallbackFailure, RepeatCallbackFailureKind, RepeatCallbackPhase, RepeatContext,
+        RepeatDefinition, RepeatDefinitionError, RepeatFailure, RepeatFailureCause, RepeatId,
+        RepeatInterceptor, RepeatInterceptorDefinition, RepeatInterceptorId, RepeatInterceptorKind,
+        RepeatInterceptorRegistration, RepeatPolicy, RepeatPolicyConfiguration,
+        RepeatPolicyDefinition, RepeatPolicyKind, RepeatPolicyOutcome, RepeatPolicyRegistration,
+        RepeatRuntimeRegistration, RepeatStateSchema, ScopeBuildFailureKind, ScopeFactoryKind,
+        ScopeFrameworkSource, ScopeKind, ScopeRegistrationError, ScopeResolverKind,
+        ScopedCleanupError, ScopedComponentDefinition, ScopedComponentFactory,
+        ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration,
+        ScopedFactoryContext, ScopedFactoryError,
     };
 
     #[cfg(feature = "postgres")]

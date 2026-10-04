@@ -419,6 +419,7 @@ mod item_listener;
 mod item_stream;
 mod listener;
 mod nested_job_runtime;
+mod repeat_runtime;
 mod repository;
 mod runtime;
 mod scope_live;
@@ -552,6 +553,12 @@ pub use oxide_batch_repository::{
     SequentialIdGenerator, StaleThreshold, StateEnvelopeDescriptor, StepExecutionProjection,
     StepPartition, StepPartitionProjection, SystemClock, SystemMonotonicClock, TerminalStatusSet,
     aggregate_step_partitions,
+};
+pub use repeat_runtime::{
+    MAX_REPEAT_SECONDARY_FAILURES, RepeatCallbackError, RepeatCallbackFailure,
+    RepeatCallbackFailureKind, RepeatCallbackPhase, RepeatContext, RepeatFailure,
+    RepeatFailureCause, RepeatInterceptor, RepeatInterceptorRegistration, RepeatPolicy,
+    RepeatPolicyOutcome, RepeatPolicyRegistration, RepeatRuntimeRegistration,
 };
 #[cfg(feature = "postgres")]
 pub use repository::{

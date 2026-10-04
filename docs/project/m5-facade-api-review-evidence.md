@@ -41,10 +41,11 @@ scenarios. All four are delivered; two of them run somewhere other than
 | `public_api_snapshot_matches_the_reviewed_preview_surface` | `tests/facade_review.rs` |
 
 The rustdoc inspection is the load-bearing one, because it is the only check
-that sees the surface as a consumer does. Reading `src/lib.rs` cannot: the
-facade re-exports 225 of its 426 names from three implementation crates, so a
-disclosure can arrive through an item this crate never mentions. Two mechanics
-of that inspection are worth recording, because both changed the result:
+that sees the surface as a consumer does. Reading `src/lib.rs` cannot: a
+substantial part of the facade is re-exported from implementation crates, so a
+disclosure can arrive through an item this crate never defines locally. Two
+mechanics of that inspection are worth recording, because both changed the
+result:
 
 **Dependencies are documented rather than skipped.** Under `--no-deps`, a
 crate that declares no `html_root_url` has no address for rustdoc to link to,
@@ -90,8 +91,8 @@ would have become had it been carried rather than removed.
 
 ## The delivered surface
 
-The current facade claims exactly one crate. `oxide-batch` exports **531
-names**: 519 always and 12 more under the optional `postgres` feature. The
+The current facade claims exactly one crate. `oxide-batch` exports **545
+names**: 533 always and 12 more under the optional `postgres` feature. The
 committed snapshot at
 `crates/oxide-batch/tests/fixtures/facade/public-api.txt` is the authoritative
 name list; this table is the reviewed enumeration by the `src/lib.rs`
@@ -103,6 +104,7 @@ be added or moved without revisiting this record.
 | Group | Names | What it delivers |
 | --- | ---: | --- |
 | `oxide_batch_repository` | 117 | repository, explorer, operator, recovery, retention, paging, M7 durable-link ports/values, and #300 bounded durable repeat authority |
+| `repeat_runtime` | 14 | #301 process-local repeat policy/interceptor contracts, redacted callback/failure/context values, runtime registrations, policy outcome, and bounded secondary diagnostics |
 | `oxide_batch_core` | 109 | durable domain values, definition identity, state, parameters, fault-policy values, the two M7 repeat capacity ceilings, and #300's shared `RepeatId` ownership |
 | `oxide_batch_plan` | 61 | compiled flow/plan declarations, M7 composition, structured scope/late-binding values, and #299 bounded repeat definition identity other than `RepeatId`, whose facade path is unchanged after #300 moves its ownership to core |
 | `telemetry` | 38 | framework-owned event, metric, span, and export contracts |
@@ -134,6 +136,18 @@ no SQLx row/pool/transaction type, serializer document, credential, executor,
 or repository implementation handle. The repository capability and failure
 surface remains the existing facade-owned negotiation/error boundary; the four
 new names only make the accepted repeat-state authority explicit.
+
+The #301 `repeat_runtime` group is likewise facade-owned and process-local.
+Its 14 names expose only repeat policy/interceptor traits and registrations,
+bounded framework context/outcome/failure values, and
+`MAX_REPEAT_SECONDARY_FAILURES`. `RepeatContext` composes existing
+facade-owned tasklet/parameter/correlation/stop contracts; registrations retain
+application implementations behind private `Arc<dyn ...>` fields; callback
+errors discard application error payloads; and repeat outcome/failure
+diagnostics retain no application state value. The group exposes no Tokio
+executor/handle, SQLx connection/row/transaction, serializer document,
+credential, telemetry SDK, repository implementation handle, or user error
+text.
 
 The #277 `scope_live` group is deliberately process-local. The public handle
 is opaque and downcast-based; factories receive only already-resolved values

@@ -42,15 +42,17 @@ use oxide_batch::{
     NoopChunkCompletion, OwnerToken, ParameterCoercion, ParameterName, ParameterValueKind,
     PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry, PartitionPlanFactory,
     PartitionTaskletFactory, PartitionedStepNode, ProcessContext, ProcessOutcome, ProcessorError,
-    ReadContext, ReadOutcome, ReaderError, RepeatDefinition, RepeatId, RepeatPolicyConfiguration,
-    RepeatPolicyDefinition, RepeatPolicyKind, RepeatStateSchema, RepositoryCapability,
-    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, ScopeFactoryKind, ScopeKind,
-    ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition, ScopedComponentFactory,
-    ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration, ScopedFactoryContext,
-    ScopedFactoryError, SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepComponents, StepExecutionId, StepName, StepNode, StopPollInterval,
-    StopSource, SystemClock, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
-    TerminalKind, VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
+    ReadContext, ReadOutcome, ReaderError, RepeatCallbackError, RepeatContext, RepeatDefinition,
+    RepeatId, RepeatPolicy, RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind,
+    RepeatPolicyOutcome, RepeatPolicyRegistration, RepeatRuntimeRegistration, RepeatStateSchema,
+    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    ScopeFactoryKind, ScopeKind, ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition,
+    ScopedComponentFactory, ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration,
+    ScopedFactoryContext, ScopedFactoryError, SequentialIdGenerator, StateCodecError, StateLimits,
+    StateSchemaId, StateSchemaVersion, StepComponents, StepExecutionId, StepName, StepNode,
+    StopPollInterval, StopSource, SystemClock, Tasklet, TaskletContext, TaskletError,
+    TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec, WriteContext, WriteOutcome,
+    WriterError,
 };
 
 // ---------------------------------------------------------------------------
@@ -269,6 +271,31 @@ impl Tasklet for Noop {
     }
 }
 
+/// Executable repeat policy used only to make capability-negotiation fixtures complete.
+struct CapabilityRepeatPolicy;
+
+impl RepeatPolicy for CapabilityRepeatPolicy {
+    fn decide<'a>(
+        &'a self,
+        _context: RepeatContext<'a>,
+    ) -> BoxFuture<'a, Result<RepeatPolicyOutcome, RepeatCallbackError>> {
+        Box::pin(async { Err(RepeatCallbackError::new()) })
+    }
+}
+
+fn repeat_runtime_registration() -> Result<RepeatRuntimeRegistration, Box<dyn Error>> {
+    Ok(RepeatRuntimeRegistration::new(
+        RepeatId::new("batch-window")?,
+        RepeatPolicyRegistration::new(
+            RepeatPolicyKind::new("bounded-count")?,
+            ComponentRevision::new("policy-v1")?,
+            RepeatPolicyConfiguration::new("limit-3")?,
+            Arc::new(CapabilityRepeatPolicy),
+        ),
+        Vec::new(),
+    ))
+}
+
 struct NoopScopedFactory;
 
 impl ScopedComponentFactory for NoopScopedFactory {
@@ -320,12 +347,13 @@ fn partitioned_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
 }
 
 fn repeat_tasklet_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
-    Ok(
-        FlowJob::new(name.clone(), repeat_tasklet_plan(name)?)?.with_tasklet_step(
-            NodeId::new("only")?,
+    let only = NodeId::new("only")?;
+    Ok(FlowJob::new(name.clone(), repeat_tasklet_plan(name)?)?
+        .with_tasklet_step(
+            only.clone(),
             TaskletStep::new(StepName::new("only")?, Arc::new(Noop)),
-        )?,
-    )
+        )?
+        .with_repeat_registration(only, repeat_runtime_registration()?)?)
 }
 
 fn tasklet_job(name: &JobName) -> Result<FlowJob, Box<dyn Error>> {
