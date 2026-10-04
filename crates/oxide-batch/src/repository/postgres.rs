@@ -5818,9 +5818,74 @@ fn durable_step_select(suffix: &str) -> String {
     )
 }
 
+fn encode_repeat_lineage(lineage: &RepeatLineage) -> Value {
+    Value::Array(
+        lineage
+            .iter()
+            .map(|(repeat_id, ordinal)| {
+                json!({
+                    "repeat_id": repeat_id.as_str(),
+                    "ordinal": ordinal.get(),
+                })
+            })
+            .collect(),
+    )
+}
+
+fn decode_repeat_lineage(value: &Value) -> Result<RepeatLineage, RepositoryError> {
+    let entries = value
+        .as_array()
+        .ok_or(RepositoryError::RepeatStateCorrupt)?;
+    let mut lineage = RepeatLineage::root();
+    for entry in entries {
+        let object = entry
+            .as_object()
+            .ok_or(RepositoryError::RepeatStateCorrupt)?;
+        let repeat_id = RepeatId::new(
+            object
+                .get("repeat_id")
+                .and_then(Value::as_str)
+                .ok_or(RepositoryError::RepeatStateCorrupt)?,
+        )
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+        let ordinal = u32::try_from(
+            object
+                .get("ordinal")
+                .and_then(Value::as_u64)
+                .ok_or(RepositoryError::RepeatStateCorrupt)?,
+        )
+        .map(RepeatOrdinal::new)
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+        lineage = lineage
+            .child(repeat_id, ordinal)
+            .ok_or(RepositoryError::RepeatStateCorrupt)?;
+    }
+    Ok(lineage)
+}
+
 fn repeat_execution_select(suffix: &str) -> String {
     format!(
-        "SELECT repeat.step_execution_id, repeat.repeat_id, repeat.ordinal,          repeat.state_format, repeat.state_schema, repeat.state_schema_version,          repeat.state_payload, repeat.state_checksum, repeat.decision,          repeat.plan_fingerprint, step.step_logical_id, job.job_instance_id,          definition.manifest_digest AS definition_fingerprint,          definition.manifest AS definition_manifest          FROM oxide_batch.ob_repeat_execution repeat          JOIN oxide_batch.ob_step_execution step ON step.id = repeat.step_execution_id          JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id          JOIN oxide_batch.ob_job_definition definition ON definition.id = job.definition_id {suffix}"
+        "SELECT repeat.step_execution_id, repeat.repeat_id, repeat.definition_node_id, \
+         repeat.parent_lineage, repeat.ordinal, repeat.state_format, repeat.state_schema, \
+         repeat.state_schema_version, repeat.state_payload, repeat.state_checksum, \
+         repeat.decision, repeat.plan_fingerprint, step.step_logical_id, step.job_execution_id, \
+         job.job_instance_id, definition.manifest_digest AS definition_fingerprint, \
+         definition.manifest AS definition_manifest, \
+         (SELECT count(*) FROM oxide_batch.ob_step_partition partition_binding \
+          WHERE partition_binding.worker_step_execution_id = repeat.step_execution_id) \
+             AS partition_binding_count, \
+         (SELECT parent.step_logical_id FROM oxide_batch.ob_step_partition partition_binding \
+          JOIN oxide_batch.ob_step_execution parent ON parent.id = partition_binding.step_execution_id \
+          WHERE partition_binding.worker_step_execution_id = repeat.step_execution_id \
+          ORDER BY partition_binding.id LIMIT 1) AS partition_manager_node_id, \
+         (SELECT parent.job_execution_id FROM oxide_batch.ob_step_partition partition_binding \
+          JOIN oxide_batch.ob_step_execution parent ON parent.id = partition_binding.step_execution_id \
+          WHERE partition_binding.worker_step_execution_id = repeat.step_execution_id \
+          ORDER BY partition_binding.id LIMIT 1) AS partition_parent_job_execution_id \
+         FROM oxide_batch.ob_repeat_execution repeat \
+         JOIN oxide_batch.ob_step_execution step ON step.id = repeat.step_execution_id \
+         JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id \
+         JOIN oxide_batch.ob_job_definition definition ON definition.id = job.definition_id {suffix}"
     )
 }
 
