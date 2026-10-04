@@ -23,7 +23,7 @@ use crate::{
     NestedJobLinkRequest, OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft,
     OwnerToken, PartitionAggregate, PartitionAggregationError, PartitionPlanEntry, PurgeCounts,
     PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode, RepeatCommitRequest, RepeatExecution,
-    RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
+    RepeatLineage, RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
     ScopeResolutionProvenance, StepPartition,
 };
 
@@ -1071,6 +1071,29 @@ pub trait RepositoryUnitOfWork: Send {
             Err(RepositoryError::UnsupportedCapability {
                 capability: RepositoryCapability::RepeatState,
             })
+        })
+    }
+
+    /// Loads the newest committed repeat record for one exact execution/definition lineage.
+    ///
+    /// The default preserves schema-7 root semantics for adapters that have
+    /// not yet implemented nested lineage or dynamic partition-worker owners.
+    fn latest_repeat_execution_in_lineage<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        definition_node_id: &'a NodeId,
+        lineage: &'a RepeatLineage,
+        repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async move {
+            if node_id != definition_node_id || !lineage.is_root() {
+                return Err(RepositoryError::UnsupportedCapability {
+                    capability: RepositoryCapability::RepeatState,
+                });
+            }
+            self.latest_repeat_execution(job_instance_id, node_id, repeat_id)
+                .await
         })
     }
 
