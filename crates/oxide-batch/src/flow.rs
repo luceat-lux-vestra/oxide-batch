@@ -585,16 +585,6 @@ impl FlowJob {
         if plan.definition_identity().job_name() != Some(&name) {
             return Err(FlowJobError::JobNameMismatch);
         }
-        if let Some(node) = plan.nodes().find_map(|(_, node)| match node {
-            FlowNode::PartitionedStep(partitioned)
-                if partitioned.worker().repeat_definition().is_some() =>
-            {
-                Some(partitioned.worker().id().clone())
-            }
-            _ => None,
-        }) {
-            return Err(FlowJobError::RepeatRuntimeUnsupported { node });
-        }
         Ok(Self {
             name,
             plan,
@@ -1062,11 +1052,6 @@ pub enum FlowJobError {
         /// Logical step missing its repeat runtime.
         node: NodeId,
     },
-    /// A repeat execution shape needs durable lineage that this runtime does not yet model.
-    RepeatRuntimeUnsupported {
-        /// Logical step whose repeat execution shape is not yet supported.
-        node: NodeId,
-    },
     /// A live component registration does not match its compiled definition.
     ScopedComponentRegistrationMismatch {
         /// Attempt-local scope whose registration mismatched.
@@ -1168,11 +1153,6 @@ impl fmt::Display for FlowJobError {
             Self::MissingRepeatBinding { node } => write!(
                 formatter,
                 "node {} declares repeat semantics but has no runtime registration",
-                node.as_str()
-            ),
-            Self::RepeatRuntimeUnsupported { node } => write!(
-                formatter,
-                "node {} repeat runtime requires durable lineage not modeled by this execution path",
                 node.as_str()
             ),
             Self::ScopedComponentRegistrationMismatch { scope, component } => write!(
@@ -2101,6 +2081,7 @@ impl<'a> FlowLauncher<'a> {
                             let run = self
                                 .run_step(
                                     job,
+                                    &node_id,
                                     &node_id,
                                     tasklet,
                                     created,
@@ -3277,6 +3258,7 @@ impl<'a> FlowLauncher<'a> {
                 .run_step(
                     job,
                     compiled.id(),
+                    compiled.id(),
                     tasklet,
                     created,
                     parameters,
@@ -3594,7 +3576,7 @@ impl<'a> FlowLauncher<'a> {
         stop: &StopToken,
         job_scope: Option<&crate::scope_live::LiveScope>,
     ) -> Result<PartitionWorkerRun, FlowRuntimeError> {
-        let (worker, assigned) = self
+        let (worker, assigned, worker_node_id) = self
             .create_and_assign_partition_worker(execution_id, compiled, &partition)
             .await?;
         let correlation = correlation(
@@ -3622,6 +3604,7 @@ impl<'a> FlowLauncher<'a> {
                     self.run_step(
                         job,
                         compiled.worker().id(),
+                        &worker_node_id,
                         &tasklet_step,
                         worker,
                         parameters,
@@ -3662,7 +3645,7 @@ impl<'a> FlowLauncher<'a> {
         execution_id: JobExecutionId,
         compiled: &crate::PartitionedStepNode,
         partition: &StepPartition,
-    ) -> Result<(StepExecution, StepPartition), FlowRuntimeError> {
+    ) -> Result<(StepExecution, StepPartition, NodeId), FlowRuntimeError> {
         let (worker_name, worker_node_id) = partition_worker_identity(compiled, partition)?;
         let mut unit = self.repository.begin().await?;
         let worker = unit
@@ -3677,7 +3660,7 @@ impl<'a> FlowLauncher<'a> {
             .assign_step_partition(partition.id(), partition.version(), worker.id())
             .await?;
         unit.commit().await?;
-        Ok((worker, assigned))
+        Ok((worker, assigned, worker_node_id))
     }
 
     async fn finish_uninvoked_partition_worker(
@@ -4588,7 +4571,8 @@ impl<'a> FlowLauncher<'a> {
     async fn run_step(
         &self,
         job: &FlowJob,
-        node_id: &NodeId,
+        definition_node_id: &NodeId,
+        execution_node_id: &NodeId,
         step: &TaskletStep,
         created: StepExecution,
         parameters: &JobParameters,
@@ -4621,7 +4605,7 @@ impl<'a> FlowLauncher<'a> {
                     correlation.job_instance_id(),
                     correlation.job_execution_id(),
                     correlation.job_attempt(),
-                    node_id.clone(),
+                    definition_node_id.clone(),
                     Some(execution.id()),
                     None,
                     self.clock.now(),
@@ -4642,7 +4626,7 @@ impl<'a> FlowLauncher<'a> {
 
         let step_owner = crate::scope_runtime::ScopeStepOwner {
             execution_id: created.id(),
-            node_id,
+            definition_node_id,
             step_name: step.name(),
         };
         let mut step_scope = match self
@@ -4658,7 +4642,7 @@ impl<'a> FlowLauncher<'a> {
         {
             Ok(scope) => scope,
             Err(error) if is_scope_assembly_failure(&error) => {
-                self.fail_unstarted_scope_step(&created, correlation, node_id)
+                self.fail_unstarted_scope_step(&created, correlation, definition_node_id)
                     .await?;
                 return Err(error);
             }
@@ -4685,17 +4669,19 @@ impl<'a> FlowLauncher<'a> {
             step_scope.as_ref(),
         );
         let repeat_definition =
-            repeat_step(&job.plan, node_id).and_then(crate::StepNode::repeat_definition);
+            repeat_step(&job.plan, definition_definition_node_id).and_then(crate::StepNode::repeat_definition);
         let repeat_invocation = match repeat_definition {
             Some(definition) => {
-                let registration = job.repeat_registration(node_id).ok_or_else(|| {
+                let registration = job.repeat_registration(definition_node_id).ok_or_else(|| {
                     FlowRuntimeError::Job(FlowJobError::MissingRepeatBinding {
-                        node: node_id.clone(),
+                        node: definition_node_id.clone(),
                     })
                 })?;
                 self.invoke_repeat_chain(
                     job,
-                    node_id,
+                    execution_node_id,
+                    definition_node_id,
+                    &crate::RepeatLineage::root(),
                     definition,
                     registration,
                     step.tasklet(),
@@ -4833,7 +4819,7 @@ impl<'a> FlowLauncher<'a> {
             correlation.job_instance_id(),
             correlation.job_execution_id(),
             correlation.job_attempt(),
-            node_id.clone(),
+            definition_node_id.clone(),
             Some(execution.id()),
             None,
             self.clock.now(),
@@ -4855,7 +4841,7 @@ impl<'a> FlowLauncher<'a> {
                 }
             } else if let Some(failure) = repeat_failure {
                 Some(FlowFailure::Repeat {
-                    node: node_id.clone(),
+                    node: definition_node_id.clone(),
                     failure,
                 })
             } else {
@@ -4871,7 +4857,9 @@ impl<'a> FlowLauncher<'a> {
     fn invoke_repeat_chain<'b>(
         &'b self,
         job: &'b FlowJob,
-        node_id: &'b NodeId,
+        execution_node_id: &'b NodeId,
+        definition_node_id: &'b NodeId,
+        lineage: &'b crate::RepeatLineage,
         definition: &'b crate::RepeatDefinition,
         registration: &'b crate::RepeatRuntimeRegistration,
         tasklet: &'b dyn crate::Tasklet,
@@ -4885,9 +4873,11 @@ impl<'a> FlowLauncher<'a> {
                 }
 
                 let prior = self
-                    .latest_repeat_execution(
+                    .latest_repeat_execution_in_lineage(
                         tasklet_context.correlation().job_instance_id(),
-                        node_id,
+                        execution_node_id,
+                        definition_node_id,
+                        lineage,
                         definition.id(),
                     )
                     .await?;
@@ -4950,9 +4940,14 @@ impl<'a> FlowLauncher<'a> {
                 } else if let (Some(nested_definition), Some(nested_registration)) =
                     (definition.nested(), registration.nested())
                 {
+                    let child_lineage = lineage
+                        .child(definition.id().clone(), ordinal)
+                        .ok_or(RepositoryError::RepeatStateCorrupt)?;
                     self.invoke_repeat_chain(
                         job,
-                        node_id,
+                        execution_node_id,
+                        definition_node_id,
+                        &child_lineage,
                         nested_definition,
                         nested_registration,
                         tasklet,
@@ -4986,16 +4981,6 @@ impl<'a> FlowLauncher<'a> {
                     )
                     .await
                     {
-                        Ok(outcome)
-                            if definition.nested().is_some()
-                                && outcome.decision() == crate::RepeatDecision::Continue =>
-                        {
-                            invocation.result = Err(TaskletFailure::Error);
-                            invocation.failure =
-                                Some(crate::RepeatFailure::nested_continuation_unsupported(
-                                    definition.id(),
-                                ));
-                        }
                         Ok(outcome) => accepted = Some(outcome),
                         Err(kind) => {
                             let failure =
@@ -5055,14 +5040,16 @@ impl<'a> FlowLauncher<'a> {
                 let (state, decision) = accepted.into_parts();
                 let request = crate::RepeatCommitRequest::new(
                     tasklet_context.correlation().job_instance_id(),
-                    node_id.clone(),
+                    execution_node_id.clone(),
                     tasklet_context.step_execution_id(),
                     definition.id().clone(),
                     ordinal,
                     state,
                     decision,
                     *job.plan.fingerprint(),
-                );
+                )
+                .with_definition_node_id(definition_node_id.clone())
+                .with_lineage(lineage.clone());
                 match self.commit_repeat_iteration(&request).await? {
                     Some(_) if decision == crate::RepeatDecision::Complete => {
                         return Ok(RepeatInvocation::body(body_result));
@@ -5078,15 +5065,23 @@ impl<'a> FlowLauncher<'a> {
         })
     }
 
-    async fn latest_repeat_execution(
+    async fn latest_repeat_execution_in_lineage(
         &self,
         instance_id: JobInstanceId,
-        node_id: &NodeId,
+        execution_node_id: &NodeId,
+        definition_node_id: &NodeId,
+        lineage: &crate::RepeatLineage,
         repeat_id: &crate::RepeatId,
     ) -> Result<Option<crate::RepeatExecution>, FlowRuntimeError> {
         let mut unit = self.repository.begin().await?;
         let repeat = unit
-            .latest_repeat_execution(instance_id, node_id, repeat_id)
+            .latest_repeat_execution_in_lineage(
+                instance_id,
+                execution_node_id,
+                definition_node_id,
+                lineage,
+                repeat_id,
+            )
             .await?;
         unit.rollback().await?;
         Ok(repeat)
@@ -5340,7 +5335,6 @@ fn repeat_primary_tasklet_failure(failure: &crate::RepeatFailure) -> TaskletFail
         crate::RepeatFailureCause::Callback(callback) => {
             repeat_callback_tasklet_failure(callback.kind())
         }
-        crate::RepeatFailureCause::NestedContinuationUnsupported { .. } => TaskletFailure::Error,
     }
 }
 
