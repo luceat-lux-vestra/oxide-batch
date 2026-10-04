@@ -4672,11 +4672,12 @@ impl<'a> FlowLauncher<'a> {
             repeat_step(&job.plan, definition_node_id).and_then(crate::StepNode::repeat_definition);
         let repeat_invocation = match repeat_definition {
             Some(definition) => {
-                let registration = job.repeat_registration(definition_node_id).ok_or_else(|| {
-                    FlowRuntimeError::Job(FlowJobError::MissingRepeatBinding {
-                        node: definition_node_id.clone(),
-                    })
-                })?;
+                let registration =
+                    job.repeat_registration(definition_node_id).ok_or_else(|| {
+                        FlowRuntimeError::Job(FlowJobError::MissingRepeatBinding {
+                            node: definition_node_id.clone(),
+                        })
+                    })?;
                 self.invoke_repeat_chain(
                     job,
                     execution_node_id,
