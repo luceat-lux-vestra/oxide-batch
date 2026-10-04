@@ -183,7 +183,7 @@ const PROBES: &[Probe] = &[
 ];
 
 #[test]
-fn repeat_state_privileges_match_schema7_policy() -> Result<(), Box<dyn Error>> {
+fn repeat_state_privileges_match_schema8_policy() -> Result<(), Box<dyn Error>> {
     let Some(admin) = admin_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_ADMIN_TEST_URL is not set");
         return Ok(());
