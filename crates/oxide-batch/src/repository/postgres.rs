@@ -3085,7 +3085,12 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 IdentifierKind::StepExecution,
             )?;
             let row = sqlx::query(
-                "SELECT job.job_instance_id, step.step_logical_id,                  definition.manifest_digest, definition.manifest                  FROM oxide_batch.ob_step_execution step                  JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id                  JOIN oxide_batch.ob_job_definition definition ON definition.id = job.definition_id                  WHERE step.id = $1 FOR UPDATE OF step",
+                "SELECT job.job_instance_id, step.step_logical_id, step.job_execution_id, \
+                 definition.manifest_digest, definition.manifest \
+                 FROM oxide_batch.ob_step_execution step \
+                 JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id \
+                 JOIN oxide_batch.ob_job_definition definition ON definition.id = job.definition_id \
+                 WHERE step.id = $1 FOR UPDATE OF step",
             )
             .bind(step_id)
             .fetch_optional(&mut **self.transaction()?)
@@ -3097,6 +3102,8 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let instance_id = JobInstanceId::new(read_u64(&row, "job_instance_id")?)?;
             let node_id = NodeId::new(read_text(&row, "step_logical_id")?)
                 .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+            let job_execution_id =
+                JobExecutionId::new(read_u64(&row, "job_execution_id")?)?;
             let fingerprint: [u8; 32] = row
                 .try_get::<Vec<u8>, _>("manifest_digest")
                 .map_err(|_| RepositoryError::RepeatStateCorrupt)?
@@ -3105,10 +3112,46 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let Json(manifest): Json<Value> = row
                 .try_get("manifest")
                 .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+
+            let partition_manager = if request.definition_node_id() != request.node_id() {
+                let bindings = sqlx::query(
+                    "SELECT parent.step_logical_id AS manager_node_id, \
+                     parent.job_execution_id AS parent_job_execution_id \
+                     FROM oxide_batch.ob_step_partition partition_binding \
+                     JOIN oxide_batch.ob_step_execution parent \
+                       ON parent.id = partition_binding.step_execution_id \
+                     WHERE partition_binding.worker_step_execution_id = $1 \
+                     ORDER BY partition_binding.id",
+                )
+                .bind(step_id)
+                .fetch_all(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if bindings.len() != 1 {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                let binding = &bindings[0];
+                let parent_job_execution_id =
+                    JobExecutionId::new(read_u64(binding, "parent_job_execution_id")?)?;
+                if parent_job_execution_id != job_execution_id {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                Some(
+                    NodeId::new(read_text(binding, "manager_node_id")?)
+                        .map_err(|_| RepositoryError::RepeatStateCorrupt)?,
+                )
+            } else {
+                None
+            };
+
             if instance_id != request.job_instance_id()
                 || &node_id != request.node_id()
                 || &fingerprint != request.plan_fingerprint()
-                || !super::repeat_request_matches_manifest(&manifest, request)
+                || !super::repeat_request_matches_manifest(
+                    &manifest,
+                    request,
+                    partition_manager.as_ref(),
+                )
             {
                 return Err(RepositoryError::RepeatStateCorrupt);
             }
@@ -3125,8 +3168,12 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .as_ref()
                 .map(decode_repeat_execution)
                 .transpose()?;
+            let same_current_lineage = current.as_ref().filter(|existing| {
+                existing.definition_node_id() == request.definition_node_id()
+                    && existing.lineage() == request.lineage()
+            });
 
-            if let Some(existing) = &current {
+            if let Some(existing) = same_current_lineage {
                 let exact_replay = existing.job_instance_id() == request.job_instance_id()
                     && existing.node_id() == request.node_id()
                     && existing.ordinal() == request.ordinal()
@@ -3153,14 +3200,20 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     });
                 }
             } else {
+                let lineage_json = encode_repeat_lineage(request.lineage());
                 let prior_row = sqlx::query(AssertSqlSafe(repeat_execution_select(
-                    "WHERE job.job_instance_id = $1 AND step.step_logical_id = $2                      AND repeat.repeat_id = $3                      ORDER BY job.attempt DESC, repeat.step_execution_id DESC LIMIT 1",
+                    "WHERE job.job_instance_id = $1 AND step.step_logical_id = $2 \
+                     AND repeat.definition_node_id = $3 AND repeat.parent_lineage = $4 \
+                     AND repeat.repeat_id = $5 \
+                     ORDER BY job.attempt DESC, repeat.step_execution_id DESC LIMIT 1",
                 )))
                 .bind(database_id(
                     request.job_instance_id().get(),
                     IdentifierKind::JobInstance,
                 )?)
                 .bind(request.node_id().as_str())
+                .bind(request.definition_node_id().as_str())
+                .bind(Json(lineage_json))
                 .bind(request.repeat_id().as_str())
                 .fetch_optional(&mut **self.transaction()?)
                 .await
@@ -3209,16 +3262,24 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let schema_version = i32::try_from(request.state().schema_version().get())
                 .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
             let ordinal = i64::from(request.ordinal().get());
+            let lineage_json = encode_repeat_lineage(request.lineage());
 
             if current.is_some() {
                 let affected = sqlx::query(
-                    "UPDATE oxide_batch.ob_repeat_execution SET ordinal = $1,                      state_format = $2, state_schema = $3, state_schema_version = $4,                      state_payload = $5, state_checksum = $6, decision = $7,                      plan_fingerprint = $8, updated_at = CURRENT_TIMESTAMP                      WHERE step_execution_id = $9 AND repeat_id = $10",
+                    "UPDATE oxide_batch.ob_repeat_execution \
+                     SET definition_node_id = $1, parent_lineage = $2, ordinal = $3, \
+                         state_format = $4, state_schema = $5, state_schema_version = $6, \
+                         state_payload = $7, state_checksum = $8, decision = $9, \
+                         plan_fingerprint = $10, updated_at = CURRENT_TIMESTAMP \
+                     WHERE step_execution_id = $11 AND repeat_id = $12",
                 )
+                .bind(request.definition_node_id().as_str())
+                .bind(Json(lineage_json.clone()))
                 .bind(ordinal)
                 .bind(format)
                 .bind(request.state().schema_id().as_str())
                 .bind(schema_version)
-                .bind(Json(payload))
+                .bind(Json(payload.clone()))
                 .bind(&checksum[..])
                 .bind(request.decision().as_str())
                 .bind(request.plan_fingerprint().as_slice())
@@ -3232,10 +3293,16 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 }
             } else {
                 sqlx::query(
-                    "INSERT INTO oxide_batch.ob_repeat_execution                      (step_execution_id, repeat_id, ordinal, state_format, state_schema,                       state_schema_version, state_payload, state_checksum, decision, plan_fingerprint)                      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+                    "INSERT INTO oxide_batch.ob_repeat_execution \
+                     (step_execution_id, repeat_id, definition_node_id, parent_lineage, ordinal, \
+                      state_format, state_schema, state_schema_version, state_payload, state_checksum, \
+                      decision, plan_fingerprint) \
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
                 )
                 .bind(step_id)
                 .bind(request.repeat_id().as_str())
+                .bind(request.definition_node_id().as_str())
+                .bind(Json(lineage_json))
                 .bind(ordinal)
                 .bind(format)
                 .bind(request.state().schema_id().as_str())
@@ -3252,8 +3319,10 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             Ok(RepeatExecution::new(
                 request.job_instance_id(),
                 request.node_id().clone(),
+                request.definition_node_id().clone(),
                 request.step_execution_id(),
                 request.repeat_id().clone(),
+                request.lineage().clone(),
                 request.ordinal(),
                 request.state().clone(),
                 request.decision(),
