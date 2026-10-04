@@ -73,7 +73,9 @@ impl RepeatLineage {
 
     /// Borrows durable parent entries in outermost-to-innermost order.
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&RepeatId, RepeatOrdinal)> {
-        self.0.iter().map(|(repeat_id, ordinal)| (repeat_id, *ordinal))
+        self.0
+            .iter()
+            .map(|(repeat_id, ordinal)| (repeat_id, *ordinal))
     }
 }
 
