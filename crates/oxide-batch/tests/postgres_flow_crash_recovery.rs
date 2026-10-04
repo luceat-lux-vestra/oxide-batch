@@ -347,9 +347,9 @@ const REPEAT_STATE_SCHEMA: &str = "m7.repeat.crash.state";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RepeatCrashPoint {
-    AfterChildComplete,
-    AfterParentPolicy,
-    AfterParentCommit,
+    ChildComplete,
+    ParentPolicy,
+    ParentCommit,
 }
 
 async fn wait_for_repeat_process_kill() -> Result<(), RepeatCallbackError> {
@@ -365,25 +365,25 @@ async fn wait_for_repeat_process_kill() -> Result<(), RepeatCallbackError> {
 impl RepeatCrashPoint {
     const fn job_name(self) -> &'static str {
         match self {
-            Self::AfterChildComplete => "m7_repeat_crash_after_child_complete",
-            Self::AfterParentPolicy => "m7_repeat_crash_after_parent_policy",
-            Self::AfterParentCommit => "m7_repeat_crash_after_parent_commit",
+            Self::ChildComplete => "m7_repeat_crash_after_child_complete",
+            Self::ParentPolicy => "m7_repeat_crash_after_parent_policy",
+            Self::ParentCommit => "m7_repeat_crash_after_parent_commit",
         }
     }
 
     const fn environment_value(self) -> &'static str {
         match self {
-            Self::AfterChildComplete => "after-child-complete",
-            Self::AfterParentPolicy => "after-parent-policy",
-            Self::AfterParentCommit => "after-parent-commit",
+            Self::ChildComplete => "after-child-complete",
+            Self::ParentPolicy => "after-parent-policy",
+            Self::ParentCommit => "after-parent-commit",
         }
     }
 
     fn parse(value: &str) -> Result<Self, Box<dyn Error>> {
         match value {
-            "after-child-complete" => Ok(Self::AfterChildComplete),
-            "after-parent-policy" => Ok(Self::AfterParentPolicy),
-            "after-parent-commit" => Ok(Self::AfterParentCommit),
+            "after-child-complete" => Ok(Self::ChildComplete),
+            "after-parent-policy" => Ok(Self::ParentPolicy),
+            "after-parent-commit" => Ok(Self::ParentCommit),
             _ => Err("unknown M7 repeat-lineage crash mode".into()),
         }
     }
@@ -408,7 +408,7 @@ impl RepeatPolicy for CrashRepeatPolicy {
     ) -> BoxFuture<'a, Result<RepeatPolicyOutcome, RepeatCallbackError>> {
         Box::pin(async move {
             if self.outer
-                && self.crash == Some(RepeatCrashPoint::AfterChildComplete)
+                && self.crash == Some(RepeatCrashPoint::ChildComplete)
                 && context.ordinal() == RepeatOrdinal::INITIAL
             {
                 wait_for_repeat_process_kill().await?;
@@ -435,7 +435,7 @@ impl RepeatInterceptor for CrashOuterInterceptor {
         context: RepeatContext<'a>,
     ) -> BoxFuture<'a, Result<(), RepeatCallbackError>> {
         Box::pin(async move {
-            if self.crash == Some(RepeatCrashPoint::AfterParentCommit)
+            if self.crash == Some(RepeatCrashPoint::ParentCommit)
                 && context.ordinal() == RepeatOrdinal::new(1)
             {
                 wait_for_repeat_process_kill().await?;
@@ -451,7 +451,7 @@ impl RepeatInterceptor for CrashOuterInterceptor {
         _outcome: oxide_batch::TaskletExecutionOutcome,
     ) -> BoxFuture<'a, Result<(), RepeatCallbackError>> {
         Box::pin(async move {
-            if self.crash == Some(RepeatCrashPoint::AfterParentPolicy)
+            if self.crash == Some(RepeatCrashPoint::ParentPolicy)
                 && context.ordinal() == RepeatOrdinal::INITIAL
             {
                 wait_for_repeat_process_kill().await?;
@@ -654,13 +654,13 @@ async fn inspect_recover_and_restart_repeat(
     assert_eq!(inner0.ordinal(), RepeatOrdinal::new(1));
     assert_eq!(inner0.decision(), RepeatDecision::Complete);
     match point {
-        RepeatCrashPoint::AfterChildComplete | RepeatCrashPoint::AfterParentPolicy => {
+        RepeatCrashPoint::ChildComplete | RepeatCrashPoint::ParentPolicy => {
             assert!(
                 outer_before.is_none(),
                 "parent must remain uncommitted at the selected pre-commit boundary"
             );
         }
-        RepeatCrashPoint::AfterParentCommit => {
+        RepeatCrashPoint::ParentCommit => {
             let outer = outer_before.ok_or("parent continuation was not committed before crash")?;
             assert_eq!(outer.ordinal(), RepeatOrdinal::INITIAL);
             assert_eq!(outer.decision(), RepeatDecision::Continue);
@@ -765,15 +765,15 @@ fn repeat_lineage_crash_worker_process() -> Result<(), Box<dyn Error>> {
 
 #[test]
 fn crash_after_nested_child_complete_reuses_child_cycle() -> Result<(), Box<dyn Error>> {
-    run_repeat_parent_scenario(RepeatCrashPoint::AfterChildComplete)
+    run_repeat_parent_scenario(RepeatCrashPoint::ChildComplete)
 }
 
 #[test]
 fn crash_after_parent_policy_reuses_child_cycle() -> Result<(), Box<dyn Error>> {
-    run_repeat_parent_scenario(RepeatCrashPoint::AfterParentPolicy)
+    run_repeat_parent_scenario(RepeatCrashPoint::ParentPolicy)
 }
 
 #[test]
 fn crash_after_parent_continue_commit_enters_next_child_lineage() -> Result<(), Box<dyn Error>> {
-    run_repeat_parent_scenario(RepeatCrashPoint::AfterParentCommit)
+    run_repeat_parent_scenario(RepeatCrashPoint::ParentCommit)
 }
