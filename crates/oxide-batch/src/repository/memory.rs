@@ -23,7 +23,8 @@ use crate::{
     ParameterDescriptor, ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate,
     PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
     RecoveryDecisionId, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence,
-    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatOrdinal, RetentionAction,
+    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal,
+    RetentionAction,
     RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft, ScopeKind,
     ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StepExecution, StepExecutionId,
     StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
@@ -748,6 +749,8 @@ impl InMemoryUnitOfWork<'_> {
         &self,
         instance_id: JobInstanceId,
         node_id: &NodeId,
+        definition_node_id: &NodeId,
+        lineage: &RepeatLineage,
         repeat_id: &RepeatId,
     ) -> Result<Option<RepeatExecution>, RepositoryError> {
         let executions = self
@@ -769,6 +772,8 @@ impl InMemoryUnitOfWork<'_> {
                         .staged
                         .repeat_executions
                         .get(&(*step_id, repeat_id.clone()))
+                    && record.definition_node_id() == definition_node_id
+                    && record.lineage() == lineage
                 {
                     return Ok(Some(record.clone()));
                 }
@@ -797,6 +802,39 @@ impl InMemoryUnitOfWork<'_> {
         {
             return Err(RepositoryError::RepeatStateCorrupt);
         }
+        let partition_manager_node_id = if request.definition_node_id() != request.node_id() {
+            let mut bindings = self
+                .staged
+                .step_partitions
+                .values()
+                .filter(|partition| {
+                    partition.worker_step_execution_id() == Some(request.step_execution_id())
+                });
+            let partition = bindings
+                .next()
+                .ok_or(RepositoryError::RepeatStateCorrupt)?;
+            if bindings.next().is_some() {
+                return Err(RepositoryError::RepeatStateCorrupt);
+            }
+            let parent = self
+                .staged
+                .step_executions
+                .get(&partition.step_execution_id())
+                .ok_or(RepositoryError::RepeatStateCorrupt)?;
+            if parent.job_execution_id() != step.job_execution_id() {
+                return Err(RepositoryError::RepeatStateCorrupt);
+            }
+            Some(
+                self.staged
+                    .step_logical_ids
+                    .get(&partition.step_execution_id())
+                    .cloned()
+                    .ok_or(RepositoryError::RepeatStateCorrupt)?,
+            )
+        } else {
+            None
+        };
+
         let definition = self
             .staged
             .execution_definitions
@@ -807,7 +845,11 @@ impl InMemoryUnitOfWork<'_> {
         }
         let manifest: serde_json::Value = serde_json::from_slice(definition.canonical_manifest())
             .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
-        if !super::repeat_request_matches_manifest(&manifest, request) {
+        if !super::repeat_request_matches_manifest(
+            &manifest,
+            request,
+            partition_manager_node_id.as_ref(),
+        ) {
             return Err(RepositoryError::RepeatStateCorrupt);
         }
         Ok(())
@@ -1715,7 +1757,34 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         node_id: &'a NodeId,
         repeat_id: &'a RepeatId,
     ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
-        Box::pin(async move { self.latest_repeat_snapshot(job_instance_id, node_id, repeat_id) })
+        Box::pin(async move {
+            self.latest_repeat_snapshot(
+                job_instance_id,
+                node_id,
+                node_id,
+                &RepeatLineage::root(),
+                repeat_id,
+            )
+        })
+    }
+
+    fn latest_repeat_execution_in_lineage<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        definition_node_id: &'a NodeId,
+        lineage: &'a RepeatLineage,
+        repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async move {
+            self.latest_repeat_snapshot(
+                job_instance_id,
+                node_id,
+                definition_node_id,
+                lineage,
+                repeat_id,
+            )
+        })
     }
 
     fn commit_repeat_iteration<'a>(
@@ -1728,6 +1797,8 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             if let Some(existing) = self.staged.repeat_executions.get(&key).cloned() {
                 let exact_replay = existing.job_instance_id() == request.job_instance_id()
                     && existing.node_id() == request.node_id()
+                    && existing.definition_node_id() == request.definition_node_id()
+                    && existing.lineage() == request.lineage()
                     && existing.ordinal() == request.ordinal()
                     && existing.state() == request.state()
                     && existing.decision() == request.decision()
@@ -1755,6 +1826,8 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 let prior = self.latest_repeat_snapshot(
                     request.job_instance_id(),
                     request.node_id(),
+                    request.definition_node_id(),
+                    request.lineage(),
                     request.repeat_id(),
                 )?;
                 let expected = match prior {
@@ -1780,8 +1853,10 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             let record = RepeatExecution::new(
                 request.job_instance_id(),
                 request.node_id().clone(),
+                request.definition_node_id().clone(),
                 request.step_execution_id(),
                 request.repeat_id().clone(),
+                request.lineage().clone(),
                 request.ordinal(),
                 request.state().clone(),
                 request.decision(),
