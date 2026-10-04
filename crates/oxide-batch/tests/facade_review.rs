@@ -98,6 +98,10 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // bounded durable repeat authority values: RepeatCommitRequest,
     // RepeatDecision, RepeatExecution, and RepeatOrdinal.
     ("oxide_batch_repository", 117),
+    // #301 exposes the process-local repeat runtime contract: callback/policy/
+    // interceptor traits and registrations, redacted failure/context values,
+    // policy outcome, and the bounded secondary-failure ceiling.
+    ("repeat_runtime", 14),
     ("repository", 14),
     ("runtime", 18),
     // #277 exposes only process-local live-scope assembly contracts: opaque

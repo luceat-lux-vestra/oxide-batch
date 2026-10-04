@@ -536,6 +536,7 @@ pub struct FlowJob {
     partitioned_tasklets: BTreeMap<NodeId, PartitionedTaskletBinding>,
     nested_jobs: BTreeMap<NodeId, NestedJobBinding>,
     custom_leaves: BTreeMap<NodeId, crate::CustomLeafRegistration>,
+    repeat_registrations: BTreeMap<NodeId, crate::RepeatRuntimeRegistration>,
     scoped_components:
         BTreeMap<(ScopeKind, crate::ScopedComponentId), crate::ScopedComponentRegistration>,
 }
@@ -555,6 +556,10 @@ impl fmt::Debug for FlowJob {
             )
             .field("nested_job_count", &self.nested_jobs.len())
             .field("custom_leaf_count", &self.custom_leaves.len())
+            .field(
+                "repeat_registration_count",
+                &self.repeat_registrations.len(),
+            )
             .field("scoped_component_count", &self.scoped_components.len())
             .finish()
     }
@@ -589,6 +594,7 @@ impl FlowJob {
             partitioned_tasklets: BTreeMap::new(),
             nested_jobs: BTreeMap::new(),
             custom_leaves: BTreeMap::new(),
+            repeat_registrations: BTreeMap::new(),
             scoped_components: BTreeMap::new(),
         })
     }
@@ -791,6 +797,36 @@ impl FlowJob {
         Ok(self)
     }
 
+    /// Binds one executable repeat wrapper to a compiled step declaration.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an undeclared repeat, any policy/interceptor/nesting identity
+    /// drift, or a second registration for the same logical step.
+    pub fn with_repeat_registration(
+        mut self,
+        node_id: NodeId,
+        registration: crate::RepeatRuntimeRegistration,
+    ) -> Result<Self, FlowJobError> {
+        let Some(compiled) = repeat_step(&self.plan, &node_id) else {
+            return Err(FlowJobError::WrongNodeKind { node: node_id });
+        };
+        let Some(definition) = compiled.repeat_definition() else {
+            return Err(FlowJobError::RepeatRegistrationMismatch { node: node_id });
+        };
+        if !registration.matches_definition(definition) {
+            return Err(FlowJobError::RepeatRegistrationMismatch { node: node_id });
+        }
+        if self
+            .repeat_registrations
+            .insert(node_id.clone(), registration)
+            .is_some()
+        {
+            return Err(FlowJobError::DuplicateRepeatBinding { node: node_id });
+        }
+        Ok(self)
+    }
+
     /// Binds one explicit live component factory to its compiled scoped definition.
     ///
     /// # Errors
@@ -832,6 +868,7 @@ impl FlowJob {
                             node: step.id().clone(),
                         });
                     }
+                    self.validate_repeat_registration(step)?;
                 }
                 continue;
             }
@@ -855,6 +892,13 @@ impl FlowJob {
             };
             if !present {
                 return Err(FlowJobError::MissingBinding { node: id.clone() });
+            }
+            match node {
+                FlowNode::Step(step) => self.validate_repeat_registration(step)?,
+                FlowNode::PartitionedStep(partitioned) => {
+                    self.validate_repeat_registration(partitioned.worker())?;
+                }
+                _ => {}
             }
         }
 
@@ -882,6 +926,33 @@ impl FlowJob {
             }
         }
         Ok(())
+    }
+
+    fn validate_repeat_registration(&self, step: &crate::StepNode) -> Result<(), FlowJobError> {
+        match (
+            step.repeat_definition(),
+            self.repeat_registrations.get(step.id()),
+        ) {
+            (None, None) => Ok(()),
+            (Some(definition), Some(registration))
+                if registration.matches_definition(definition) =>
+            {
+                Ok(())
+            }
+            (Some(_), None) => Err(FlowJobError::MissingRepeatBinding {
+                node: step.id().clone(),
+            }),
+            _ => Err(FlowJobError::RepeatRegistrationMismatch {
+                node: step.id().clone(),
+            }),
+        }
+    }
+
+    pub(crate) fn repeat_registration(
+        &self,
+        node_id: &NodeId,
+    ) -> Option<&crate::RepeatRuntimeRegistration> {
+        self.repeat_registrations.get(node_id)
     }
 
     pub(crate) fn scoped_component_registrations(
@@ -964,6 +1035,21 @@ pub enum FlowJobError {
     /// A branch component factory panicked before durable launch.
     FactoryPanic {
         /// Logical branch step whose factory panicked.
+        node: NodeId,
+    },
+    /// A repeat runtime registration does not match its compiled declaration.
+    RepeatRegistrationMismatch {
+        /// Logical step whose repeat executable identity drifted.
+        node: NodeId,
+    },
+    /// A repeat runtime was registered more than once for one logical step.
+    DuplicateRepeatBinding {
+        /// Logical step containing the duplicate repeat registration.
+        node: NodeId,
+    },
+    /// A compiled repeat declaration has no executable runtime registration.
+    MissingRepeatBinding {
+        /// Logical step missing its repeat runtime.
         node: NodeId,
     },
     /// A live component registration does not match its compiled definition.
@@ -1054,6 +1140,21 @@ impl fmt::Display for FlowJobError {
                 "node {} component factory panicked",
                 node.as_str()
             ),
+            Self::RepeatRegistrationMismatch { node } => write!(
+                formatter,
+                "node {} repeat runtime does not match its compiled declaration",
+                node.as_str()
+            ),
+            Self::DuplicateRepeatBinding { node } => write!(
+                formatter,
+                "node {} has more than one repeat runtime registration",
+                node.as_str()
+            ),
+            Self::MissingRepeatBinding { node } => write!(
+                formatter,
+                "node {} declares repeat semantics but has no runtime registration",
+                node.as_str()
+            ),
             Self::ScopedComponentRegistrationMismatch { scope, component } => write!(
                 formatter,
                 "{} scoped component {} registration does not match its compiled definition",
@@ -1131,6 +1232,24 @@ fn split_step<'a>(
     })
 }
 
+fn repeat_step<'a>(
+    plan: &'a CompiledExecutionPlan,
+    node_id: &NodeId,
+) -> Option<&'a crate::StepNode> {
+    if let Some(FlowNode::Step(step)) = plan.node(node_id) {
+        return Some(step);
+    }
+    if let Some(step) = split_step(plan, node_id) {
+        return Some(step);
+    }
+    plan.nodes().find_map(|(_, node)| match node {
+        FlowNode::PartitionedStep(partitioned) if partitioned.worker().id() == node_id => {
+            Some(partitioned.worker())
+        }
+        _ => None,
+    })
+}
+
 /// Why a durable flow attempt ended.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
@@ -1151,6 +1270,13 @@ pub enum FlowExecutionOutcome {
 pub enum FlowFailure {
     /// A tasklet returned an error or panicked.
     Tasklet(TaskletFailure),
+    /// A repeat policy/interceptor boundary failed around the existing body engine.
+    Repeat {
+        /// Logical step whose repeat wrapper failed.
+        node: NodeId,
+        /// Deterministic primary/secondary repeat failure authority.
+        failure: crate::RepeatFailure,
+    },
     /// A step listener returned an error or panicked.
     Listener(TaskletFailure),
     /// A decider returned an error.
@@ -4538,15 +4664,37 @@ impl<'a> FlowLauncher<'a> {
             job_scope,
             step_scope.as_ref(),
         );
-        let invoked = match self
-            .invoke_with_execution_control(
-                correlation.job_execution_id(),
-                step.tasklet(),
-                tasklet_context,
-                stop_token,
-            )
-            .await
-        {
+        let repeat_definition =
+            repeat_step(&job.plan, node_id).and_then(crate::StepNode::repeat_definition);
+        let repeat_invocation = match repeat_definition {
+            Some(definition) => {
+                let registration = job.repeat_registration(node_id).ok_or_else(|| {
+                    FlowRuntimeError::Job(FlowJobError::MissingRepeatBinding {
+                        node: node_id.clone(),
+                    })
+                })?;
+                self.invoke_repeat_chain(
+                    job,
+                    node_id,
+                    definition,
+                    registration,
+                    step.tasklet(),
+                    tasklet_context,
+                    stop_token,
+                )
+                .await
+            }
+            None => self
+                .invoke_with_execution_control(
+                    correlation.job_execution_id(),
+                    step.tasklet(),
+                    tasklet_context,
+                    stop_token,
+                )
+                .await
+                .map(RepeatInvocation::body),
+        };
+        let repeat_invocation = match repeat_invocation {
             Ok(invoked) => invoked,
             Err(error) => {
                 if let Some(scope) = step_scope.as_mut() {
@@ -4555,6 +4703,8 @@ impl<'a> FlowLauncher<'a> {
                 return Err(error);
             }
         };
+        let repeat_failure = repeat_invocation.failure;
+        let invoked = repeat_invocation.result;
         let (mut outcome, mut exit, tasklet_failure) = match invoked {
             Ok(TaskletOutcome::Completed) if !stop_token.is_stop_requested() => (
                 TaskletExecutionOutcome::Completed,
@@ -4678,23 +4828,271 @@ impl<'a> FlowLauncher<'a> {
                     scope: ScopeKind::Step,
                     failures: cleanup.failures().len(),
                 })
+            } else if !failures.is_empty() {
+                match outcome {
+                    TaskletExecutionOutcome::Failed(value) => Some(FlowFailure::Listener(value)),
+                    _ => None,
+                }
+            } else if let Some(failure) = repeat_failure {
+                Some(FlowFailure::Repeat {
+                    node: node_id.clone(),
+                    failure,
+                })
             } else {
                 match outcome {
-                    TaskletExecutionOutcome::Failed(value) => Some(
-                        if matches!(
-                            value,
-                            TaskletFailure::ListenerError | TaskletFailure::ListenerPanic
-                        ) {
-                            FlowFailure::Listener(value)
-                        } else {
-                            FlowFailure::Tasklet(value)
-                        },
-                    ),
+                    TaskletExecutionOutcome::Failed(value) => Some(FlowFailure::Tasklet(value)),
                     _ => None,
                 }
             },
             listener_failures: failures,
         })
+    }
+
+    fn invoke_repeat_chain<'b>(
+        &'b self,
+        job: &'b FlowJob,
+        node_id: &'b NodeId,
+        definition: &'b crate::RepeatDefinition,
+        registration: &'b crate::RepeatRuntimeRegistration,
+        tasklet: &'b dyn crate::Tasklet,
+        tasklet_context: TaskletContext<'b>,
+        stop_token: &'b StopToken,
+    ) -> BoxFuture<'b, Result<RepeatInvocation, FlowRuntimeError>> {
+        Box::pin(async move {
+            loop {
+                if stop_token.is_stop_requested() {
+                    return Ok(RepeatInvocation::body(Ok(TaskletOutcome::Stopped)));
+                }
+
+                let prior = self
+                    .latest_repeat_execution(
+                        tasklet_context.correlation().job_instance_id(),
+                        node_id,
+                        definition.id(),
+                    )
+                    .await?;
+                if prior
+                    .as_ref()
+                    .is_some_and(|record| record.plan_fingerprint() != job.plan.fingerprint())
+                {
+                    return Err(RepositoryError::RepeatStateCorrupt.into());
+                }
+                if prior
+                    .as_ref()
+                    .is_some_and(|record| record.decision() == crate::RepeatDecision::Complete)
+                {
+                    return Ok(RepeatInvocation::body(Ok(TaskletOutcome::Completed)));
+                }
+                let ordinal = match prior.as_ref() {
+                    Some(record) => record
+                        .ordinal()
+                        .checked_next()
+                        .ok_or(RepositoryError::RepeatStateCorrupt)?,
+                    None => crate::RepeatOrdinal::INITIAL,
+                };
+                let context = crate::RepeatContext::new(
+                    tasklet_context,
+                    definition.id(),
+                    ordinal,
+                    prior.as_ref().map(crate::RepeatExecution::state),
+                );
+
+                let mut entered = 0usize;
+                let mut callback_failure = None;
+                for registered in registration.interceptors() {
+                    match crate::repeat_runtime::invoke_repeat_before(
+                        registered.interceptor(),
+                        context,
+                    )
+                    .await
+                    {
+                        Ok(()) => entered += 1,
+                        Err(kind) => {
+                            callback_failure = Some(crate::RepeatCallbackFailure::interceptor(
+                                definition.id(),
+                                registered.id(),
+                                crate::RepeatCallbackPhase::Before,
+                                kind,
+                            ));
+                            break;
+                        }
+                    }
+                }
+
+                let mut invocation = if let Some(primary) = callback_failure {
+                    let failure_kind = primary.kind();
+                    RepeatInvocation {
+                        result: Err(repeat_callback_tasklet_failure(failure_kind)),
+                        failure: Some(crate::RepeatFailure::callback(primary)),
+                    }
+                } else if stop_token.is_stop_requested() {
+                    RepeatInvocation::body(Ok(TaskletOutcome::Stopped))
+                } else if let (Some(nested_definition), Some(nested_registration)) =
+                    (definition.nested(), registration.nested())
+                {
+                    self.invoke_repeat_chain(
+                        job,
+                        node_id,
+                        nested_definition,
+                        nested_registration,
+                        tasklet,
+                        tasklet_context,
+                        stop_token,
+                    )
+                    .await?
+                } else {
+                    RepeatInvocation::body(
+                        self.invoke_with_execution_control(
+                            tasklet_context.correlation().job_execution_id(),
+                            tasklet,
+                            tasklet_context,
+                            stop_token,
+                        )
+                        .await?,
+                    )
+                };
+
+                let mut accepted = None;
+                if invocation.failure.is_none()
+                    && matches!(
+                        &invocation.result,
+                        Ok(TaskletOutcome::Completed | TaskletOutcome::CompletedWith(_))
+                    )
+                    && !stop_token.is_stop_requested()
+                {
+                    match crate::repeat_runtime::invoke_repeat_policy(
+                        registration.policy().policy(),
+                        context,
+                    )
+                    .await
+                    {
+                        Ok(outcome) => accepted = Some(outcome),
+                        Err(kind) => {
+                            let failure =
+                                crate::RepeatCallbackFailure::policy(definition.id(), kind);
+                            invocation.result = Err(repeat_callback_tasklet_failure(kind));
+                            invocation.failure = Some(crate::RepeatFailure::callback(failure));
+                        }
+                    }
+                }
+
+                let unwind_outcome = repeat_invocation_outcome(&invocation.result, stop_token);
+                for registered in registration.interceptors()[..entered].iter().rev() {
+                    if let Err(kind) = crate::repeat_runtime::invoke_repeat_after(
+                        registered.interceptor(),
+                        context,
+                        unwind_outcome,
+                    )
+                    .await
+                    {
+                        let failure = crate::RepeatCallbackFailure::interceptor(
+                            definition.id(),
+                            registered.id(),
+                            crate::RepeatCallbackPhase::After,
+                            kind,
+                        );
+                        if let Some(aggregate) = invocation.failure.as_mut() {
+                            aggregate.push_secondary(failure);
+                        } else if let Err(body) = &invocation.result {
+                            let mut aggregate = crate::RepeatFailure::body(*body);
+                            aggregate.push_secondary(failure);
+                            invocation.failure = Some(aggregate);
+                        } else {
+                            invocation.result = Err(repeat_callback_tasklet_failure(kind));
+                            invocation.failure = Some(crate::RepeatFailure::callback(failure));
+                        }
+                    }
+                }
+
+                if let Some(failure) = invocation.failure.as_ref() {
+                    if invocation.result.is_ok() {
+                        invocation.result = Err(repeat_primary_tasklet_failure(failure));
+                    }
+                    return Ok(invocation);
+                }
+                if !matches!(
+                    &invocation.result,
+                    Ok(TaskletOutcome::Completed | TaskletOutcome::CompletedWith(_))
+                ) || stop_token.is_stop_requested()
+                {
+                    return Ok(invocation);
+                }
+
+                let Some(accepted) = accepted else {
+                    return Err(RepositoryError::RepeatStateCorrupt.into());
+                };
+                let body_result = invocation.result;
+                let (state, decision) = accepted.into_parts();
+                let request = crate::RepeatCommitRequest::new(
+                    tasklet_context.correlation().job_instance_id(),
+                    node_id.clone(),
+                    tasklet_context.step_execution_id(),
+                    definition.id().clone(),
+                    ordinal,
+                    state,
+                    decision,
+                    *job.plan.fingerprint(),
+                );
+                match self.commit_repeat_iteration(&request).await? {
+                    Some(_) if decision == crate::RepeatDecision::Complete => {
+                        return Ok(RepeatInvocation::body(body_result));
+                    }
+                    Some(_) => {}
+                    None => {
+                        return Ok(RepeatInvocation::body(Ok(
+                            TaskletOutcome::CommitOutcomeUnknown,
+                        )));
+                    }
+                }
+            }
+        })
+    }
+
+    async fn latest_repeat_execution(
+        &self,
+        instance_id: JobInstanceId,
+        node_id: &NodeId,
+        repeat_id: &crate::RepeatId,
+    ) -> Result<Option<crate::RepeatExecution>, FlowRuntimeError> {
+        let mut unit = self.repository.begin().await?;
+        let repeat = unit
+            .latest_repeat_execution(instance_id, node_id, repeat_id)
+            .await?;
+        unit.rollback().await?;
+        Ok(repeat)
+    }
+
+    async fn repeat_execution(
+        &self,
+        step_execution_id: StepExecutionId,
+        repeat_id: &crate::RepeatId,
+    ) -> Result<Option<crate::RepeatExecution>, RepositoryError> {
+        let mut unit = self.repository.begin().await?;
+        let repeat = unit.repeat_execution(step_execution_id, repeat_id).await?;
+        unit.rollback().await?;
+        Ok(repeat)
+    }
+
+    async fn commit_repeat_iteration(
+        &self,
+        request: &crate::RepeatCommitRequest,
+    ) -> Result<Option<crate::RepeatExecution>, FlowRuntimeError> {
+        let mut unit = self.repository.begin().await?;
+        let proposed = unit.commit_repeat_iteration(request).await?;
+        match unit.commit().await {
+            Ok(()) => Ok(Some(proposed)),
+            Err(RepositoryError::CommitOutcomeUnknown) => {
+                let durable = self
+                    .repeat_execution(request.step_execution_id(), request.repeat_id())
+                    .await?;
+                if durable.as_ref() == Some(&proposed) {
+                    Ok(durable)
+                } else {
+                    Ok(None)
+                }
+            }
+            Err(error) => Err(error.into()),
+        }
     }
 
     async fn fail_unstarted_scope_step(
@@ -4862,6 +5260,57 @@ fn partition_worker_identity(
         StepName::new(token.clone()).map_err(|_| RepositoryError::PartitionStateCorrupt)?;
     let node_id = NodeId::new(token).map_err(|_| RepositoryError::PartitionStateCorrupt)?;
     Ok((step_name, node_id))
+}
+
+struct RepeatInvocation {
+    result: Result<TaskletOutcome, TaskletFailure>,
+    failure: Option<crate::RepeatFailure>,
+}
+
+impl RepeatInvocation {
+    fn body(result: Result<TaskletOutcome, TaskletFailure>) -> Self {
+        Self {
+            result,
+            failure: None,
+        }
+    }
+}
+
+fn repeat_callback_tasklet_failure(kind: crate::RepeatCallbackFailureKind) -> TaskletFailure {
+    match kind {
+        crate::RepeatCallbackFailureKind::Panic => TaskletFailure::Panic,
+        crate::RepeatCallbackFailureKind::Error => TaskletFailure::Error,
+    }
+}
+
+fn repeat_invocation_outcome(
+    result: &Result<TaskletOutcome, TaskletFailure>,
+    stop: &StopToken,
+) -> TaskletExecutionOutcome {
+    match result {
+        Ok(TaskletOutcome::Completed | TaskletOutcome::CompletedWith(_))
+            if !stop.is_stop_requested() =>
+        {
+            TaskletExecutionOutcome::Completed
+        }
+        Ok(
+            TaskletOutcome::Completed | TaskletOutcome::CompletedWith(_) | TaskletOutcome::Stopped,
+        ) => TaskletExecutionOutcome::Stopped(StopTiming::DuringExecution),
+        Ok(TaskletOutcome::StoppedAfterBlockingWork) => {
+            TaskletExecutionOutcome::Stopped(StopTiming::AfterBlockingWork)
+        }
+        Ok(TaskletOutcome::CommitOutcomeUnknown) => TaskletExecutionOutcome::Unknown,
+        Err(failure) => TaskletExecutionOutcome::Failed(*failure),
+    }
+}
+
+fn repeat_primary_tasklet_failure(failure: &crate::RepeatFailure) -> TaskletFailure {
+    match failure.primary() {
+        crate::RepeatFailureCause::Body(body) => *body,
+        crate::RepeatFailureCause::Callback(callback) => {
+            repeat_callback_tasklet_failure(callback.kind())
+        }
+    }
 }
 
 struct StepRun {

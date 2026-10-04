@@ -999,9 +999,13 @@
     },
     {
       "resource": "repeat-definition composition shape ceilings",
-      "symbols": ["MAX_REPEAT_INTERCEPTORS", "MAX_REPEAT_NESTING_DEPTH"],
-      "reason": "These bound the shape of Gate-C repeat metadata an application compiles -- interceptor count and nested repeat-wrapper depth -- not a resource the framework holds at runtime. Both are validated while compiling/canonicalizing the repeat definition, in the same category as the completion-policy composition limits above: a fixed structural check enforced before execution, not a bounded operational resource (queue, buffer, connection, cache) whose steady-state behavior this M5 campaign proves. Added in M7/#299.",
-      "covered_by": "crates/oxide-batch/tests/repeat_definition_plan.rs::repeat_bounds_are_exact"
+      "symbols": [
+        "MAX_REPEAT_INTERCEPTORS",
+        "MAX_REPEAT_NESTING_DEPTH",
+        "MAX_REPEAT_SECONDARY_FAILURES"
+      ],
+      "reason": "MAX_REPEAT_INTERCEPTORS and MAX_REPEAT_NESTING_DEPTH bound the Gate-C repeat shape accepted before execution. MAX_REPEAT_SECONDARY_FAILURES is not an independent runtime admission or retention budget: it is exactly their derived product and therefore cannot bind before those validated structural ceilings do. The runtime composition test reaches the full 32-by-8 callback frontier, retains all 256 possible secondary unwind failures, and proves defensive truncation remains false. These are structural-definition/derived-diagnostic invariants rather than an independently configurable operational resource (queue, connection, cache, or persistent buffer) owned by the M5 capacity campaign.",
+      "covered_by": "crates/oxide-batch/tests/repeat_definition_plan.rs::repeat_bounds_are_exact; crates/oxide-batch/tests/repeat_runtime.rs::nested_repeat_secondary_diagnostics_are_bounded_at_structural_maximum"
     }
   ],
   "related": [

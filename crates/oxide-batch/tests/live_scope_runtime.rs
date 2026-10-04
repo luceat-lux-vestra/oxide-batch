@@ -9,16 +9,19 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use oxide_batch::{
-    BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, FlowExecutionOutcome,
-    FlowFailure, FlowGraph, FlowJob, FlowJobError, FlowLauncher, FlowNode, FlowRuntimeError,
-    FlowTarget, InMemoryJobRepository, JobName, JobParameter, JobParameters, LateBoundInput,
-    LateBoundSource, MissingParameterPolicy, NodeId, ParameterCoercion, ParameterName,
-    ParameterRole, ParameterValue, ParameterValueKind, ScopeBuildFailureKind, ScopeFactoryKind,
+    BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, ExecutionContext,
+    FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowJobError, FlowLauncher, FlowNode,
+    FlowRuntimeError, FlowTarget, InMemoryJobRepository, JobName, JobParameter, JobParameters,
+    LateBoundInput, LateBoundSource, MissingParameterPolicy, NodeId, ParameterCoercion,
+    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, RepeatCallbackError,
+    RepeatContext, RepeatDefinition, RepeatId, RepeatPolicy, RepeatPolicyConfiguration,
+    RepeatPolicyDefinition, RepeatPolicyKind, RepeatPolicyOutcome, RepeatPolicyRegistration,
+    RepeatRuntimeRegistration, RepeatStateSchema, ScopeBuildFailureKind, ScopeFactoryKind,
     ScopeKind, ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition,
     ScopedComponentFactory, ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration,
-    ScopedFactoryContext, ScopedFactoryError, SequentialIdGenerator, StepComponents, StepName,
-    StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletFailure, TaskletOutcome,
-    TaskletStep, TerminalKind,
+    ScopedFactoryContext, ScopedFactoryError, SequentialIdGenerator, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
+    TaskletError, TaskletFailure, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 #[derive(Debug)]
@@ -74,6 +77,65 @@ fn parameters() -> Result<JobParameters, Box<dyn Error>> {
         JobParameter::new(ParameterValue::string("acme")?, ParameterRole::Identifying),
     )?;
     Ok(parameters)
+}
+
+const SCOPE_REPEAT_ID: &str = "scope-repeat";
+const SCOPE_REPEAT_SCHEMA: &str = "test.scope-repeat";
+
+struct ScopeRepeatPolicy {
+    complete_after: u32,
+}
+
+impl RepeatPolicy for ScopeRepeatPolicy {
+    fn decide<'a>(
+        &'a self,
+        context: RepeatContext<'a>,
+    ) -> BoxFuture<'a, Result<RepeatPolicyOutcome, RepeatCallbackError>> {
+        Box::pin(async move {
+            let payload = format!(
+                r#"{{"format":"oxide-batch.execution-context","format_version":1,"schema":"{SCOPE_REPEAT_SCHEMA}","schema_version":1,"payload":{{"ordinal":{}}}}}"#,
+                context.ordinal().get()
+            );
+            let state = ExecutionContext::from_json(payload.as_bytes(), StateLimits::default())
+                .map_err(|_| RepeatCallbackError::new())?;
+            if context.ordinal().get().saturating_add(1) >= self.complete_after {
+                Ok(RepeatPolicyOutcome::complete_with(state))
+            } else {
+                Ok(RepeatPolicyOutcome::continue_with(state))
+            }
+        })
+    }
+}
+
+fn scope_repeat_definition(complete_after: u32) -> Result<RepeatDefinition, Box<dyn Error>> {
+    Ok(RepeatDefinition::new(
+        RepeatId::new(SCOPE_REPEAT_ID)?,
+        RepeatPolicyDefinition::new(
+            RepeatPolicyKind::new("scope-count")?,
+            ComponentRevision::new("scope-repeat-policy-v1")?,
+            RepeatPolicyConfiguration::new(format!("limit-{complete_after}"))?,
+        ),
+        Vec::new(),
+        RepeatStateSchema::new(
+            StateSchemaId::new(SCOPE_REPEAT_SCHEMA)?,
+            StateSchemaVersion::new(1)?,
+        ),
+    )?)
+}
+
+fn scope_repeat_registration(
+    complete_after: u32,
+) -> Result<RepeatRuntimeRegistration, Box<dyn Error>> {
+    Ok(RepeatRuntimeRegistration::new(
+        RepeatId::new(SCOPE_REPEAT_ID)?,
+        RepeatPolicyRegistration::new(
+            RepeatPolicyKind::new("scope-count")?,
+            ComponentRevision::new("scope-repeat-policy-v1")?,
+            RepeatPolicyConfiguration::new(format!("limit-{complete_after}"))?,
+            Arc::new(ScopeRepeatPolicy { complete_after }),
+        ),
+        Vec::new(),
+    ))
 }
 
 struct RecordingFactory {
@@ -302,14 +364,31 @@ struct Harness {
 }
 
 fn harness(name: &str, mode: TaskletMode) -> Result<Harness, Box<dyn Error>> {
+    harness_with_repeat(name, mode, None)
+}
+
+fn repeat_harness(name: &str, complete_after: u32) -> Result<Harness, Box<dyn Error>> {
+    harness_with_repeat(name, TaskletMode::Complete, Some(complete_after))
+}
+
+fn harness_with_repeat(
+    name: &str,
+    mode: TaskletMode,
+    repeat_iterations: Option<u32>,
+) -> Result<Harness, Box<dyn Error>> {
     let node = NodeId::new("work")?;
     let job_name = JobName::new(name)?;
+    let mut step_definition = StepNode::new(
+        node.clone(),
+        StepName::new("work")?,
+        StepComponents::Tasklet(ComponentRevision::new("tasklet-v1")?),
+    );
+    if let Some(complete_after) = repeat_iterations {
+        step_definition =
+            step_definition.with_repeat_definition(scope_repeat_definition(complete_after)?);
+    }
     let plan = FlowGraph::new(node.clone())
-        .with_node(FlowNode::step(StepNode::new(
-            node.clone(),
-            StepName::new("work")?,
-            StepComponents::Tasklet(ComponentRevision::new("tasklet-v1")?),
-        )))
+        .with_node(FlowNode::step(step_definition))
         .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
         .with_scoped_component(definition(ScopeKind::Job, "job-client")?)
         .with_scoped_component(definition(ScopeKind::Step, "step-client")?)
@@ -323,9 +402,9 @@ fn harness(name: &str, mode: TaskletMode) -> Result<Harness, Box<dyn Error>> {
     let observations = Arc::new(Mutex::new(Vec::new()));
     let events = Arc::new(Mutex::new(Vec::new()));
 
-    let job = FlowJob::new(job_name, plan)?
+    let mut job = FlowJob::new(job_name, plan)?
         .with_tasklet_step(
-            node,
+            node.clone(),
             TaskletStep::new(
                 StepName::new("work")?,
                 Arc::new(ScopedTasklet {
@@ -352,6 +431,9 @@ fn harness(name: &str, mode: TaskletMode) -> Result<Harness, Box<dyn Error>> {
             Arc::clone(&step_cleanups),
             Arc::clone(&events),
         )?)?;
+    if let Some(complete_after) = repeat_iterations {
+        job = job.with_repeat_registration(node, scope_repeat_registration(complete_after)?)?;
+    }
 
     Ok(Harness {
         job,
@@ -502,6 +584,48 @@ async fn restart_recreates_attempt_local_scopes_and_preserves_in_scope_memoizati
             "tasklet:job-2:step-2",
             "cleanup:step-2",
             "cleanup:job-2",
+        ],
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn repeat_reuses_attempt_local_scopes_and_cleans_them_once() -> Result<(), Box<dyn Error>> {
+    let harness = repeat_harness("live-scope-repeat", 2)?;
+    let (clock, ids, repository) = infrastructure();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let (_, stop) = StopSource::new();
+
+    let report = launcher.launch(&harness.job, &parameters()?, &stop).await?;
+
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(harness.tasklet_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(harness.job_creates.load(Ordering::SeqCst), 1);
+    assert_eq!(harness.step_creates.load(Ordering::SeqCst), 1);
+    assert_eq!(harness.job_cleanups.load(Ordering::SeqCst), 1);
+    assert_eq!(harness.step_cleanups.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *harness
+            .observations
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![
+            (String::from("job-1"), String::from("step-1")),
+            (String::from("job-1"), String::from("step-1")),
+        ],
+    );
+    assert_eq!(
+        *harness
+            .events
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![
+            "create:job-1",
+            "create:step-1",
+            "tasklet:job-1:step-1",
+            "tasklet:job-1:step-1",
+            "cleanup:step-1",
+            "cleanup:job-1",
         ],
     );
     Ok(())
