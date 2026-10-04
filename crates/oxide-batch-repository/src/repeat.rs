@@ -29,6 +29,54 @@ impl RepeatOrdinal {
     }
 }
 
+/// Bounded durable ancestry of one nested repeat invocation.
+///
+/// Entries are ordered outermost to innermost and identify the parent repeat
+/// iteration whose child state is being read or committed. The current repeat
+/// is not included in this path.
+#[derive(Clone, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct RepeatLineage(Vec<(RepeatId, RepeatOrdinal)>);
+
+impl RepeatLineage {
+    const MAX_PARENTS: usize = 8;
+
+    /// Constructs the root repeat lineage.
+    #[must_use]
+    pub const fn root() -> Self {
+        Self(Vec::new())
+    }
+
+    /// Returns whether this is the root repeat lineage.
+    #[must_use]
+    pub fn is_root(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Returns the number of durable parent repeat iterations.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Derives a child lineage from this lineage and the current parent iteration.
+    ///
+    /// Returns `None` when the bounded nesting ceiling would be exceeded.
+    #[must_use]
+    pub fn child(&self, repeat_id: RepeatId, ordinal: RepeatOrdinal) -> Option<Self> {
+        if self.0.len() >= Self::MAX_PARENTS {
+            return None;
+        }
+        let mut entries = self.0.clone();
+        entries.push((repeat_id, ordinal));
+        Some(Self(entries))
+    }
+
+    /// Borrows durable parent entries in outermost-to-innermost order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&RepeatId, RepeatOrdinal)> {
+        self.0.iter().map(|(repeat_id, ordinal)| (repeat_id, *ordinal))
+    }
+}
+
 /// Committed Gate-C decision for one accepted repeat iteration.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
@@ -66,8 +114,10 @@ impl RepeatDecision {
 pub struct RepeatExecution {
     job_instance_id: JobInstanceId,
     node_id: NodeId,
+    definition_node_id: NodeId,
     step_execution_id: StepExecutionId,
     repeat_id: RepeatId,
+    lineage: RepeatLineage,
     ordinal: RepeatOrdinal,
     state: ExecutionContext,
     decision: RepeatDecision,
@@ -81,8 +131,10 @@ impl RepeatExecution {
     pub const fn new(
         job_instance_id: JobInstanceId,
         node_id: NodeId,
+        definition_node_id: NodeId,
         step_execution_id: StepExecutionId,
         repeat_id: RepeatId,
+        lineage: RepeatLineage,
         ordinal: RepeatOrdinal,
         state: ExecutionContext,
         decision: RepeatDecision,
@@ -91,8 +143,10 @@ impl RepeatExecution {
         Self {
             job_instance_id,
             node_id,
+            definition_node_id,
             step_execution_id,
             repeat_id,
+            lineage,
             ordinal,
             state,
             decision,
@@ -108,6 +162,16 @@ impl RepeatExecution {
     #[must_use]
     pub const fn node_id(&self) -> &NodeId {
         &self.node_id
+    }
+    /// Returns the compiled step definition that owns the repeat declaration.
+    #[must_use]
+    pub const fn definition_node_id(&self) -> &NodeId {
+        &self.definition_node_id
+    }
+    /// Borrows the bounded parent repeat lineage.
+    #[must_use]
+    pub const fn lineage(&self) -> &RepeatLineage {
+        &self.lineage
     }
     /// Returns the concrete step execution identifier.
     #[must_use]
@@ -146,8 +210,10 @@ impl RepeatExecution {
 pub struct RepeatCommitRequest {
     job_instance_id: JobInstanceId,
     node_id: NodeId,
+    definition_node_id: NodeId,
     step_execution_id: StepExecutionId,
     repeat_id: RepeatId,
+    lineage: RepeatLineage,
     ordinal: RepeatOrdinal,
     state: ExecutionContext,
     decision: RepeatDecision,
@@ -158,7 +224,7 @@ impl RepeatCommitRequest {
     /// Constructs a proposed accepted iteration for one repository commit.
     #[allow(clippy::too_many_arguments)]
     #[must_use]
-    pub const fn new(
+    pub fn new(
         job_instance_id: JobInstanceId,
         node_id: NodeId,
         step_execution_id: StepExecutionId,
@@ -170,14 +236,30 @@ impl RepeatCommitRequest {
     ) -> Self {
         Self {
             job_instance_id,
+            definition_node_id: node_id.clone(),
             node_id,
             step_execution_id,
             repeat_id,
+            lineage: RepeatLineage::root(),
             ordinal,
             state,
             decision,
             plan_fingerprint,
         }
+    }
+
+    /// Binds the request to a compiled definition owner distinct from its durable execution owner.
+    #[must_use]
+    pub fn with_definition_node_id(mut self, definition_node_id: NodeId) -> Self {
+        self.definition_node_id = definition_node_id;
+        self
+    }
+
+    /// Binds the request to one bounded nested-repeat parent lineage.
+    #[must_use]
+    pub fn with_lineage(mut self, lineage: RepeatLineage) -> Self {
+        self.lineage = lineage;
+        self
     }
     /// Returns the owning logical job instance.
     #[must_use]
@@ -188,6 +270,16 @@ impl RepeatCommitRequest {
     #[must_use]
     pub const fn node_id(&self) -> &NodeId {
         &self.node_id
+    }
+    /// Returns the compiled step definition that owns the repeat declaration.
+    #[must_use]
+    pub const fn definition_node_id(&self) -> &NodeId {
+        &self.definition_node_id
+    }
+    /// Borrows the bounded parent repeat lineage.
+    #[must_use]
+    pub const fn lineage(&self) -> &RepeatLineage {
+        &self.lineage
     }
     /// Returns the concrete step execution identifier.
     #[must_use]
