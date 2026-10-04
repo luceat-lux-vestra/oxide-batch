@@ -198,7 +198,7 @@ fn job(crash: bool) -> Result<FlowJob, Box<dyn Error>> {
     });
     Ok(FlowJob::new(name, plan)?
         .with_partitioned_tasklet(manager, partitioner, factory)?
-        .with_repeat_registration(worker_node, partition_repeat_registration())?)
+        .with_repeat_registration(worker_node, partition_repeat_registration()?)?)
 }
 
 async fn remove_job(url: &str) -> Result<(), sqlx::Error> {
