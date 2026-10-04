@@ -1833,6 +1833,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                         existing.definition_node_id() == request.definition_node_id()
                             && existing.lineage() == request.lineage()
                     });
+            self.validate_repeat_lineage_current(request)?;
             if let Some(existing) = same_current_lineage.as_ref() {
                 let exact_replay = existing.job_instance_id() == request.job_instance_id()
                     && existing.node_id() == request.node_id()
@@ -1844,7 +1845,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     return Ok(existing.clone());
                 }
             }
-            self.validate_repeat_lineage_current(request)?;
             if let Some(existing) = same_current_lineage {
                 if existing.ordinal() == request.ordinal() {
                     return Err(RepositoryError::RepeatStateCorrupt);

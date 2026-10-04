@@ -538,6 +538,14 @@ async fn nested_repeat_state_is_scoped_to_exact_parent_lineage() -> Result<(), B
     advance_parent.commit_repeat_iteration(&parent0).await?;
     advance_parent.commit().await?;
 
+    let mut stale_exact = repository.begin().await?;
+    assert_eq!(
+        stale_exact.commit_repeat_iteration(&first).await,
+        Err(RepositoryError::RepeatStateCorrupt),
+        "an exact replay from a superseded parent iteration is stale, not idempotent",
+    );
+    stale_exact.rollback().await?;
+
     let mut replace = repository.begin().await?;
     let committed1 = replace.commit_repeat_iteration(&second).await?;
     assert_eq!(committed1.ordinal(), RepeatOrdinal::INITIAL);

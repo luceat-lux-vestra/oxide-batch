@@ -3171,18 +3171,6 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     && existing.lineage() == request.lineage()
             });
 
-            if let Some(existing) = same_current_lineage {
-                let exact_replay = existing.job_instance_id() == request.job_instance_id()
-                    && existing.node_id() == request.node_id()
-                    && existing.ordinal() == request.ordinal()
-                    && existing.state() == request.state()
-                    && existing.decision() == request.decision()
-                    && existing.plan_fingerprint() == request.plan_fingerprint();
-                if exact_replay {
-                    return Ok(existing.clone());
-                }
-            }
-
             let mut enclosing = RepeatLineage::root();
             for (parent_id, parent_ordinal) in request.lineage().iter() {
                 let enclosing_json = encode_repeat_lineage(&enclosing);
@@ -3226,6 +3214,18 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 enclosing = enclosing
                     .child(parent_id.clone(), parent_ordinal)
                     .ok_or(RepositoryError::RepeatStateCorrupt)?;
+            }
+
+            if let Some(existing) = same_current_lineage.as_ref() {
+                let exact_replay = existing.job_instance_id() == request.job_instance_id()
+                    && existing.node_id() == request.node_id()
+                    && existing.ordinal() == request.ordinal()
+                    && existing.state() == request.state()
+                    && existing.decision() == request.decision()
+                    && existing.plan_fingerprint() == request.plan_fingerprint();
+                if exact_replay {
+                    return Ok(existing.clone());
+                }
             }
 
             if let Some(existing) = same_current_lineage {
