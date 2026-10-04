@@ -34,9 +34,7 @@ pub(crate) fn repeat_request_matches_manifest(
             let Some(object) = current.as_object() else {
                 return false;
             };
-            if object.get("id").and_then(serde_json::Value::as_str)
-                != Some(parent_id.as_str())
-            {
+            if object.get("id").and_then(serde_json::Value::as_str) != Some(parent_id.as_str()) {
                 return false;
             }
             let Some(nested) = object.get("nested") else {
@@ -63,10 +61,7 @@ pub(crate) fn repeat_request_matches_manifest(
         })
     }
 
-    fn step_matches(
-        step: &serde_json::Value,
-        request: &crate::RepeatCommitRequest,
-    ) -> bool {
+    fn step_matches(step: &serde_json::Value, request: &crate::RepeatCommitRequest) -> bool {
         step.as_object().is_some_and(|object| {
             object.get("kind").and_then(serde_json::Value::as_str) == Some("step")
                 && object.get("id").and_then(serde_json::Value::as_str)
@@ -136,7 +131,6 @@ pub(crate) fn repeat_request_matches_manifest(
     if request.definition_node_id() == request.node_id() {
         partition_manager_node_id.is_none() && visit_step(manifest, request)
     } else {
-        partition_manager_node_id
-            .is_some_and(|manager| visit_partition(manifest, manager, request))
+        partition_manager_node_id.is_some_and(|manager| visit_partition(manifest, manager, request))
     }
 }
