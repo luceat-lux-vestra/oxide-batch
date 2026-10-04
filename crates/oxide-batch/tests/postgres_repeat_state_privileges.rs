@@ -1,4 +1,4 @@
-//! Schema-7 least-privilege evidence for durable repeat state.
+//! Schema-8 least-privilege evidence for durable repeat state and lineage.
 //!
 //! The long-lived M5 role matrix predates `ob_repeat_execution`.
 //! Runtime may read, insert, and update bounded repeat state, but may not
