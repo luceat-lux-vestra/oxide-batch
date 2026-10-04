@@ -124,6 +124,21 @@ pub const SCHEMA6_TABLES: &[&str] = &["ob_scope_resolution_provenance"];
 /// Columns schema 6 added to tables schema 5 already declared.
 pub const SCHEMA6_COLUMNS: &[(&str, &str)] = &[];
 
+/// The table schema 7 added to schema 6.
+pub const SCHEMA7_TABLES: &[&str] = &["ob_repeat_execution"];
+
+/// Columns schema 7 added to tables schema 6 already declared.
+pub const SCHEMA7_COLUMNS: &[(&str, &str)] = &[];
+
+/// Schema 8 adds no table; it extends durable repeat identity in place.
+pub const SCHEMA8_TABLES: &[&str] = &[];
+
+/// Columns schema 8 adds to the schema-7 repeat table.
+pub const SCHEMA8_COLUMNS: &[(&str, &str)] = &[
+    ("ob_repeat_execution", "definition_node_id"),
+    ("ob_repeat_execution", "parent_lineage"),
+];
+
 /// Columns schema 2 added to tables schema 1 already declared.
 pub const SCHEMA2_COLUMNS: &[(&str, &str)] = &[
     ("ob_step_execution", "step_logical_id"),
@@ -304,6 +319,8 @@ pub async fn assert_historical_shape(url: &str, version: u32) -> Result<(), Box<
         (version >= 4, SCHEMA4_TABLES, SCHEMA4_COLUMNS),
         (version >= 5, SCHEMA5_TABLES, SCHEMA5_COLUMNS),
         (version >= 6, SCHEMA6_TABLES, SCHEMA6_COLUMNS),
+        (version >= 7, SCHEMA7_TABLES, SCHEMA7_COLUMNS),
+        (version >= 8, SCHEMA8_TABLES, SCHEMA8_COLUMNS),
     ] {
         for table in tables {
             if table_exists(url, table).await? != present {
