@@ -21,13 +21,31 @@ pub use postgres::{
 pub(crate) fn repeat_request_matches_manifest(
     manifest: &serde_json::Value,
     request: &crate::RepeatCommitRequest,
+    partition_manager_node_id: Option<&crate::NodeId>,
 ) -> bool {
     fn repeat_matches(
         repeat: &serde_json::Value,
+        lineage: &crate::RepeatLineage,
         repeat_id: &crate::RepeatId,
         state: &crate::ExecutionContext,
     ) -> bool {
-        let matches = repeat.as_object().is_some_and(|object| {
+        let mut current = repeat;
+        for (parent_id, _) in lineage.iter() {
+            let Some(object) = current.as_object() else {
+                return false;
+            };
+            if object.get("id").and_then(serde_json::Value::as_str)
+                != Some(parent_id.as_str())
+            {
+                return false;
+            }
+            let Some(nested) = object.get("nested") else {
+                return false;
+            };
+            current = nested;
+        }
+
+        current.as_object().is_some_and(|object| {
             object.get("id").and_then(serde_json::Value::as_str) == Some(repeat_id.as_str())
                 && object
                     .get("state")
@@ -42,31 +60,83 @@ pub(crate) fn repeat_request_matches_manifest(
                                 .and_then(serde_json::Value::as_u64)
                                 == Some(u64::from(state.schema_version().get()))
                     })
-        });
-        matches
-            || repeat
-                .get("nested")
-                .is_some_and(|nested| repeat_matches(nested, repeat_id, state))
+        })
     }
 
-    fn visit(value: &serde_json::Value, request: &crate::RepeatCommitRequest) -> bool {
+    fn step_matches(
+        step: &serde_json::Value,
+        request: &crate::RepeatCommitRequest,
+    ) -> bool {
+        step.as_object().is_some_and(|object| {
+            object.get("kind").and_then(serde_json::Value::as_str) == Some("step")
+                && object.get("id").and_then(serde_json::Value::as_str)
+                    == Some(request.definition_node_id().as_str())
+                && object.get("repeat").is_some_and(|repeat| {
+                    repeat_matches(
+                        repeat,
+                        request.lineage(),
+                        request.repeat_id(),
+                        request.state(),
+                    )
+                })
+        })
+    }
+
+    fn partition_matches(
+        value: &serde_json::Value,
+        manager_node_id: &crate::NodeId,
+        request: &crate::RepeatCommitRequest,
+    ) -> bool {
+        value.as_object().is_some_and(|object| {
+            object.get("kind").and_then(serde_json::Value::as_str) == Some("partitioned_step")
+                && object.get("id").and_then(serde_json::Value::as_str)
+                    == Some(manager_node_id.as_str())
+                && object
+                    .get("worker")
+                    .is_some_and(|worker| step_matches(worker, request))
+        })
+    }
+
+    fn visit_step(value: &serde_json::Value, request: &crate::RepeatCommitRequest) -> bool {
         match value {
             serde_json::Value::Object(object) => {
-                if object.get("kind").and_then(serde_json::Value::as_str) == Some("step")
-                    && object.get("id").and_then(serde_json::Value::as_str)
-                        == Some(request.node_id().as_str())
-                    && object.get("repeat").is_some_and(|repeat| {
-                        repeat_matches(repeat, request.repeat_id(), request.state())
-                    })
-                {
+                if step_matches(value, request) {
                     return true;
                 }
-                object.values().any(|child| visit(child, request))
+                object.values().any(|child| visit_step(child, request))
             }
-            serde_json::Value::Array(values) => values.iter().any(|child| visit(child, request)),
+            serde_json::Value::Array(values) => {
+                values.iter().any(|child| visit_step(child, request))
+            }
             _ => false,
         }
     }
 
-    visit(manifest, request)
+    fn visit_partition(
+        value: &serde_json::Value,
+        manager_node_id: &crate::NodeId,
+        request: &crate::RepeatCommitRequest,
+    ) -> bool {
+        match value {
+            serde_json::Value::Object(object) => {
+                if partition_matches(value, manager_node_id, request) {
+                    return true;
+                }
+                object
+                    .values()
+                    .any(|child| visit_partition(child, manager_node_id, request))
+            }
+            serde_json::Value::Array(values) => values
+                .iter()
+                .any(|child| visit_partition(child, manager_node_id, request)),
+            _ => false,
+        }
+    }
+
+    if request.definition_node_id() == request.node_id() {
+        partition_manager_node_id.is_none() && visit_step(manifest, request)
+    } else {
+        partition_manager_node_id
+            .is_some_and(|manager| visit_partition(manifest, manager, request))
+    }
 }
