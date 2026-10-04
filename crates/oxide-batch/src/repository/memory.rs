@@ -24,10 +24,10 @@ use crate::{
     PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
     RecoveryDecisionId, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence,
     RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal,
-    RetentionAction,
-    RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft, ScopeKind,
-    ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StepExecution, StepExecutionId,
-    StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
+    RetentionAction, RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft,
+    ScopeKind, ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StepExecution,
+    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
+    StepPartitionProjection,
 };
 use crate::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
@@ -803,16 +803,10 @@ impl InMemoryUnitOfWork<'_> {
             return Err(RepositoryError::RepeatStateCorrupt);
         }
         let partition_manager_node_id = if request.definition_node_id() != request.node_id() {
-            let mut bindings = self
-                .staged
-                .step_partitions
-                .values()
-                .filter(|partition| {
-                    partition.worker_step_execution_id() == Some(request.step_execution_id())
-                });
-            let partition = bindings
-                .next()
-                .ok_or(RepositoryError::RepeatStateCorrupt)?;
+            let mut bindings = self.staged.step_partitions.values().filter(|partition| {
+                partition.worker_step_execution_id() == Some(request.step_execution_id())
+            });
+            let partition = bindings.next().ok_or(RepositoryError::RepeatStateCorrupt)?;
             if bindings.next().is_some() {
                 return Err(RepositoryError::RepeatStateCorrupt);
             }
@@ -1794,15 +1788,15 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move {
             self.validate_repeat_request(request)?;
             let key = (request.step_execution_id(), request.repeat_id().clone());
-            let same_current_lineage = self
-                .staged
-                .repeat_executions
-                .get(&key)
-                .cloned()
-                .filter(|existing| {
-                    existing.definition_node_id() == request.definition_node_id()
-                        && existing.lineage() == request.lineage()
-                });
+            let same_current_lineage =
+                self.staged
+                    .repeat_executions
+                    .get(&key)
+                    .cloned()
+                    .filter(|existing| {
+                        existing.definition_node_id() == request.definition_node_id()
+                            && existing.lineage() == request.lineage()
+                    });
             if let Some(existing) = same_current_lineage {
                 let exact_replay = existing.job_instance_id() == request.job_instance_id()
                     && existing.node_id() == request.node_id()
