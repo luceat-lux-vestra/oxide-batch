@@ -782,6 +782,42 @@ impl InMemoryUnitOfWork<'_> {
         Ok(None)
     }
 
+    fn validate_repeat_lineage_current(
+        &self,
+        request: &RepeatCommitRequest,
+    ) -> Result<(), RepositoryError> {
+        let mut enclosing = RepeatLineage::root();
+        for (parent_id, parent_ordinal) in request.lineage().iter() {
+            let prior = self.latest_repeat_snapshot(
+                request.job_instance_id(),
+                request.node_id(),
+                request.definition_node_id(),
+                &enclosing,
+                parent_id,
+            )?;
+            let expected = match prior {
+                Some(prior) if prior.plan_fingerprint() != request.plan_fingerprint() => {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                Some(prior) if prior.decision() == RepeatDecision::Complete => {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                Some(prior) => prior
+                    .ordinal()
+                    .checked_next()
+                    .ok_or(RepositoryError::RepeatStateCorrupt)?,
+                None => RepeatOrdinal::INITIAL,
+            };
+            if parent_ordinal != expected {
+                return Err(RepositoryError::RepeatStateCorrupt);
+            }
+            enclosing = enclosing
+                .child(parent_id.clone(), parent_ordinal)
+                .ok_or(RepositoryError::RepeatStateCorrupt)?;
+        }
+        Ok(())
+    }
+
     fn validate_repeat_request(
         &self,
         request: &RepeatCommitRequest,
@@ -1797,7 +1833,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                         existing.definition_node_id() == request.definition_node_id()
                             && existing.lineage() == request.lineage()
                     });
-            if let Some(existing) = same_current_lineage {
+            if let Some(existing) = same_current_lineage.as_ref() {
                 let exact_replay = existing.job_instance_id() == request.job_instance_id()
                     && existing.node_id() == request.node_id()
                     && existing.ordinal() == request.ordinal()
@@ -1805,8 +1841,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     && existing.decision() == request.decision()
                     && existing.plan_fingerprint() == request.plan_fingerprint();
                 if exact_replay {
-                    return Ok(existing);
+                    return Ok(existing.clone());
                 }
+            }
+            self.validate_repeat_lineage_current(request)?;
+            if let Some(existing) = same_current_lineage {
                 if existing.ordinal() == request.ordinal() {
                     return Err(RepositoryError::RepeatStateCorrupt);
                 }

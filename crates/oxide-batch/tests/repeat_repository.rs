@@ -515,11 +515,53 @@ async fn nested_repeat_state_is_scoped_to_exact_parent_lineage() -> Result<(), B
         *nested_plan.fingerprint(),
     )
     .with_lineage(lineage1.clone());
+
+    let mut premature = repository.begin().await?;
+    assert_eq!(
+        premature.commit_repeat_iteration(&second).await,
+        Err(RepositoryError::RepeatStateCorrupt),
+        "a child lineage cannot move to a parent ordinal that is not yet the current proposed parent iteration",
+    );
+    premature.rollback().await?;
+
+    let parent0 = RepeatCommitRequest::new(
+        instance,
+        node.clone(),
+        step,
+        RepeatId::new("outer")?,
+        RepeatOrdinal::INITIAL,
+        state("outer-0")?,
+        RepeatDecision::Continue,
+        *nested_plan.fingerprint(),
+    );
+    let mut advance_parent = repository.begin().await?;
+    advance_parent.commit_repeat_iteration(&parent0).await?;
+    advance_parent.commit().await?;
+
     let mut replace = repository.begin().await?;
     let committed1 = replace.commit_repeat_iteration(&second).await?;
     assert_eq!(committed1.ordinal(), RepeatOrdinal::INITIAL);
     assert_eq!(committed1.lineage(), &lineage1);
     replace.commit().await?;
+
+    let stale = RepeatCommitRequest::new(
+        instance,
+        node.clone(),
+        step,
+        RepeatId::new("inner")?,
+        RepeatOrdinal::INITIAL,
+        state("stale-child-0")?,
+        RepeatDecision::Complete,
+        *nested_plan.fingerprint(),
+    )
+    .with_lineage(lineage0);
+    let mut stale_replay = repository.begin().await?;
+    assert_eq!(
+        stale_replay.commit_repeat_iteration(&stale).await,
+        Err(RepositoryError::RepeatStateCorrupt),
+        "a superseded parent lineage must not overwrite the current child cycle",
+    );
+    stale_replay.rollback().await?;
 
     let mut terminal = repository.begin().await?;
     let invalid_next = RepeatCommitRequest::new(

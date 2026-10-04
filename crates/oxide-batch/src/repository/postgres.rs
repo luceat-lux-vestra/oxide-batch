@@ -3181,6 +3181,54 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 if exact_replay {
                     return Ok(existing.clone());
                 }
+            }
+
+            let mut enclosing = RepeatLineage::root();
+            for (parent_id, parent_ordinal) in request.lineage().iter() {
+                let enclosing_json = encode_repeat_lineage(&enclosing);
+                let parent_row = sqlx::query(AssertSqlSafe(repeat_execution_select(
+                    "WHERE job.job_instance_id = $1 AND step.step_logical_id = $2 \
+                     AND repeat.definition_node_id = $3 AND repeat.parent_lineage = $4 \
+                     AND repeat.repeat_id = $5 \
+                     ORDER BY job.attempt DESC, repeat.step_execution_id DESC LIMIT 1",
+                )))
+                .bind(database_id(
+                    request.job_instance_id().get(),
+                    IdentifierKind::JobInstance,
+                )?)
+                .bind(request.node_id().as_str())
+                .bind(request.definition_node_id().as_str())
+                .bind(Json(enclosing_json))
+                .bind(parent_id.as_str())
+                .fetch_optional(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                let parent = parent_row
+                    .as_ref()
+                    .map(decode_repeat_execution)
+                    .transpose()?;
+                let expected = match parent {
+                    Some(parent) if parent.plan_fingerprint() != request.plan_fingerprint() => {
+                        return Err(RepositoryError::RepeatStateCorrupt);
+                    }
+                    Some(parent) if parent.decision() == RepeatDecision::Complete => {
+                        return Err(RepositoryError::RepeatStateCorrupt);
+                    }
+                    Some(parent) => parent
+                        .ordinal()
+                        .checked_next()
+                        .ok_or(RepositoryError::RepeatStateCorrupt)?,
+                    None => RepeatOrdinal::INITIAL,
+                };
+                if parent_ordinal != expected {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                enclosing = enclosing
+                    .child(parent_id.clone(), parent_ordinal)
+                    .ok_or(RepositoryError::RepeatStateCorrupt)?;
+            }
+
+            if let Some(existing) = same_current_lineage {
                 if existing.ordinal() == request.ordinal() {
                     return Err(RepositoryError::RepeatStateCorrupt);
                 }
