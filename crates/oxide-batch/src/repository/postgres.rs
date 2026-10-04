@@ -43,13 +43,12 @@ use crate::{
     PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId,
     RecoveryRequest, RecoveryResult, RepeatCommitRequest, RepeatDecision, RepeatExecution,
     RepeatId, RepeatLineage, RepeatOrdinal, RepositoryCapability, RepositoryDescriptor,
-    RepositoryError,
-    RepositoryUnitOfWork, RequestDigest, RetentionAction, RetentionActionId, RetentionHold,
-    RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey, RetryLimit,
-    RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId, SkipCounts,
-    StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepExecution, StepExecutionId, StepExecutionProjection, StepName, StepPartition,
-    StepPartitionId, StepPartitionProjection, TerminalKind,
+    RepositoryError, RepositoryUnitOfWork, RequestDigest, RetentionAction, RetentionActionId,
+    RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey,
+    RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId,
+    SkipCounts, StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepExecution, StepExecutionId, StepExecutionProjection, StepName,
+    StepPartition, StepPartitionId, StepPartitionProjection, TerminalKind,
 };
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 8;
@@ -3102,8 +3101,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let instance_id = JobInstanceId::new(read_u64(&row, "job_instance_id")?)?;
             let node_id = NodeId::new(read_text(&row, "step_logical_id")?)
                 .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
-            let job_execution_id =
-                JobExecutionId::new(read_u64(&row, "job_execution_id")?)?;
+            let job_execution_id = JobExecutionId::new(read_u64(&row, "job_execution_id")?)?;
             let fingerprint: [u8; 32] = row
                 .try_get::<Vec<u8>, _>("manifest_digest")
                 .map_err(|_| RepositoryError::RepeatStateCorrupt)?
