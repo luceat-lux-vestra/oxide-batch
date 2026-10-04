@@ -585,6 +585,16 @@ impl FlowJob {
         if plan.definition_identity().job_name() != Some(&name) {
             return Err(FlowJobError::JobNameMismatch);
         }
+        if let Some(node) = plan.nodes().find_map(|(_, node)| match node {
+            FlowNode::PartitionedStep(partitioned)
+                if partitioned.worker().repeat_definition().is_some() =>
+            {
+                Some(partitioned.worker().id().clone())
+            }
+            _ => None,
+        }) {
+            return Err(FlowJobError::RepeatRuntimeUnsupported { node });
+        }
         Ok(Self {
             name,
             plan,
@@ -1052,6 +1062,11 @@ pub enum FlowJobError {
         /// Logical step missing its repeat runtime.
         node: NodeId,
     },
+    /// A repeat execution shape needs durable lineage that this runtime does not yet model.
+    RepeatRuntimeUnsupported {
+        /// Logical step whose repeat execution shape is not yet supported.
+        node: NodeId,
+    },
     /// A live component registration does not match its compiled definition.
     ScopedComponentRegistrationMismatch {
         /// Attempt-local scope whose registration mismatched.
@@ -1153,6 +1168,11 @@ impl fmt::Display for FlowJobError {
             Self::MissingRepeatBinding { node } => write!(
                 formatter,
                 "node {} declares repeat semantics but has no runtime registration",
+                node.as_str()
+            ),
+            Self::RepeatRuntimeUnsupported { node } => write!(
+                formatter,
+                "node {} repeat runtime requires durable lineage not modeled by this execution path",
                 node.as_str()
             ),
             Self::ScopedComponentRegistrationMismatch { scope, component } => write!(
@@ -4966,6 +4986,16 @@ impl<'a> FlowLauncher<'a> {
                     )
                     .await
                     {
+                        Ok(outcome)
+                            if definition.nested().is_some()
+                                && outcome.decision() == crate::RepeatDecision::Continue =>
+                        {
+                            invocation.result = Err(TaskletFailure::Error);
+                            invocation.failure =
+                                Some(crate::RepeatFailure::nested_continuation_unsupported(
+                                    definition.id(),
+                                ));
+                        }
                         Ok(outcome) => accepted = Some(outcome),
                         Err(kind) => {
                             let failure =
@@ -5310,6 +5340,7 @@ fn repeat_primary_tasklet_failure(failure: &crate::RepeatFailure) -> TaskletFail
         crate::RepeatFailureCause::Callback(callback) => {
             repeat_callback_tasklet_failure(callback.kind())
         }
+        crate::RepeatFailureCause::NestedContinuationUnsupported { .. } => TaskletFailure::Error,
     }
 }
 
