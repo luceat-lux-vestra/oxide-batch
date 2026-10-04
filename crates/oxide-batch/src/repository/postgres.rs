@@ -3018,10 +3018,54 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 });
             }
             let row = sqlx::query(AssertSqlSafe(repeat_execution_select(
-                "WHERE job.job_instance_id = $1 AND step.step_logical_id = $2                  AND repeat.repeat_id = $3                  ORDER BY job.attempt DESC, repeat.step_execution_id DESC LIMIT 1",
+                "WHERE job.job_instance_id = $1 AND step.step_logical_id = $2 \
+                 AND repeat.definition_node_id = $2 AND repeat.parent_lineage = '[]'::jsonb \
+                 AND repeat.repeat_id = $3 \
+                 ORDER BY job.attempt DESC, repeat.step_execution_id DESC LIMIT 1",
             )))
             .bind(instance_id)
             .bind(node_id.as_str())
+            .bind(repeat_id.as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.as_ref().map(decode_repeat_execution).transpose()
+        })
+    }
+
+    fn latest_repeat_execution_in_lineage<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        definition_node_id: &'a NodeId,
+        lineage: &'a RepeatLineage,
+        repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id = database_id(job_instance_id.get(), IdentifierKind::JobInstance)?;
+            let exists: bool = sqlx::query_scalar(
+                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_instance WHERE id = $1)",
+            )
+            .bind(instance_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !exists {
+                return Err(RepositoryError::JobInstanceNotFound {
+                    id: job_instance_id,
+                });
+            }
+            let lineage_json = encode_repeat_lineage(lineage);
+            let row = sqlx::query(AssertSqlSafe(repeat_execution_select(
+                "WHERE job.job_instance_id = $1 AND step.step_logical_id = $2 \
+                 AND repeat.definition_node_id = $3 AND repeat.parent_lineage = $4 \
+                 AND repeat.repeat_id = $5 \
+                 ORDER BY job.attempt DESC, repeat.step_execution_id DESC LIMIT 1",
+            )))
+            .bind(instance_id)
+            .bind(node_id.as_str())
+            .bind(definition_node_id.as_str())
+            .bind(Json(lineage_json))
             .bind(repeat_id.as_str())
             .fetch_optional(&mut **self.transaction()?)
             .await
