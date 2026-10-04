@@ -58,6 +58,12 @@ impl RepeatLineage {
         self.0.len()
     }
 
+    /// Returns whether this lineage contains no durable parent repeat iterations.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
     /// Derives a child lineage from this lineage and the current parent iteration.
     ///
     /// Returns `None` when the bounded nesting ceiling would be exceeded.
@@ -72,6 +78,7 @@ impl RepeatLineage {
     }
 
     /// Borrows durable parent entries in outermost-to-innermost order.
+    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&RepeatId, RepeatOrdinal)> {
         self.0
             .iter()
