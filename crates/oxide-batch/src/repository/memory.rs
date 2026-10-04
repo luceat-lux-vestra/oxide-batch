@@ -802,7 +802,9 @@ impl InMemoryUnitOfWork<'_> {
         {
             return Err(RepositoryError::RepeatStateCorrupt);
         }
-        let partition_manager_node_id = if request.definition_node_id() != request.node_id() {
+        let partition_manager_node_id = if request.definition_node_id() == request.node_id() {
+            None
+        } else {
             let mut bindings = self.staged.step_partitions.values().filter(|partition| {
                 partition.worker_step_execution_id() == Some(request.step_execution_id())
             });
@@ -825,8 +827,6 @@ impl InMemoryUnitOfWork<'_> {
                     .cloned()
                     .ok_or(RepositoryError::RepeatStateCorrupt)?,
             )
-        } else {
-            None
         };
 
         let definition = self
