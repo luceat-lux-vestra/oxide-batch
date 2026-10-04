@@ -3111,7 +3111,9 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .try_get("manifest")
                 .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
 
-            let partition_manager = if request.definition_node_id() != request.node_id() {
+            let partition_manager = if request.definition_node_id() == request.node_id() {
+                None
+            } else {
                 let bindings = sqlx::query(
                     "SELECT parent.step_logical_id AS manager_node_id, \
                      parent.job_execution_id AS parent_job_execution_id \
@@ -3138,8 +3140,6 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     NodeId::new(read_text(binding, "manager_node_id")?)
                         .map_err(|_| RepositoryError::RepeatStateCorrupt)?,
                 )
-            } else {
-                None
             };
 
             if instance_id != request.job_instance_id()
