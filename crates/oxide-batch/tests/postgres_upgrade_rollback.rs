@@ -14,8 +14,9 @@
 //! introduced is recoverable exactly the way the two M5 edges already were,
 //! rather than assuming an additive migration is automatically safe to roll
 //! back. M7 `#265` advanced the target to schema 5, M7 `#276` to schema 6,
-//! and M7 `#300` to schema 7; the populated 4 -> 5, 5 -> 6, and 6 -> 7
-//! boundaries are owned by their dedicated design gates rather than duplicated here.
+//! M7 `#300` advanced the target to schema 7 and #401 to schema 8; the populated
+//! 4 -> 5, 5 -> 6, 6 -> 7, and 7 -> 8 boundaries are owned by their dedicated
+//! design gates rather than duplicated here.
 //!
 //! Each run does the whole operational sequence. A prior-schema database is
 //! built and seeded, `pg_dump` writes a custom-format archive of the metadata
