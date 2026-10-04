@@ -91,8 +91,8 @@ would have become had it been carried rather than removed.
 
 ## The delivered surface
 
-The current facade claims exactly one crate. `oxide-batch` exports **545
-names**: 533 always and 12 more under the optional `postgres` feature. The
+The current facade claims exactly one crate. `oxide-batch` exports **546
+names**: 534 always and 12 more under the optional `postgres` feature. The
 committed snapshot at
 `crates/oxide-batch/tests/fixtures/facade/public-api.txt` is the authoritative
 name list; this table is the reviewed enumeration by the `src/lib.rs`
@@ -103,7 +103,7 @@ be added or moved without revisiting this record.
 
 | Group | Names | What it delivers |
 | --- | ---: | --- |
-| `oxide_batch_repository` | 117 | repository, explorer, operator, recovery, retention, paging, M7 durable-link ports/values, and #300 bounded durable repeat authority |
+| `oxide_batch_repository` | 118 | repository, explorer, operator, recovery, retention, paging, M7 durable-link ports/values, #300 bounded durable repeat authority, and #401 bounded repeat lineage |
 | `repeat_runtime` | 14 | #301 process-local repeat policy/interceptor contracts, redacted callback/failure/context values, runtime registrations, policy outcome, and bounded secondary diagnostics |
 | `oxide_batch_core` | 109 | durable domain values, definition identity, state, parameters, fault-policy values, the two M7 repeat capacity ceilings, and #300's shared `RepeatId` ownership |
 | `oxide_batch_plan` | 61 | compiled flow/plan declarations, M7 composition, structured scope/late-binding values, and #299 bounded repeat definition identity other than `RepeatId`, whose facade path is unchanged after #300 moves its ownership to core |
@@ -130,8 +130,8 @@ be added or moved without revisiting this record.
 | crate root | 1 | `VERSION` |
 
 The #300 repeat-state addition is deliberately value-oriented at the facade boundary. It also moves `RepeatId` from the plan crate to the shared core value layer while preserving the existing `oxide_batch::RepeatId` facade path; the reviewed group counts record that ownership move explicitly.
-`RepeatOrdinal`, `RepeatDecision`, `RepeatExecution`, and
-`RepeatCommitRequest` are bounded framework-owned durable values. They expose
+`RepeatOrdinal`, `RepeatDecision`, `RepeatExecution`, `RepeatCommitRequest`, and
+`RepeatLineage` are bounded framework-owned durable values. They expose
 no SQLx row/pool/transaction type, serializer document, credential, executor,
 or repository implementation handle. The repository capability and failure
 surface remains the existing facade-owned negotiation/error boundary; the four
