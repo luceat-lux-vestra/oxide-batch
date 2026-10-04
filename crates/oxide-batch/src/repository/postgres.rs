@@ -42,7 +42,8 @@ use crate::{
     PartitionPlanEntry, PartitionResult, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan,
     PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId,
     RecoveryRequest, RecoveryResult, RepeatCommitRequest, RepeatDecision, RepeatExecution,
-    RepeatId, RepeatOrdinal, RepositoryCapability, RepositoryDescriptor, RepositoryError,
+    RepeatId, RepeatLineage, RepeatOrdinal, RepositoryCapability, RepositoryDescriptor,
+    RepositoryError,
     RepositoryUnitOfWork, RequestDigest, RetentionAction, RetentionActionId, RetentionHold,
     RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey, RetryLimit,
     RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId, SkipCounts,
@@ -51,7 +52,7 @@ use crate::{
     StepPartitionId, StepPartitionProjection, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 7;
+const SUPPORTED_SCHEMA_VERSION: u32 = 8;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
