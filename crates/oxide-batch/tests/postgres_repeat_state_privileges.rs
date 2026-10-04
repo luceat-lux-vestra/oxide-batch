@@ -1,4 +1,4 @@
-//! Schema-7 least-privilege evidence for durable repeat state.
+//! Schema-8 least-privilege evidence for durable repeat state and lineage.
 //!
 //! The long-lived M5 role matrix predates `ob_repeat_execution`.
 //! Runtime may read, insert, and update bounded repeat state, but may not
@@ -183,7 +183,7 @@ const PROBES: &[Probe] = &[
 ];
 
 #[test]
-fn repeat_state_privileges_match_schema7_policy() -> Result<(), Box<dyn Error>> {
+fn repeat_state_privileges_match_schema8_policy() -> Result<(), Box<dyn Error>> {
     let Some(admin) = admin_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_ADMIN_TEST_URL is not set");
         return Ok(());
@@ -328,8 +328,8 @@ async fn run_report_in_database(admin: &str, database: &str) -> Result<(), Box<d
     retain_observation(
         "repeat-state-privileges",
         &json!({
-            "report": "schema-7 repeat-state least-privilege",
-            "scenario": "repeat_state_privileges_match_schema7_policy",
+            "report": "schema-8 repeat-state least-privilege",
+            "scenario": "repeat_state_privileges_match_schema8_policy",
             "fixture": "postgres-security-roles",
             "server_version": server,
             "postgres_major_version": major_version(&server),

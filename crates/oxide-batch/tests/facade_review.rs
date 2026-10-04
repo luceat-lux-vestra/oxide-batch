@@ -96,8 +96,10 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // #265 adds the durable-link repository contract: NestedJobLink,
     // NestedJobLinkRequest, and NestedJobTerminalObservation. #300 adds the
     // bounded durable repeat authority values: RepeatCommitRequest,
-    // RepeatDecision, RepeatExecution, and RepeatOrdinal.
-    ("oxide_batch_repository", 117),
+    // RepeatDecision, RepeatExecution, and RepeatOrdinal. #401 adds
+    // RepeatLineage so nested cycles and dynamic execution owners retain an
+    // explicit facade-owned restart identity.
+    ("oxide_batch_repository", 118),
     // #301 exposes the process-local repeat runtime contract: callback/policy/
     // interceptor traits and registrations, redacted failure/context values,
     // policy outcome, and the bounded secondary-failure ceiling.

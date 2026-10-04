@@ -547,7 +547,7 @@ pub use oxide_batch_repository::{
     RecoveryDisposition, RecoveryError, RecoveryEvidence, RecoveryField, RecoveryMarkers,
     RecoveryProposal, RecoveryRepository, RecoveryRequest, RecoveryRequestError, RecoveryResult,
     RecoverySnapshot, RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution,
-    RepeatOrdinal, RepositoryCapability, RepositoryDescriptor, RepositoryError,
+    RepeatLineage, RepeatOrdinal, RepositoryCapability, RepositoryDescriptor, RepositoryError,
     RepositoryUnitOfWork, RequestDigest, RequestField, RequestFieldError, RetentionAction,
     RetentionError, RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft,
     SequentialIdGenerator, StaleThreshold, StateEnvelopeDescriptor, StepExecutionProjection,

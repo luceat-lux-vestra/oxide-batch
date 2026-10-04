@@ -71,10 +71,10 @@ const REQUIRED_PATHS: &[&str] = &[
 ///
 /// The M5 preview installed schema 3; M6 `#144` added schema 4 component state,
 /// M7 `#265` added schema 5 durable nested-job linkage, and M7 `#276` adds schema 6
-/// scoped-resolution provenance, and M7 #300 adds schema 7 durable repeat state.
+/// scoped-resolution provenance, M7 #300 adds schema 7 durable repeat state, and M7 #401 adds schema 8 repeat lineage identity.
 /// The historical source denominator remains 1/2/3; populated 4 -> 5, 5 -> 6,
-/// and 6 -> 7 preservation are owned by their dedicated `PostgreSQL` DB design gates.
-const TARGET_SCHEMA_VERSION: u64 = 7;
+/// 6 -> 7 and 7 -> 8 preservation are owned by their dedicated `PostgreSQL` DB design gates.
+const TARGET_SCHEMA_VERSION: u64 = 8;
 
 /// The regression test the campaign keeps and does not stand in for.
 const KEPT_REGRESSION: &str = "newer_schema_is_rejected_without_guessing_compatibility";

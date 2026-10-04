@@ -10,13 +10,14 @@ use std::time::{Duration, SystemTime};
 
 use oxide_batch::{
     BoxFuture, Clock, ComponentRevision, DefinitionRevision, ExecutionContext,
-    FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowJobError, FlowLauncher, FlowNode,
-    FlowTarget, InMemoryJobRepository, JobName, JobParameters, JobRepository, JoinNode,
-    ListenerContext, ListenerError, MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH,
-    MAX_REPEAT_SECONDARY_FAILURES, NodeId, PartitionBudget, PartitionCount, PartitionedStepNode,
-    RepeatCallbackError, RepeatCallbackFailureKind, RepeatCallbackPhase, RepeatContext,
-    RepeatDecision, RepeatDefinition, RepeatFailureCause, RepeatId, RepeatInterceptor,
-    RepeatInterceptorDefinition, RepeatInterceptorId, RepeatInterceptorKind,
+    FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
+    InMemoryJobRepository, JobName, JobParameters, JobRepository, JoinNode, ListenerContext,
+    ListenerError, MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH,
+    MAX_REPEAT_SECONDARY_FAILURES, NodeId, PartitionBudget, PartitionCount, PartitionFactoryError,
+    PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
+    PartitionedStepNode, RepeatCallbackError, RepeatCallbackFailureKind, RepeatCallbackPhase,
+    RepeatContext, RepeatDecision, RepeatDefinition, RepeatFailureCause, RepeatId,
+    RepeatInterceptor, RepeatInterceptorDefinition, RepeatInterceptorId, RepeatInterceptorKind,
     RepeatInterceptorRegistration, RepeatPolicy, RepeatPolicyConfiguration, RepeatPolicyDefinition,
     RepeatPolicyKind, RepeatPolicyOutcome, RepeatPolicyRegistration, RepeatRuntimeRegistration,
     RepeatStateSchema, SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode, StateLimits,
@@ -746,7 +747,7 @@ async fn nested_repeat_wraps_inner_iterations_in_declared_order() -> Result<(), 
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn nested_parent_continue_fails_closed_without_durable_parent_lineage()
+async fn nested_parent_continue_reenters_child_under_new_durable_lineage()
 -> Result<(), Box<dyn Error>> {
     let events = Arc::new(Mutex::new(Vec::new()));
     let tasklet_calls = Arc::new(AtomicUsize::new(0));
@@ -792,7 +793,7 @@ async fn nested_parent_continue_fails_closed_without_durable_parent_lineage()
                 StepName::new(NODE)?,
                 Arc::new(RecordingTasklet {
                     calls: Arc::clone(&tasklet_calls),
-                    events: Arc::clone(&events),
+                    events,
                     mode: BodyMode::Complete,
                 }),
             ),
@@ -805,69 +806,150 @@ async fn nested_parent_continue_fails_closed_without_durable_parent_lineage()
         .launch(&job, &JobParameters::new(), &stop)
         .await?;
 
-    assert_eq!(tasklet_calls.load(Ordering::SeqCst), 2);
-    assert_eq!(inner_policy_calls.load(Ordering::SeqCst), 2);
-    assert_eq!(outer_policy_calls.load(Ordering::SeqCst), 1);
-    match report.outcome() {
-        FlowExecutionOutcome::Failed(FlowFailure::Repeat { failure, .. }) => {
-            match failure.primary() {
-                RepeatFailureCause::NestedContinuationUnsupported { repeat_id } => {
-                    assert_eq!(repeat_id.as_str(), "outer");
-                }
-                other => panic!("unexpected repeat primary: {other:?}"),
-            }
-            assert!(failure.secondary().is_empty());
-        }
-        other => panic!("unexpected flow outcome: {other:?}"),
-    }
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(tasklet_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(inner_policy_calls.load(Ordering::SeqCst), 4);
+    assert_eq!(outer_policy_calls.load(Ordering::SeqCst), 2);
 
     let mut unit = repository.begin().await?;
     let outer = unit
         .latest_repeat_execution(report.instance().id(), &node, &RepeatId::new("outer")?)
-        .await?;
+        .await?
+        .ok_or_else(|| std::io::Error::other("outer repeat state missing"))?;
     let inner = unit
         .latest_repeat_execution(report.instance().id(), &node, &RepeatId::new("inner")?)
         .await?
         .ok_or_else(|| std::io::Error::other("inner repeat state missing"))?;
     unit.rollback().await?;
-    assert!(
-        outer.is_none(),
-        "unsupported outer continuation must not commit"
-    );
+
+    assert_eq!(outer.ordinal().get(), 1);
+    assert_eq!(outer.decision(), RepeatDecision::Complete);
+    assert!(outer.lineage().is_root());
     assert_eq!(inner.ordinal().get(), 1);
     assert_eq!(inner.decision(), RepeatDecision::Complete);
+    assert_eq!(inner.lineage().ancestors().len(), 1);
+    assert_eq!(inner.lineage().ancestors()[0].0.as_str(), "outer");
+    assert_eq!(inner.lineage().ancestors()[0].1.get(), 1);
     Ok(())
 }
 
-#[test]
-fn partition_worker_repeat_is_rejected_before_executable_binding() -> Result<(), Box<dyn Error>> {
-    let name = JobName::new("partition-repeat-unsupported")?;
+#[tokio::test(flavor = "current_thread")]
+async fn partition_worker_repeat_restarts_from_its_own_durable_execution_lineage()
+-> Result<(), Box<dyn Error>> {
+    let name = JobName::new("partition-repeat-lineage")?;
     let manager = NodeId::new("partitioned")?;
-    let worker = StepNode::new(
-        NodeId::new("worker")?,
+    let worker = NodeId::new("worker")?;
+    let worker_definition = StepNode::new(
+        worker.clone(),
         StepName::new("worker")?,
         StepComponents::Tasklet(ComponentRevision::new("worker-v1")?),
     )
-    .with_repeat_definition(definition(1, &[])?);
+    .with_repeat_definition(definition(2, &[])?);
     let plan = FlowGraph::new(manager.clone())
         .with_node(FlowNode::partitioned_step(PartitionedStepNode::new(
             manager.clone(),
             StepName::new("partitioned")?,
-            worker,
+            worker_definition,
             ComponentRevision::new("partitioner-v1")?,
             ComponentRevision::new("canonical-v1")?,
-            PartitionCount::new(1)?,
+            PartitionCount::new(2)?,
             PartitionBudget::new(1, 2)?,
         )))
-        .with_sequence(manager, FlowTarget::Terminal(TerminalKind::Complete))?
+        .with_sequence(
+            manager.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
         .compile(&name, DefinitionRevision::new("v1")?)?;
 
-    match FlowJob::new(name, plan) {
-        Err(FlowJobError::RepeatRuntimeUnsupported { node }) => {
-            assert_eq!(node.as_str(), "worker");
+    let entries = ["alpha", "beta"]
+        .into_iter()
+        .map(|key| {
+            Ok(PartitionPlanEntry::new(
+                PartitionKey::new(key)?,
+                repeat_state(0)?,
+            )?)
+        })
+        .collect::<Result<Vec<_>, Box<dyn Error>>>()?;
+    let partitioner = PartitionPlanFactory::new(move |request| {
+        if usize::from(request.partition_count().get()) != entries.len() {
+            return Err(PartitionFactoryError::Rejected);
         }
-        other => panic!("unexpected partition repeat result: {other:?}"),
+        Ok(entries.clone())
+    });
+
+    let alpha_calls = Arc::new(AtomicUsize::new(0));
+    let beta_calls = Arc::new(AtomicUsize::new(0));
+    let worker_events = Arc::new(Mutex::new(Vec::new()));
+    let step_name = StepName::new("worker")?;
+    let factory_name = step_name.clone();
+    let factory = PartitionTaskletFactory::new(step_name, {
+        let alpha_calls = Arc::clone(&alpha_calls);
+        let beta_calls = Arc::clone(&beta_calls);
+        let worker_events = Arc::clone(&worker_events);
+        move |input| {
+            let (calls, mode) = if input.key().as_str() == "alpha" {
+                (Arc::clone(&alpha_calls), BodyMode::Complete)
+            } else {
+                (Arc::clone(&beta_calls), BodyMode::StopOn(1))
+            };
+            TaskletStep::new(
+                factory_name.clone(),
+                Arc::new(RecordingTasklet {
+                    calls,
+                    events: Arc::clone(&worker_events),
+                    mode,
+                }),
+            )
+        }
+    });
+    let policy_calls = Arc::new(AtomicUsize::new(0));
+    let policy_events = Arc::new(Mutex::new(Vec::new()));
+    let job = FlowJob::new(name, plan)?
+        .with_partitioned_tasklet(manager, partitioner, factory)?
+        .with_repeat_registration(
+            worker.clone(),
+            runtime_registration(2, &policy_events, Arc::clone(&policy_calls), &[])?,
+        )?;
+
+    let (clock, ids, repository) = infrastructure();
+    let (_source, stop) = StopSource::new();
+    let parameters = JobParameters::new();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+
+    let first = launcher.launch(&job, &parameters, &stop).await?;
+    assert_eq!(first.outcome(), &FlowExecutionOutcome::Stopped);
+    assert_eq!(alpha_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(beta_calls.load(Ordering::SeqCst), 2);
+
+    let restarted = launcher.launch(&job, &parameters, &stop).await?;
+    assert_eq!(restarted.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(restarted.instance().id(), first.instance().id());
+    assert_eq!(alpha_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(beta_calls.load(Ordering::SeqCst), 3);
+
+    let parent = restarted
+        .step_executions()
+        .last()
+        .ok_or_else(|| std::io::Error::other("partition parent missing"))?;
+    let mut unit = repository.begin().await?;
+    let partitions = unit.step_partition_plan(parent.id()).await?;
+    assert_eq!(partitions.len(), 2);
+    for partition in &partitions {
+        let worker_execution_id = partition
+            .worker_step_execution_id()
+            .ok_or_else(|| std::io::Error::other("partition worker missing"))?;
+        let repeat = unit
+            .repeat_execution(worker_execution_id, &RepeatId::new(REPEAT)?)
+            .await?
+            .ok_or_else(|| std::io::Error::other("partition repeat state missing"))?;
+        assert_eq!(repeat.ordinal().get(), 1);
+        assert_eq!(repeat.decision(), RepeatDecision::Complete);
+        assert!(repeat.lineage().is_root());
+        assert_eq!(repeat.definition_node_id(), &worker);
+        assert_ne!(repeat.node_id(), repeat.definition_node_id());
     }
+    unit.rollback().await?;
+    assert_eq!(policy_calls.load(Ordering::SeqCst), 4);
     Ok(())
 }
 

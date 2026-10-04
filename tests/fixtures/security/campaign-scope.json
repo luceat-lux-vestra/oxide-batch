@@ -3,7 +3,7 @@
   "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
   "gate": "docs/project/m5-design-gate-evidence.md",
   "plan": "docs/engineering/performance-plan.md",
-  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage, M7 #276 adds schema 6 value-free scope-resolution provenance, and M7 #300 adds schema 7 durable repeat state. The same five privilege classes remain; each newly durable table has a dedicated restricted-role report.",
+  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage, M7 #276 adds schema 6 value-free scope-resolution provenance, and M7 #300 adds schema 7 durable repeat state, and M7 #401 adds schema 8 repeat lineage identity. The same five privilege classes remain; each newly durable table has a dedicated restricted-role report.",
   "support_contract": {
     "postgres_versions": [
       "15",
@@ -15,7 +15,7 @@
       "15",
       "18"
     ],
-    "installed_schema_version": 7,
+    "installed_schema_version": 8,
     "tls_mode": "verify-full",
     "privilege_classes": [
       "migration",
@@ -82,11 +82,11 @@
     },
     {
       "id": "repeat-state-privileges",
-      "title": "Schema-7 repeat-state least-privilege",
-      "owes": "actual PostgreSQL allow/refuse evidence for the schema-7 repeat execution table under the committed roles and grants",
+      "title": "Schema-8 repeat-state least-privilege",
+      "owes": "actual PostgreSQL allow/refuse evidence for the schema-8 repeat execution table under the committed roles and grants",
       "package": "oxide-batch",
       "target": "postgres_repeat_state_privileges",
-      "name": "repeat_state_privileges_match_schema7_policy",
+      "name": "repeat_state_privileges_match_schema8_policy",
       "fixture": "postgres-security-roles",
       "database_report": true
     },
@@ -400,7 +400,7 @@
     ]
   },
   "repeat_state_privileges": {
-    "note": "Exact schema-7 probe denominator for `postgres_repeat_state_privileges.rs`. Runtime may read, insert, and update the bounded repeat row but may not directly delete it. Explorer, operator, and retention may read only; retention deletion is schema-owned step-execution cascade behavior rather than a direct grant.",
+    "note": "Exact schema-8 probe denominator for `postgres_repeat_state_privileges.rs`. Runtime may read, insert, and update the bounded repeat row but may not directly delete it. Explorer, operator, and retention may read only; retention deletion is schema-owned step-execution cascade behavior rather than a direct grant.",
     "report": "repeat-state-privileges",
     "total_probes": 16,
     "allowed_probes": 6,

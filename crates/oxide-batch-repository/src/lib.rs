@@ -77,7 +77,9 @@ pub use recovery::{
     RecoveryProposal, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence, StaleThreshold,
     SystemMonotonicClock,
 };
-pub use repeat::{RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatOrdinal};
+pub use repeat::{
+    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatLineage, RepeatOrdinal,
+};
 pub use repository::{
     BoxFuture, Clock, ExecutionControl, IdGenerationError, IdGenerator, JobInstanceSelection,
     JobRepository, RecoveryDecision, RecoveryDisposition, RecoveryField, RecoveryRequest,

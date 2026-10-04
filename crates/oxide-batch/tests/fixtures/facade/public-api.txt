@@ -402,6 +402,7 @@ oxide_batch::RepeatInterceptorDefinition
 oxide_batch::RepeatInterceptorId
 oxide_batch::RepeatInterceptorKind
 oxide_batch::RepeatInterceptorRegistration
+oxide_batch::RepeatLineage
 oxide_batch::RepeatOrdinal
 oxide_batch::RepeatPolicy
 oxide_batch::RepeatPolicyConfiguration

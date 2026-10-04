@@ -8,14 +8,15 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use oxide_batch::{
-    ComponentRevision, DefinitionRevision, DefinitionUpgrade, DefinitionUpgradeKey,
+    BatchStatus, ComponentRevision, DefinitionRevision, DefinitionUpgrade, DefinitionUpgradeKey,
     ExecutionContext, FailureCategory, FailureId, FailureSummary, FlowGraph, FlowNode, FlowTarget,
     InMemoryJobRepository, JobInstanceKey, JobName, JobParameters, JobRepository,
-    LifecycleTransition, NodeId, RepeatCommitRequest, RepeatDecision, RepeatDefinition, RepeatId,
-    RepeatOrdinal, RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind,
-    RepeatStateSchema, RepositoryError, SequentialIdGenerator, StartLimit, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepComponents, StepDefinitionUpgrade, StepName, StepNode,
-    SystemClock, TerminalKind,
+    LifecycleTransition, NodeId, PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry,
+    PartitionedStepNode, RepeatCommitRequest, RepeatDecision, RepeatDefinition, RepeatId,
+    RepeatLineage, RepeatOrdinal, RepeatPolicyConfiguration, RepeatPolicyDefinition,
+    RepeatPolicyKind, RepeatStateSchema, RepositoryError, SequentialIdGenerator, StartLimit,
+    StateLimits, StateSchemaId, StateSchemaVersion, StepComponents, StepDefinitionUpgrade,
+    StepName, StepNode, SystemClock, TerminalKind,
 };
 
 fn plan() -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
@@ -432,6 +433,343 @@ async fn repeat_lineage_rejects_prior_state_from_an_upgraded_definition()
         "a directed definition upgrade does not authorize carrying repeat lineage state across a different plan fingerprint",
     );
     rejected.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn nested_repeat_state_is_scoped_to_exact_parent_lineage() -> Result<(), Box<dyn Error>> {
+    let repository = repository();
+    let node = NodeId::new("repeat-step")?;
+    let inner = RepeatDefinition::new(
+        RepeatId::new("inner")?,
+        RepeatPolicyDefinition::new(
+            RepeatPolicyKind::new("bounded-count")?,
+            ComponentRevision::new("inner-policy-v1")?,
+            RepeatPolicyConfiguration::new("limit-1")?,
+        ),
+        Vec::new(),
+        RepeatStateSchema::new(
+            StateSchemaId::new("repeat.state")?,
+            StateSchemaVersion::new(1)?,
+        ),
+    )?;
+    let outer = RepeatDefinition::new(
+        RepeatId::new("outer")?,
+        RepeatPolicyDefinition::new(
+            RepeatPolicyKind::new("bounded-count")?,
+            ComponentRevision::new("outer-policy-v1")?,
+            RepeatPolicyConfiguration::new("limit-2")?,
+        ),
+        Vec::new(),
+        RepeatStateSchema::new(
+            StateSchemaId::new("repeat.state")?,
+            StateSchemaVersion::new(1)?,
+        ),
+    )?
+    .with_nested(inner)?;
+    let nested_plan = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(
+            StepNode::new(
+                node.clone(),
+                StepName::new("repeat-step")?,
+                StepComponents::Tasklet(ComponentRevision::new("tasklet-v1")?),
+            )
+            .with_repeat_definition(outer),
+        ))
+        .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(
+            &JobName::new("repeat-repository")?,
+            DefinitionRevision::new("nested-v1")?,
+        )?;
+    let (instance, step) = create_owner(&repository, &nested_plan).await?;
+
+    let lineage0 = RepeatLineage::root()
+        .child(&RepeatId::new("outer")?, RepeatOrdinal::new(0))
+        .ok_or_else(|| std::io::Error::other("first child lineage exceeds bound"))?;
+    let first = RepeatCommitRequest::new(
+        instance,
+        node.clone(),
+        step,
+        RepeatId::new("inner")?,
+        RepeatOrdinal::INITIAL,
+        state("child-0")?,
+        RepeatDecision::Complete,
+        *nested_plan.fingerprint(),
+    )
+    .with_lineage(lineage0.clone());
+    let mut unit = repository.begin().await?;
+    let committed0 = unit.commit_repeat_iteration(&first).await?;
+    assert_eq!(committed0.lineage(), &lineage0);
+    unit.commit().await?;
+
+    let lineage1 = RepeatLineage::root()
+        .child(&RepeatId::new("outer")?, RepeatOrdinal::new(1))
+        .ok_or_else(|| std::io::Error::other("second child lineage exceeds bound"))?;
+    let second = RepeatCommitRequest::new(
+        instance,
+        node.clone(),
+        step,
+        RepeatId::new("inner")?,
+        RepeatOrdinal::INITIAL,
+        state("child-1")?,
+        RepeatDecision::Complete,
+        *nested_plan.fingerprint(),
+    )
+    .with_lineage(lineage1.clone());
+
+    let mut premature = repository.begin().await?;
+    assert_eq!(
+        premature.commit_repeat_iteration(&second).await,
+        Err(RepositoryError::RepeatStateCorrupt),
+        "a child lineage cannot move to a parent ordinal that is not yet the current proposed parent iteration",
+    );
+    premature.rollback().await?;
+
+    let parent0 = RepeatCommitRequest::new(
+        instance,
+        node.clone(),
+        step,
+        RepeatId::new("outer")?,
+        RepeatOrdinal::INITIAL,
+        state("outer-0")?,
+        RepeatDecision::Continue,
+        *nested_plan.fingerprint(),
+    );
+    let mut advance_parent = repository.begin().await?;
+    advance_parent.commit_repeat_iteration(&parent0).await?;
+    advance_parent.commit().await?;
+
+    let mut stale_exact = repository.begin().await?;
+    assert_eq!(
+        stale_exact.commit_repeat_iteration(&first).await,
+        Err(RepositoryError::RepeatStateCorrupt),
+        "an exact replay from a superseded parent iteration is stale, not idempotent",
+    );
+    stale_exact.rollback().await?;
+
+    let mut replace = repository.begin().await?;
+    let committed1 = replace.commit_repeat_iteration(&second).await?;
+    assert_eq!(committed1.ordinal(), RepeatOrdinal::INITIAL);
+    assert_eq!(committed1.lineage(), &lineage1);
+    replace.commit().await?;
+
+    let stale = RepeatCommitRequest::new(
+        instance,
+        node.clone(),
+        step,
+        RepeatId::new("inner")?,
+        RepeatOrdinal::INITIAL,
+        state("stale-child-0")?,
+        RepeatDecision::Complete,
+        *nested_plan.fingerprint(),
+    )
+    .with_lineage(lineage0);
+    let mut stale_replay = repository.begin().await?;
+    assert_eq!(
+        stale_replay.commit_repeat_iteration(&stale).await,
+        Err(RepositoryError::RepeatStateCorrupt),
+        "a superseded parent lineage must not overwrite the current child cycle",
+    );
+    stale_replay.rollback().await?;
+
+    let mut terminal = repository.begin().await?;
+    let invalid_next = RepeatCommitRequest::new(
+        instance,
+        node,
+        step,
+        RepeatId::new("inner")?,
+        RepeatOrdinal::new(1),
+        state("must-not-advance")?,
+        RepeatDecision::Continue,
+        *nested_plan.fingerprint(),
+    )
+    .with_lineage(lineage1);
+    assert_eq!(
+        terminal.commit_repeat_iteration(&invalid_next).await,
+        Err(RepositoryError::RepeatAlreadyComplete)
+    );
+    terminal.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn repeat_lineage_and_definition_owner_mismatch_fail_closed() -> Result<(), Box<dyn Error>> {
+    let repository = repository();
+    let plan = plan()?;
+    let (instance, step) = create_owner(&repository, &plan).await?;
+
+    let wrong_parent = RepeatLineage::root()
+        .child(&RepeatId::new("not-a-parent")?, RepeatOrdinal::INITIAL)
+        .ok_or_else(|| std::io::Error::other("test lineage exceeds bound"))?;
+    let wrong_lineage = request(
+        &plan,
+        instance,
+        step,
+        0,
+        state("wrong-lineage")?,
+        RepeatDecision::Continue,
+    )?
+    .with_lineage(wrong_parent);
+    let mut unit = repository.begin().await?;
+    assert_eq!(
+        unit.commit_repeat_iteration(&wrong_lineage).await,
+        Err(RepositoryError::RepeatStateCorrupt)
+    );
+    unit.rollback().await?;
+
+    let wrong_definition = request(
+        &plan,
+        instance,
+        step,
+        0,
+        state("wrong-owner")?,
+        RepeatDecision::Continue,
+    )?
+    .with_definition_node_id(NodeId::new("worker-definition")?);
+    let mut owner = repository.begin().await?;
+    assert_eq!(
+        owner.commit_repeat_iteration(&wrong_definition).await,
+        Err(RepositoryError::RepeatStateCorrupt),
+        "a dynamic execution owner cannot claim a different definition without a durable partition assignment",
+    );
+    owner.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn partition_repeat_definition_owner_requires_exact_durable_worker_assignment()
+-> Result<(), Box<dyn Error>> {
+    let repository = repository();
+    let manager = NodeId::new("partition-manager")?;
+    let worker = NodeId::new("partition-worker")?;
+    let repeat = RepeatDefinition::new(
+        RepeatId::new("window")?,
+        RepeatPolicyDefinition::new(
+            RepeatPolicyKind::new("bounded-count")?,
+            ComponentRevision::new("policy-v1")?,
+            RepeatPolicyConfiguration::new("limit-3")?,
+        ),
+        Vec::new(),
+        RepeatStateSchema::new(
+            StateSchemaId::new("repeat.state")?,
+            StateSchemaVersion::new(1)?,
+        ),
+    )?;
+    let partition_plan = FlowGraph::new(manager.clone())
+        .with_node(FlowNode::partitioned_step(PartitionedStepNode::new(
+            manager.clone(),
+            StepName::new("partition-manager")?,
+            StepNode::new(
+                worker.clone(),
+                StepName::new("partition-worker")?,
+                StepComponents::Tasklet(ComponentRevision::new("tasklet-v1")?),
+            )
+            .with_repeat_definition(repeat),
+            ComponentRevision::new("partitioner-v1")?,
+            ComponentRevision::new("aggregation-v1")?,
+            PartitionCount::new(1)?,
+            PartitionBudget::new(1, 2)?,
+        )))
+        .with_sequence(
+            manager.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
+        .compile(
+            &JobName::new("repeat-partition-owner")?,
+            DefinitionRevision::new("v1")?,
+        )?;
+
+    let key = JobInstanceKey::new(
+        JobName::new("repeat-partition-owner")?,
+        &JobParameters::new(),
+    );
+    let wrong_worker_node = NodeId::new("wrong-worker")?;
+    let mut setup = repository.begin().await?;
+    let instance = setup
+        .select_or_create_job_instance(&key)
+        .await?
+        .instance()
+        .clone();
+    let job = setup
+        .create_job_execution_with_definition(instance.id(), partition_plan.definition_identity())
+        .await?;
+    let parent = setup
+        .create_flow_step_execution(
+            job.id(),
+            &StepName::new("partition-manager")?,
+            &manager,
+            StartLimit::UNRESTRICTED,
+        )
+        .await?;
+    let parent = setup
+        .transition_step_execution(
+            parent.id(),
+            parent.version(),
+            LifecycleTransition::new(BatchStatus::Started, SystemTime::now()),
+        )
+        .await?;
+    let wrong_worker = setup
+        .create_flow_step_execution(
+            job.id(),
+            &StepName::new("wrong-worker")?,
+            &wrong_worker_node,
+            StartLimit::UNRESTRICTED,
+        )
+        .await?;
+    setup.commit().await?;
+
+    let unassigned = RepeatCommitRequest::new(
+        instance.id(),
+        wrong_worker_node.clone(),
+        wrong_worker.id(),
+        RepeatId::new("window")?,
+        RepeatOrdinal::INITIAL,
+        state("unassigned-spoof")?,
+        RepeatDecision::Continue,
+        *partition_plan.fingerprint(),
+    )
+    .with_definition_node_id(worker.clone());
+    let mut no_assignment = repository.begin().await?;
+    assert_eq!(
+        no_assignment.commit_repeat_iteration(&unassigned).await,
+        Err(RepositoryError::RepeatStateCorrupt),
+        "a same-job step execution cannot claim a partition worker repeat definition without assignment",
+    );
+    no_assignment.rollback().await?;
+
+    let entry = PartitionPlanEntry::new(PartitionKey::new("alpha")?, state("partition-context")?)?;
+    let mut planning = repository.begin().await?;
+    let planned = planning
+        .create_step_partition_plan(parent.id(), &[entry])
+        .await?;
+    planning.commit().await?;
+
+    let mut assignment = repository.begin().await?;
+    assignment
+        .assign_step_partition(planned[0].id(), planned[0].version(), wrong_worker.id())
+        .await?;
+    assignment.commit().await?;
+
+    let assigned_spoof = RepeatCommitRequest::new(
+        instance.id(),
+        wrong_worker_node,
+        wrong_worker.id(),
+        RepeatId::new("window")?,
+        RepeatOrdinal::INITIAL,
+        state("assigned-spoof")?,
+        RepeatDecision::Continue,
+        *partition_plan.fingerprint(),
+    )
+    .with_definition_node_id(worker);
+    let mut wrong_identity = repository.begin().await?;
+    assert_eq!(
+        wrong_identity
+            .commit_repeat_iteration(&assigned_spoof)
+            .await,
+        Err(RepositoryError::RepeatStateCorrupt),
+        "partition assignment alone is insufficient when the durable worker NodeId is not the deterministic manager/key identity",
+    );
+    wrong_identity.rollback().await?;
     Ok(())
 }
 
