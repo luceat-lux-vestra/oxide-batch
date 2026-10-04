@@ -331,7 +331,6 @@ fn crash_after_decision_commit_reuses_durable_decision() -> Result<(), Box<dyn E
     run_parent_scenario(CrashPoint::AfterDecisionCommit)
 }
 
-
 const REPEAT_CRASH_MODE_ENV: &str = "OXIDEBATCH_M7_REPEAT_LINEAGE_CRASH_MODE";
 const REPEAT_NODE: &str = "repeat-step";
 const OUTER_REPEAT: &str = "outer";
@@ -594,13 +593,7 @@ async fn inspect_recover_and_restart_repeat(
         .next()
         .ok_or("repeat crash worker did not create an execution")?;
     let inner0 = inspect
-        .latest_repeat_execution_in_lineage(
-            instance.id(),
-            &node,
-            &node,
-            &lineage0,
-            &inner_id,
-        )
+        .latest_repeat_execution_in_lineage(instance.id(), &node, &node, &lineage0, &inner_id)
         .await?
         .ok_or("crash boundary did not retain the completed child lineage")?;
     let outer_before = inspect
@@ -664,13 +657,7 @@ async fn inspect_recover_and_restart_repeat(
         .await?
         .ok_or("restart left no completed parent repeat")?;
     let inner1 = final_state
-        .latest_repeat_execution_in_lineage(
-            instance.id(),
-            &node,
-            &node,
-            &lineage1,
-            &inner_id,
-        )
+        .latest_repeat_execution_in_lineage(instance.id(), &node, &node, &lineage1, &inner_id)
         .await?
         .ok_or("restart left no child state for the next parent lineage")?;
     final_state.rollback().await?;
