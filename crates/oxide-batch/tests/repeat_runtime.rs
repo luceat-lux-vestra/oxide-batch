@@ -11,20 +11,20 @@ use std::time::{Duration, SystemTime};
 use oxide_batch::{
     BoxFuture, Clock, ComponentRevision, DefinitionRevision, ExecutionContext,
     FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
-    InMemoryJobRepository, JobName, JobParameters, JobRepository, JoinNode,
-    ListenerContext, ListenerError, MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH,
+    InMemoryJobRepository, JobName, JobParameters, JobRepository, JoinNode, ListenerContext,
+    ListenerError, MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH,
     MAX_REPEAT_SECONDARY_FAILURES, NodeId, PartitionBudget, PartitionCount, PartitionKey,
     PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory, PartitionedStepNode,
     RepeatCallbackError, RepeatCallbackFailureKind, RepeatCallbackPhase, RepeatContext,
     RepeatDecision, RepeatDefinition, RepeatFailureCause, RepeatId, RepeatInterceptor,
     RepeatInterceptorDefinition, RepeatInterceptorId, RepeatInterceptorKind,
-    RepeatInterceptorRegistration, RepeatPolicy, RepeatPolicyConfiguration, RepeatPolicyDefinition,
-    RepeatLineage, RepeatOrdinal, RepeatPolicyKind, RepeatPolicyOutcome, RepeatPolicyRegistration,
-    RepeatRuntimeRegistration, RepeatStateSchema, SequentialIdGenerator, SplitBranch, SplitBudget,
-    SplitNode, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepComponents, StepExecutionListener, StepName, StepNode,
-    StopSource, Tasklet, TaskletContext, TaskletError, TaskletExecutionOutcome, TaskletOutcome,
-    TaskletStep, TaskletStepFactory, TerminalKind,
+    RepeatInterceptorRegistration, RepeatLineage, RepeatOrdinal, RepeatPolicy,
+    RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind, RepeatPolicyOutcome,
+    RepeatPolicyRegistration, RepeatRuntimeRegistration, RepeatStateSchema, SequentialIdGenerator,
+    SplitBranch, SplitBudget, SplitNode, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepComponents, StepExecutionListener, StepName, StepNode, StopSource, Tasklet, TaskletContext,
+    TaskletError, TaskletExecutionOutcome, TaskletOutcome, TaskletStep, TaskletStepFactory,
+    TerminalKind,
 };
 
 const NODE: &str = "repeat-step";
@@ -840,8 +840,8 @@ async fn nested_parent_continue_reenters_child_with_exact_parent_lineage()
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn partition_workers_keep_independent_repeat_execution_owners()
--> Result<(), Box<dyn Error>> {
+async fn partition_workers_keep_independent_repeat_execution_owners() -> Result<(), Box<dyn Error>>
+{
     let events = Arc::new(Mutex::new(Vec::new()));
     let tasklet_calls = Arc::new(AtomicUsize::new(0));
     let policy_calls = Arc::new(AtomicUsize::new(0));
