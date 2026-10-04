@@ -4626,7 +4626,7 @@ impl<'a> FlowLauncher<'a> {
 
         let step_owner = crate::scope_runtime::ScopeStepOwner {
             execution_id: created.id(),
-            definition_node_id,
+            node_id: definition_node_id,
             step_name: step.name(),
         };
         let mut step_scope = match self
@@ -4669,7 +4669,7 @@ impl<'a> FlowLauncher<'a> {
             step_scope.as_ref(),
         );
         let repeat_definition =
-            repeat_step(&job.plan, definition_definition_node_id).and_then(crate::StepNode::repeat_definition);
+            repeat_step(&job.plan, definition_node_id).and_then(crate::StepNode::repeat_definition);
         let repeat_invocation = match repeat_definition {
             Some(definition) => {
                 let registration = job.repeat_registration(definition_node_id).ok_or_else(|| {
