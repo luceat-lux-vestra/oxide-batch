@@ -82,11 +82,11 @@
     },
     {
       "id": "repeat-state-privileges",
-      "title": "Schema-7 repeat-state least-privilege",
-      "owes": "actual PostgreSQL allow/refuse evidence for the schema-7 repeat execution table under the committed roles and grants",
+      "title": "Schema-8 repeat-state least-privilege",
+      "owes": "actual PostgreSQL allow/refuse evidence for the schema-8 repeat execution table under the committed roles and grants",
       "package": "oxide-batch",
       "target": "postgres_repeat_state_privileges",
-      "name": "repeat_state_privileges_match_schema7_policy",
+      "name": "repeat_state_privileges_match_schema8_policy",
       "fixture": "postgres-security-roles",
       "database_report": true
     },
