@@ -4,10 +4,11 @@
 
 use std::error::Error;
 use std::num::NonZeroU64;
-use std::process::{Command, ExitStatus};
+use std::path::{Path, PathBuf};
+use std::process::{Child, Command, ExitStatus};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, ExecutionContext,
@@ -332,6 +333,8 @@ fn crash_after_decision_commit_reuses_durable_decision() -> Result<(), Box<dyn E
 }
 
 const REPEAT_CRASH_MODE_ENV: &str = "OXIDEBATCH_M7_REPEAT_LINEAGE_CRASH_MODE";
+const REPEAT_CRASH_HANDSHAKE_ENV: &str = "OXIDEBATCH_M7_REPEAT_LINEAGE_HANDSHAKE";
+const REPEAT_CRASH_WAIT_BOUND: Duration = Duration::from_secs(20);
 const REPEAT_NODE: &str = "repeat-step";
 const OUTER_REPEAT: &str = "outer";
 const INNER_REPEAT: &str = "inner";
@@ -347,6 +350,16 @@ enum RepeatCrashPoint {
     AfterChildComplete,
     AfterParentPolicy,
     AfterParentCommit,
+}
+
+async fn wait_for_repeat_process_kill() -> Result<(), RepeatCallbackError> {
+    let path = std::env::var(REPEAT_CRASH_HANDSHAKE_ENV)
+        .map(PathBuf::from)
+        .map_err(RepeatCallbackError::from_error)?;
+    std::fs::write(path, b"ready").map_err(RepeatCallbackError::from_error)?;
+    loop {
+        tokio::time::sleep(Duration::from_mins(1)).await;
+    }
 }
 
 impl RepeatCrashPoint {
@@ -398,7 +411,8 @@ impl RepeatPolicy for CrashRepeatPolicy {
                 && self.crash == Some(RepeatCrashPoint::AfterChildComplete)
                 && context.ordinal() == RepeatOrdinal::INITIAL
             {
-                std::process::exit(CRASH_EXIT_CODE);
+                wait_for_repeat_process_kill().await?;
+                return Err(RepeatCallbackError::new());
             }
             let state = repeat_crash_state(context.ordinal().get())
                 .map_err(RepeatCallbackError::from_error)?;
@@ -424,7 +438,8 @@ impl RepeatInterceptor for CrashOuterInterceptor {
             if self.crash == Some(RepeatCrashPoint::AfterParentCommit)
                 && context.ordinal() == RepeatOrdinal::new(1)
             {
-                std::process::exit(CRASH_EXIT_CODE);
+                wait_for_repeat_process_kill().await?;
+                return Err(RepeatCallbackError::new());
             }
             Ok(())
         })
@@ -439,7 +454,8 @@ impl RepeatInterceptor for CrashOuterInterceptor {
             if self.crash == Some(RepeatCrashPoint::AfterParentPolicy)
                 && context.ordinal() == RepeatOrdinal::INITIAL
             {
-                std::process::exit(CRASH_EXIT_CODE);
+                wait_for_repeat_process_kill().await?;
+                return Err(RepeatCallbackError::new());
             }
             Ok(())
         })
@@ -552,13 +568,46 @@ async fn run_repeat_crash_worker(
     Err("repeat-lineage crash worker crossed the selected process-exit boundary".into())
 }
 
-fn spawn_repeat_crash_worker(point: RepeatCrashPoint) -> Result<ExitStatus, Box<dyn Error>> {
+fn repeat_crash_handshake_path(point: RepeatCrashPoint) -> PathBuf {
+    std::env::temp_dir().join(format!(
+        "oxide-batch-m7-repeat-lineage-{}-{}",
+        std::process::id(),
+        point.environment_value()
+    ))
+}
+
+async fn wait_for_repeat_crash_handshake(path: &Path) -> Result<(), Box<dyn Error>> {
+    let started = Instant::now();
+    while !path.exists() {
+        if started.elapsed() >= REPEAT_CRASH_WAIT_BOUND {
+            return Err(format!("timed out waiting for {}", path.display()).into());
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    Ok(())
+}
+
+fn spawn_repeat_crash_worker(
+    point: RepeatCrashPoint,
+    handshake: &Path,
+) -> Result<Child, Box<dyn Error>> {
     Ok(Command::new(std::env::current_exe()?)
         .arg("--exact")
         .arg("repeat_lineage_crash_worker_process")
         .arg("--nocapture")
         .env(REPEAT_CRASH_MODE_ENV, point.environment_value())
-        .status()?)
+        .env(REPEAT_CRASH_HANDSHAKE_ENV, handshake)
+        .spawn()?)
+}
+
+fn kill_repeat_crash_worker(child: &mut Child) -> Result<(), Box<dyn Error>> {
+    child.kill()?;
+    let status = child.wait()?;
+    assert!(
+        !status.success(),
+        "repeat-lineage worker must be forcibly terminated"
+    );
+    Ok(())
 }
 
 #[allow(
@@ -687,15 +736,17 @@ fn run_repeat_parent_scenario(point: RepeatCrashPoint) -> Result<(), Box<dyn Err
         Ok::<(), Box<dyn Error>>(())
     })?;
 
-    assert_eq!(
-        spawn_repeat_crash_worker(point)?.code(),
-        Some(CRASH_EXIT_CODE)
-    );
+    let handshake = repeat_crash_handshake_path(point);
+    let _ = std::fs::remove_file(&handshake);
+    let mut child = spawn_repeat_crash_worker(point, &handshake)?;
+    runtime.block_on(wait_for_repeat_crash_handshake(&handshake))?;
+    kill_repeat_crash_worker(&mut child)?;
     runtime.block_on(inspect_recover_and_restart_repeat(
         point,
         runtime_url.clone(),
     ))?;
     runtime.block_on(remove_job(&migrator_url, point.job_name()))?;
+    let _ = std::fs::remove_file(handshake);
     Ok(())
 }
 
