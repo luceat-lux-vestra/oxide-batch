@@ -227,6 +227,14 @@ bash "${fixture_root}/design-gate/run-schema7-upgrade-gate.sh" \
   "${fixture_root}" \
   "${temporary_root}"
 
+# Schema-7 to schema-8 evidence proves the additive repeat-lineage columns
+# backfill existing root repeat state without rewriting prior durable meaning.
+bash "${fixture_root}/design-gate/run-schema8-upgrade-gate.sh" \
+  "${container_name}" \
+  "${repository_root}" \
+  "${fixture_root}" \
+  "${temporary_root}"
+
 (
   cd "${repository_root}"
   OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
