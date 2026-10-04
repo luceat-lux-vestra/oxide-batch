@@ -6599,11 +6599,18 @@ fn decode_flow_decision(row: &PgRow) -> Result<FlowDecision, RepositoryError> {
 
 fn decode_repeat_execution(row: &PgRow) -> Result<RepeatExecution, RepositoryError> {
     let step_execution_id = StepExecutionId::new(read_u64(row, "step_execution_id")?)?;
+    let job_execution_id = JobExecutionId::new(read_u64(row, "job_execution_id")?)?;
     let job_instance_id = JobInstanceId::new(read_u64(row, "job_instance_id")?)?;
     let node_id = NodeId::new(read_text(row, "step_logical_id")?)
         .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let definition_node_id = NodeId::new(read_text(row, "definition_node_id")?)
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
     let repeat_id = RepeatId::new(read_text(row, "repeat_id")?)
         .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let Json(parent_lineage): Json<Value> = row
+        .try_get("parent_lineage")
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let lineage = decode_repeat_lineage(&parent_lineage)?;
     let ordinal = u32::try_from(read_u64(row, "ordinal")?)
         .map(RepeatOrdinal::new)
         .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
@@ -6668,11 +6675,41 @@ fn decode_repeat_execution(row: &PgRow) -> Result<RepeatExecution, RepositoryErr
     if plan_fingerprint != definition_fingerprint {
         return Err(RepositoryError::RepeatStateCorrupt);
     }
+
+    let binding_count = read_u64(row, "partition_binding_count")?;
+    let manager = read_optional_text(row, "partition_manager_node_id")?
+        .map(NodeId::new)
+        .transpose()
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
+    let parent_job_execution_id = row
+        .try_get::<Option<i64>, _>("partition_parent_job_execution_id")
+        .map_err(|_| RepositoryError::RepeatStateCorrupt)?
+        .map(|value| {
+            JobExecutionId::new(
+                u64::try_from(value).map_err(|_| RepositoryError::RepeatStateCorrupt)?,
+            )
+            .map_err(RepositoryError::from)
+        })
+        .transpose()?;
+    let partition_manager = if definition_node_id == node_id {
+        if binding_count != 0 || manager.is_some() || parent_job_execution_id.is_some() {
+            return Err(RepositoryError::RepeatStateCorrupt);
+        }
+        None
+    } else {
+        if binding_count != 1 || parent_job_execution_id != Some(job_execution_id) {
+            return Err(RepositoryError::RepeatStateCorrupt);
+        }
+        Some(manager.ok_or(RepositoryError::RepeatStateCorrupt)?)
+    };
+
     let record = RepeatExecution::new(
         job_instance_id,
         node_id,
+        definition_node_id,
         step_execution_id,
         repeat_id,
+        lineage,
         ordinal,
         state,
         decision,
@@ -6687,8 +6724,14 @@ fn decode_repeat_execution(row: &PgRow) -> Result<RepeatExecution, RepositoryErr
         record.state().clone(),
         record.decision(),
         *record.plan_fingerprint(),
-    );
-    if !super::repeat_request_matches_manifest(&definition_manifest, &request) {
+    )
+    .with_definition_node_id(record.definition_node_id().clone())
+    .with_lineage(record.lineage().clone());
+    if !super::repeat_request_matches_manifest(
+        &definition_manifest,
+        &request,
+        partition_manager.as_ref(),
+    ) {
         return Err(RepositoryError::RepeatStateCorrupt);
     }
     Ok(record)
