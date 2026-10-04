@@ -1794,11 +1794,18 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move {
             self.validate_repeat_request(request)?;
             let key = (request.step_execution_id(), request.repeat_id().clone());
-            if let Some(existing) = self.staged.repeat_executions.get(&key).cloned() {
+            let same_current_lineage = self
+                .staged
+                .repeat_executions
+                .get(&key)
+                .cloned()
+                .filter(|existing| {
+                    existing.definition_node_id() == request.definition_node_id()
+                        && existing.lineage() == request.lineage()
+                });
+            if let Some(existing) = same_current_lineage {
                 let exact_replay = existing.job_instance_id() == request.job_instance_id()
                     && existing.node_id() == request.node_id()
-                    && existing.definition_node_id() == request.definition_node_id()
-                    && existing.lineage() == request.lineage()
                     && existing.ordinal() == request.ordinal()
                     && existing.state() == request.state()
                     && existing.decision() == request.decision()
