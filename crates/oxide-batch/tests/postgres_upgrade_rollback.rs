@@ -68,9 +68,9 @@ use upgrade::{
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade reaches before the rollback: the current
-/// installed schema (6, since M7 `#276`), not the schema-3 target the M5
+/// installed schema (8, including #401 repeat lineage), not the schema-3 target the M5
 /// preview named when it was current.
-const UPGRADED_VERSION: u32 = 7;
+const UPGRADED_VERSION: u32 = 8;
 
 /// The metadata schema the logical backup covers.
 const DUMPED_SCHEMA: &str = "oxide_batch";
