@@ -195,4 +195,3 @@ jobs:
         if: ${{ always() && steps.enable-sccache.outcome == 'success' && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
         continue-on-error: true
         run: sccache --show-stats --stats-format=json
-
