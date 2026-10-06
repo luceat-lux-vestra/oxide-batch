@@ -1,0 +1,211 @@
+name: Fast compiler cache prime
+
+on:
+  schedule:
+    - cron: "17 */4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fast-sccache-main-prime
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: never
+  SCCACHE_CACHE_SIZE: 768M
+  RUSTC_WRAPPER: sccache
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  prime:
+    name: main Fast compiler cache prime
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write # Prune older protected-main Fast compiler-cache entries after a successful save.
+      contents: read # Check out the exact protected default-branch source being cached.
+    steps:
+      - name: Check out protected default branch
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify protected-main authority
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          EXPECTED_SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          git log -1 --check
+
+      - name: Resolve bounded compiler-cache identity
+        id: cache-id
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          root_prefix="oxide-fast-sccache-v1-linux-"
+          family="${root_prefix}${toolchain_hash}"
+          lock_prefix="${family}-${lock_hash}-"
+          key="${lock_prefix}${GITHUB_SHA}"
+
+          {
+            echo "root_prefix=$root_prefix"
+            echo "family=$family"
+            echo "lock_prefix=$lock_prefix"
+            echo "key=$key"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Fast compiler-cache key: $key"
+
+      - name: Restore newest compatible main compiler cache
+        id: restore-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.cache-id.outputs.lock_prefix }}
+            ${{ steps.cache-id.outputs.family }}-
+
+      - name: Protected-main compiler cache already current
+        if: ${{ steps.restore-cache.outputs.cache-hit == 'true' }}
+        run: echo "Exact protected-main Fast compiler cache already exists; no prime work is needed."
+
+      - name: Install verified sccache 0.18.0
+        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v0.18.0-x86_64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-x86_64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+
+          echo "45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89  $archive" \
+            | sha256sum --check --strict
+
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Configure local sccache directory
+        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache" >> "$GITHUB_ENV"
+
+      - name: Fetch locked dependencies
+        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        run: cargo fetch --locked
+
+      - name: Prime exact Fast Rust compiler outputs
+        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          sccache --zero-stats
+
+          cargo clippy --workspace --all-targets --all-features -- \
+            -D warnings \
+            -A clippy::too_many_arguments \
+            -A clippy::too_many_lines
+
+          cargo test --workspace --all-features --lib
+
+          sccache --show-stats --stats-format=json | tee /tmp/sccache-main-prime-stats.json
+          python3 - /tmp/sccache-main-prime-stats.json <<'PY'
+          import json
+          import sys
+
+          stats = json.load(open(sys.argv[1], encoding="utf-8")).get("stats", {})
+          rust_hits = stats.get("cache_hits", {}).get("counts", {}).get("Rust", 0)
+          rust_misses = stats.get("cache_misses", {}).get("counts", {}).get("Rust", 0)
+          read_errors = stats.get("cache_read_errors", 0)
+          write_errors = stats.get("cache_write_errors", 0)
+
+          print(
+              f"main-prime rust_hits={rust_hits} rust_misses={rust_misses} "
+              f"read_errors={read_errors} write_errors={write_errors}"
+          )
+          if read_errors != 0 or write_errors != 0:
+              raise SystemExit("main compiler-cache prime recorded cache I/O errors")
+          PY
+
+      - name: Save exact protected-main compiler cache
+        id: save-cache
+        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.cache-id.outputs.key }}
+
+      - name: Keep only current and one previous Fast compiler cache
+        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' && steps.save-cache.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_KEY: ${{ steps.cache-id.outputs.key }}
+          ROOT_PREFIX: ${{ steps.cache-id.outputs.root_prefix }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="refs/heads/$DEFAULT_BRANCH"
+
+          list_caches() {
+            gh api --paginate --slurp -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100"
+          }
+
+          caches="$(list_caches)"
+          mapfile -t delete_ids < <(
+            jq -r \
+              --arg prefix "$ROOT_PREFIX" \
+              --arg current "$CURRENT_KEY" \
+              --arg ref "$ref" '
+                [
+                  .[].actions_caches[]
+                  | select(
+                      .ref == $ref
+                      and (.key | startswith($prefix))
+                      and .key != $current
+                    )
+                ]
+                | sort_by(.created_at)
+                | reverse
+                | .[1:][]
+                | .id
+              ' <<<"$caches"
+          )
+
+          for cache_id in "${delete_ids[@]}"; do
+            gh api --method DELETE \
+              -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/actions/caches/$cache_id"
+          done
+
+          remaining="$(
+            list_caches | jq \
+              --arg prefix "$ROOT_PREFIX" \
+              --arg ref "$ref" '
+                [
+                  .[].actions_caches[]
+                  | select(.ref == $ref and (.key | startswith($prefix)))
+                ]
+                | length
+              '
+          )"
+          test "$remaining" -le 2
+          echo "Retained $remaining protected-main Fast compiler cache entries."
