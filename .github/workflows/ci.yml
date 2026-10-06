@@ -337,7 +337,7 @@ jobs:
       - name: Run final-only integration shard 1
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/run-integration-shard.py 1 4
-      
+
       - name: Show integration compiler cache stats
         if: ${{ always() && steps.integration-enable-sccache.outcome == 'success' }}
         continue-on-error: true
@@ -432,7 +432,7 @@ jobs:
       - name: Run final-only integration shard 2
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/run-integration-shard.py 2 4
-      
+
       - name: Show integration compiler cache stats
         if: ${{ always() && steps.integration-enable-sccache.outcome == 'success' }}
         continue-on-error: true
@@ -527,7 +527,7 @@ jobs:
       - name: Run final-only integration shard 3
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: python3 .github/scripts/run-integration-shard.py 3 4
-      
+
       - name: Show integration compiler cache stats
         if: ${{ always() && steps.integration-enable-sccache.outcome == 'success' }}
         continue-on-error: true
