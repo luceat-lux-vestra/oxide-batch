@@ -98,6 +98,79 @@ jobs:
         if: ${{ steps.docs-only-scope.outcome == 'success' && steps.docs-only-scope.outputs.docs_only == 'true' }}
         run: echo "Trusted protected-base classification proved documentation-only scope; Rust product validation is not applicable."
 
+      - name: Resolve protected-main compiler cache identity
+        id: fast-cache-id
+        if: ${{ (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') && steps.resolve-trusted-base.outcome == 'success' }}
+        env:
+          BASE_SHA: ${{ steps.resolve-trusted-base.outputs.base_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+
+          family="oxide-fast-sccache-v1-linux-${toolchain_hash}"
+          lock_prefix="${family}-${lock_hash}-"
+          key="${lock_prefix}${BASE_SHA}"
+
+          {
+            echo "family=$family"
+            echo "lock_prefix=$lock_prefix"
+            echo "key=$key"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install verified sccache 0.18.0
+        id: install-sccache
+        if: ${{ steps.fast-cache-id.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v0.18.0-x86_64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-x86_64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+
+          echo "45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89  $archive" \
+            | sha256sum --check --strict
+
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Restore protected-main compiler cache read-only
+        id: restore-sccache
+        if: ${{ steps.install-sccache.outcome == 'success' }}
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.fast-cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.fast-cache-id.outputs.lock_prefix }}
+            ${{ steps.fast-cache-id.outputs.family }}-
+
+      - name: Enable restore-only sccache
+        id: enable-sccache
+        if: ${{ steps.restore-sccache.outcome == 'success' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache"
+            echo "SCCACHE_CACHE_SIZE=768M"
+            echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CARGO_INCREMENTAL=0"
+          } >> "$GITHUB_ENV"
+
+          echo "protected-main cache hit: ${{ steps.restore-sccache.outputs.cache-hit }}"
+
       - name: Show toolchain
         if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
         run: rustup show
@@ -117,3 +190,9 @@ jobs:
       - name: Run workspace unit tests
         if: ${{ steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true' }}
         run: cargo test --workspace --all-features --lib
+
+      - name: Show compiler cache stats
+        if: ${{ always() && steps.enable-sccache.outcome == 'success' && (steps.docs-only-scope.outcome != 'success' || steps.docs-only-scope.outputs.docs_only != 'true') }}
+        continue-on-error: true
+        run: sccache --show-stats --stats-format=json
+
