@@ -165,7 +165,8 @@
         "workflow": ".github/workflows/codeql.yml",
         "accepted_blobs": [
           "6b9df4e63ffd3ca2c696c1e300b7f7e1cf659639",
-          "08b5c85af7ae6cbf5642a0928664a5e64d61eba8"
+          "08b5c85af7ae6cbf5642a0928664a5e64d61eba8",
+          "e8a9416ee7a57e1ee31224261a318aa793c5099e"
         ]
       },
       {
