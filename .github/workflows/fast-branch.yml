@@ -8,6 +8,9 @@ on:
 permissions:
   contents: read
 
+env:
+  CARGO_TERM_COLOR: never
+
 concurrency:
   group: fast-branch-${{ github.ref }}
   cancel-in-progress: true
