@@ -22,7 +22,6 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: never
-  SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
   SCCACHE_CACHE_SIZE: 768M
   RUSTC_WRAPPER: sccache
   CARGO_INCREMENTAL: "0"
@@ -81,7 +80,7 @@ jobs:
         id: restore-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.SCCACHE_DIR }}
+          path: ${{ runner.temp }}/oxide-fast-sccache
           key: ${{ steps.cache-id.outputs.key }}
           restore-keys: |
             ${{ steps.cache-id.outputs.lock_prefix }}
@@ -105,6 +104,10 @@ jobs:
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
           echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Configure local sccache directory
+        shell: bash
+        run: echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache" >> "$GITHUB_ENV"
 
       - name: Fetch locked dependencies
         run: cargo fetch --locked
@@ -146,7 +149,7 @@ jobs:
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          path: ${{ env.SCCACHE_DIR }}
+          path: ${{ runner.temp }}/oxide-fast-sccache
           key: ${{ steps.cache-id.outputs.key }}
 
       - name: Keep only current and one previous Fast compiler cache
