@@ -356,6 +356,68 @@ fn repeat_commit_boundary_survives_sigkill_and_corruption_fails_closed()
         );
         corrupted.rollback().await?;
 
+        // Restore a valid state envelope, then corrupt only the static
+        // definition owner. A durable worker/execution may not claim a
+        // different repeat definition without the exact partition assignment
+        // and manifest relationship.
+        let valid = state(1)?;
+        let valid_payload =
+            serde_json::from_slice::<serde_json::Value>(&valid.payload_json()?)?;
+        let valid_checksum: [u8; 32] = Sha256::digest(valid.to_json()?).into();
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&migrator)
+            .await?;
+        sqlx::query(
+            "UPDATE oxide_batch.ob_repeat_execution              SET state_schema_version = $1, state_payload = $2, state_checksum = $3,                  definition_node_id = $4              WHERE step_execution_id = $5 AND repeat_id = $6",
+        )
+        .bind(i32::try_from(valid.schema_version().get())?)
+        .bind(Json(valid_payload))
+        .bind(&valid_checksum[..])
+        .bind("not-the-step-definition")
+        .bind(i64::try_from(step.get())?)
+        .bind("window")
+        .execute(&admin)
+        .await?;
+        admin.close().await;
+
+        let mut wrong_owner = repository.begin().await?;
+        assert_eq!(
+            wrong_owner
+                .repeat_execution(step, &RepeatId::new("window")?)
+                .await,
+            Err(RepositoryError::RepeatStateCorrupt),
+        );
+        wrong_owner.rollback().await?;
+
+        // Restore the definition owner but forge a structurally valid lineage
+        // that the compiled repeat manifest never declared.
+        let admin = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&migrator)
+            .await?;
+        sqlx::query(
+            "UPDATE oxide_batch.ob_repeat_execution              SET definition_node_id = $1, lineage = $2              WHERE step_execution_id = $3 AND repeat_id = $4",
+        )
+        .bind("repeat-step")
+        .bind(Json(serde_json::json!([
+            { "repeat_id": "ghost-parent", "ordinal": 0 }
+        ])))
+        .bind(i64::try_from(step.get())?)
+        .bind("window")
+        .execute(&admin)
+        .await?;
+        admin.close().await;
+
+        let mut wrong_lineage = repository.begin().await?;
+        assert_eq!(
+            wrong_lineage
+                .repeat_execution(step, &RepeatId::new("window")?)
+                .await,
+            Err(RepositoryError::RepeatStateCorrupt),
+        );
+        wrong_lineage.rollback().await?;
+
         repository.close().await?;
         remove_fixture(&migrator).await?;
         let _ = std::fs::remove_file(before_path);

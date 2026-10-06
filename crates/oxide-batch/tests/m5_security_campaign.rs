@@ -84,10 +84,10 @@ const DENIED_ATTRIBUTES: &[&str] = &["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE"
 ///
 /// The M5 preview installed schema 3; M6 `#144` added schema 4 component
 /// state, M7 `#265` added schema 5 durable nested-job linkage, M7 `#276`
-/// added schema 6 scoped-resolution provenance, and M7 `#300` adds schema 7
-/// durable repeat state. The campaign must exercise the privilege matrix against
-/// the current installed schema.
-const SCHEMA_VERSION: u64 = 7;
+/// added schema 6 scoped-resolution provenance, M7 `#300` adds schema 7
+/// durable repeat state, and M7 `#401` adds schema 8 durable repeat lineage identity.
+/// The campaign must exercise the privilege matrix against the current installed schema.
+const SCHEMA_VERSION: u64 = 8;
 
 /// The transport the M5 preview supports in production.
 const TLS_MODE: &str = "verify-full";

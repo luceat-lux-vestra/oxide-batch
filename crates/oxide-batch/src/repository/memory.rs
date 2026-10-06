@@ -23,10 +23,11 @@ use crate::{
     ParameterDescriptor, ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate,
     PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
     RecoveryDecisionId, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence,
-    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatOrdinal, RetentionAction,
-    RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft, ScopeKind,
-    ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StepExecution, StepExecutionId,
-    StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
+    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal,
+    RetentionAction, RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft,
+    ScopeKind, ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StepExecution,
+    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
+    StepPartitionProjection,
 };
 use crate::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
@@ -777,6 +778,128 @@ impl InMemoryUnitOfWork<'_> {
         Ok(None)
     }
 
+    fn latest_repeat_snapshot_in_lineage(
+        &self,
+        instance_id: JobInstanceId,
+        node_id: &NodeId,
+        repeat_id: &RepeatId,
+        lineage: &RepeatLineage,
+    ) -> Result<Option<RepeatExecution>, RepositoryError> {
+        let executions = self
+            .staged
+            .job_executions_by_instance
+            .get(&instance_id)
+            .ok_or(RepositoryError::JobInstanceNotFound { id: instance_id })?;
+        for execution_id in executions.iter().rev() {
+            for step_id in self
+                .staged
+                .step_executions_by_job
+                .get(execution_id)
+                .into_iter()
+                .flatten()
+                .rev()
+            {
+                if self.staged.step_logical_ids.get(step_id) == Some(node_id)
+                    && let Some(record) = self
+                        .staged
+                        .repeat_executions
+                        .get(&(*step_id, repeat_id.clone()))
+                    && record.lineage() == lineage
+                {
+                    return Ok(Some(record.clone()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
+    fn validate_repeat_lineage_request(
+        &self,
+        request: &RepeatCommitRequest,
+    ) -> Result<(), RepositoryError> {
+        let mut lineage = RepeatLineage::root();
+        for (ancestor_id, ancestor_ordinal) in request.lineage().ancestors() {
+            let prior = self.latest_repeat_snapshot_in_lineage(
+                request.job_instance_id(),
+                request.node_id(),
+                ancestor_id,
+                &lineage,
+            )?;
+            let expected = match prior {
+                Some(prior) if prior.plan_fingerprint() != request.plan_fingerprint() => {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                Some(prior) if prior.definition_node_id() != request.definition_node_id() => {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                Some(prior) if prior.decision() == RepeatDecision::Complete => {
+                    return Err(RepositoryError::RepeatAlreadyComplete);
+                }
+                Some(prior) => prior
+                    .ordinal()
+                    .checked_next()
+                    .ok_or(RepositoryError::RepeatStateCorrupt)?,
+                None => RepeatOrdinal::INITIAL,
+            };
+            if *ancestor_ordinal != expected {
+                return Err(RepositoryError::RepeatStateCorrupt);
+            }
+            lineage = lineage
+                .child(ancestor_id, *ancestor_ordinal)
+                .ok_or(RepositoryError::RepeatStateCorrupt)?;
+        }
+        Ok(())
+    }
+
+    fn validate_repeat_owner_request(
+        &self,
+        request: &RepeatCommitRequest,
+        owner: &super::RepeatManifestOwner,
+    ) -> Result<(), RepositoryError> {
+        match owner {
+            super::RepeatManifestOwner::Static => {
+                if request.node_id() != request.definition_node_id() {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+            }
+            super::RepeatManifestOwner::Partitioned(manager_node_id) => {
+                if request.node_id() == request.definition_node_id() {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                let mut assigned = self.staged.step_partitions.values().filter(|partition| {
+                    partition.worker_step_execution_id() == Some(request.step_execution_id())
+                });
+                let partition = assigned.next().ok_or(RepositoryError::RepeatStateCorrupt)?;
+                if assigned.next().is_some() {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+                let parent = self
+                    .staged
+                    .step_executions
+                    .get(&partition.step_execution_id())
+                    .ok_or(RepositoryError::RepeatStateCorrupt)?;
+                let worker = self
+                    .staged
+                    .step_executions
+                    .get(&request.step_execution_id())
+                    .ok_or(RepositoryError::RepeatStateCorrupt)?;
+                let parent_node_id = self
+                    .staged
+                    .step_logical_ids
+                    .get(&partition.step_execution_id())
+                    .ok_or(RepositoryError::RepeatStateCorrupt)?;
+                if parent.job_execution_id() != worker.job_execution_id()
+                    || parent_node_id != manager_node_id
+                    || super::partition_worker_token(manager_node_id, partition.key())
+                        != request.node_id().as_str()
+                {
+                    return Err(RepositoryError::RepeatStateCorrupt);
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn validate_repeat_request(
         &self,
         request: &RepeatCommitRequest,
@@ -807,9 +930,10 @@ impl InMemoryUnitOfWork<'_> {
         }
         let manifest: serde_json::Value = serde_json::from_slice(definition.canonical_manifest())
             .map_err(|_| RepositoryError::RepeatStateCorrupt)?;
-        if !super::repeat_request_matches_manifest(&manifest, request) {
-            return Err(RepositoryError::RepeatStateCorrupt);
-        }
+        let owner = super::repeat_request_manifest_owner(&manifest, request)
+            .ok_or(RepositoryError::RepeatStateCorrupt)?;
+        self.validate_repeat_owner_request(request, &owner)?;
+        self.validate_repeat_lineage_request(request)?;
         Ok(())
     }
 
@@ -1718,6 +1842,18 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move { self.latest_repeat_snapshot(job_instance_id, node_id, repeat_id) })
     }
 
+    fn latest_repeat_execution_in_lineage<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        repeat_id: &'a RepeatId,
+        lineage: &'a RepeatLineage,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async move {
+            self.latest_repeat_snapshot_in_lineage(job_instance_id, node_id, repeat_id, lineage)
+        })
+    }
+
     fn commit_repeat_iteration<'a>(
         &'a mut self,
         request: &'a RepeatCommitRequest,
@@ -1725,15 +1861,20 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move {
             self.validate_repeat_request(request)?;
             let key = (request.step_execution_id(), request.repeat_id().clone());
-            if let Some(existing) = self.staged.repeat_executions.get(&key).cloned() {
+            let current = self.staged.repeat_executions.get(&key).cloned();
+            if let Some(existing) = current
+                .as_ref()
+                .filter(|existing| existing.lineage() == request.lineage())
+            {
                 let exact_replay = existing.job_instance_id() == request.job_instance_id()
                     && existing.node_id() == request.node_id()
+                    && existing.definition_node_id() == request.definition_node_id()
                     && existing.ordinal() == request.ordinal()
                     && existing.state() == request.state()
                     && existing.decision() == request.decision()
                     && existing.plan_fingerprint() == request.plan_fingerprint();
                 if exact_replay {
-                    return Ok(existing);
+                    return Ok(existing.clone());
                 }
                 if existing.ordinal() == request.ordinal() {
                     return Err(RepositoryError::RepeatStateCorrupt);
@@ -1752,13 +1893,17 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     });
                 }
             } else {
-                let prior = self.latest_repeat_snapshot(
+                let prior = self.latest_repeat_snapshot_in_lineage(
                     request.job_instance_id(),
                     request.node_id(),
                     request.repeat_id(),
+                    request.lineage(),
                 )?;
                 let expected = match prior {
                     Some(prior) if prior.plan_fingerprint() != request.plan_fingerprint() => {
+                        return Err(RepositoryError::RepeatStateCorrupt);
+                    }
+                    Some(prior) if prior.definition_node_id() != request.definition_node_id() => {
                         return Err(RepositoryError::RepeatStateCorrupt);
                     }
                     Some(prior) if prior.decision() == RepeatDecision::Complete => {
@@ -1780,8 +1925,10 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             let record = RepeatExecution::new(
                 request.job_instance_id(),
                 request.node_id().clone(),
+                request.definition_node_id().clone(),
                 request.step_execution_id(),
                 request.repeat_id().clone(),
+                request.lineage().clone(),
                 request.ordinal(),
                 request.state().clone(),
                 request.decision(),

@@ -23,7 +23,7 @@ use crate::{
     NestedJobLinkRequest, OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft,
     OwnerToken, PartitionAggregate, PartitionAggregationError, PartitionPlanEntry, PurgeCounts,
     PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode, RepeatCommitRequest, RepeatExecution,
-    RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
+    RepeatLineage, RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
     ScopeResolutionProvenance, StepPartition,
 };
 
@@ -1067,6 +1067,24 @@ pub trait RepositoryUnitOfWork: Send {
         _node_id: &'a NodeId,
         _repeat_id: &'a RepeatId,
     ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::RepeatState,
+            })
+        })
+    }
+
+    /// Loads the newest committed repeat record for one exact nested lineage.
+    fn latest_repeat_execution_in_lineage<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        repeat_id: &'a RepeatId,
+        lineage: &'a RepeatLineage,
+    ) -> BoxFuture<'a, Result<Option<RepeatExecution>, RepositoryError>> {
+        if lineage.is_root() {
+            return self.latest_repeat_execution(job_instance_id, node_id, repeat_id);
+        }
         Box::pin(async {
             Err(RepositoryError::UnsupportedCapability {
                 capability: RepositoryCapability::RepeatState,
