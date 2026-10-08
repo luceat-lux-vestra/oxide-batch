@@ -25,7 +25,7 @@ SAFE_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 WORKFLOW_PREFIX = ".github/workflows/"
 KNOWN_STATUSES = frozenset({"added", "modified", "removed", "renamed"})
 DOC_ROOT = frozenset({
-    "README.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md",
+    "README.md", "AGENTS.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md",
     "CONTRIBUTING.md", "SECURITY.md",
 })
 CORE_MARKERS = (
@@ -59,6 +59,13 @@ def path(value: object) -> str:
 
 
 def classify(filename: str) -> set[str]:
+    # These documents are authoritative policy/evidence inputs, not just prose.
+    if filename == "docs/engineering/retained-evidence-policy.json":
+        return {"ci_security", "evidence_provenance"}
+    if filename == "docs/engineering/dependency-policy.md":
+        return {"docs", "dependencies"}
+    if filename.startswith("docs/engineering/campaigns/"):
+        return {"docs", "evidence_provenance"}
     if filename.startswith(".github/"):
         return {"ci_security"}
     if filename in {"Cargo.toml", "Cargo.lock", "deny.toml", "rust-toolchain.toml"}:
@@ -140,6 +147,8 @@ def evaluate(
         required.update({"trusted_static_policy_review", "independent_security_review"})
     if "dependencies" in classes:
         required.add("dependency_supply_chain")
+    if "evidence_provenance" in classes:
+        required.add("evidence_provenance")
     if "core" in classes:
         required.update({"rust_fast_and_unit", "integration_regression"})
     if "database_recovery" in classes:
@@ -227,8 +236,16 @@ def inspect(api: GitHubReadOnly, number: int, base: str, head: str) -> dict:
         if filename.startswith(WORKFLOW_PREFIX) and item.get("status") != "removed":
             encoded = urllib.parse.quote(filename, safe="/")
             texts[filename] = api.get(f"contents/{encoded}?ref={head}", raw=True)
+    # PR metadata may change while the file pages and head-source texts load.
+    # Re-read identity to prevent a stale-head advisory plan being presented.
+    latest = api.get(f"pulls/{number}")
+    if not isinstance(latest, dict) or any(
+        latest.get(key) != pr.get(key)
+        for key in ("base", "head", "changed_files", "state", "draft")
+    ):
+        raise ContractError("PR identity changed during advisory inspection")
     return evaluate(
-        pr, files, texts, repository=api.repository,
+        latest, files, texts, repository=api.repository,
         trusted_base=base, expected_head=head,
     )
 
@@ -255,6 +272,42 @@ class ShadowTests(unittest.TestCase):
             pr or self.pr(len(files)), files, texts or {},
             repository=self.REPO, trusted_base=self.BASE, expected_head=self.HEAD,
         )
+
+    def test_sensitive_evidence_policy_is_not_docs_only(self):
+        p = self.plan(["docs/engineering/retained-evidence-policy.json"])
+        self.assertEqual(p["recommendation"], "REQUIRE_INDEPENDENT_REVIEW")
+        self.assertIn("evidence_provenance", p["recommended_checks"])
+
+    def test_sensitive_dependency_docs_require_supply_chain(self):
+        p = self.plan(["docs/engineering/dependency-policy.md"])
+        self.assertIn("dependency_supply_chain", p["recommended_checks"])
+
+    def test_campaign_docs_require_evidence(self):
+        p = self.plan(["docs/engineering/campaigns/decisions.md"])
+        self.assertIn("evidence_provenance", p["recommended_checks"])
+
+    def test_agents_is_docs_only(self):
+        self.assertEqual(self.plan(["AGENTS.md"])["recommended_checks"], ["documentation_checks"])
+
+    def test_mid_inspection_head_change_denied(self):
+        class MutatingAPI:
+            repository = ShadowTests.REPO
+            calls = 0
+
+            def get(self, route, *, raw=False):
+                if route == "pulls/42":
+                    self.calls += 1
+                    p = self_pr()
+                    if self.calls > 1:
+                        p["head"]["sha"] = "c" * 40
+                    return p
+                if route.startswith("pulls/42/files?"):
+                    return [{"filename": "README.md", "status": "modified"}]
+                raise AssertionError("unexpected API call")
+
+        self_pr = self.pr
+        with self.assertRaisesRegex(ContractError, "identity changed"):
+            inspect(MutatingAPI(), 42, self.BASE, self.HEAD)
 
     def test_docs_narrow(self):
         p = self.plan(["docs/usage.md"])
