@@ -68,7 +68,7 @@ def classify(filename: str) -> set[str]:
     if filename in SECURITY_POLICY_DOCS:
         return {"docs", "ci_security"}
     if filename in CI_POLICY_TESTS:
-        return {"ci_security"}
+        return {"ci_security", "ci_contract"}
     # These documents are authoritative policy/evidence inputs, not just prose.
     if filename == "docs/engineering/retained-evidence-policy.json":
         return {"ci_security", "evidence_provenance"}
@@ -155,6 +155,9 @@ def evaluate(
         required.add("documentation_checks")
     if "ci_security" in classes:
         required.update({"trusted_static_policy_review", "independent_security_review"})
+    if "ci_contract" in classes:
+        # Keep focused Rust test execution for policy-contract source files.
+        required.add("rust_fast_and_unit")
     if "dependencies" in classes:
         required.add("dependency_supply_chain")
     if "evidence_provenance" in classes:
@@ -326,9 +329,12 @@ class ShadowTests(unittest.TestCase):
 
     def test_ci_merge_gate_contract_tests_are_security_not_core(self):
         p = self.plan(["xtask/tests/merge_gate_policy.rs"])
-        self.assertEqual(p["risk_classes"], ["ci_security"])
+        self.assertEqual(p["risk_classes"], ["ci_contract", "ci_security"])
         self.assertEqual(p["recommendation"], "REQUIRE_INDEPENDENT_REVIEW")
+        self.assertIn("rust_fast_and_unit", p["recommended_checks"])
+        self.assertIn("independent_security_review", p["recommended_checks"])
         self.assertNotIn("integration_regression", p["recommended_checks"])
+        self.assertNotIn("postgres_15_18_and_recovery", p["recommended_checks"])
 
     def test_other_editorial_docs_stay_docs_only(self):
         p = self.plan(["docs/product/vision-and-scope.md"])
