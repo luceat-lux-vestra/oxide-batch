@@ -99,8 +99,10 @@ jobs:
           classification="$(
             python3 .fast-trusted-base/.github/scripts/pr-scope.py               --repo-root .fast-trusted-base               --policy .github/merge-gate-policy.json               --expected-count "$expected_count"               --trusted-base-sha "$BASE_SHA"               <"$changed_file_records"
           )"
+          # JSON false is a valid non-docs result: jq -e would incorrectly
+          # exit 1. Keep strict validation, then extract the boolean with -r.
           docs_only="$(
-            jq -er '
+            jq -r '
               if .classification_valid == true and
                  (.docs_only | type) == "boolean"
               then .docs_only
