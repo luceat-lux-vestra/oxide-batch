@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - .github/scripts/shadow-ci-policy.py
+      - .github/scripts/pr-authority-runtime.py
       - .github/scripts/validate_actions_security.py
       - .github/scripts/verify-merge-gates.rb
       - .github/scripts/test-merge-gates.rb
@@ -55,6 +56,8 @@ jobs:
         run: python3 .github/scripts/shadow-ci-policy.py --self-test
       - name: Run merge-gate Ruby contract regression tests (advisory)
         run: ruby .github/scripts/test-merge-gates.rb
+      - name: Run authority proof stale-HEAD contract self-tests (advisory)
+        run: python3 .github/scripts/pr-authority-runtime.py self-test
       - name: Evaluate PR risk data without executing its contents
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.assessment != 'bounded-safe-diff' }}
         env:
