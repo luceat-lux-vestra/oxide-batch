@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import io
 import json
 import os
@@ -224,6 +225,119 @@ class GitHubActionsClient:
         return [run for run in runs if isinstance(run, dict)]
 
 
+
+def audit_orphan_authority_candidate(
+    *,
+    authority: Authority,
+    old_caller: dict[str, object],
+    dispatched: dict[str, object],
+    live_pr: dict[str, object],
+    associated_prs: list[dict[str, object]],
+    pr_number: int,
+    current_caller_run_id: int,
+    repository: str,
+) -> dict[str, object]:
+    """Read-only candidate evidence; NEVER an authorization to cancel a run.
+
+    The separate commit->pulls lookup is required because GitHub may return
+    pull_requests=[] for both old PR CI and workflow_dispatch runs. Caller
+    and candidate metadata alone do not establish PR ownership.
+    """
+    def positive(value: object) -> bool:
+        return type(value) is int and value > 0
+
+    def repo_id(run: dict[str, object], key: str) -> object:
+        info = run.get(key)
+        return info.get("id") if isinstance(info, dict) else None
+
+    if not positive(pr_number) or not positive(current_caller_run_id):
+        raise ContractError("orphan audit needs exact positive PR/current caller IDs")
+    base, head = live_pr.get("base"), live_pr.get("head")
+    if not isinstance(base, dict) or not isinstance(head, dict):
+        raise ContractError("orphan audit live PR base/head is malformed")
+    base_repo, head_repo = base.get("repo"), head.get("repo")
+    if not isinstance(base_repo, dict) or not isinstance(head_repo, dict):
+        raise ContractError("orphan audit live PR repositories are malformed")
+    repository_id = base_repo.get("id")
+    if (
+        live_pr.get("number") != pr_number
+        or live_pr.get("state") != "open"
+        or live_pr.get("draft") is not False
+        or base_repo.get("full_name") != repository
+        or head_repo.get("full_name") != repository
+        or not positive(repository_id)
+        or head_repo.get("id") != repository_id
+        or base.get("ref") != "main"
+        or not isinstance(head.get("ref"), str)
+        or not SHA_RE.fullmatch(str(base.get("sha", "")))
+        or not SHA_RE.fullmatch(str(head.get("sha", "")))
+    ):
+        raise ContractError("orphan audit live PR identity is not trusted")
+    old_id = old_caller.get("id")
+    old_attempt = old_caller.get("run_attempt")
+    old_sha = old_caller.get("head_sha")
+    if (
+        not positive(old_id)
+        or old_id >= current_caller_run_id
+        or not positive(old_attempt)
+        or not isinstance(old_sha, str)
+        or not SHA_RE.fullmatch(old_sha)
+        or old_sha == head["sha"]
+        or old_caller.get("event") != "pull_request"
+        or old_caller.get("path") != ".github/workflows/pr-ci.yml"
+        or old_caller.get("head_branch") != head["ref"]
+        or repo_id(old_caller, "repository") != repository_id
+        or repo_id(old_caller, "head_repository") != repository_id
+    ):
+        raise ContractError("orphan audit old caller identity is not trusted")
+    if not isinstance(associated_prs, list) or sum(
+        type(pr.get("number")) is int and pr["number"] == pr_number
+        for pr in associated_prs if isinstance(pr, dict)
+    ) != 1:
+        raise ContractError("orphan audit old commit lacks unique PR association")
+    association = next(
+        pr for pr in associated_prs
+        if isinstance(pr, dict) and pr.get("number") == pr_number
+    )
+    linked_head, linked_base = association.get("head"), association.get("base")
+    if (
+        not isinstance(linked_head, dict)
+        or not isinstance(linked_base, dict)
+        or linked_head.get("ref") != head["ref"]
+        or linked_base.get("ref") != "main"
+    ):
+        raise ContractError("orphan audit commit/PR association conflicts")
+    run_id = dispatched.get("id")
+    actor = dispatched.get("actor")
+    if (
+        not positive(run_id)
+        or run_id == old_id
+        or dispatched.get("run_attempt") != 1
+        or dispatched.get("event") != "workflow_dispatch"
+        or dispatched.get("path") != authority.workflow
+        or dispatched.get("head_sha") != base["sha"]
+        or dispatched.get("head_branch") != "main"
+        or dispatched.get("status") not in {"queued", "in_progress", "waiting", "pending", "requested"}
+        or dispatched.get("conclusion") is not None
+        or not isinstance(actor, dict)
+        or actor.get("login") != "github-actions[bot]"
+        or repo_id(dispatched, "repository") != repository_id
+        or repo_id(dispatched, "head_repository") != repository_id
+        or dispatched.get("display_title") != expected_run_name(
+            authority, pr_number=str(pr_number), head_sha=old_sha,
+            caller_run_id=str(old_id), caller_run_attempt=str(old_attempt),
+        )
+    ):
+        raise ContractError("orphan audit dispatched run identity is not trusted")
+    return {
+        "candidate_only": True,
+        "cancel_authorized": False,
+        "authority": authority.id,
+        "old_caller_run_id": old_id,
+        "old_head_sha": old_sha,
+        "dispatched_run_id": run_id,
+    }
+
 def verify_runs(
     *,
     authorities: list[Authority],
@@ -418,6 +532,78 @@ def _run(authority: Authority, *, conclusion: str = "success", run_id: int = 10)
 
 
 class RuntimeContractTests(unittest.TestCase):
+
+    def test_orphan_audit_read_only_candidate_and_adversarial_inputs(self) -> None:
+        # Model the real Stage L shape: dispatched run head_sha is *base*,
+        # and both run.pull_requests arrays may be empty.
+        authority = _test_authorities()[2]
+        repo = {"id": 1315088383, "full_name": "owner/repo"}
+        def fixture() -> dict[str, object]:
+            return {
+                "authority": authority,
+                "old_caller": {
+                    "id": 1001, "run_attempt": 1, "event": "pull_request",
+                    "path": ".github/workflows/pr-ci.yml",
+                    "head_sha": "b" * 40, "head_branch": "feat/pr-42",
+                    "repository": dict(repo), "head_repository": dict(repo), "pull_requests": [],
+                },
+                "dispatched": {
+                    "id": 1002, "run_attempt": 1, "event": "workflow_dispatch",
+                    "path": authority.workflow, "head_sha": "a" * 40,
+                    "head_branch": "main", "status": "in_progress",
+                    "conclusion": None, "actor": {"login": "github-actions[bot]"},
+                    "repository": dict(repo), "head_repository": dict(repo), "pull_requests": [],
+                    "display_title": expected_run_name(
+                        authority, pr_number="42", head_sha="b" * 40,
+                        caller_run_id="1001", caller_run_attempt="1",
+                    ),
+                },
+                "live_pr": {
+                    "number": 42, "state": "open", "draft": False,
+                    "base": {"sha": "a" * 40, "ref": "main", "repo": dict(repo)},
+                    "head": {"sha": "c" * 40, "ref": "feat/pr-42", "repo": dict(repo)},
+                },
+                "associated_prs": [
+                    {"number": 42, "head": {"ref": "feat/pr-42"}, "base": {"ref": "main"}}
+                ],
+                "pr_number": 42, "current_caller_run_id": 2001,
+                "repository": "owner/repo",
+            }
+        result = audit_orphan_authority_candidate(**fixture())
+        self.assertTrue(result["candidate_only"])
+        self.assertIs(result["cancel_authorized"], False)
+        self.assertEqual(1002, result["dispatched_run_id"])
+        cases = {
+            "no commit association": ("associated_prs", []),
+            "ambiguous association": ("associated_prs", fixture()["associated_prs"] * 2),
+            "wrong PR": ("pr_number", 43),
+            "wrong repository": ("repository", "foreign/repo"),
+            "untrusted actor": ("dispatched.actor.login", "attacker"),
+            "spoofed title": ("dispatched.display_title", "pr-authority/codeql/spoof"),
+            "unrelated workflow": ("dispatched.path", ".github/workflows/ci.yml"),
+            "completed": ("dispatched.status", "completed"),
+            "rerun": ("dispatched.run_attempt", 2),
+            "foreign dispatched repo": ("dispatched.repository.id", 111),
+            "reused branch": ("old_caller.head_branch", "old/branch"),
+            "current head": ("old_caller.head_sha", "c" * 40),
+            "invalid old event": ("old_caller.event", "workflow_dispatch"),
+            "foreign old caller": ("old_caller.head_repository.id", 111),
+            "invalid caller order": ("current_caller_run_id", 999),
+            "draft PR": ("live_pr.draft", True),
+            "closed PR": ("live_pr.state", "closed"),
+            "wrong base": ("live_pr.base.sha", "f" * 40),
+        }
+        for label, (path, value) in cases.items():
+            case = copy.deepcopy(fixture())
+            target = case
+            segments = path.split(".")
+            for segment in segments[:-1]:
+                target = target[segment]
+            target[segments[-1]] = value
+            with self.subTest(case=label), self.assertRaises(ContractError):
+                audit_orphan_authority_candidate(**case)
+
+
     def test_workflow_runs_uses_workflow_filename_endpoint(self) -> None:
         seen: dict[str, object] = {}
 
