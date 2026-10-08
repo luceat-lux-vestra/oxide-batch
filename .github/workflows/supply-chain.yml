@@ -40,7 +40,7 @@ concurrency:
 jobs:
   supply-chain:
     name: supply-chain
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - name: Check out repository
