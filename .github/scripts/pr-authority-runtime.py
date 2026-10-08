@@ -491,6 +491,21 @@ class RuntimeContractTests(unittest.TestCase):
             )
         self.assertEqual(2, client.pr_reads)
 
+    def test_live_base_repo_supersession_during_poll_fails_closed(self) -> None:
+        authority = _test_authorities()[0]
+        client = _FakeClient({})
+        def switch_base_repo(_: float) -> None:
+            client.live_pr["base"]["repo"]["full_name"] = "other/repo"
+        with self.assertRaisesRegex(ContractError, "live PR base identity changed"):
+            verify_runs(
+                authorities=[authority], required=[authority], client=client,
+                dispatch_result="success", pr_number="42",
+                base_sha="a" * 40, head_sha="b" * 40, head_repo="owner/repo",
+                caller_run_id="1001", caller_run_attempt="2",
+                timeout_seconds=20, poll_interval_seconds=0, sleep=switch_base_repo,
+            )
+        self.assertEqual(2, client.pr_reads)
+
     def test_live_pr_identity_and_state_are_fail_closed(self) -> None:
         authority = _test_authorities()[0]
         for case in ("base", "base_repo", "head_repo", "closed", "draft", "missing", "malformed"):
