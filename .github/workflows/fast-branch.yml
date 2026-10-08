@@ -18,6 +18,10 @@ concurrency:
 jobs:
   fast:
     name: fast
+    # A ref-only branch bootstrap emits a push with created=true and no
+    # new commits. Avoid occupying a runner for an unchanged main SHA.
+    # First-commit pushes and missing/unknown event metadata MUST run Fast.
+    if: ${{ github.event.created != true || toJSON(github.event.commits) != '[]' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
