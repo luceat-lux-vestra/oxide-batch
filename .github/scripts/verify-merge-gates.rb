@@ -960,7 +960,8 @@ module MergeGateVerifier
       violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} dispatched needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
     end
     violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must use always()" unless always_condition?(proof['if'])
-    unless proof['runs-on'] == 'ubuntu-slim' && proof['timeout-minutes'] == 10
+    # GitHub enforces a 15-minute ceiling on ubuntu-slim jobs.
+    unless proof['runs-on'] == 'ubuntu-slim' && [10, 15].include?(proof['timeout-minutes'])
       violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must keep the bounded ubuntu-slim proof job"
     end
     unless proof['permissions'] == PR_PROOF_VERIFY_PERMISSIONS
@@ -979,6 +980,11 @@ module MergeGateVerifier
     end
 
     proof_command = proof_steps.filter_map { |step| step['run'] }.join("\n")
+    expected_wait = {10 => '540', 15 => '780'}[proof['timeout-minutes']]
+    actual_waits = proof_command.scan(/--timeout-seconds\s+(\d+)(?=\s|\z)/).flatten
+    unless expected_wait && actual_waits == [expected_wait]
+      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} has an invalid or inconsistent poll/job timeout budget"
+    end
     proof_tokens = [
       "#{PR_PROOF_RUNTIME_SCRIPT} verify",
       '--policy .proof-trusted-base/.github/merge-gate-policy.json',

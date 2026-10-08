@@ -1797,6 +1797,37 @@ class MergeGateVerifierTest < Minitest::Test
     )
   end
 
+  def test_v7_dispatched_runtime_accepts_bounded_15_minute_proof
+    jobs = canonical_dispatched_runtime_jobs
+    jobs['pr-proof']['timeout-minutes'] = 15
+    proof_step = jobs['pr-proof']['steps'].find { |step| step['name'] == 'Verify dispatched authorities' }
+    proof_step['run'] = proof_step['run'].sub('--timeout-seconds 540', '--timeout-seconds 780')
+    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
+    assert_empty MergeGateVerifier.pr_proof_dispatch_runtime_contract(
+      jobs: jobs, docs: canonical_dispatched_authority_docs, policy: policy
+    )
+  end
+
+  def test_v7_dispatched_runtime_rejects_mismatched_wait_budget
+    jobs = canonical_dispatched_runtime_jobs
+    jobs['pr-proof']['timeout-minutes'] = 15
+    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
+    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
+      jobs: jobs, docs: canonical_dispatched_authority_docs, policy: policy
+    )
+    assert_includes violations.join("\n"), 'invalid or inconsistent poll/job timeout budget'
+  end
+
+  def test_v7_dispatched_runtime_rejects_over_slim_runner_limit
+    jobs = canonical_dispatched_runtime_jobs
+    jobs['pr-proof']['timeout-minutes'] = 16
+    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
+    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
+      jobs: jobs, docs: canonical_dispatched_authority_docs, policy: policy
+    )
+    assert_includes violations.join("\n"), 'must keep the bounded ubuntu-slim proof job'
+  end
+
   def test_v7_dispatched_runtime_rejects_static_optional_authority_job
     jobs = canonical_dispatched_runtime_jobs
     jobs['rust'] = {'uses' => './.github/workflows/ci.yml'}
@@ -2129,7 +2160,9 @@ class MergeGateVerifierTest < Minitest::Test
       '--head-repo "$HEAD_REPO"',
       '--pr-number "$PR_NUMBER"',
       '--caller-run-id "$CALLER_RUN_ID"',
-      '--caller-run-attempt "$CALLER_RUN_ATTEMPT"'
+      '--caller-run-attempt "$CALLER_RUN_ATTEMPT"',
+      '--timeout-seconds 540',
+      '--poll-interval-seconds 5'
     ].join("\n")
 
     {
