@@ -1,7 +1,7 @@
 # Schema-v8 trusted-base merge-gate live enforcement evidence
 
-**Evidence date:** 2026-10-09 (KST)  
-**Tracker:** [oxide-batch #433](https://github.com/luceat-lux-vestra/oxide-batch/issues/433)  
+**Evidence date:** 2026-10-09 (KST)
+**Tracker:** [oxide-batch #433](https://github.com/luceat-lux-vestra/oxide-batch/issues/433)
 **Cross-project tracker:** [R2A #95](https://github.com/luceat-lux-vestra/Research-to-Action/issues/95)
 
 ## Security objective and trusted anchor
