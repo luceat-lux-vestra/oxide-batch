@@ -49,6 +49,7 @@ jobs:
               .github/workflows/pr-ci.yml \
               .github/workflows/sccache-main-prime.yml \
               .github/workflows/supply-chain.yml \
+              .github/zizmor.yml \
               | sort
           )"
           test "$actual" = "$expected"
