@@ -7,11 +7,6 @@ on:
     paths:
       - .github/workflows/arm-sweep-423.yml
 
-permissions:
-  actions: write
-  contents: read
-  pull-requests: read
-
 concurrency:
   group: arm-sweep-423
   cancel-in-progress: true
@@ -21,6 +16,10 @@ jobs:
     name: dispatch-arm-authorities
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 30
+    permissions:
+      actions: write # Dispatch only branch-local research authority workflows for this bounded experiment.
+      contents: read # Check out and compare the exact reviewed research head.
+      pull-requests: read # Resolve exact draft PR identity before dispatch.
     steps:
       - name: Check out exact research head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,10 +75,12 @@ jobs:
             --arg repo "$GITHUB_REPOSITORY" \
             '.head.sha == $head and .head.repo.full_name == $repo and .base.repo.full_name == $repo and .draft == true' \
             <<<"$pr" >/dev/null
-          echo "number=$(jq -r '.number' <<<"$pr")" >> "$GITHUB_OUTPUT"
-          echo "base_sha=$(jq -r '.base.sha' <<<"$pr")" >> "$GITHUB_OUTPUT"
-          echo "head_sha=$(jq -r '.head.sha' <<<"$pr")" >> "$GITHUB_OUTPUT"
-          echo "head_repo=$(jq -r '.head.repo.full_name' <<<"$pr")" >> "$GITHUB_OUTPUT"
+          {
+            echo "number=$(jq -r '.number' <<<"$pr")"
+            echo "base_sha=$(jq -r '.base.sha' <<<"$pr")"
+            echo "head_sha=$(jq -r '.head.sha' <<<"$pr")"
+            echo "head_repo=$(jq -r '.head.repo.full_name' <<<"$pr")"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Wait for exact-head ARM compiler cache prime
         shell: bash
@@ -140,12 +141,12 @@ jobs:
             gh api --method POST \
               "repos/$GITHUB_REPOSITORY/actions/workflows/$workflow/dispatches" \
               -f ref="$BRANCH" \
-              -f inputs[base_sha]="$BASE_SHA" \
-              -f inputs[head_sha]="$HEAD_SHA" \
-              -f inputs[head_repo]="$HEAD_REPO" \
-              -f inputs[pr_number]="$PR_NUMBER" \
-              -f inputs[caller_run_id]="$CALLER_RUN_ID" \
-              -f inputs[caller_run_attempt]="$CALLER_RUN_ATTEMPT"
+              -f "inputs[base_sha]=$BASE_SHA" \
+              -f "inputs[head_sha]=$HEAD_SHA" \
+              -f "inputs[head_repo]=$HEAD_REPO" \
+              -f "inputs[pr_number]=$PR_NUMBER" \
+              -f "inputs[caller_run_id]=$CALLER_RUN_ID" \
+              -f "inputs[caller_run_attempt]=$CALLER_RUN_ATTEMPT"
           done
 
       - name: Record dispatch identity
