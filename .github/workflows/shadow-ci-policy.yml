@@ -22,8 +22,12 @@ on:
 # Advisory-only evaluation from the trusted default branch. It does not
 # contribute to the required merge-gate and cannot approve or mutate a PR.
 permissions:
-  contents: read
-  pull-requests: read
+  contents: read # Read only the trusted main checkout and changed workflow content.
+  pull-requests: read # Reconcile PR identity and complete changed-file API inventory.
+
+concurrency:
+  group: ci-shadow-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   shadow:
