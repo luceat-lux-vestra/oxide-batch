@@ -138,3 +138,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+# Negative control for schema-v8 trusted-base Gate: intentionally unadmitted blob; NEVER MERGE.
