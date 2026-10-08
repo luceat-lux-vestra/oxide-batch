@@ -48,13 +48,29 @@ control-file modifications.
 
 ## Positive control and boundaries
 
-The first subsequent ordinary, non-protected-file documentation PR
-should be assessed against **the already-active schema-8 trusted base**
-and must receive an independent successful required `merge-gate`
-before squash merge. The exact candidate HEAD, job/run identities,
-first-attempt outcomes and post-main Git tree equality are tracked
-in [#433](https://github.com/luceat-lux-vestra/oxide-batch/issues/433);
-this record alone is **not** positive merge authorization.
+The first positive ordinary documentation-only control,
+[PR #444](https://github.com/luceat-lux-vestra/oxide-batch/pull/444),
+was squash-merged after the active schema-8 trusted-base `merge-gate`
+accepted all eight protected workflow blobs, all six protected file
+blobs, and the three canonical exact-head authorities. Its final
+candidate was `4262f0746a317cda83a86dfe0e9888ab55312c56`;
+landed main was `89cdc75992509b4e42f88e962f672e37ddea9687`,
+with identical Git trees. The first-attempt Fast run nevertheless
+fell back to full Rust validation: its docs-only classification failed
+internally although the outer Fast job ultimately succeeded.
+
+[PR #445](https://github.com/luceat-lux-vestra/oxide-batch/pull/445)
+corrected that GitHub Compare REST response mismatch and the
+`jq -e` false-boolean exit-code trap, without changing Gate authority
+or the unknown-input full-validation fallback. Its final-head Fast run
+verified `docs-only Fast path: false` for a workflow change, with
+Clippy and workspace tests succeeding. A subsequent clean docs-only
+PR must still demonstrate `docs-only Fast path: true` and that
+non-applicable Rust-only steps were skipped while the independent
+required Merge Gate succeeds. Record that run's exact HEAD and
+first-attempt logs separately in
+[tracker #433](https://github.com/luceat-lux-vestra/oxide-batch/issues/433);
+this document alone is not acceptance evidence.
 
 Until further verified migrations, the following remain unchanged:
 
