@@ -2,6 +2,8 @@ name: CI policy shadow (advisory)
 
 on:
   push:
+    branches-ignore:
+      - main
     paths:
       - .github/scripts/shadow-ci-policy.py
       - .github/scripts/validate_actions_security.py
