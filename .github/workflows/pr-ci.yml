@@ -87,8 +87,8 @@ jobs:
             bootstrap_path="$(jq -er '[.[][]] | if length == 1 then .[0].filename else error("bootstrap requires exactly one changed file") end' <<<"$pages")"
             bootstrap_previous="$(jq -r '[.[][]] | if length == 1 then (.[0].previous_filename // "") else "" end' <<<"$pages")"
             if [ "$bootstrap_status" = "modified" ] && [ "$bootstrap_path" = ".github/merge-gate-policy.json" ] && [ -z "$bootstrap_previous" ]; then
-              head_policy="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/contents/.github/merge-gate-policy.json?ref=${HEAD_SHA}")"
-              head_schema="$(jq -er '.content | @base64d | fromjson | .schema_version | select(type == "number")' <<<"$head_policy")"
+              head_policy="$(gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/merge-gate-policy.json?ref=${HEAD_SHA}")"
+              head_schema="$(jq -er '.schema_version | select(type == "number")' <<<"$head_policy")"
               if [ "$head_schema" = "8" ]; then
                 schema8_bootstrap=true
               fi
@@ -104,9 +104,9 @@ jobs:
               <"$changed_file_records"
           )"
 
-          docs_only="$(jq -er 'if .classification_valid == true and (.docs_only | type) == "boolean" then .docs_only else error("invalid docs_only") end' <<<"$classification")"
-          supply_chain_impact="$(jq -er 'if .classification_valid == true and (.supply_chain_impact | type) == "boolean" then .supply_chain_impact else error("invalid supply_chain_impact") end' <<<"$classification")"
-          evidence_impact="$(jq -er 'if .classification_valid == true and (.evidence_impact | type) == "boolean" then .evidence_impact else error("invalid evidence_impact") end' <<<"$classification")"
+          docs_only="$(jq -r 'if .classification_valid == true and (.docs_only | type) == "boolean" then .docs_only else error("invalid docs_only") end' <<<"$classification")"
+          supply_chain_impact="$(jq -r 'if .classification_valid == true and (.supply_chain_impact | type) == "boolean" then .supply_chain_impact else error("invalid supply_chain_impact") end' <<<"$classification")"
+          evidence_impact="$(jq -r 'if .classification_valid == true and (.evidence_impact | type) == "boolean" then .evidence_impact else error("invalid evidence_impact") end' <<<"$classification")"
 
           {
             echo "schema8_bootstrap=$schema8_bootstrap"
