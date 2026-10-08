@@ -1906,6 +1906,108 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def with_v8_protected_inventory
+    Dir.mktmpdir do |root|
+      entries = MergeGateVerifier::V8_PROTECTED_CONTROL_FILES.each_with_index.map do |path, index|
+        content = "trusted-protected-#{index}\n"
+        write(root, path, content)
+        {
+          'path' => path,
+          'accepted_blobs' => [MergeGateVerifier.git_blob_sha(content)]
+        }
+      end
+      policy = {
+        'schema_version' => 8,
+        'repository_merge_gate' => {'protected_files' => entries}
+      }
+      yield root, policy
+    end
+  end
+
+  def v8_inventory_violations(root, policy)
+    MergeGateVerifier.protected_file_inventory_v8_contract(root: root, policy: policy)
+  end
+
+  def test_v8_protected_files_accept_only_canonical_live_blob_inventory
+    with_v8_protected_inventory do |root, policy|
+      assert_empty v8_inventory_violations(root, policy)
+      policy['schema_version'] = 7
+      policy['repository_merge_gate'].delete('protected_files')
+      assert_empty v8_inventory_violations(root, policy)
+    end
+  end
+
+  def test_v8_protected_files_missing_or_extra_path_denied
+    with_v8_protected_inventory do |root, policy|
+      entries = policy.dig('repository_merge_gate', 'protected_files')
+      deleted = entries.pop
+      assert_includes v8_inventory_violations(root, policy).join("\n"), 'inventory mismatch'
+      entries << deleted
+      entries << {'path' => '.github/scripts/new-untrusted.py', 'accepted_blobs' => ['a' * 40]}
+      assert_includes v8_inventory_violations(root, policy).join("\n"), 'inventory mismatch'
+    end
+  end
+
+  def test_v8_protected_files_duplicate_or_malformed_entry_denied
+    with_v8_protected_inventory do |root, policy|
+      entries = policy.dig('repository_merge_gate', 'protected_files')
+      entries << Marshal.load(Marshal.dump(entries.first))
+      assert_includes v8_inventory_violations(root, policy).join("\n"), 'duplicate path'
+      entries.pop
+      entries.first['unexpected'] = true
+      assert_includes v8_inventory_violations(root, policy).join("\n"), 'entry is malformed'
+    end
+  end
+
+  def test_v8_protected_files_bad_or_new_sha_denied
+    with_v8_protected_inventory do |root, policy|
+      entry = policy.dig('repository_merge_gate', 'protected_files').first
+      good = entry.fetch('accepted_blobs').first
+      [[], ['x' * 40], [good, good], [good.upcase], ['f' * 40]].each do |blobs|
+        entry['accepted_blobs'] = blobs
+        refute_empty v8_inventory_violations(root, policy)
+      end
+    end
+  end
+
+  def test_v8_protected_files_mutated_file_denied
+    with_v8_protected_inventory do |root, policy|
+      path = policy.dig('repository_merge_gate', 'protected_files').first.fetch('path')
+      File.write(File.join(root, path), 'tampered head implementation')
+      assert_includes v8_inventory_violations(root, policy).join("\n"), 'is not accepted by policy'
+    end
+  end
+
+  def test_v8_protected_files_symlink_target_denied
+    with_v8_protected_inventory do |root, policy|
+      path = policy.dig('repository_merge_gate', 'protected_files').first.fetch('path')
+      target = File.join(root, path)
+      File.rename(target, target + '.trusted')
+      File.symlink(target + '.trusted', target)
+      assert_includes v8_inventory_violations(root, policy).join("\n"), 'non-symlink'
+    end
+  end
+
+  def test_v8_protected_files_symlink_parent_denied
+    with_v8_protected_inventory do |root, policy|
+      dir = File.join(root, '.github/scripts')
+      File.rename(dir, dir + '.trusted')
+      File.symlink(dir + '.trusted', dir)
+      assert_includes v8_inventory_violations(root, policy).join("\n"), 'non-symlink'
+    end
+  end
+
+  def test_v8_pr_proof_contract_is_not_skipped
+    policy = {
+      'schema_version' => 8,
+      'pr_proof' => {
+        'schema' => 'spoof',
+        'members' => []
+      }
+    }
+    refute_empty MergeGateVerifier.pr_proof_policy_contract(policy: policy)
+  end
+
   def test_v7_topology_contract_accepts_canonical_single_entrypoint
     with_v7_topology_contract do |root, policy|
       assert_empty MergeGateVerifier.pr_topology_v7_contract(
