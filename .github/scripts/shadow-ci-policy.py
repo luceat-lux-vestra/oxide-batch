@@ -26,8 +26,14 @@ WORKFLOW_PREFIX = ".github/workflows/"
 KNOWN_STATUSES = frozenset({"added", "modified", "removed", "renamed"})
 DOC_ROOT = frozenset({
     "README.md", "AGENTS.md", "CHANGELOG.md", "CODE_OF_CONDUCT.md",
-    "CONTRIBUTING.md", "SECURITY.md",
+    "CONTRIBUTING.md",
 })
+# Security guidance is a policy surface, not ordinary editorial documentation.
+SECURITY_POLICY_DOCS = frozenset({
+    "SECURITY.md", "docs/engineering/actions-security.md",
+})
+# CI contract tests validate the trust boundary rather than batch semantics.
+CI_POLICY_TESTS = frozenset({"xtask/tests/merge_gate_policy.rs"})
 CORE_MARKERS = (
     "checkpoint", "recovery", "transaction", "repository", "postgres",
     "migration", "scheduler", "retry", "partition", "repeat",
@@ -59,6 +65,10 @@ def path(value: object) -> str:
 
 
 def classify(filename: str) -> set[str]:
+    if filename in SECURITY_POLICY_DOCS:
+        return {"docs", "ci_security"}
+    if filename in CI_POLICY_TESTS:
+        return {"ci_security"}
     # These documents are authoritative policy/evidence inputs, not just prose.
     if filename == "docs/engineering/retained-evidence-policy.json":
         return {"ci_security", "evidence_provenance"}
@@ -285,6 +295,45 @@ class ShadowTests(unittest.TestCase):
     def test_campaign_docs_require_evidence(self):
         p = self.plan(["docs/engineering/campaigns/decisions.md"])
         self.assertIn("evidence_provenance", p["recommended_checks"])
+
+    def test_security_policy_docs_require_independent_review(self):
+        for filename in sorted(SECURITY_POLICY_DOCS):
+            with self.subTest(filename=filename):
+                p = self.plan([filename])
+                self.assertIn("ci_security", p["risk_classes"])
+                self.assertIn("trusted_static_policy_review", p["recommended_checks"])
+                self.assertIn("independent_security_review", p["recommended_checks"])
+                self.assertEqual(p["recommendation"], "REQUIRE_INDEPENDENT_REVIEW")
+                self.assertNotIn("postgres_15_18_and_recovery", p["recommended_checks"])
+
+    def test_security_document_rename_cannot_launder_risk(self):
+        for source, destination in (
+            ("SECURITY.md", "docs/project/security-history.md"),
+            ("docs/project/security-history.md", "SECURITY.md"),
+            ("docs/engineering/actions-security.md", "docs/engineering/history.md"),
+            ("docs/engineering/history.md", "docs/engineering/actions-security.md"),
+        ):
+            with self.subTest(source=source, destination=destination):
+                p = evaluate(
+                    self.pr(), [{
+                        "filename": destination,
+                        "previous_filename": source,
+                        "status": "renamed",
+                    }], {}, repository=self.REPO,
+                    trusted_base=self.BASE, expected_head=self.HEAD,
+                )
+                self.assertEqual(p["recommendation"], "REQUIRE_INDEPENDENT_REVIEW")
+
+    def test_ci_merge_gate_contract_tests_are_security_not_core(self):
+        p = self.plan(["xtask/tests/merge_gate_policy.rs"])
+        self.assertEqual(p["risk_classes"], ["ci_security"])
+        self.assertEqual(p["recommendation"], "REQUIRE_INDEPENDENT_REVIEW")
+        self.assertNotIn("integration_regression", p["recommended_checks"])
+
+    def test_other_editorial_docs_stay_docs_only(self):
+        p = self.plan(["docs/product/vision-and-scope.md"])
+        self.assertEqual(p["risk_classes"], ["docs"])
+        self.assertEqual(p["recommended_checks"], ["documentation_checks"])
 
     def test_agents_is_docs_only(self):
         self.assertEqual(self.plan(["AGENTS.md"])["recommended_checks"], ["documentation_checks"])
