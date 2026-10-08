@@ -1,6 +1,11 @@
 name: CI policy shadow (advisory)
 
 on:
+  push:
+    paths:
+      - .github/scripts/shadow-ci-policy.py
+      - .github/scripts/validate_actions_security.py
+      - .github/workflows/shadow-ci-policy.yml
   workflow_dispatch:
     inputs:
       pr_number:
@@ -21,7 +26,7 @@ permissions:
 jobs:
   shadow:
     name: advisory-shadow-evaluation
-    if: ${{ github.ref == 'refs/heads/main' }}
+    if: ${{ github.event_name == 'push' || github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -33,6 +38,7 @@ jobs:
       - name: Run shadow evaluator adversarial self-tests
         run: python3 .github/scripts/shadow-ci-policy.py --self-test
       - name: Evaluate PR data without executing its contents
+        if: ${{ github.event_name == 'workflow_dispatch' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
