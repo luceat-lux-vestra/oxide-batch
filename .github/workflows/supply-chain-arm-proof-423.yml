@@ -30,7 +30,8 @@ jobs:
         run: |
           set -euo pipefail
           grep -F "runs-on: ubuntu-24.04-arm" .github/workflows/supply-chain.yml
-          grep -F "cargo-deny-0.20.2-aarch64-unknown-linux-musl.tar.gz" .github/workflows/supply-chain.yml
+          grep -F "aarch64-unknown-linux-musl.tar.gz" .github/workflows/supply-chain.yml
+          grep -F "995c82be0defc7a025cae49a2aa2644ce8245c9a3318fc4103907c6a285e8c7d" .github/workflows/supply-chain.yml
           ! grep -F "uses: EmbarkStudios/cargo-deny-action@" .github/workflows/supply-chain.yml
 
       - name: Show repository Rust toolchain
