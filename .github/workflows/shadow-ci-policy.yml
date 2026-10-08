@@ -7,6 +7,8 @@ on:
     paths:
       - .github/scripts/shadow-ci-policy.py
       - .github/scripts/validate_actions_security.py
+      - .github/scripts/verify-merge-gates.rb
+      - .github/scripts/test-merge-gates.rb
       - .github/workflows/shadow-ci-policy.yml
   workflow_dispatch:
     inputs:
@@ -51,6 +53,8 @@ jobs:
           persist-credentials: false
       - name: Run shadow evaluator adversarial self-tests
         run: python3 .github/scripts/shadow-ci-policy.py --self-test
+      - name: Run merge-gate Ruby contract regression tests (advisory)
+        run: ruby .github/scripts/test-merge-gates.rb
       - name: Evaluate PR risk data without executing its contents
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.assessment != 'bounded-safe-diff' }}
         env:
