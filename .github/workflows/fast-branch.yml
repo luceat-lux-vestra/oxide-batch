@@ -75,6 +75,20 @@ jobs:
           test "$TRUSTED_CHECKOUT" = "success"
 
           compare="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/compare/${BASE_SHA}...${HEAD_SHA}")"
+          # GitHub Compare REST exposes commits[], not head_commit. Verify the
+          # returned commit list ends at the exact requested HEAD before using
+          # its final entry to supply the legacy verifier's head_commit field.
+          # Missing/truncated/malformed lists must fall back to full Fast tests.
+          compare="$(jq -ce --arg head "$HEAD_SHA" '
+            if (.commits | type) != "array" or
+               (.commits | length) == 0 or
+               .commits[-1].sha != $head
+            then error("compare commit list must end at exact candidate HEAD")
+            elif .head_commit == null
+            then .head_commit = .commits[-1]
+            else .
+            end
+          ' <<<"$compare")"
           jq -e             --arg head "$HEAD_SHA"             '.head_commit.sha == $head and (.files | type) == "array" and (.files | length) > 0 and (.files | length) < 300'             <<<"$compare" >/dev/null
           expected_count="$(jq -er '.files | length' <<<"$compare")"
 
