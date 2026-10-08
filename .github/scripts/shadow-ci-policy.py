@@ -20,6 +20,7 @@ from pathlib import Path
 
 from validate_actions_security import check_workflow
 from safe_workflow_transition import SafeWorkflowTransitionTests
+from test_safe_workflow_transition_api import SafeWorkflowTransitionApiTests
 
 SHA = re.compile(r"^[0-9a-f]{40}$")
 SAFE_REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -457,6 +458,7 @@ def main() -> int:
         suite = unittest.TestSuite((
             unittest.defaultTestLoader.loadTestsFromTestCase(ShadowTests),
             unittest.defaultTestLoader.loadTestsFromTestCase(SafeWorkflowTransitionTests),
+            unittest.defaultTestLoader.loadTestsFromTestCase(SafeWorkflowTransitionApiTests),
         ))
         return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
 
