@@ -40,7 +40,7 @@ concurrency:
 jobs:
   dependency-review:
     name: dependency-review
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Review dependency changes
@@ -59,7 +59,7 @@ jobs:
 
   actions-security:
     name: actions-security
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Draft final-gate placeholder
@@ -108,22 +108,22 @@ jobs:
           tool_dir="${RUNNER_TEMP}/actions-security-tools"
           mkdir -p "${tool_dir}"
 
-          # actionlint v1.7.12 Linux arm64 release artifact, verified before use.
-          actionlint_archive="actionlint_1.7.12_linux_arm64.tar.gz"
+          # actionlint v1.7.12 Linux amd64 release artifact, verified before use.
+          actionlint_archive="actionlint_1.7.12_linux_amd64.tar.gz"
           curl --fail --silent --show-error --location \
             "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${actionlint_archive}" \
             --output "${tool_dir}/${actionlint_archive}"
-          echo "325e971b6ba9bfa504672e29be93c24981eeb1c07576d730e9f7c8805afff0c6  ${tool_dir}/${actionlint_archive}" \
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  ${tool_dir}/${actionlint_archive}" \
             | sha256sum --check --strict
           tar -xzf "${tool_dir}/${actionlint_archive}" -C "${tool_dir}" actionlint
           "${tool_dir}/actionlint" -version
 
-          # zizmor v1.29.0 Linux arm64 release artifact, verified before use.
-          zizmor_archive="zizmor-aarch64-unknown-linux-gnu.tar.gz"
+          # zizmor v1.29.0 Linux amd64 release artifact, verified before use.
+          zizmor_archive="zizmor-x86_64-unknown-linux-gnu.tar.gz"
           curl --fail --silent --show-error --location \
             "https://github.com/zizmorcore/zizmor/releases/download/v1.29.0/${zizmor_archive}" \
             --output "${tool_dir}/${zizmor_archive}"
-          echo "415eaa7c0a06479a701b8e44a3e812c1047decc848ec4bede7bd6bbf49f22d20  ${tool_dir}/${zizmor_archive}" \
+          echo "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839  ${tool_dir}/${zizmor_archive}" \
             | sha256sum --check --strict
           tar -xzf "${tool_dir}/${zizmor_archive}" -C "${tool_dir}" zizmor
           "${tool_dir}/zizmor" --version
