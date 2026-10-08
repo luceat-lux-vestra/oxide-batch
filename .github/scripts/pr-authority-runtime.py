@@ -333,6 +333,103 @@ class GitHubActionsClient:
 
 
 
+    def audit_commit_prs_link_bounded(
+        self, commit_sha: str, *, max_pages: int = 3
+    ) -> list[dict[str, object]]:
+        """GET-only, Link-aware double-pass audit. Never a cancellation grant."""
+        if not SHA_RE.fullmatch(commit_sha):
+            raise ContractError("Link audit needs exact commit SHA")
+        if type(max_pages) is not int or not 1 <= max_pages <= 3:
+            raise ContractError("Link audit page budget invalid")
+        root = f"{self.api_url}/repos/{self.repository}/commits/{commit_sha}/pulls"
+        target = urllib.parse.urlsplit(root)
+
+        def read_page(page: int) -> tuple[list[dict[str, object]], bool]:
+            request = urllib.request.Request(
+                f"{root}?per_page=100&page={page}",
+                headers={
+                    "Authorization": f"Bearer {self.token}",
+                    "Accept": "application/vnd.github+json",
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "User-Agent": "oxide-batch-link-audit",
+                },
+            )
+            try:
+                with self.opener(request, timeout=20) as response:
+                    rows = json.load(response)
+                    link = response.headers.get("Link")
+            except Exception as exc:
+                raise ContractError(f"Link audit GET failed: {exc}") from exc
+            if (
+                not isinstance(rows, list) or len(rows) > 100
+                or any(not isinstance(x, dict) for x in rows)
+                or (link is not None and not isinstance(link, str))
+            ):
+                raise ContractError("Link audit malformed page")
+            relations: dict[str, int] = {}
+            if link:
+                for element in link.split(","):
+                    item = re.fullmatch(
+                        r'\s*<([^<>]+)>;\s*rel="(next|prev|first|last)"\s*',
+                        element,
+                    )
+                    if not item:
+                        raise ContractError("Link audit malformed relation")
+                    url, rel = item.groups()
+                    parsed = urllib.parse.urlsplit(url)
+                    try:
+                        query = urllib.parse.parse_qs(
+                            parsed.query, keep_blank_values=True, strict_parsing=True
+                        )
+                    except ValueError as exc:
+                        raise ContractError("Link audit bad query") from exc
+                    number = query.get("page")
+                    if (
+                        rel in relations
+                        or (parsed.scheme, parsed.netloc, parsed.path) !=
+                        (target.scheme, target.netloc, target.path)
+                        or parsed.fragment or parsed.username or parsed.password
+                        or set(query) != {"page", "per_page"}
+                        or query.get("per_page") != ["100"]
+                        or not isinstance(number, list) or len(number) != 1
+                        or not re.fullmatch(r"[1-9][0-9]*", number[0])
+                    ):
+                        raise ContractError("Link audit foreign or duplicate pagination")
+                    relations[rel] = int(number[0])
+                if (
+                    ("next" in relations and relations["next"] != page + 1)
+                    or ("prev" in relations and relations["prev"] != page - 1)
+                    or ("first" in relations and relations["first"] != 1)
+                    or ("last" in relations and relations["last"] < page)
+                ):
+                    raise ContractError("Link audit out-of-sequence pagination")
+            has_next = "next" in relations
+            if has_next and len(rows) != 100:
+                raise ContractError("Link audit short page has next")
+            return rows, has_next
+
+        def scan() -> list[tuple[list[dict[str, object]], bool]]:
+            pages: list[tuple[list[dict[str, object]], bool]] = []
+            seen: set[int] = set()
+            for page in range(1, max_pages + 1):
+                rows, more = read_page(page)
+                for item in rows:
+                    number = item.get("number")
+                    if type(number) is not int or number <= 0 or number in seen:
+                        raise ContractError("Link audit invalid or duplicate PR number")
+                    seen.add(number)
+                pages.append((rows, more))
+                if not more:
+                    return pages
+            raise ContractError("Link audit page budget exhausted")
+
+        initial = scan()
+        if scan() != initial:
+            raise ContractError("Link audit changed across complete passes")
+        return [record for page, _ in initial for record in page]
+
+
+
 def audit_orphan_authority_candidate(
     *,
     authority: Authority,
@@ -640,6 +737,87 @@ def _run(authority: Authority, *, conclusion: str = "success", run_id: int = 10)
 
 class RuntimeContractTests(unittest.TestCase):
 
+
+
+    def test_link_audit_two_pages_fail_closed_and_get_only(self) -> None:
+        sha = "a" * 40
+
+        class Response(io.StringIO):
+            def __init__(self, records: object, link: str | None) -> None:
+                super().__init__(json.dumps(records))
+                self.headers = {"Link": link} if link else {}
+
+        class Stub:
+            def __init__(self) -> None:
+                self.calls: list[tuple[str, int]] = []
+                self.mode = "normal"
+
+            def __call__(self, request: urllib.request.Request, timeout: int) -> Response:
+                self.calls.append((request.get_method(), timeout))
+                url = urllib.parse.urlsplit(request.full_url)
+                page = int(urllib.parse.parse_qs(url.query)["page"][0])
+                root = request.full_url.split("?")[0]
+                link_url = f"{root}?page=2&per_page=100"
+                if self.mode == "foreign":
+                    link_url = f"https://evil.invalid/commits/{sha}/pulls?per_page=100&page=2"
+                if self.mode == "out-of-order":
+                    link_url = f"{root}?per_page=100&page=3"
+                if page == 1:
+                    rows = [{"number": i} for i in range(1, 101)]
+                    if self.mode == "short":
+                        rows = rows[:3]
+                    link = f'<{link_url}>; rel="next"'
+                    if self.mode == "duplicate-link":
+                        link += f', <{link_url}>; rel="next"'
+                    if self.mode == "invalid-link":
+                        link = "not a link"
+                else:
+                    rows = [{"number": 101}]
+                    if self.mode == "drift" and len(self.calls) >= 4:
+                        rows = [{"number": 102}]
+                    link = None
+                return Response(rows, link)
+
+        api_stub = Stub()
+        api = GitHubActionsClient(
+            api_url="https://api.github.test", repository="owner/repo",
+            token="test", opener=api_stub,
+        )
+        self.assertEqual(
+            list(range(1, 102)),
+            [row["number"] for row in api.audit_commit_prs_link_bounded(sha)],
+        )
+        self.assertEqual([("GET", 20)] * 4, api_stub.calls)
+        for mode in ("foreign", "out-of-order", "short", "duplicate-link", "invalid-link", "drift"):
+            with self.subTest(mode=mode):
+                stub = Stub()
+                stub.mode = mode
+                other = GitHubActionsClient(
+                    api_url="https://api.github.test", repository="owner/repo",
+                    token="test", opener=stub,
+                )
+                with self.assertRaises(ContractError):
+                    other.audit_commit_prs_link_bounded(sha)
+        with self.assertRaisesRegex(ContractError, "page budget"):
+            api.audit_commit_prs_link_bounded(sha, max_pages=1)
+        with self.assertRaises(ContractError):
+            api.audit_commit_prs_link_bounded("bad")
+
+    def test_link_audit_single_page_still_get_only(self) -> None:
+        class Response(io.StringIO):
+            headers: dict[str, str] = {}
+        verbs: list[str] = []
+        def opener(request: urllib.request.Request, timeout: int) -> Response:
+            verbs.append(request.get_method())
+            return Response('[{"number":451}]')
+        api = GitHubActionsClient(
+            api_url="https://api.github.test", repository="owner/repo",
+            token="test", opener=opener,
+        )
+        self.assertEqual(
+            [{"number": 451}], api.audit_commit_prs_link_bounded("f" * 40)
+        )
+        self.assertEqual(["GET", "GET"], verbs)
 
     def test_orphan_readonly_bounded_workflow_and_commit_collection(self) -> None:
         class Stub(GitHubActionsClient):
