@@ -52,7 +52,7 @@ jobs:
   evidence-provenance:
     # Live required context name remains stable during the topology migration.
     name: evidence-provenance
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Draft final-gate placeholder
