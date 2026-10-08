@@ -87,8 +87,8 @@ jobs:
             bootstrap_path="$(jq -er '[.[][]] | if length == 1 then .[0].filename else error("bootstrap requires exactly one changed file") end' <<<"$pages")"
             bootstrap_previous="$(jq -r '[.[][]] | if length == 1 then (.[0].previous_filename // "") else "" end' <<<"$pages")"
             if [ "$bootstrap_status" = "modified" ] && [ "$bootstrap_path" = ".github/merge-gate-policy.json" ] && [ -z "$bootstrap_previous" ]; then
-              head_policy="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/contents/.github/merge-gate-policy.json?ref=${HEAD_SHA}")"
-              head_schema="$(jq -er '.content | @base64d | fromjson | .schema_version | select(type == "number")' <<<"$head_policy")"
+              head_policy="$(gh api -H 'Accept: application/vnd.github.raw+json' "repos/${GITHUB_REPOSITORY}/contents/.github/merge-gate-policy.json?ref=${HEAD_SHA}")"
+              head_schema="$(jq -er '.schema_version | select(type == "number")' <<<"$head_policy")"
               if [ "$head_schema" = "8" ]; then
                 schema8_bootstrap=true
               fi
