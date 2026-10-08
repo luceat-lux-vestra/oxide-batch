@@ -1,5 +1,5 @@
 {
-  "schema_version": 7,
+  "schema_version": 8,
   "ruleset": {
     "id": 19905142,
     "name": "Protect main"
@@ -200,6 +200,44 @@
           "3c74e15ea0ea61fbbd6095f86a355fd75b4174c3",
           "680ef346dece5d5c525ded56c3e03e05c606ce4f",
           "f12ebbbbe5c3e5d71f8d04c8f51d7eed1d2fdbee"
+        ]
+      }
+    ],
+    "protected_files": [
+      {
+        "path": ".github/scripts/pr-scope.py",
+        "accepted_blobs": [
+          "8eaaf621df6771cf28d8deca97b05fb84f218bd3"
+        ]
+      },
+      {
+        "path": ".github/scripts/verify-merge-gates.rb",
+        "accepted_blobs": [
+          "51b080a11cd96cb8f4d4bd908a11cb753304764e"
+        ]
+      },
+      {
+        "path": ".github/scripts/test-merge-gates.rb",
+        "accepted_blobs": [
+          "7e543fe3cefa0426f934dc6dc59519ff50fa3f64"
+        ]
+      },
+      {
+        "path": ".github/scripts/validate_actions_security.py",
+        "accepted_blobs": [
+          "0f140ba42fdb8c6ae0f34c070a7423dc5ff73a2e"
+        ]
+      },
+      {
+        "path": ".github/scripts/validate_supply_chain_exceptions.py",
+        "accepted_blobs": [
+          "a06eb71c6b16ffc6cda2d07a7955ce8ca9ae5735"
+        ]
+      },
+      {
+        "path": "docs/engineering/retained-evidence-policy.json",
+        "accepted_blobs": [
+          "5528238c7b4c735d35034e48fbf852b7960d61d8"
         ]
       }
     ]
