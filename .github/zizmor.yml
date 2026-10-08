@@ -34,3 +34,7 @@ rules:
       # permissions; this workflow-level finding therefore has no effective
       # permission surface to widen.
       - release-draft.yml:1
+      # Research-only ARM sweep dispatcher must hold job-scoped actions:write
+      # to dispatch branch-local authority workflows. The workflow is deleted
+      # before any production candidate.
+      - arm-sweep-423.yml:1
