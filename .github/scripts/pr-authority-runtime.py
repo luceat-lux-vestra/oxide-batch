@@ -226,6 +226,113 @@ class GitHubActionsClient:
 
 
 
+    def _read_array(self, path: str) -> list[dict[str, object]]:
+        """Read a GitHub REST array without granting or invoking write APIs."""
+        request = urllib.request.Request(
+            f"{self.api_url}/repos/{self.repository}/{path}",
+            headers={
+                "Authorization": f"Bearer {self.token}",
+                "Accept": "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+                "User-Agent": "oxide-batch-orphan-readonly-audit",
+            },
+        )
+        try:
+            with self.opener(request, timeout=20) as response:
+                payload = json.load(response)
+        except Exception as exc:
+            raise ContractError(f"orphan audit GitHub GET {path} failed: {exc}") from exc
+        if not isinstance(payload, list) or any(not isinstance(row, dict) for row in payload):
+            raise ContractError("orphan audit GitHub array response is malformed")
+        return payload
+
+    def audit_workflow_runs_bounded(
+        self, workflow: str, *, max_pages: int = 3
+    ) -> list[dict[str, object]]:
+        """Bounded complete read-only snapshot; ambiguous/changed pages fail closed.
+
+        Never feed these rows directly to a cancellation API. GitHub lists can
+        change after this snapshot and no cross-request transaction is offered.
+        """
+        if not re.fullmatch(r"\.github/workflows/[A-Za-z0-9_.-]+\.yml", workflow):
+            raise ContractError("orphan audit workflow path is invalid")
+        if type(max_pages) is not int or not 1 <= max_pages <= 3:
+            raise ContractError("orphan audit page budget is invalid")
+
+        filename = Path(workflow).name
+
+        def read_page(page: int) -> tuple[int, list[dict[str, object]]]:
+            payload = self._read_json(
+                f"actions/workflows/{filename}/runs?"
+                f"event=workflow_dispatch&per_page=100&page={page}"
+            )
+            count = payload.get("total_count")
+            rows = payload.get("workflow_runs")
+            if (
+                type(count) is not int or count < 0 or count > max_pages * 100
+                or not isinstance(rows, list)
+                or any(not isinstance(row, dict) for row in rows)
+            ):
+                raise ContractError("orphan audit workflow page is malformed or exceeds budget")
+            return count, rows
+
+        count, first = read_page(1)
+        pages = max(1, (count + 99) // 100)
+        results: list[dict[str, object]] = []
+        seen: set[int] = set()
+        for page in range(1, pages + 1):
+            page_count, rows = (count, first) if page == 1 else read_page(page)
+            expected = min(100, max(0, count - (page - 1) * 100))
+            if page_count != count or len(rows) != expected:
+                raise ContractError("orphan audit workflow pages are incomplete or changed")
+            for row in rows:
+                run_id = row.get("id")
+                if (
+                    type(run_id) is not int or run_id <= 0 or run_id in seen
+                    or row.get("event") != "workflow_dispatch"
+                ):
+                    raise ContractError("orphan audit workflow run is duplicate or malformed")
+                seen.add(run_id)
+                results.append(row)
+        if read_page(1) != (count, first):
+            raise ContractError("orphan audit workflow first page changed during inspection")
+        return results
+
+    def audit_commit_prs_bounded(
+        self, commit_sha: str, *, max_pages: int = 3
+    ) -> list[dict[str, object]]:
+        """Enumerate all commit->PR associations, including the final short page."""
+        if not SHA_RE.fullmatch(commit_sha):
+            raise ContractError("orphan audit commit identity is invalid")
+        if type(max_pages) is not int or not 1 <= max_pages <= 3:
+            raise ContractError("orphan audit page budget is invalid")
+
+        def read_page(page: int) -> list[dict[str, object]]:
+            return self._read_array(
+                f"commits/{commit_sha}/pulls?per_page=100&page={page}"
+            )
+
+        first = read_page(1)
+        seen: set[int] = set()
+        results: list[dict[str, object]] = []
+        for page in range(1, max_pages + 1):
+            rows = first if page == 1 else read_page(page)
+            if len(rows) > 100:
+                raise ContractError("orphan audit commit page exceeds GitHub page size")
+            for row in rows:
+                pr_id = row.get("number")
+                if type(pr_id) is not int or pr_id <= 0 or pr_id in seen:
+                    raise ContractError("orphan audit commit PR association is duplicate or malformed")
+                seen.add(pr_id)
+                results.append(row)
+            if len(rows) < 100:
+                if read_page(1) != first:
+                    raise ContractError("orphan audit commit first page changed during inspection")
+                return results
+        raise ContractError("orphan audit commit association page budget exhausted")
+
+
+
 def audit_orphan_authority_candidate(
     *,
     authority: Authority,
@@ -532,6 +639,130 @@ def _run(authority: Authority, *, conclusion: str = "success", run_id: int = 10)
 
 
 class RuntimeContractTests(unittest.TestCase):
+
+
+    def test_orphan_readonly_bounded_workflow_and_commit_collection(self) -> None:
+        class Stub(GitHubActionsClient):
+            def __init__(self) -> None:
+                super().__init__(
+                    api_url="https://api.github.test", repository="owner/repo",
+                    token="test", opener=lambda *_a, **_k: None,
+                )
+                self.workflow_count = 2
+                self.workflow_rows = [
+                    {"id": 10, "event": "workflow_dispatch"},
+                    {"id": 11, "event": "workflow_dispatch"},
+                ]
+                self.associations = [{"number": 42}]
+                self.calls: list[str] = []
+
+            def _read_json(self, path: str) -> dict[str, object]:
+                self.calls.append(path)
+                return {
+                    "total_count": self.workflow_count,
+                    "workflow_runs": copy.deepcopy(self.workflow_rows),
+                }
+
+            def _read_array(self, path: str) -> list[dict[str, object]]:
+                self.calls.append(path)
+                return copy.deepcopy(self.associations)
+
+        stub = Stub()
+        self.assertEqual(
+            [10, 11],
+            [r["id"] for r in stub.audit_workflow_runs_bounded(
+                ".github/workflows/codeql.yml"
+            )],
+        )
+        self.assertEqual(2, len(stub.calls))
+        self.assertEqual(stub.calls[0], stub.calls[1])
+        self.assertIn("event=workflow_dispatch&per_page=100&page=1", stub.calls[0])
+        stub.calls.clear()
+        self.assertEqual(
+            [42],
+            [p["number"] for p in stub.audit_commit_prs_bounded("a" * 40)],
+        )
+        self.assertEqual(2, len(stub.calls))
+        self.assertEqual(stub.calls[0], stub.calls[1])
+        self.assertIn("/pulls?per_page=100&page=1", stub.calls[0])
+
+        for name, adjust in (
+            ("bad count", lambda c: setattr(c, "workflow_count", True)),
+            ("too many", lambda c: setattr(c, "workflow_count", 301)),
+            ("short response", lambda c: setattr(c, "workflow_count", 3)),
+            ("duplicate run", lambda c: c.workflow_rows[1].update(id=10)),
+            ("wrong event", lambda c: c.workflow_rows[1].update(event="push")),
+            ("bad id", lambda c: c.workflow_rows[1].update(id=True)),
+        ):
+            with self.subTest(case=name):
+                c = Stub()
+                adjust(c)
+                with self.assertRaises(ContractError):
+                    c.audit_workflow_runs_bounded(".github/workflows/codeql.yml")
+        for name, rows in (
+            ("duplicate PR", [{"number": 42}, {"number": 42}]),
+            ("bad PR", [{"number": False}]),
+        ):
+            with self.subTest(case=name):
+                c = Stub()
+                c.associations = rows
+                with self.assertRaises(ContractError):
+                    c.audit_commit_prs_bounded("a" * 40)
+
+        class ChangingStub(Stub):
+            def _read_json(self, path: str) -> dict[str, object]:
+                result = super()._read_json(path)
+                if self.calls.count(path) > 1:
+                    result["workflow_runs"] = [{"id": 13, "event": "workflow_dispatch"}]
+                    result["total_count"] = 1
+                return result
+
+            def _read_array(self, path: str) -> list[dict[str, object]]:
+                rows = super()._read_array(path)
+                if self.calls.count(path) > 1:
+                    return [{"number": 43}]
+                return rows
+
+        with self.assertRaises(ContractError):
+            ChangingStub().audit_workflow_runs_bounded(".github/workflows/ci.yml")
+        with self.assertRaises(ContractError):
+            ChangingStub().audit_commit_prs_bounded("a" * 40)
+        with self.assertRaises(ContractError):
+            Stub().audit_workflow_runs_bounded("../bad")
+        with self.assertRaises(ContractError):
+            Stub().audit_commit_prs_bounded("broken")
+        with self.assertRaises(ContractError):
+            Stub().audit_commit_prs_bounded("a" * 40, max_pages=0)
+
+    def test_orphan_readonly_rejects_full_last_commit_page(self) -> None:
+        class FullStub(GitHubActionsClient):
+            def __init__(self) -> None:
+                super().__init__(
+                    api_url="https://api.github.test", repository="owner/repo",
+                    token="test", opener=lambda *_a, **_k: None,
+                )
+            def _read_array(self, path: str) -> list[dict[str, object]]:
+                page = int(path.rsplit("=", 1)[-1])
+                return [{"number": page * 100 + i} for i in range(100)]
+        with self.assertRaisesRegex(ContractError, "page budget exhausted"):
+            FullStub().audit_commit_prs_bounded("a" * 40, max_pages=2)
+
+    def test_orphan_readonly_list_get_is_not_write(self) -> None:
+        observed: dict[str, object] = {}
+        def opener(request: urllib.request.Request, timeout: int) -> io.StringIO:
+            observed["url"] = request.full_url
+            observed["verb"] = request.get_method()
+            observed["timeout"] = timeout
+            return io.StringIO('[{"number":42}]')
+        client = GitHubActionsClient(
+            api_url="https://api.github.test", repository="owner/repo",
+            token="test", opener=opener,
+        )
+        self.assertEqual(42, client._read_array("commits/" + "a" * 40 + "/pulls")[0]["number"])
+        self.assertEqual("GET", observed["verb"])
+        self.assertEqual(20, observed["timeout"])
+        self.assertIn("/commits/" + "a" * 40 + "/pulls", observed["url"])
+
 
     def test_orphan_audit_read_only_candidate_and_adversarial_inputs(self) -> None:
         # Model the real Stage L shape: dispatched run head_sha is *base*,
