@@ -129,7 +129,7 @@ class SafeWorkflowTransitionApiTests(unittest.TestCase):
 
     def test_head_changed_during_git_inspection_denied(self):
         api = self.fixture()
-        api.next_pr = api.responses["pulls/42"]
+        api.next_pr = copy.deepcopy(api.responses["pulls/42"])
         api.next_pr["head"]["sha"] = "c" * 40
         with self.assertRaises(TransitionDenied):
             self.run_inspection(api)
