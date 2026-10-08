@@ -176,7 +176,7 @@ jobs:
     needs: [scope, dispatch-authorities]
     if: ${{ always() }}
     runs-on: ubuntu-slim
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       actions: read # Poll and verify the exact correlated authority workflow runs.
       contents: read # Read the exact protected-base policy/runtime used for proof verification.
@@ -215,4 +215,4 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 .proof-trusted-base/.github/scripts/pr-authority-runtime.py verify             --policy .proof-trusted-base/.github/merge-gate-policy.json             --scope-result "$SCOPE_RESULT"             --classification-outcome "$CLASSIFICATION_OUTCOME"             --legacy-base "$LEGACY_BASE"             --docs-only "$DOCS_ONLY"             --evidence-impact "$EVIDENCE_IMPACT"             --supply-chain-impact "$SUPPLY_IMPACT"             --dispatch-result "$DISPATCH_RESULT"             --base-sha "$BASE_SHA"             --head-sha "$HEAD_SHA"             --head-repo "$HEAD_REPO"             --pr-number "$PR_NUMBER"             --caller-run-id "$CALLER_RUN_ID"             --caller-run-attempt "$CALLER_RUN_ATTEMPT"             --timeout-seconds 540             --poll-interval-seconds 5
+          python3 .proof-trusted-base/.github/scripts/pr-authority-runtime.py verify             --policy .proof-trusted-base/.github/merge-gate-policy.json             --scope-result "$SCOPE_RESULT"             --classification-outcome "$CLASSIFICATION_OUTCOME"             --legacy-base "$LEGACY_BASE"             --docs-only "$DOCS_ONLY"             --evidence-impact "$EVIDENCE_IMPACT"             --supply-chain-impact "$SUPPLY_IMPACT"             --dispatch-result "$DISPATCH_RESULT"             --base-sha "$BASE_SHA"             --head-sha "$HEAD_SHA"             --head-repo "$HEAD_REPO"             --pr-number "$PR_NUMBER"             --caller-run-id "$CALLER_RUN_ID"             --caller-run-attempt "$CALLER_RUN_ATTEMPT"             --timeout-seconds 780             --poll-interval-seconds 5
