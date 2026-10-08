@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import io
 import json
 import os
@@ -593,7 +594,7 @@ class RuntimeContractTests(unittest.TestCase):
             "wrong base": ("live_pr.base.sha", "f" * 40),
         }
         for label, (path, value) in cases.items():
-            case = json.loads(json.dumps(fixture()))
+            case = copy.deepcopy(fixture())
             target = case
             segments = path.split(".")
             for segment in segments[:-1]:
