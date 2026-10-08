@@ -10,6 +10,14 @@ on:
       - .github/workflows/shadow-ci-policy.yml
   workflow_dispatch:
     inputs:
+      assessment:
+        description: 'Read-only evaluator; neither mode is a merge authority'
+        required: true
+        default: risk
+        type: choice
+        options:
+          - risk
+          - bounded-safe-diff
       pr_number:
         description: 'Open PR number to inspect (read-only)'
         required: true
@@ -43,8 +51,8 @@ jobs:
           persist-credentials: false
       - name: Run shadow evaluator adversarial self-tests
         run: python3 .github/scripts/shadow-ci-policy.py --self-test
-      - name: Evaluate PR data without executing its contents
-        if: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Evaluate PR risk data without executing its contents
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.assessment != 'bounded-safe-diff' }}
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ inputs.pr_number }}
@@ -53,6 +61,20 @@ jobs:
           set -euo pipefail
           test "$GITHUB_REF" = refs/heads/main
           python3 .github/scripts/shadow-ci-policy.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" \
+            --trusted-base "$GITHUB_SHA" \
+            --expected-head "$EXPECTED_HEAD"
+      - name: Verify exact Git-tree bounded transition candidate (advisory only)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.assessment == 'bounded-safe-diff' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          python3 .github/scripts/safe_workflow_transition_api.py \
             --repository "$GITHUB_REPOSITORY" \
             --pr "$PR_NUMBER" \
             --trusted-base "$GITHUB_SHA" \
