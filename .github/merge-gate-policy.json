@@ -1,5 +1,5 @@
 {
-  "schema_version": 7,
+  "schema_version": 8,
   "ruleset": {
     "id": 19905142,
     "name": "Protect main"
@@ -167,7 +167,8 @@
         "accepted_blobs": [
           "6b9df4e63ffd3ca2c696c1e300b7f7e1cf659639",
           "08b5c85af7ae6cbf5642a0928664a5e64d61eba8",
-          "e8a9416ee7a57e1ee31224261a318aa793c5099e"
+          "e8a9416ee7a57e1ee31224261a318aa793c5099e",
+          "8bff6a865381aeeb5bd583f4df1c95f051a44adb"
         ]
       },
       {
@@ -181,7 +182,8 @@
         "workflow": ".github/workflows/supply-chain.yml",
         "accepted_blobs": [
           "f3ffe4aaf4cab64a315fe94f67a8498e9b6509ad",
-          "c6456410b50ded7b0775c5480179ecf62fbd9517"
+          "c6456410b50ded7b0775c5480179ecf62fbd9517",
+          "e4e253f64495915800e54971e7ea65f10af21bc9"
         ]
       },
       {
@@ -197,6 +199,46 @@
           "3c74e15ea0ea61fbbd6095f86a355fd75b4174c3",
           "680ef346dece5d5c525ded56c3e03e05c606ce4f",
           "f12ebbbbe5c3e5d71f8d04c8f51d7eed1d2fdbee"
+        ]
+      }
+    ],
+    "protected_files": [
+      {
+        "path": ".github/scripts/pr-scope.py",
+        "accepted_blobs": [
+          "8eaaf621df6771cf28d8deca97b05fb84f218bd3"
+        ]
+      },
+      {
+        "path": ".github/scripts/verify-merge-gates.rb",
+        "accepted_blobs": [
+          "43b665abcfc7d6343d4e9662241d485d0bdcecc1",
+          "ce26b92a90f5689336ceca1bd1dbfab695eb239a"
+        ]
+      },
+      {
+        "path": ".github/scripts/test-merge-gates.rb",
+        "accepted_blobs": [
+          "1ea806c9f282fad553169ca91549948cb121d654",
+          "c052923f81f3cdd9af28760d452e81ead30806bf"
+        ]
+      },
+      {
+        "path": ".github/scripts/validate_actions_security.py",
+        "accepted_blobs": [
+          "0f140ba42fdb8c6ae0f34c070a7423dc5ff73a2e"
+        ]
+      },
+      {
+        "path": ".github/scripts/validate_supply_chain_exceptions.py",
+        "accepted_blobs": [
+          "a06eb71c6b16ffc6cda2d07a7955ce8ca9ae5735"
+        ]
+      },
+      {
+        "path": "docs/engineering/retained-evidence-policy.json",
+        "accepted_blobs": [
+          "5528238c7b4c735d35034e48fbf852b7960d61d8"
         ]
       }
     ]
