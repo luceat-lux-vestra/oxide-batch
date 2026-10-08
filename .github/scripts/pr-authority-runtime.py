@@ -185,17 +185,9 @@ class GitHubActionsClient:
         self.token = token
         self.opener = opener
 
-    def workflow_runs(self, workflow: str) -> list[dict[str, object]]:
-        workflow_id = Path(workflow).name
-        if not workflow_id:
-            raise ContractError("workflow path must contain a file name")
-        encoded = urllib.parse.quote(workflow_id, safe="")
-        url = (
-            f"{self.api_url}/repos/{self.repository}/actions/workflows/{encoded}/runs"
-            "?event=workflow_dispatch&per_page=100"
-        )
+    def _read_json(self, path: str) -> dict[str, object]:
         request = urllib.request.Request(
-            url,
+            f"{self.api_url}/repos/{self.repository}/{path}",
             headers={
                 "Authorization": f"Bearer {self.token}",
                 "Accept": "application/vnd.github+json",
@@ -207,7 +199,25 @@ class GitHubActionsClient:
             with self.opener(request, timeout=20) as response:
                 payload = json.load(response)
         except Exception as exc:
-            raise ContractError(f"could not list workflow runs for {workflow}: {exc}") from exc
+            raise ContractError(f"could not read GitHub API {path}: {exc}") from exc
+        if not isinstance(payload, dict):
+            raise ContractError(f"GitHub API {path} returned malformed metadata")
+        return payload
+
+    def pull_request(self, number: str) -> dict[str, object]:
+        if not number.isdigit() or int(number) <= 0:
+            raise ContractError("PR number must be a positive integer")
+        # Read-only PR metadata is accessible with the existing contents:read token.
+        return self._read_json(f"pulls/{number}")
+
+    def workflow_runs(self, workflow: str) -> list[dict[str, object]]:
+        workflow_id = Path(workflow).name
+        if not workflow_id:
+            raise ContractError("workflow path must contain a file name")
+        encoded = urllib.parse.quote(workflow_id, safe="")
+        payload = self._read_json(
+            f"actions/workflows/{encoded}/runs?event=workflow_dispatch&per_page=100"
+        )
         runs = payload.get("workflow_runs")
         if not isinstance(runs, list):
             raise ContractError(f"workflow run response for {workflow} is malformed")
@@ -221,7 +231,9 @@ def verify_runs(
     client: GitHubActionsClient | object,
     dispatch_result: str,
     pr_number: str,
+    base_sha: str,
     head_sha: str,
+    head_repo: str,
     caller_run_id: str,
     caller_run_attempt: str,
     timeout_seconds: float,
@@ -242,6 +254,24 @@ def verify_runs(
     deadline = monotonic() + timeout_seconds
 
     while True:
+        # An older workflow may keep polling independently dispatched jobs
+        # after the PR head changes. Never use stale-head results as proof.
+        live = client.pull_request(pr_number)
+        if not isinstance(live, dict):
+            raise ContractError("live PR response must be an object")
+        live_base, live_head = live.get("base"), live.get("head")
+        if not isinstance(live_base, dict) or not isinstance(live_head, dict):
+            raise ContractError("live PR base/head metadata is malformed")
+        base_repo, head_repo_data = live_base.get("repo"), live_head.get("repo")
+        if not isinstance(base_repo, dict) or not isinstance(head_repo_data, dict):
+            raise ContractError("live PR repository metadata is malformed")
+        if live.get("state") != "open" or live.get("draft") is not False:
+            raise ContractError("live PR is closed or no longer ready for proof")
+        if live_base.get("sha") != base_sha or base_repo.get("full_name") != client.repository:
+            raise ContractError("live PR base identity changed during polling")
+        if live_head.get("sha") != head_sha or head_repo_data.get("full_name") != head_repo:
+            raise ContractError("live PR head identity changed during polling")
+
         waiting: list[str] = []
         evidence: dict[str, dict[str, object]] = {}
 
@@ -341,8 +371,21 @@ def required_from_args(args: argparse.Namespace) -> tuple[list[Authority], list[
 
 
 class _FakeClient:
+    repository = "owner/repo"
+
     def __init__(self, runs: dict[str, list[dict[str, object]]]) -> None:
         self.runs = runs
+        self.live_pr: dict[str, object] = {
+            "state": "open",
+            "draft": False,
+            "base": {"sha": "a" * 40, "repo": {"full_name": self.repository}},
+            "head": {"sha": "b" * 40, "repo": {"full_name": self.repository}},
+        }
+        self.pr_reads = 0
+
+    def pull_request(self, number: str) -> dict[str, object]:
+        self.pr_reads += 1
+        return self.live_pr
 
     def workflow_runs(self, workflow: str) -> list[dict[str, object]]:
         return list(self.runs.get(workflow, []))
@@ -399,6 +442,91 @@ class RuntimeContractTests(unittest.TestCase):
             seen["url"],
         )
         self.assertEqual(20, seen["timeout"])
+
+    def test_pull_lookup_uses_read_only_get_with_contents_token(self) -> None:
+        observed: dict[str, object] = {}
+
+        def opener(request: urllib.request.Request, timeout: int) -> io.StringIO:
+            observed["url"] = request.full_url
+            observed["verb"] = request.get_method()
+            observed["timeout"] = timeout
+            return io.StringIO('{"state":"open"}')
+
+        client = GitHubActionsClient(
+            api_url="https://api.github.test",
+            repository="owner/repo",
+            token="token",
+            opener=opener,
+        )
+        self.assertEqual("open", client.pull_request("42")["state"])
+        self.assertEqual("GET", observed["verb"])
+        self.assertEqual("https://api.github.test/repos/owner/repo/pulls/42", observed["url"])
+        self.assertEqual(20, observed["timeout"])
+
+    def test_stale_head_fails_even_if_previous_authorities_succeeded(self) -> None:
+        authority = _test_authorities()[0]
+        client = _FakeClient({authority.workflow: [_run(authority)]})
+        client.live_pr["head"]["sha"] = "c" * 40
+        with self.assertRaisesRegex(ContractError, "live PR head identity changed"):
+            verify_runs(
+                authorities=[authority], required=[authority], client=client,
+                dispatch_result="success", pr_number="42",
+                base_sha="a" * 40, head_sha="b" * 40, head_repo="owner/repo",
+                caller_run_id="1001", caller_run_attempt="2",
+                timeout_seconds=0, poll_interval_seconds=0,
+            )
+
+    def test_stale_head_detected_on_next_poll_before_timeout(self) -> None:
+        authority = _test_authorities()[0]
+        client = _FakeClient({})
+        def supersede(_: float) -> None:
+            client.live_pr["head"]["sha"] = "c" * 40
+        with self.assertRaisesRegex(ContractError, "live PR head identity changed"):
+            verify_runs(
+                authorities=[authority], required=[authority], client=client,
+                dispatch_result="success", pr_number="42",
+                base_sha="a" * 40, head_sha="b" * 40, head_repo="owner/repo",
+                caller_run_id="1001", caller_run_attempt="2",
+                timeout_seconds=20, poll_interval_seconds=0, sleep=supersede,
+            )
+        self.assertEqual(2, client.pr_reads)
+
+    def test_live_pr_identity_and_state_are_fail_closed(self) -> None:
+        authority = _test_authorities()[0]
+        for case in ("base", "base_repo", "head_repo", "closed", "draft", "missing", "malformed"):
+            client = _FakeClient({authority.workflow: [_run(authority)]})
+            if case == "base":
+                client.live_pr["base"]["sha"] = "c" * 40
+            elif case == "base_repo":
+                client.live_pr["base"]["repo"]["full_name"] = "other/repo"
+            elif case == "head_repo":
+                client.live_pr["head"]["repo"]["full_name"] = "other/repo"
+            elif case == "closed":
+                client.live_pr["state"] = "closed"
+            elif case == "draft":
+                client.live_pr["draft"] = True
+            elif case == "missing":
+                del client.live_pr["head"]["repo"]
+            else:
+                client.live_pr = {"head": "invalid"}
+            with self.subTest(case=case), self.assertRaises(ContractError):
+                verify_runs(
+                    authorities=[authority], required=[authority], client=client,
+                    dispatch_result="success", pr_number="42",
+                    base_sha="a" * 40, head_sha="b" * 40, head_repo="owner/repo",
+                    caller_run_id="1001", caller_run_attempt="2",
+                    timeout_seconds=0, poll_interval_seconds=0,
+                )
+
+    def test_pr_api_error_is_not_accepted_as_proof(self) -> None:
+        def broken(request: urllib.request.Request, timeout: int) -> io.StringIO:
+            raise OSError("temporary upstream failure")
+        client = GitHubActionsClient(
+            api_url="https://api.github.test", repository="owner/repo",
+            token="token", opener=broken,
+        )
+        with self.assertRaisesRegex(ContractError, "could not read GitHub API pulls/42"):
+            client.pull_request("42")
 
     def test_docs_only_without_impacts_requires_no_optional_authority(self) -> None:
         required = required_authorities(
@@ -487,7 +615,9 @@ class RuntimeContractTests(unittest.TestCase):
             client=client,
             dispatch_result="success",
             pr_number="42",
+            base_sha="a" * 40,
             head_sha="b" * 40,
+            head_repo="owner/repo",
             caller_run_id="1001",
             caller_run_attempt="2",
             timeout_seconds=0,
@@ -507,7 +637,9 @@ class RuntimeContractTests(unittest.TestCase):
                 client=_FakeClient({}),
                 dispatch_result="success",
                 pr_number="42",
+                base_sha="a" * 40,
                 head_sha="b" * 40,
+                head_repo="owner/repo",
                 caller_run_id="1001",
                 caller_run_attempt="2",
                 timeout_seconds=0,
@@ -524,7 +656,9 @@ class RuntimeContractTests(unittest.TestCase):
                 client=_FakeClient({authority.workflow: [run, dict(run, id=11)]}),
                 dispatch_result="success",
                 pr_number="42",
+                base_sha="a" * 40,
                 head_sha="b" * 40,
+                head_repo="owner/repo",
                 caller_run_id="1001",
                 caller_run_attempt="2",
                 timeout_seconds=0,
@@ -540,7 +674,9 @@ class RuntimeContractTests(unittest.TestCase):
                 client=_FakeClient({authority.workflow: [_run(authority, conclusion="failure")]}),
                 dispatch_result="success",
                 pr_number="42",
+                base_sha="a" * 40,
                 head_sha="b" * 40,
+                head_repo="owner/repo",
                 caller_run_id="1001",
                 caller_run_attempt="2",
                 timeout_seconds=0,
@@ -556,7 +692,9 @@ class RuntimeContractTests(unittest.TestCase):
                 client=_FakeClient({authority.workflow: [_run(authority)]}),
                 dispatch_result="success",
                 pr_number="42",
+                base_sha="a" * 40,
                 head_sha="b" * 40,
+                head_repo="owner/repo",
                 caller_run_id="1001",
                 caller_run_attempt="2",
                 timeout_seconds=0,
@@ -573,7 +711,9 @@ class RuntimeContractTests(unittest.TestCase):
                 client=_FakeClient({authority.workflow: [wrong]}),
                 dispatch_result="success",
                 pr_number="42",
+                base_sha="a" * 40,
                 head_sha="b" * 40,
+                head_repo="owner/repo",
                 caller_run_id="1001",
                 caller_run_attempt="2",
                 timeout_seconds=0,
@@ -640,7 +780,9 @@ def main() -> int:
             client=client,
             dispatch_result=args.dispatch_result,
             pr_number=args.pr_number,
+            base_sha=args.base_sha,
             head_sha=args.head_sha,
+            head_repo=args.head_repo,
             caller_run_id=args.caller_run_id,
             caller_run_attempt=args.caller_run_attempt,
             timeout_seconds=args.timeout_seconds,
