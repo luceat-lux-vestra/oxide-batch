@@ -545,14 +545,14 @@ class RuntimeContractTests(unittest.TestCase):
                     "id": 1001, "run_attempt": 1, "event": "pull_request",
                     "path": ".github/workflows/pr-ci.yml",
                     "head_sha": "b" * 40, "head_branch": "feat/pr-42",
-                    "repository": repo, "head_repository": repo, "pull_requests": [],
+                    "repository": dict(repo), "head_repository": dict(repo), "pull_requests": [],
                 },
                 "dispatched": {
                     "id": 1002, "run_attempt": 1, "event": "workflow_dispatch",
                     "path": authority.workflow, "head_sha": "a" * 40,
                     "head_branch": "main", "status": "in_progress",
                     "conclusion": None, "actor": {"login": "github-actions[bot]"},
-                    "repository": repo, "head_repository": repo, "pull_requests": [],
+                    "repository": dict(repo), "head_repository": dict(repo), "pull_requests": [],
                     "display_title": expected_run_name(
                         authority, pr_number="42", head_sha="b" * 40,
                         caller_run_id="1001", caller_run_attempt="1",
@@ -560,8 +560,8 @@ class RuntimeContractTests(unittest.TestCase):
                 },
                 "live_pr": {
                     "number": 42, "state": "open", "draft": False,
-                    "base": {"sha": "a" * 40, "ref": "main", "repo": repo},
-                    "head": {"sha": "c" * 40, "ref": "feat/pr-42", "repo": repo},
+                    "base": {"sha": "a" * 40, "ref": "main", "repo": dict(repo)},
+                    "head": {"sha": "c" * 40, "ref": "feat/pr-42", "repo": dict(repo)},
                 },
                 "associated_prs": [
                     {"number": 42, "head": {"ref": "feat/pr-42"}, "base": {"ref": "main"}}
