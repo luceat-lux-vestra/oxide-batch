@@ -1,0 +1,59 @@
+name: CI policy shadow (advisory)
+
+on:
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - .github/scripts/shadow-ci-policy.py
+      - .github/scripts/validate_actions_security.py
+      - .github/workflows/shadow-ci-policy.yml
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Open PR number to inspect (read-only)'
+        required: true
+        type: number
+      expected_head:
+        description: 'Exact 40-character PR HEAD SHA'
+        required: true
+        type: string
+
+# Advisory-only evaluation from the trusted default branch. It does not
+# contribute to the required merge-gate and cannot approve or mutate a PR.
+permissions:
+  contents: read # Read only the trusted main checkout and changed workflow content.
+  pull-requests: read # Reconcile PR identity and complete changed-file API inventory.
+
+concurrency:
+  group: ci-shadow-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shadow:
+    name: advisory-shadow-evaluation
+    if: ${{ github.event_name == 'push' || github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out trusted main only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run shadow evaluator adversarial self-tests
+        run: python3 .github/scripts/shadow-ci-policy.py --self-test
+      - name: Evaluate PR data without executing its contents
+        if: ${{ github.event_name == 'workflow_dispatch' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          EXPECTED_HEAD: ${{ inputs.expected_head }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/main
+          python3 .github/scripts/shadow-ci-policy.py \
+            --repository "$GITHUB_REPOSITORY" \
+            --pr "$PR_NUMBER" \
+            --trusted-base "$GITHUB_SHA" \
+            --expected-head "$EXPECTED_HEAD"
