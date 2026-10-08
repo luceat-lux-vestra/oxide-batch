@@ -816,8 +816,86 @@ module MergeGateVerifier
     Digest::SHA1.hexdigest("blob #{content.bytesize}\0#{content}")
   end
 
+  # Mirrors the independent protected-base inventory in pr-labeler.yml.
+  V8_PROTECTED_CONTROL_FILES = %w[
+    .github/scripts/pr-scope.py
+    .github/scripts/verify-merge-gates.rb
+    .github/scripts/test-merge-gates.rb
+    .github/scripts/validate_actions_security.py
+    .github/scripts/validate_supply_chain_exceptions.py
+    docs/engineering/retained-evidence-policy.json
+  ].freeze
+
+  def protected_file_inventory_v8_contract(root:, policy:)
+    return [] unless policy['schema_version'] == 8
+
+    gate = policy['repository_merge_gate']
+    entries = gate.is_a?(Hash) ? gate['protected_files'] : nil
+    unless entries.is_a?(Array)
+      return ['schema v8 protected_files must be a canonical non-empty array']
+    end
+
+    violations = []
+    by_path = {}
+    entries.each do |entry|
+      unless entry.is_a?(Hash) && entry.keys.sort == %w[accepted_blobs path] &&
+             entry['path'].is_a?(String)
+        violations << "schema v8 protected-file entry is malformed: #{entry.inspect}"
+        next
+      end
+      path = entry['path']
+      if by_path.key?(path)
+        violations << "schema v8 protected-files duplicate path #{path}"
+        next
+      end
+      by_path[path] = entry
+    end
+
+    expected = V8_PROTECTED_CONTROL_FILES.sort
+    unless by_path.keys.sort == expected
+      violations << "schema v8 protected-files inventory mismatch: expected=#{expected.inspect} actual=#{by_path.keys.sort.inspect}"
+    end
+
+    V8_PROTECTED_CONTROL_FILES.each do |relative|
+      entry = by_path[relative]
+      next unless entry
+
+      accepted = entry['accepted_blobs']
+      unless accepted.is_a?(Array) && !accepted.empty? &&
+             accepted.uniq.length == accepted.length &&
+             accepted.all? { |sha| sha.is_a?(String) && sha.match?(/\A[0-9a-f]{40}\z/) }
+        violations << "schema v8 protected file #{relative} accepted blob inventory is malformed"
+        next
+      end
+
+      parts = relative.split('/')
+      path = Pathname(root)
+      # Reject symlinked parents and symlinked targets fail-closed.
+      valid_type = parts.each_with_index.all? do |part, index|
+        path = path.join(part)
+        stat = begin
+          path.lstat
+        rescue Errno::ENOENT, Errno::ENOTDIR
+          nil
+        end
+        stat && !stat.symlink? &&
+          (index == parts.length - 1 ? stat.file? : stat.directory?)
+      end
+      unless valid_type
+        violations << "schema v8 protected file #{relative} is missing or is not a regular non-symlink file"
+        next
+      end
+
+      actual = git_blob_sha(path.binread)
+      unless accepted.include?(actual)
+        violations << "schema v8 protected file #{relative} blob #{actual.inspect} is not accepted by policy"
+      end
+    end
+    violations
+  end
+
   def pr_proof_policy_contract(policy:)
-    return [] unless policy['schema_version'] == 7
+    return [] unless policy['schema_version'].to_i >= 7
 
     proof = policy['pr_proof']
     return [] if proof.nil?
@@ -1047,7 +1125,7 @@ module MergeGateVerifier
   end
 
   def pr_topology_v7_contract(root:, policy:, producer_summary:)
-    return [] unless policy['schema_version'] == 7
+    return [] unless policy['schema_version'].to_i >= 7
 
     violations = []
     topology = policy['pr_topology']
@@ -2502,7 +2580,7 @@ module MergeGateVerifier
     ruleset = JSON.parse(File.read(ruleset_path))
     violations = []
 
-    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless [6, 7].include?(policy['schema_version'])
+    violations << "unsupported policy schema_version #{policy['schema_version'].inspect}" unless [6, 7, 8].include?(policy['schema_version'])
     violations << "ruleset id mismatch: expected #{policy.dig('ruleset', 'id')}, got #{ruleset['id']}" unless ruleset['id'] == policy.dig('ruleset', 'id')
     violations << "ruleset name mismatch: expected #{policy.dig('ruleset', 'name').inspect}, got #{ruleset['name'].inspect}" unless ruleset['name'] == policy.dig('ruleset', 'name')
     violations << 'ruleset is not active' unless ruleset['enforcement'] == 'active'
@@ -2514,6 +2592,7 @@ module MergeGateVerifier
 
     violations.concat(pr_proof_policy_contract(policy: policy))
     violations.concat(pr_topology_v7_contract(root: root, policy: policy, producer_summary: producer_summary))
+    violations.concat(protected_file_inventory_v8_contract(root: root, policy: policy))
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(docs_applicability_contract(policy: policy, producer_summary: producer_summary))
     violations.concat(fast_branch_docs_contract(producer_summary: producer_summary))
