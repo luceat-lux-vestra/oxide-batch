@@ -1443,6 +1443,55 @@ class RuntimeContractTests(unittest.TestCase):
         with self.assertRaises(ContractError):
             api.audit_commit_prs_link_bounded("bad")
 
+
+    def test_m6_bounded_workflow_page_forward_progress(self) -> None:
+        class MutableClient(GitHubActionsClient):
+            def __init__(self, mode: str) -> None:
+                super().__init__(
+                    api_url="https://api.github.test", repository="owner/repo",
+                    token="test", opener=lambda *_a, **_k: None,
+                )
+                self.calls = 0
+                self.mode = mode
+
+            def _read_json(self, path: str) -> dict[str, object]:
+                self.calls += 1
+                run = {
+                    "id": 81, "event": "workflow_dispatch", "run_attempt": 1,
+                    "path": ".github/workflows/codeql.yml",
+                    "head_sha": "a" * 40, "status": "in_progress",
+                    "conclusion": None,
+                    "repository": {"id": 1, "full_name": "owner/repo"},
+                }
+                if self.calls == 2:
+                    run["updated_at"] = "new timestamp"
+                    if self.mode == "status-forward":
+                        run.update(status="completed", conclusion="success")
+                    elif self.mode == "attempt-drift":
+                        run["run_attempt"] = 2
+                    elif self.mode == "repo-drift":
+                        run["repository"]["id"] = 2
+                    elif self.mode == "head-drift":
+                        run["head_sha"] = "b" * 40
+                return {"total_count": 1, "workflow_runs": [run]}
+
+        for mode in ("metadata", "status-forward"):
+            with self.subTest(mode=mode):
+                client = MutableClient(mode)
+                self.assertEqual([81], [
+                    row["id"] for row in client.audit_workflow_runs_bounded(
+                        ".github/workflows/codeql.yml"
+                    )
+                ])
+                self.assertEqual(2, client.calls)
+        for mode in ("attempt-drift", "repo-drift", "head-drift"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(
+                ContractError, "first page provenance drift"
+            ):
+                MutableClient(mode).audit_workflow_runs_bounded(
+                    ".github/workflows/codeql.yml"
+                )
+
     def test_link_audit_single_page_still_get_only(self) -> None:
         class Response(io.StringIO):
             headers: dict[str, str] = {}
@@ -2105,8 +2154,49 @@ class RuntimeContractTests(unittest.TestCase):
                     result["total_count"] = 2
                 return result
 
-        with self.assertRaisesRegex(ContractError, "page drift"):
+        with self.assertRaisesRegex(ContractError, "page membership drift"):
             check(Drifting(data()))
+
+
+        # Duplicate GETs of a *live* current caller may disagree on updated_at
+        # and forward status transitions without any PR/run identity drift.
+        class PageReread(Stub):
+            def __init__(self, metadata: dict[str, object], mode: str) -> None:
+                super().__init__(metadata)
+                self.mode = mode
+
+            def _read_json(self, path: str) -> dict[str, object]:
+                result = super()._read_json(path)
+                if path == query and self.calls.count("GET " + query) == 2:
+                    row = result["workflow_runs"][0]
+                    row["updated_at"] = "2026-10-09T06:36:09Z"
+                    if self.mode == "status-forward":
+                        row["status"] = "completed"
+                        row["conclusion"] = "success"
+                    elif self.mode == "head-drift":
+                        row["head_sha"] = old_sha
+                    elif self.mode == "attempt-drift":
+                        row["run_attempt"] = 2
+                    elif self.mode == "repo-drift":
+                        row["repository"]["id"] = 999
+                    elif self.mode == "status-regression":
+                        row["status"] = "queued"
+                return result
+
+        for mode in ("metadata", "status-forward"):
+            with self.subTest(mode=mode):
+                self.assertEqual("READ_ONLY_CANDIDATE",
+                                 check(PageReread(data(), mode))["decision"])
+        for mode in ("head-drift", "attempt-drift", "repo-drift"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(
+                ContractError, "page provenance drift"
+            ):
+                check(PageReread(data(), mode))
+        completed_caller = data()
+        completed_caller[query]["workflow_runs"][0]["status"] = "completed"
+        completed_caller[query]["workflow_runs"][0]["conclusion"] = "success"
+        with self.assertRaisesRegex(ContractError, "page provenance drift"):
+            check(PageReread(completed_caller, "status-regression"))
 
     def test_workflow_runs_uses_workflow_filename_endpoint(self) -> None:
         seen: dict[str, object] = {}
