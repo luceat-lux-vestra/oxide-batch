@@ -123,6 +123,45 @@ observed = codeql_routing_violations(broken)
 assert any("must not checkout PR-head" in item for item in observed), observed
 
 
+
+# Stage M6: validate both future protected blobs before activation.
+ROOT = Path(__file__).resolve().parents[2]
+STAGED_VALIDATOR_PATH = ROOT / "docs/engineering/ci-staging/actions-security-cancel-aware-candidate.py"
+STAGED_WORKFLOW_PATH = ROOT / "docs/engineering/ci-staging/codeql-cancel-aware-candidate.yml"
+assert STAGED_VALIDATOR_PATH.is_file() and STAGED_WORKFLOW_PATH.is_file(), (
+    "M6 protected candidate files must be present for pre-admission"
+)
+STAGED_SPEC = importlib.util.spec_from_file_location("actions_security_cancel_candidate", STAGED_VALIDATOR_PATH)
+assert STAGED_SPEC is not None and STAGED_SPEC.loader is not None
+STAGED_MODULE = importlib.util.module_from_spec(STAGED_SPEC)
+STAGED_SPEC.loader.exec_module(STAGED_MODULE)
+
+def staged_routing_violations(workflow: str) -> list[str]:
+    return STAGED_MODULE.check_codeql_rust_routing_contract_text(textwrap.dedent(workflow).lstrip())
+
+STAGED_WORKFLOW = STAGED_WORKFLOW_PATH.read_text(encoding="utf-8")
+assert not staged_routing_violations(STAGED_WORKFLOW), "M6 future CodeQL workflow fails future security contract"
+CANCELLABLE_FIXTURE = CODEQL_ROUTING_FIXTURE.replace("always()", "!cancelled()")
+assert not staged_routing_violations(CANCELLABLE_FIXTURE), "M6 cancellable routing fixture rejected"
+
+for label, unsafe_fixture, expected in (
+    ("old always", CODEQL_ROUTING_FIXTURE, "!cancelled()"),
+    ("always mixed with guard", CANCELLABLE_FIXTURE.replace(
+        "!cancelled() &&", "always() || !cancelled() &&"), "must not use always()"),
+    ("missing cancellation guard", CANCELLABLE_FIXTURE.replace(
+        "!cancelled()", "success()"), "!cancelled()"),
+    ("missing failed dependency fallback", CANCELLABLE_FIXTURE.replace(
+        "needs.rust-impact.result != 'success'", "needs.rust-impact.result == 'success'"),
+        "needs.rust-impact.result != 'success'"),
+    ("draft PR accidentally scanned", CANCELLABLE_FIXTURE.replace(
+        "github.event.pull_request.draft == false", "github.event.pull_request.draft == true"),
+        "github.event.pull_request.draft == false"),
+):
+    errors = staged_routing_violations(unsafe_fixture)
+    assert any(expected in violation for violation in errors), (
+        f"M6 {label}: expected {expected!r} rejection, got {errors!r}"
+    )
+
 PINNED_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 PG15 = "926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561"
 PG18 = "4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
