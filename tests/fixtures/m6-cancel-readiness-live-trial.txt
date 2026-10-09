@@ -1,0 +1,1 @@
+M6 controlled CodeQL cancellation efficacy experiment - HEAD A. Do not merge.
