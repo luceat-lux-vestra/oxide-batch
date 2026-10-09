@@ -258,6 +258,8 @@ class CancelContractTests(unittest.TestCase):
         state = {"result": preflight, "calls": 0}
         def fake_preflight(**_: object) -> dict[str, object]:
             state["calls"] += 1
+            if state.get("alter_second") and state["calls"] == 2:
+                return dict(state["result"], dispatched_run_id=1003)
             return copy.deepcopy(state["result"])
         runtime.preflight_orphan_codeql_cancel = fake_preflight
         def invoke(client: Client, mode: str = "live") -> dict[str, object]:
@@ -302,9 +304,12 @@ class CancelContractTests(unittest.TestCase):
                     invoke(witness)
                 self.assertFalse(any(c.startswith("POST") for c in witness.calls))
 
-            state["result"] = dict(preflight, dispatched_run_id=1003)
-            with self.assertRaisesRegex(ContractError, "near-POST"):
-                invoke(Client(fixture()))
+            state["alter_second"] = True
+            witness = Client(fixture())
+            with self.assertRaisesRegex(ContractError, "preflight identity drift"):
+                invoke(witness)
+            self.assertFalse(any(c.startswith("POST") for c in witness.calls))
+            state["alter_second"] = False
             state["result"] = dict(preflight, decision="NO_WRITE", reason="already_completed")
             witness = Client(fixture())
             self.assertEqual("NO_WRITE", invoke(witness)["decision"])
