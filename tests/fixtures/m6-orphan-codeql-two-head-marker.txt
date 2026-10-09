@@ -1,3 +1,3 @@
 oxide-batch #433 / M6 controlled live CodeQL cancellation acceptance
-HEAD C — create an independently dispatched CodeQL Authority run, then supersede only after status in_progress.
-This is a non-production marker; do not merge the experiment PR.
+HEAD D — supersedes HEAD C bcf6cfc7a595ac972fa5d10b5bca447ee8d956a1 while independent CodeQL 37894298288 was in_progress.
+Live protected-main cancellation must target only the old C CodeQL run; this is a non-production test marker.
