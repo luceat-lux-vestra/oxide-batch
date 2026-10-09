@@ -1,0 +1,77 @@
+# ONE-TIME MEASUREMENT ONLY; NEVER MERGE. Delete with unmerged PR closure.
+# This job is NOT a security authority. It does not upload CodeQL/SARIF/database/logs.
+name: CodeQL Rust offline evaluator experiment - DO NOT MERGE
+on:
+  pull_request:
+    types: [opened]
+    branches: [main]
+    paths:
+      - .github/workflows/codeql-rust-profile-probe.yml
+permissions:
+  contents: read
+jobs:
+  profile-rust:
+    name: Non-authoritative ARM64 profile (one-shot)
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'experiment/433-codeql-arm64-private-profile' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact measurement HEAD (read-only token)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Initialize original pinned CodeQL engine (no upload)
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: rust
+          build-mode: none
+      - name: Reproduce original rust extraction and run private evaluator
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_BASE: c888bc0d5c238ce68a745c1fc62c6b0b7207f1c1
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "aarch64"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          test "$EXPECTED_BASE" = "c888bc0d5c238ce68a745c1fc62c6b0b7207f1c1"
+          test "$(git rev-parse HEAD^)" = "$EXPECTED_BASE"
+          CODEQL=/opt/hostedtoolcache/CodeQL/2.27.2/arm64/codeql/codeql
+          DB="$RUNNER_TEMP/codeql_databases/rust"
+          OUT="$RUNNER_TEMP/oxide-rust-evaluator-profile"
+          test -x "$CODEQL"
+          test -f "$DB/codeql-database.yml"
+          "$CODEQL" database trace-command --use-build-mode --working-dir "$GITHUB_WORKSPACE" "$DB"
+          "$CODEQL" database finalize --finalize-dataset --threads=4 --ram=14535 "$DB"
+          python3 .github/scripts/profile_codeql_rust.py \
+            --codeql "$CODEQL" --database "$DB" --output-dir "$OUT" \
+            --timeout-seconds 600
+          # Emit ONLY sanitized results; the raw evaluator log and DB never leave runner.
+          python3 - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          out = Path(os.environ["RUNNER_TEMP"]) / "oxide-rust-evaluator-profile"
+          info = json.loads((out / "metadata.json").read_text())
+          overall = (out / "overall-summary.json").read_bytes()
+          data = json.loads(overall)
+          assert info["query_count"] == 37
+          assert info["cli_version"] == "2.27.2"
+          assert info["query_pack"] == "codeql/rust-queries/0.1.44"
+          print(json.dumps({
+              "classification": "RESEARCH_ONLY_NEVER_A_MERGE_GATE",
+              "head": os.environ["EXPECTED_HEAD"],
+              "arch": info["architecture"],
+              "version": info["cli_version"],
+              "query_count": info["query_count"],
+              "elapsed_seconds": info["elapsed_seconds"],
+              "summary_sha256": hashlib.sha256(overall).hexdigest(),
+              "summary_top_level_type": type(data).__name__,
+              "summary_top_level_keys": sorted(data.keys()) if isinstance(data, dict) else [],
+              "no_raw_outputs_uploaded": True,
+          }, sort_keys=True))
+          PY
