@@ -51,6 +51,7 @@ on:
     paths:
       - .github/workflows/orphan-authority-readonly.yml
       - .github/scripts/pr-authority-runtime.py
+      - .github/scripts/orphan-codeql-cancel.py
 
 # Read-only even on branch pushes. No job can cancel another workflow.
 permissions:
