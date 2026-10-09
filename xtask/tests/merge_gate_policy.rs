@@ -62,3 +62,10 @@ fn merge_gate_contract_negative_tests_pass_in_github_actions() -> Result<(), Box
 // protected merge-gate remains independent. This Rust integration shard must
 // not duplicate an unauthenticated network call; HTTP 403 here previously
 // failed unrelated application changes despite successful local contracts.
+
+#[test]
+fn repository_root_resolves_trusted_merge_gate_policy() -> Result<(), Box<dyn Error>> {
+    let root = repo_root()?;
+    assert!(root.join(".github/merge-gate-policy.json").is_file());
+    Ok(())
+}
