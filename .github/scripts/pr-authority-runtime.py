@@ -1550,6 +1550,19 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual("NO_CANDIDATE", check(non_cancelled)["decision"])
         self.assertNotIn("GET-LINK " + old_sha, non_cancelled.calls)
 
+        # A failed/timed-out/neutral predecessor is NOT proof of supersession.
+        # Do not probe commit associations or an old independent Authority.
+        for conclusion in ("failure", "timed_out", "skipped", "neutral", "action_required"):
+            stalled = Stub(data())
+            stalled.metadata["actions/runs/1001"]["conclusion"] = conclusion
+            with self.subTest(old_conclusion=conclusion):
+                status = check(stalled)
+                self.assertEqual("NO_CANDIDATE", status["decision"])
+                self.assertEqual("old_caller_not_cancelled", status["reason"])
+                self.assertNotIn("GET-LINK " + old_sha, stalled.calls)
+                self.assertFalse(any(c.startswith("GET-BOUNDED ") for c in stalled.calls))
+
+
         completed = Stub(data())
         completed.targets[0] = dict(completed.targets[0], status="completed", conclusion="success")
         self.assertEqual("old_authority_already_completed", check(completed)["reason"])
