@@ -592,12 +592,24 @@ assert ACTIVE_WRITER.read_bytes() == STAGED_WRITER.read_bytes(), "M6 writer diff
 assert m6_git_blob(STAGED_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071", (
     "Historical M6 CodeQL stage changed without review"
 )
-assert m6_git_blob(ACTIVE_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232", (
-    "Active wall-clock CodeQL must match exact pre-admitted candidate"
+assert m6_git_blob(ACTIVE_CODEQL) == "351638668c6e19dd171293f4f15d16409c5558e9", (
+    "Active Rust CodeQL ARM64 must match its exact pre-admitted blob"
 )
-assert ACTIVE_CODEQL.read_bytes() == (
+staged_wallclock = (
     ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
-).read_bytes(), "Active CodeQL differs from exact pre-admitted wall-clock candidate"
+).read_bytes()
+rust_job_header = b"  analyze-rust:\n"
+assert staged_wallclock.count(rust_job_header) == 1, "Ambiguous staged Rust job"
+pre_rust, rust_job = staged_wallclock.split(rust_job_header, 1)
+old_runner = b"    runs-on: ubuntu-latest\n"
+assert rust_job.count(old_runner) == 1, "Staged Rust runner not unique"
+expected_arm_codeql = (
+    pre_rust + rust_job_header
+    + rust_job.replace(old_runner, b"    runs-on: ubuntu-24.04-arm\n", 1)
+)
+assert ACTIVE_CODEQL.read_bytes() == expected_arm_codeql, (
+    "Active ARM64 CodeQL differs from exact x64-stage plus runner-only substitution"
+)
 
 activated_codeql = ACTIVE_CODEQL.read_text(encoding="utf-8")
 assert activated_codeql.count("89fd82a519b43c5fad5d7300c9ab42e09392e9da") == 2, "M6 CodeQL writer SHA must occur exactly twice"
@@ -617,6 +629,12 @@ assert "2d6e80287d137c2d63da431ed9c085e24a920071" in approved, (
 assert "025a05b98eb6dc2c5cfc6dbfddef905664a0d6c8" in approved, (
     "M6 prior protected CodeQL blob no longer accepted"
 )
+assert "351638668c6e19dd171293f4f15d16409c5558e9" in approved, (
+    "ARM64 runner-only CodeQL blob is not pre-admitted"
+)
+assert "c150f2001a74e802180369fd16ee462b63e99232" in approved, (
+    "x64 CodeQL rollback blob has been removed from trusted inventory"
+)
 
 # Exercise the now-active writer ONLY with mock HTTP and a trusted runtime copy.
 # No actual token, Actions POST, or production cancellation is invoked.
@@ -634,18 +652,17 @@ with tempfile.TemporaryDirectory(prefix="oxide-m6-active-writer-") as td:
         + writer_contract.stdout + writer_contract.stderr
     )
 
-# CI wall-clock: stage protected Rust CodeQL dispatch-routing candidates only.
-# The live validator and CodeQL workflow remain byte-identical until both exact
-# prospective blobs are accepted by the trusted base policy in a separate PR.
+# CI wall-clock: preserve the historical x64 stage and validator evidence;
+# active Rust CodeQL now differs ONLY by its exactly pre-admitted ARM64 runner.
 WALLCLOCK_CODEQL = ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
 WALLCLOCK_VALIDATOR = ROOT / "docs/engineering/ci-staging/actions-security-wallclock-rust-impact-candidate.py"
 assert WALLCLOCK_CODEQL.is_file() and WALLCLOCK_VALIDATOR.is_file()
-assert m6_git_blob(ACTIVE_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232"
+assert m6_git_blob(ACTIVE_CODEQL) == "351638668c6e19dd171293f4f15d16409c5558e9"
 assert m6_git_blob(ROOT / ".github/scripts/validate_actions_security.py") == (
     "29fe8e7a6778f433c6f0390f11aed10820764ee4"
 )
 assert m6_git_blob(WALLCLOCK_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232"
-assert ACTIVE_CODEQL.read_bytes() == WALLCLOCK_CODEQL.read_bytes()
+assert ACTIVE_CODEQL.read_bytes() == expected_arm_codeql
 assert m6_git_blob(WALLCLOCK_VALIDATOR) == "29fe8e7a6778f433c6f0390f11aed10820764ee4"
 assert (ROOT / ".github/scripts/validate_actions_security.py").read_bytes() == WALLCLOCK_VALIDATOR.read_bytes()
 
