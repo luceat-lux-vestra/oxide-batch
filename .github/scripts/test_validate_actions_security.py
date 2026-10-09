@@ -636,6 +636,38 @@ assert "c150f2001a74e802180369fd16ee462b63e99232" in approved, (
     "x64 CodeQL rollback blob has been removed from trusted inventory"
 )
 
+# Future Rust CodeQL DB-upload optimization is staged but NOT yet active.
+# Preserve all 37 security queries, scanning, SARIF upload, and server-side
+# processing verification. Only the supplemental CodeQL database upload
+# is toggled, with a one-line exact byte transition and pre-admitted blob.
+STAGED_NO_DB_UPLOAD = (
+    ROOT / "docs/engineering/ci-staging/codeql-rust-no-database-upload-candidate.yml"
+)
+assert STAGED_NO_DB_UPLOAD.is_file(), "missing CodeQL no-database-upload stage"
+rust_category = b"          category: /language:rust\n"
+active_codeql_bytes = ACTIVE_CODEQL.read_bytes()
+assert active_codeql_bytes.count(rust_category) == 1, "ambiguous Rust CodeQL Analyze"
+expected_no_db_upload = active_codeql_bytes.replace(
+    rust_category,
+    rust_category + b"          upload-database: false\n",
+    1,
+)
+assert STAGED_NO_DB_UPLOAD.read_bytes() == expected_no_db_upload, (
+    "CodeQL DB-upload stage must differ from active ARM64 solely in the Rust Analyze input"
+)
+assert m6_git_blob(STAGED_NO_DB_UPLOAD) == "894db7fb531721bbb961ce59231e08b9331b7444", (
+    "CodeQL no-database-upload candidate Git blob drift"
+)
+assert "894db7fb531721bbb961ce59231e08b9331b7444" in approved, (
+    "Future no-database-upload CodeQL blob must be pre-admitted before activation"
+)
+assert "          upload-database: false\n" not in activated_codeql, (
+    "This PR may admit the candidate but must NOT activate the protected workflow"
+)
+assert not codeql_routing_violations(STAGED_NO_DB_UPLOAD.read_text(encoding="utf-8")), (
+    "Future CodeQL DB-upload candidate must retain Rust routing security invariants"
+)
+
 # Exercise the now-active writer ONLY with mock HTTP and a trusted runtime copy.
 # No actual token, Actions POST, or production cancellation is invoked.
 with tempfile.TemporaryDirectory(prefix="oxide-m6-active-writer-") as td:
