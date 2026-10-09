@@ -240,7 +240,7 @@ jobs:
     name: Analyze (rust)
     needs: rust-impact
     if: >-
-      ${{ always() && github.event_name != 'workflow_run' &&
+      ${{ !cancelled() && github.event_name != 'workflow_run' &&
           (github.event_name != 'pull_request' ||
            (github.event.pull_request.draft == false &&
             (needs.rust-impact.result != 'success' ||

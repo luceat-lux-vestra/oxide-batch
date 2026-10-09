@@ -76,7 +76,7 @@ jobs:
     name: Analyze (rust)
     needs: rust-impact
     if: >-
-      ${{ always() &&
+      ${{ !cancelled() &&
           (github.event_name != 'pull_request' ||
            (github.event.pull_request.draft == false &&
             (needs.rust-impact.result != 'success' ||
@@ -95,6 +95,19 @@ jobs:
 
 observed = codeql_routing_violations(CODEQL_ROUTING_FIXTURE)
 assert not observed, f"valid CodeQL Rust route rejected: {observed!r}"
+
+# Stage M6 activated validator must reject the cancellation-resistant regression,
+# without dropping the dependent-job failure/unknown fallback.
+legacy_always = CODEQL_ROUTING_FIXTURE.replace("!cancelled()", "always()")
+observed = codeql_routing_violations(legacy_always)
+assert any("!cancelled()" in item for item in observed), observed
+assert any("must not use always()" in item for item in observed), observed
+
+for absent_guard in ("success()", "failure()"):
+    observed = codeql_routing_violations(
+        CODEQL_ROUTING_FIXTURE.replace("!cancelled()", absent_guard)
+    )
+    assert any("!cancelled()" in item for item in observed), observed
 
 broken = CODEQL_ROUTING_FIXTURE.replace(
     'base_sha = os.environ["BASE_SHA"]',
@@ -141,11 +154,11 @@ def staged_routing_violations(workflow: str) -> list[str]:
 
 STAGED_WORKFLOW = STAGED_WORKFLOW_PATH.read_text(encoding="utf-8")
 assert not staged_routing_violations(STAGED_WORKFLOW), "M6 future CodeQL workflow fails future security contract"
-CANCELLABLE_FIXTURE = CODEQL_ROUTING_FIXTURE.replace("always()", "!cancelled()")
+CANCELLABLE_FIXTURE = CODEQL_ROUTING_FIXTURE
 assert not staged_routing_violations(CANCELLABLE_FIXTURE), "M6 cancellable routing fixture rejected"
 
 for label, unsafe_fixture, expected in (
-    ("old always", CODEQL_ROUTING_FIXTURE, "!cancelled()"),
+    ("old always", CODEQL_ROUTING_FIXTURE.replace("!cancelled()", "always()"), "!cancelled()"),
     ("always mixed with guard", CANCELLABLE_FIXTURE.replace(
         "!cancelled() &&", "always() || !cancelled() &&"), "must not use always()"),
     ("missing cancellation guard", CANCELLABLE_FIXTURE.replace(

@@ -348,7 +348,7 @@ def check_codeql_rust_routing_contract_text(
         required_analyze = (
             "name: Analyze (rust)",
             "needs: rust-impact",
-            "always()",
+            "!cancelled()",
             "github.event_name != 'pull_request'",
             "github.event.pull_request.draft == false",
             "needs.rust-impact.result != 'success'",
@@ -362,6 +362,10 @@ def check_codeql_rust_routing_contract_text(
                 violations.append(
                     f"{path}: Analyze (rust) fail-closed routing missing: {fragment}"
                 )
+        if "always()" in analyze:
+            violations.append(
+                f"{path}: Analyze (rust) must not use always() in a cancellable job"
+            )
 
     return violations
 
