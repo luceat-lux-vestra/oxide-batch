@@ -44,6 +44,10 @@
     {
       "pattern": ".github/workflows/pr-labeler.yml",
       "classification": "advisory"
+    },
+    {
+      "pattern": ".github/workflows/orphan-authority-cancel.yml",
+      "classification": "advisory"
     }
   ],
   "job_overrides": [
@@ -201,6 +205,12 @@
           "680ef346dece5d5c525ded56c3e03e05c606ce4f",
           "f12ebbbbe5c3e5d71f8d04c8f51d7eed1d2fdbee"
         ]
+      },
+      {
+        "workflow": ".github/workflows/orphan-authority-cancel.yml",
+        "accepted_blobs": [
+          "1f83a16a67e892c881f066278b12ff2d06a957fb"
+        ]
       }
     ],
     "protected_files": [
@@ -238,6 +248,12 @@
         "path": "docs/engineering/retained-evidence-policy.json",
         "accepted_blobs": [
           "5528238c7b4c735d35034e48fbf852b7960d61d8"
+        ]
+      },
+      {
+        "path": ".github/scripts/orphan-codeql-cancel.py",
+        "accepted_blobs": [
+          "beb69de6b58d89b3814b23017e408775659b275f"
         ]
       }
     ]
