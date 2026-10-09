@@ -156,6 +156,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read # Verify exact caller PR CI run and first-attempt provenance.
       contents: read # Fetch the classifier from the exact protected base SHA.
       pull-requests: read # Reconcile live PR identity and the complete changed-file list.
     outputs:

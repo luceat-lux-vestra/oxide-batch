@@ -579,8 +579,8 @@ assert m6_git_blob(ACTIVE_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071"
 assert m6_git_blob(ROOT / ".github/scripts/validate_actions_security.py") == (
     "bbec03ce7e6f4696fc56c19c76f62e0cc7c3acc1"
 )
-assert m6_git_blob(WALLCLOCK_CODEQL) == "f9ffa949754b7bff987d9ddfe16714a0e501b017"
-assert m6_git_blob(WALLCLOCK_VALIDATOR) == "8809c326c866048e466f52eaebec3a823f374815"
+assert m6_git_blob(WALLCLOCK_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232"
+assert m6_git_blob(WALLCLOCK_VALIDATOR) == "29fe8e7a6778f433c6f0390f11aed10820764ee4"
 
 future_spec = importlib.util.spec_from_file_location("wallclock_validator", WALLCLOCK_VALIDATOR)
 assert future_spec is not None and future_spec.loader is not None
@@ -598,6 +598,12 @@ for title, old, bad, diagnostic in (
         "if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}",
         "if: ${{ github.event_name == 'pull_request' }}",
         "workflow_dispatch",
+    ),
+    (
+        "caller Actions API permissions missing",
+        "actions: read # Verify exact caller PR CI run and first-attempt provenance.",
+        "actions: none # Verify exact caller PR CI run and first-attempt provenance.",
+        "actions: read",
     ),
     (
         "wrong first-attempt caller",
@@ -638,9 +644,9 @@ for title, old, bad, diagnostic in (
 candidate_policy = json.loads(POLICY.read_text(encoding="utf-8"))
 for collection, key, path, admitted, prior in (
     ("protected_workflows", "workflow", ".github/workflows/codeql.yml",
-     "f9ffa949754b7bff987d9ddfe16714a0e501b017", "2d6e80287d137c2d63da431ed9c085e24a920071"),
+     "c150f2001a74e802180369fd16ee462b63e99232", "2d6e80287d137c2d63da431ed9c085e24a920071"),
     ("protected_files", "path", ".github/scripts/validate_actions_security.py",
-     "8809c326c866048e466f52eaebec3a823f374815", "bbec03ce7e6f4696fc56c19c76f62e0cc7c3acc1"),
+     "29fe8e7a6778f433c6f0390f11aed10820764ee4", "bbec03ce7e6f4696fc56c19c76f62e0cc7c3acc1"),
 ):
     entries = [
         row for row in candidate_policy["repository_merge_gate"][collection]

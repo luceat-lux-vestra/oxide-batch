@@ -324,6 +324,7 @@ def check_codeql_rust_routing_contract_text(
             "caller.get(\"run_attempt\") != 1",
             "trusted_dispatch_identity",
             "workflow_dispatch",
+            "actions: read",
             "contents: read",
             "pull-requests: read",
             "run_rust: ${{ steps.route.outputs.run_rust }}",
