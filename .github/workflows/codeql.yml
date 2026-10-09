@@ -5,6 +5,10 @@ run-name: pr-authority/codeql/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/
 # re-analysed after squash merge. Weekly analysis still picks up new CodeQL
 # queries during periods without code changes.
 on:
+  # Workflow-run uses trusted default-branch source, never the triggering PR SHA.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: ["PR CI"]
+    types: [completed]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
     branches:
@@ -39,12 +43,82 @@ permissions:
   contents: read
 
 concurrency:
-  group: codeql-${{ github.event_name }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.caller_run_id || github.ref }}
-  cancel-in-progress: true
+  group: codeql-${{ github.event_name }}-${{ github.workflow }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.event_name == 'workflow_dispatch' && inputs.caller_run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_run' }}
 
 jobs:
+  # Enabled only by TWO explicit repo variables. Neither the default nor
+  # an ordinary PR can activate the privileged workflow_run job.
+  orphan-codeql-dry-run:
+    name: orphan-codeql-dry-run
+    if: ${{ github.event_name == 'workflow_run' && github.ref == 'refs/heads/main' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.run_attempt == 1 && github.run_attempt == 1 && vars.ORPHAN_CODEQL_CANCEL_ENABLED == 'true' && vars.ORPHAN_CODEQL_CANCEL_MODE == 'dry-run' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read # Checkout immutable trusted main source only.
+      actions: read # Exact run metadata inspection via GET.
+      pull-requests: read # Verify PR ownership, state and HEAD with GET.
+    steps:
+      - name: Checkout trusted main only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify pinned writer and read-only dry run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD_CALLER_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "luceat-lux-vestra/oxide-batch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git hash-object .github/scripts/orphan-codeql-cancel.py)" = "beb69de6b58d89b3814b23017e408775659b275f"
+          test "$(git hash-object .github/scripts/pr-authority-runtime.py)" = "f62f442261095b63de797bea9e62bfaaf000bfdb"
+          python3 .github/scripts/orphan-codeql-cancel.py execute \
+            --mode dry-run --old-caller-run-id "$OLD_CALLER_RUN_ID" \
+            --trusted-main-sha "$GITHUB_SHA"
+
+  orphan-codeql-live:
+    name: orphan-codeql-live
+    if: ${{ github.event_name == 'workflow_run' && github.ref == 'refs/heads/main' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.run_attempt == 1 && github.run_attempt == 1 && vars.ORPHAN_CODEQL_CANCEL_ENABLED == 'true' && vars.ORPHAN_CODEQL_CANCEL_MODE == 'live' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read # Only trusted main; no PR-head code or artifacts.
+      actions: write # Restrict normal run-id cancellation POST to this job.
+      pull-requests: read # Independent live PR/HEAD provenance checks.
+    steps:
+      - name: Checkout trusted main only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify pinned writer and cancel obsolete CodeQL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD_CALLER_RUN_ID: ${{ github.event.workflow_run.id }}
+          ORPHAN_CODEQL_CANCEL_ENABLED: ${{ vars.ORPHAN_CODEQL_CANCEL_ENABLED }}
+          ORPHAN_CODEQL_CANCEL_MODE: ${{ vars.ORPHAN_CODEQL_CANCEL_MODE }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "luceat-lux-vestra/oxide-batch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$ORPHAN_CODEQL_CANCEL_ENABLED" = "true"
+          test "$ORPHAN_CODEQL_CANCEL_MODE" = "live"
+          test "$(git hash-object .github/scripts/orphan-codeql-cancel.py)" = "beb69de6b58d89b3814b23017e408775659b275f"
+          test "$(git hash-object .github/scripts/pr-authority-runtime.py)" = "f62f442261095b63de797bea9e62bfaaf000bfdb"
+          python3 .github/scripts/orphan-codeql-cancel.py execute \
+            --mode live --old-caller-run-id "$OLD_CALLER_RUN_ID" \
+            --trusted-main-sha "$GITHUB_SHA"
+
   analyze-actions:
     name: Analyze (actions)
+    if: ${{ github.event_name != 'workflow_run' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
@@ -166,7 +240,7 @@ jobs:
     name: Analyze (rust)
     needs: rust-impact
     if: >-
-      ${{ always() &&
+      ${{ always() && github.event_name != 'workflow_run' &&
           (github.event_name != 'pull_request' ||
            (github.event.pull_request.draft == false &&
             (needs.rust-impact.result != 'success' ||
