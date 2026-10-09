@@ -592,8 +592,8 @@ assert ACTIVE_WRITER.read_bytes() == STAGED_WRITER.read_bytes(), "M6 writer diff
 assert m6_git_blob(STAGED_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071", (
     "Historical M6 CodeQL stage changed without review"
 )
-assert m6_git_blob(ACTIVE_CODEQL) == "351638668c6e19dd171293f4f15d16409c5558e9", (
-    "Active Rust CodeQL ARM64 must match its exact pre-admitted blob"
+assert m6_git_blob(ACTIVE_CODEQL) == "894db7fb531721bbb961ce59231e08b9331b7444", (
+    "Active Rust CodeQL no-database-upload must match its exact pre-admitted blob"
 )
 staged_wallclock = (
     ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
@@ -607,8 +607,20 @@ expected_arm_codeql = (
     pre_rust + rust_job_header
     + rust_job.replace(old_runner, b"    runs-on: ubuntu-24.04-arm\n", 1)
 )
-assert ACTIVE_CODEQL.read_bytes() == expected_arm_codeql, (
-    "Active ARM64 CodeQL differs from exact x64-stage plus runner-only substitution"
+# Preserve independent byte-level provenance of the former ARM64 workflow.
+# The activated Rust Analyze adds exactly one optional database-upload input.
+assert hashlib.sha1(
+    b"blob " + str(len(expected_arm_codeql)).encode("ascii") + b"\x00" + expected_arm_codeql
+).hexdigest() == "351638668c6e19dd171293f4f15d16409c5558e9", (
+    "Former ARM64 CodeQL baseline no longer matches its immutable Git blob"
+)
+rust_category = b"          category: /language:rust\n"
+assert expected_arm_codeql.count(rust_category) == 1, "ambiguous Rust CodeQL Analyze"
+expected_active_codeql = expected_arm_codeql.replace(
+    rust_category, rust_category + b"          upload-database: false\n", 1
+)
+assert ACTIVE_CODEQL.read_bytes() == expected_active_codeql, (
+    "Activated CodeQL must equal former ARM64 plus one Rust-only Analyze input"
 )
 
 activated_codeql = ACTIVE_CODEQL.read_text(encoding="utf-8")
@@ -630,39 +642,34 @@ assert "025a05b98eb6dc2c5cfc6dbfddef905664a0d6c8" in approved, (
     "M6 prior protected CodeQL blob no longer accepted"
 )
 assert "351638668c6e19dd171293f4f15d16409c5558e9" in approved, (
-    "ARM64 runner-only CodeQL blob is not pre-admitted"
+    "Former ARM64 CodeQL rollback blob was removed from trusted inventory"
+)
+assert "894db7fb531721bbb961ce59231e08b9331b7444" in approved, (
+    "Activated CodeQL no-database-upload blob is not pre-admitted"
 )
 assert "c150f2001a74e802180369fd16ee462b63e99232" in approved, (
     "x64 CodeQL rollback blob has been removed from trusted inventory"
 )
 
-# Future Rust CodeQL DB-upload optimization is staged but NOT yet active.
+# The Rust CodeQL DB-upload optimization is activated from pre-admitted bytes.
 # Preserve all 37 security queries, scanning, SARIF upload, and server-side
-# processing verification. Only the supplemental CodeQL database upload
-# is toggled, with a one-line exact byte transition and pre-admitted blob.
+# processing verification. Only the optional CodeQL DB upload is toggled.
 STAGED_NO_DB_UPLOAD = (
     ROOT / "docs/engineering/ci-staging/codeql-rust-no-database-upload-candidate.yml"
 )
 assert STAGED_NO_DB_UPLOAD.is_file(), "missing CodeQL no-database-upload stage"
-rust_category = b"          category: /language:rust\n"
 active_codeql_bytes = ACTIVE_CODEQL.read_bytes()
-assert active_codeql_bytes.count(rust_category) == 1, "ambiguous Rust CodeQL Analyze"
-expected_no_db_upload = active_codeql_bytes.replace(
-    rust_category,
-    rust_category + b"          upload-database: false\n",
-    1,
+assert active_codeql_bytes == expected_active_codeql, (
+    "Activated Rust CodeQL must differ from former ARM64 solely in Rust Analyze"
 )
-assert STAGED_NO_DB_UPLOAD.read_bytes() == expected_no_db_upload, (
-    "CodeQL DB-upload stage must differ from active ARM64 solely in the Rust Analyze input"
+assert STAGED_NO_DB_UPLOAD.read_bytes() == active_codeql_bytes, (
+    "Activated CodeQL must be byte-identical to the immutable pre-admitted staging file"
 )
 assert m6_git_blob(STAGED_NO_DB_UPLOAD) == "894db7fb531721bbb961ce59231e08b9331b7444", (
     "CodeQL no-database-upload candidate Git blob drift"
 )
-assert "894db7fb531721bbb961ce59231e08b9331b7444" in approved, (
-    "Future no-database-upload CodeQL blob must be pre-admitted before activation"
-)
-assert "          upload-database: false\n" not in activated_codeql, (
-    "This PR may admit the candidate but must NOT activate the protected workflow"
+assert activated_codeql.count("          upload-database: false\n") == 1, (
+    "Exactly one Rust CodeQL Analyze database upload override must remain active"
 )
 assert not codeql_routing_violations(STAGED_NO_DB_UPLOAD.read_text(encoding="utf-8")), (
     "Future CodeQL DB-upload candidate must retain Rust routing security invariants"
@@ -689,12 +696,12 @@ with tempfile.TemporaryDirectory(prefix="oxide-m6-active-writer-") as td:
 WALLCLOCK_CODEQL = ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
 WALLCLOCK_VALIDATOR = ROOT / "docs/engineering/ci-staging/actions-security-wallclock-rust-impact-candidate.py"
 assert WALLCLOCK_CODEQL.is_file() and WALLCLOCK_VALIDATOR.is_file()
-assert m6_git_blob(ACTIVE_CODEQL) == "351638668c6e19dd171293f4f15d16409c5558e9"
+assert m6_git_blob(ACTIVE_CODEQL) == "894db7fb531721bbb961ce59231e08b9331b7444"
 assert m6_git_blob(ROOT / ".github/scripts/validate_actions_security.py") == (
     "29fe8e7a6778f433c6f0390f11aed10820764ee4"
 )
 assert m6_git_blob(WALLCLOCK_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232"
-assert ACTIVE_CODEQL.read_bytes() == expected_arm_codeql
+assert ACTIVE_CODEQL.read_bytes() == expected_active_codeql
 assert m6_git_blob(WALLCLOCK_VALIDATOR) == "29fe8e7a6778f433c6f0390f11aed10820764ee4"
 assert (ROOT / ".github/scripts/validate_actions_security.py").read_bytes() == WALLCLOCK_VALIDATOR.read_bytes()
 
