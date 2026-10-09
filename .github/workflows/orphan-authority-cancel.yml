@@ -12,6 +12,7 @@ on:
     paths:
       - .github/workflows/orphan-authority-cancel.yml
       - .github/scripts/orphan-codeql-cancel.py
+      - .github/merge-gate-policy.json
 
 permissions:
   contents: read
