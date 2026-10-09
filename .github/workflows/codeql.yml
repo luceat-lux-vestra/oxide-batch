@@ -74,7 +74,7 @@ jobs:
           test "$GITHUB_REPOSITORY" = "luceat-lux-vestra/oxide-batch"
           test "$GITHUB_REF" = "refs/heads/main"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
-          test "$(git hash-object .github/scripts/orphan-codeql-cancel.py)" = "beb69de6b58d89b3814b23017e408775659b275f"
+          test "$(git hash-object .github/scripts/orphan-codeql-cancel.py)" = "89fd82a519b43c5fad5d7300c9ab42e09392e9da"
           test "$(git hash-object .github/scripts/pr-authority-runtime.py)" = "6b5dba2adda729ca0198ee3e7bcabab68d454898"
           python3 .github/scripts/orphan-codeql-cancel.py execute \
             --mode dry-run --old-caller-run-id "$OLD_CALLER_RUN_ID" \
@@ -110,7 +110,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$ORPHAN_CODEQL_CANCEL_ENABLED" = "true"
           test "$ORPHAN_CODEQL_CANCEL_MODE" = "live"
-          test "$(git hash-object .github/scripts/orphan-codeql-cancel.py)" = "beb69de6b58d89b3814b23017e408775659b275f"
+          test "$(git hash-object .github/scripts/orphan-codeql-cancel.py)" = "89fd82a519b43c5fad5d7300c9ab42e09392e9da"
           test "$(git hash-object .github/scripts/pr-authority-runtime.py)" = "6b5dba2adda729ca0198ee3e7bcabab68d454898"
           python3 .github/scripts/orphan-codeql-cancel.py execute \
             --mode live --old-caller-run-id "$OLD_CALLER_RUN_ID" \

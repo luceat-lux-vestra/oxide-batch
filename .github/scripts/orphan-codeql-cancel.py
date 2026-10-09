@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Stage M5b: opt-in, exact-run CodeQL cancellation from trusted main only.
 
-No PR-head execution, no force-cancel, no hidden retry. A GitHub run-ID cancel
-cannot be conditional on run_attempt; GET->POST TOCTOU / ABA remain residual
-risks. Do not enable outside a controlled experiment before M6 acceptance.
+No PR-head execution, no force-cancel, no POST retry. Only the exact transient
+current-caller active_status denial permits bounded pre-write GET rechecks.
+GitHub run-ID cancel cannot be conditional on run_attempt; GET->POST TOCTOU /
+ABA remain residual risks. Use only under controlled M6 acceptance.
 """
 from __future__ import annotations
 
@@ -93,10 +94,27 @@ def operate(
 
     # Preflight itself re-discovers the target from GitHub and independently
     # audits main/PR/old+current caller/target. Never consume a saved M4 report.
-    first = runtime.preflight_orphan_codeql_cancel(
-        client=client, authorities=authorities,
-        old_caller_run_id=old_caller_run_id, trusted_main_sha=trusted_main_sha,
-    )
+    # GitHub can briefly expose a newly dispatched PR CI as queued between
+    # its successful dispatch job and the next pr-proof job. Preserve the
+    # STRICT active-status predicate in the trusted runtime and at near-POST.
+    # Only this precise transient pre-write denial may be rechecked; never
+    # repeat a cancel POST, relax identity checks, or retry other failures.
+    for readiness_attempt in range(3 if mode == "live" else 1):
+        try:
+            first = runtime.preflight_orphan_codeql_cancel(
+                client=client, authorities=authorities,
+                old_caller_run_id=old_caller_run_id, trusted_main_sha=trusted_main_sha,
+            )
+            break
+        except ContractError as exc:
+            if (
+                mode != "live"
+                or str(exc) != "live orphan audit current caller is not trusted: active_status"
+                or readiness_attempt == 2
+            ):
+                raise
+            print("M5 transient caller active_status; bounded read-only recheck", flush=True)
+            time.sleep(5.0)
     if first.get("decision") == "NO_WRITE":
         return report("NO_WRITE", reason=first.get("reason", "no_candidate"))
     if first.get("decision") != "PREWRITE_CANDIDATE":
@@ -258,6 +276,11 @@ class CancelContractTests(unittest.TestCase):
         state = {"result": preflight, "calls": 0}
         def fake_preflight(**_: object) -> dict[str, object]:
             state["calls"] += 1
+            if state.get("queued_failures", 0) > 0:
+                state["queued_failures"] -= 1
+                raise ContractError("live orphan audit current caller is not trusted: active_status")
+            if state.get("fatal_preflight"):
+                raise ContractError("live orphan audit current caller is not trusted: head_sha")
             if state.get("alter_second") and state["calls"] == 2:
                 return dict(state["result"], dispatched_run_id=1003)
             return copy.deepcopy(state["result"])
@@ -314,6 +337,51 @@ class CancelContractTests(unittest.TestCase):
             witness = Client(fixture())
             self.assertEqual("NO_WRITE", invoke(witness)["decision"])
             self.assertFalse(any(c.startswith("POST") for c in witness.calls))
+
+            # Live-only, pre-POST readiness recheck. Exact current caller and
+            # target identity still pass two independent proofs before one POST.
+            state["result"] = preflight
+            saved_sleep = time.sleep
+            sleeps: list[float] = []
+            time.sleep = lambda seconds: sleeps.append(seconds)
+            try:
+                state["queued_failures"] = 1
+                recovered = Client(fixture())
+                self.assertEqual("CANCELLED_CONFIRMED", invoke(recovered)["decision"])
+                self.assertEqual(3, state["calls"])  # denied, first pass, second proof
+                self.assertEqual([5.0], sleeps)
+                self.assertEqual(1, sum(c.startswith("POST") for c in recovered.calls))
+
+                sleeps.clear()
+                state["queued_failures"] = 5
+                persistent = Client(fixture())
+                with self.assertRaisesRegex(ContractError, "active_status"):
+                    invoke(persistent)
+                self.assertEqual(3, state["calls"])
+                self.assertEqual([5.0, 5.0], sleeps)
+                self.assertFalse(any(c.startswith("POST") for c in persistent.calls))
+
+                state["queued_failures"] = 1
+                skipped = Client(fixture())
+                with self.assertRaisesRegex(ContractError, "active_status"):
+                    invoke(skipped, "dry-run")
+                self.assertEqual(1, state["calls"])
+                self.assertEqual([5.0, 5.0], sleeps)
+                self.assertFalse(any(c.startswith("POST") for c in skipped.calls))
+
+                state["queued_failures"] = 0
+                state["fatal_preflight"] = True
+                fatal = Client(fixture())
+                with self.assertRaisesRegex(ContractError, "head_sha"):
+                    invoke(fatal)
+                self.assertEqual(1, state["calls"])
+                self.assertEqual([5.0, 5.0], sleeps)
+                self.assertFalse(any(c.startswith("POST") for c in fatal.calls))
+            finally:
+                time.sleep = saved_sleep
+                state["queued_failures"] = 0
+                state["fatal_preflight"] = False
+
             for mode in ("off", "force", "LIVE"):
                 with self.assertRaises(ContractError):
                     invoke(Client(fixture()), mode)
