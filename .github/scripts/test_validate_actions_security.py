@@ -568,3 +568,99 @@ with tempfile.TemporaryDirectory(prefix="oxide-m6-active-writer-") as td:
         "M6 activated writer cancellation contract regression:\n"
         + writer_contract.stdout + writer_contract.stderr
     )
+
+# CI wall-clock: stage protected Rust CodeQL dispatch-routing candidates only.
+# The live validator and CodeQL workflow remain byte-identical until both exact
+# prospective blobs are accepted by the trusted base policy in a separate PR.
+WALLCLOCK_CODEQL = ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
+WALLCLOCK_VALIDATOR = ROOT / "docs/engineering/ci-staging/actions-security-wallclock-rust-impact-candidate.py"
+assert WALLCLOCK_CODEQL.is_file() and WALLCLOCK_VALIDATOR.is_file()
+assert m6_git_blob(ACTIVE_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071"
+assert m6_git_blob(ROOT / ".github/scripts/validate_actions_security.py") == (
+    "bbec03ce7e6f4696fc56c19c76f62e0cc7c3acc1"
+)
+assert m6_git_blob(WALLCLOCK_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232"
+assert m6_git_blob(WALLCLOCK_VALIDATOR) == "29fe8e7a6778f433c6f0390f11aed10820764ee4"
+
+future_spec = importlib.util.spec_from_file_location("wallclock_validator", WALLCLOCK_VALIDATOR)
+assert future_spec is not None and future_spec.loader is not None
+future_module = importlib.util.module_from_spec(future_spec)
+future_spec.loader.exec_module(future_module)
+future_workflow = WALLCLOCK_CODEQL.read_text(encoding="utf-8")
+route_errors = future_module.check_codeql_rust_routing_contract_text(future_workflow)
+assert route_errors == [], ("future trusted-dispatch routing invalid", route_errors)
+
+# Negative proofs must catch trust-source loss, actor/caller confusion,
+# analysis suppression on uncertainty, and cancellation-resistant regressions.
+for title, old, bad, diagnostic in (
+    (
+        "disable dispatch impact routing",
+        "if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}",
+        "if: ${{ github.event_name == 'pull_request' }}",
+        "workflow_dispatch",
+    ),
+    (
+        "caller Actions API permissions missing",
+        "actions: read # Verify exact caller PR CI run and first-attempt provenance.",
+        "actions: none # Verify exact caller PR CI run and first-attempt provenance.",
+        "actions: read",
+    ),
+    (
+        "wrong first-attempt caller",
+        'caller.get("run_attempt") != 1',
+        'caller.get("run_attempt") != 2',
+        "run_attempt",
+    ),
+    (
+        "missing exact trusted base source",
+        'os.environ.get("GITHUB_SHA") != base_sha',
+        'os.environ.get("GITHUB_SHA") == base_sha',
+        "GITHUB_SHA",
+    ),
+    (
+        "unsafe fail-open suppression",
+        "run_rust=true",
+        "run_rust=false",
+        "must never suppress",
+    ),
+    (
+        "ignore cancellation",
+        "!cancelled()",
+        "always()",
+        "!cancelled()",
+    ),
+    (
+        "suppress on uncertain classifier",
+        "needs.rust-impact.result != 'success'",
+        "needs.rust-impact.result == 'success'",
+        "needs.rust-impact.result",
+    ),
+):
+    assert old in future_workflow, ("fixture ineffective", title)
+    bad_workflow = future_workflow.replace(old, bad)
+    errors = future_module.check_codeql_rust_routing_contract_text(bad_workflow)
+    assert any(diagnostic in error for error in errors), (title, errors)
+
+candidate_policy = json.loads(POLICY.read_text(encoding="utf-8"))
+for collection, key, path, admitted, prior in (
+    ("protected_workflows", "workflow", ".github/workflows/codeql.yml",
+     "c150f2001a74e802180369fd16ee462b63e99232", "2d6e80287d137c2d63da431ed9c085e24a920071"),
+    ("protected_files", "path", ".github/scripts/validate_actions_security.py",
+     "29fe8e7a6778f433c6f0390f11aed10820764ee4", "bbec03ce7e6f4696fc56c19c76f62e0cc7c3acc1"),
+):
+    entries = [
+        row for row in candidate_policy["repository_merge_gate"][collection]
+        if row[key] == path
+    ]
+    assert len(entries) == 1, ("protected artifact missing or duplicate", path)
+    assert admitted in entries[0]["accepted_blobs"], ("future exact blob not pre-admitted", path)
+    assert prior in entries[0]["accepted_blobs"], ("active prior blob de-admitted", path)
+
+classifier_test = subprocess.run(
+    [sys.executable, str(ROOT / ".github/scripts/codeql-rust-impact.py"), "--self-test"],
+    capture_output=True, text=True, timeout=30, check=False,
+)
+assert classifier_test.returncode == 0, (
+    "trusted-base classifier regression: " + classifier_test.stdout + classifier_test.stderr
+)
+print("CI wall-clock trusted dispatch routing candidate contract: PASS")

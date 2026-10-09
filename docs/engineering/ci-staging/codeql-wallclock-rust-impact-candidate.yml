@@ -1,0 +1,315 @@
+name: CodeQL
+run-name: pr-authority/codeql/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}
+
+# Pull requests are the merge-time authority. The same exact tree is not
+# re-analysed after squash merge. Weekly analysis still picks up new CodeQL
+# queries during periods without code changes.
+on:
+  # Workflow-run uses trusted default-branch source, never the triggering PR SHA.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: ["PR CI"]
+    types: [completed]
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+    paths:
+      - .github/ci-topology-v7-migration
+  workflow_call:
+  schedule:
+    - cron: "47 18 * * 1"
+  workflow_dispatch:
+    inputs:
+      base_sha:
+        required: true
+        type: string
+      head_sha:
+        required: true
+        type: string
+      head_repo:
+        required: true
+        type: string
+      pr_number:
+        required: true
+        type: string
+      caller_run_id:
+        required: true
+        type: string
+      caller_run_attempt:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.event_name }}-${{ github.workflow }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.event_name == 'workflow_dispatch' && inputs.caller_run_id || github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'workflow_run' }}
+
+jobs:
+  # Enabled only by TWO explicit repo variables. Neither the default nor
+  # an ordinary PR can activate the privileged workflow_run job.
+  orphan-codeql-dry-run:
+    name: orphan-codeql-dry-run
+    if: ${{ github.event_name == 'workflow_run' && github.ref == 'refs/heads/main' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.run_attempt == 1 && github.run_attempt == 1 && vars.ORPHAN_CODEQL_CANCEL_ENABLED == 'true' && vars.ORPHAN_CODEQL_CANCEL_MODE == 'dry-run' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read # Checkout immutable trusted main source only.
+      actions: read # Exact run metadata inspection via GET.
+      pull-requests: read # Verify PR ownership, state and HEAD with GET.
+    steps:
+      - name: Checkout trusted main only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify pinned writer and read-only dry run
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD_CALLER_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "luceat-lux-vestra/oxide-batch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git hash-object .github/scripts/orphan-codeql-cancel.py)" = "89fd82a519b43c5fad5d7300c9ab42e09392e9da"
+          test "$(git hash-object .github/scripts/pr-authority-runtime.py)" = "6b5dba2adda729ca0198ee3e7bcabab68d454898"
+          python3 .github/scripts/orphan-codeql-cancel.py execute \
+            --mode dry-run --old-caller-run-id "$OLD_CALLER_RUN_ID" \
+            --trusted-main-sha "$GITHUB_SHA"
+
+  orphan-codeql-live:
+    name: orphan-codeql-live
+    if: ${{ github.event_name == 'workflow_run' && github.ref == 'refs/heads/main' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.run_attempt == 1 && github.run_attempt == 1 && vars.ORPHAN_CODEQL_CANCEL_ENABLED == 'true' && vars.ORPHAN_CODEQL_CANCEL_MODE == 'live' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read # Only trusted main; no PR-head code or artifacts.
+      actions: write # Restrict normal run-id cancellation POST to this job.
+      pull-requests: read # Independent live PR/HEAD provenance checks.
+    steps:
+      - name: Checkout trusted main only
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify pinned writer and cancel obsolete CodeQL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD_CALLER_RUN_ID: ${{ github.event.workflow_run.id }}
+          ORPHAN_CODEQL_CANCEL_ENABLED: ${{ vars.ORPHAN_CODEQL_CANCEL_ENABLED }}
+          ORPHAN_CODEQL_CANCEL_MODE: ${{ vars.ORPHAN_CODEQL_CANCEL_MODE }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "luceat-lux-vestra/oxide-batch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$ORPHAN_CODEQL_CANCEL_ENABLED" = "true"
+          test "$ORPHAN_CODEQL_CANCEL_MODE" = "live"
+          test "$(git hash-object .github/scripts/orphan-codeql-cancel.py)" = "89fd82a519b43c5fad5d7300c9ab42e09392e9da"
+          test "$(git hash-object .github/scripts/pr-authority-runtime.py)" = "6b5dba2adda729ca0198ee3e7bcabab68d454898"
+          python3 .github/scripts/orphan-codeql-cancel.py execute \
+            --mode live --old-caller-run-id "$OLD_CALLER_RUN_ID" \
+            --trusted-main-sha "$GITHUB_SHA"
+
+  analyze-actions:
+    name: Analyze (actions)
+    if: ${{ github.event_name != 'workflow_run' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # Upload CodeQL SARIF results to GitHub code scanning.
+    steps:
+      - name: Draft required-context placeholder
+        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+        run: echo "CodeQL Actions analysis is deferred until the pull request is ready for review"
+
+      - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: actions
+          build-mode: none
+
+      - name: Analyze
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: /language:actions
+
+  rust-impact:
+    name: codeql-rust-impact
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read # Verify exact caller PR CI run and first-attempt provenance.
+      contents: read # Fetch the classifier from the exact protected base SHA.
+      pull-requests: read # Reconcile live PR identity and the complete changed-file list.
+    outputs:
+      run_rust: ${{ steps.route.outputs.run_rust }}
+      reason: ${{ steps.route.outputs.reason }}
+      changed_files: ${{ steps.route.outputs.changed_files }}
+    steps:
+      - name: Resolve exact-base Rust CodeQL impact
+        id: route
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name }}
+          CALLER_RUN_ID: ${{ inputs.caller_run_id }}
+          CALLER_RUN_ATTEMPT: ${{ inputs.caller_run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64
+          import json
+          import os
+          import pathlib
+          import subprocess
+          import sys
+          import urllib.parse
+          import urllib.request
+
+          output = pathlib.Path(os.environ["GITHUB_OUTPUT"])
+          api_url = os.environ["GITHUB_API_URL"].rstrip("/")
+          repository = os.environ["GITHUB_REPOSITORY"]
+          base_sha = os.environ["BASE_SHA"]
+          token = os.environ["GITHUB_TOKEN"]
+          classifier_path = ".github/scripts/codeql-rust-impact.py"
+
+          def trusted_dispatch_identity():
+              # No PR-head checkout/execution. For workflow_dispatch require an
+              # exact trusted-main workflow source and independently verified
+              # originating first-attempt PR CI before suppressing Rust analysis.
+              if os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+                  return
+              if os.environ.get("GITHUB_REF") != "refs/heads/main":
+                  raise RuntimeError("dispatch is not on the protected main ref")
+              if os.environ.get("GITHUB_SHA") != base_sha:
+                  raise RuntimeError("dispatch base SHA differs from trusted main workflow source")
+              if os.environ.get("HEAD_REPO") != repository:
+                  raise RuntimeError("dispatch source must belong to protected repository")
+              if os.environ.get("CALLER_RUN_ATTEMPT") != "1":
+                  raise RuntimeError("dispatch caller must be first attempt")
+              caller_id = os.environ.get("CALLER_RUN_ID", "")
+              if not caller_id.isdecimal() or int(caller_id) < 1:
+                  raise RuntimeError("dispatch caller id invalid")
+              caller_url = f"{api_url}/repos/{repository}/actions/runs/{caller_id}"
+              request = urllib.request.Request(
+                  caller_url,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "oxide-batch-codeql-rust-route",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  caller = json.load(response)
+              if (
+                  caller.get("id") != int(caller_id)
+                  or caller.get("event") != "pull_request"
+                  or caller.get("run_attempt") != 1
+                  or caller.get("path") != ".github/workflows/pr-ci.yml"
+                  or caller.get("head_sha") != os.environ["HEAD_SHA"]
+                  or caller.get("status") not in {"in_progress", "completed"}
+                  or (caller.get("status") == "completed" and caller.get("conclusion") != "success")
+              ):
+                  raise RuntimeError("dispatch caller provenance failed")
+
+          def fallback(reason):
+              safe = str(reason).replace("\n", " ").replace("\r", " ")
+              with output.open("a", encoding="utf-8") as handle:
+                  handle.write("run_rust=true\n")
+                  handle.write(f"reason=fallback:{safe}\n")
+                  handle.write("changed_files=unknown\n")
+              print(f"::warning::Rust CodeQL routing fell back to full analysis: {safe}")
+
+          try:
+              trusted_dispatch_identity()
+              encoded_path = urllib.parse.quote(classifier_path, safe="/")
+              url = (
+                  f"{api_url}/repos/{repository}/contents/{encoded_path}"
+                  f"?ref={urllib.parse.quote(base_sha, safe='')}"
+              )
+              request = urllib.request.Request(
+                  url,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "oxide-batch-codeql-rust-route",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  payload = json.load(response)
+
+              encoded = payload.get("content")
+              if not isinstance(encoded, str):
+                  raise RuntimeError("trusted-base classifier response has no content")
+              classifier = base64.b64decode(encoded).decode("utf-8")
+              target = pathlib.Path(os.environ["RUNNER_TEMP"]) / "codeql-rust-impact.py"
+              target.write_text(classifier, encoding="utf-8")
+
+              completed = subprocess.run(
+                  [sys.executable, str(target)],
+                  check=False,
+                  env=os.environ.copy(),
+              )
+              if completed.returncode != 0:
+                  raise RuntimeError(
+                      f"trusted-base classifier exited {completed.returncode}"
+                  )
+          except Exception as exc:
+              fallback(f"{type(exc).__name__}:{exc}")
+          PY
+
+  analyze-rust:
+    name: Analyze (rust)
+    needs: rust-impact
+    if: >-
+      ${{ !cancelled() && github.event_name != 'workflow_run' &&
+          (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+          ((github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch') ||
+           needs.rust-impact.result != 'success' ||
+           needs.rust-impact.outputs.run_rust != 'false') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      security-events: write # Upload CodeQL SARIF results to GitHub code scanning.
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          persist-credentials: false
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          languages: rust
+          build-mode: none
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          category: /language:rust
