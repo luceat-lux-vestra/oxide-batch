@@ -1,0 +1,115 @@
+name: Orphan Authority provenance audit (read-only)
+
+# Stage M4: separate advisory-only entrypoint on trusted main.
+# No cancellation API, workflow-write privilege, or merge authority.
+on:
+  workflow_dispatch:
+    inputs:
+      authority_id:
+        description: "Protected policy authority ID to inspect"
+        required: true
+        type: choice
+        options:
+          - rust
+          - dependency
+          - codeql
+          - evidence
+          - supply
+      pr_number:
+        description: "Current OPEN PR number"
+        required: true
+        type: number
+      old_caller_run_id:
+        description: "Cancelled PR CI run for previous HEAD"
+        required: true
+        type: number
+      current_caller_run_id:
+        description: "Live current-HEAD PR CI run"
+        required: true
+        type: number
+      dispatched_run_id:
+        description: "Old-HEAD independently dispatched Authority run"
+        required: true
+        type: number
+      expected_base_sha:
+        description: "Exact current PR base commit SHA"
+        required: true
+        type: string
+      expected_current_head_sha:
+        description: "Exact current PR HEAD commit SHA"
+        required: true
+        type: string
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - .github/workflows/orphan-authority-readonly.yml
+
+# Read-only even on branch pushes. No job can cancel another workflow.
+permissions:
+  contents: read # Only check out workflow source at the exact event SHA.
+
+concurrency:
+  group: orphan-readonly-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  branch-contracts:
+    name: orphan-audit-branch-contracts
+    if: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out test-only branch source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Exercise original and live GET-only audit contracts
+        run: python3 .github/scripts/pr-authority-runtime.py self-test
+
+  trusted-main-audit:
+    name: orphan-audit-trusted-main
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read # Check out only the event's main commit, never PR HEAD.
+      actions: read # GET old/current caller and independently dispatched runs.
+      pull-requests: read # GET current PR and commit-to-PR associations.
+    steps:
+      - name: Check out exact trusted main commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert protected base checkout and identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "luceat-lux-vestra/oxide-batch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: GET-only orphan provenance and non-authorizing report
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUTHORITY_ID: ${{ inputs.authority_id }}
+          PR_NUMBER: ${{ inputs.pr_number }}
+          OLD_CALLER: ${{ inputs.old_caller_run_id }}
+          CURRENT_CALLER: ${{ inputs.current_caller_run_id }}
+          OLD_AUTHORITY_RUN: ${{ inputs.dispatched_run_id }}
+          EXPECTED_BASE: ${{ inputs.expected_base_sha }}
+          EXPECTED_HEAD: ${{ inputs.expected_current_head_sha }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/pr-authority-runtime.py audit-orphan-readonly \
+            --policy .github/merge-gate-policy.json \
+            --authority-id "$AUTHORITY_ID" \
+            --pr-number "$PR_NUMBER" \
+            --old-caller-run-id "$OLD_CALLER" \
+            --current-caller-run-id "$CURRENT_CALLER" \
+            --dispatched-run-id "$OLD_AUTHORITY_RUN" \
+            --expected-base-sha "$EXPECTED_BASE" \
+            --expected-current-head-sha "$EXPECTED_HEAD" \
+            --trusted-main-sha "$GITHUB_SHA"
