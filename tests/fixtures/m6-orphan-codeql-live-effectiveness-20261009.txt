@@ -1,0 +1,3 @@
+M6 #433 / controlled cancellable Rust CodeQL effectiveness experiment
+HEAD A marker: 2026-10-09, after protected PR #474 activation
+No production code modified; do NOT merge the experiment.
