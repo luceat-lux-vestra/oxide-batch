@@ -39,6 +39,9 @@ on:
         description: "Exact current PR HEAD commit SHA"
         required: true
         type: string
+  workflow_run:
+    workflows: ["PR CI"]
+    types: [completed]
   push:
     branches-ignore:
       - main
@@ -50,7 +53,7 @@ permissions:
   contents: read # Only check out workflow source at the exact event SHA.
 
 concurrency:
-  group: orphan-readonly-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.sha }}
+  group: orphan-readonly-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.event_name == 'workflow_dispatch' && inputs.pr_number || github.sha }}
   cancel-in-progress: false
 
 jobs:
@@ -112,4 +115,39 @@ jobs:
             --dispatched-run-id "$OLD_AUTHORITY_RUN" \
             --expected-base-sha "$EXPECTED_BASE" \
             --expected-current-head-sha "$EXPECTED_HEAD" \
+            --trusted-main-sha "$GITHUB_SHA"
+
+  cancelled-pr-codeql-audit:
+    name: orphan-audit-cancelled-pr-codeql
+    if: ${{ github.event_name == 'workflow_run' && github.ref == 'refs/heads/main' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'cancelled' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - name: Check out exact trusted main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert trusted event and immutable source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "luceat-lux-vestra/oxide-batch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+      - name: Read-only discovery of old CodeQL Authority
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD_CALLER_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/pr-authority-runtime.py audit-orphan-auto-readonly \
+            --policy .github/merge-gate-policy.json \
+            --authority-id codeql \
+            --old-caller-run-id "$OLD_CALLER_ID" \
             --trusted-main-sha "$GITHUB_SHA"
