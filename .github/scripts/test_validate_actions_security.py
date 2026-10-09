@@ -603,7 +603,7 @@ activated_codeql = ACTIVE_CODEQL.read_text(encoding="utf-8")
 assert activated_codeql.count("89fd82a519b43c5fad5d7300c9ab42e09392e9da") == 2, "M6 CodeQL writer SHA must occur exactly twice"
 assert "beb69de6b58d89b3814b23017e408775659b275f" not in activated_codeql, "M6 CodeQL retains stale writer SHA"
 assert "!cancelled()" in activated_codeql, "M6 Rust Analyze cancellation guard regressed"
-assert not staged_routing_violations(activated_codeql), "M6 active CodeQL Rust routing rejected"
+assert not codeql_routing_violations(activated_codeql), "active CodeQL must pass the activated trusted-dispatch security validator"
 
 policy = json.loads(POLICY.read_text(encoding="utf-8"))
 approved = next(
