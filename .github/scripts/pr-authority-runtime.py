@@ -704,20 +704,27 @@ def audit_orphan_live_readonly(
             and record["head_repository"].get("id") == repo_id
         )
 
-    if (
-        current.get("event") != "pull_request"
-        or current.get("path") != ".github/workflows/pr-ci.yml"
-        or current.get("head_sha") != expected_current_head_sha
-        or current.get("head_branch") != current_head.get("ref")
-        or current.get("run_attempt") != 1
-        or not run_repository_matches(current)
-        or current.get("status") not in {"in_progress", "completed"}
-        or (current.get("status") == "completed" and
-            current.get("conclusion") != "success")
-        or (current.get("status") == "in_progress" and
-            current.get("conclusion") is not None)
-    ):
-        raise ContractError("live orphan audit current caller is not trusted")
+    # Each denial reports the failing invariant without emitting mutable
+    # GitHub JSON, tokens, identities or attacker-controlled values. A safe
+    # diagnosis is NOT authorization to cancel, and all checks remain strict.
+    current_caller_checks = (
+        ("event", current.get("event") == "pull_request"),
+        ("workflow", current.get("path") == ".github/workflows/pr-ci.yml"),
+        ("head_sha", current.get("head_sha") == expected_current_head_sha),
+        ("head_branch", current.get("head_branch") == current_head.get("ref")),
+        ("run_attempt", current.get("run_attempt") == 1),
+        ("repository", run_repository_matches(current)),
+        ("active_status", current.get("status") in {"in_progress", "completed"}),
+        ("completed_success", current.get("status") != "completed"
+         or current.get("conclusion") == "success"),
+        ("active_no_conclusion", current.get("status") != "in_progress"
+         or current.get("conclusion") is None),
+    )
+    for invariant, trusted in current_caller_checks:
+        if not trusted:
+            raise ContractError(
+                f"live orphan audit current caller is not trusted: {invariant}"
+            )
     if (
         old.get("status") != "completed" or old.get("conclusion") != "cancelled"
         or old.get("run_attempt") != 1
@@ -1803,6 +1810,34 @@ class RuntimeContractTests(unittest.TestCase):
             data[path][key] = value
             with self.subTest(name=name), self.assertRaises(ContractError):
                 execute(Stub(data))
+        # First-pass failures must say WHICH invariant failed. This exposes no
+        # GitHub response values and must NEVER weaken the denial or POST.
+        initial_denials = {
+            "event": ("event", "workflow_dispatch"),
+            "workflow": ("path", ".github/workflows/ci.yml"),
+            "head_sha": ("head_sha", old_head),
+            "head_branch": ("head_branch", "evil/other"),
+            "run_attempt": ("run_attempt", 2),
+            "repository": ("repository", {"id": 7, "full_name": "owner/repo"}),
+            "active_status": ("status", "queued"),
+            "completed_success": ("status", "completed"),
+            "active_no_conclusion": ("conclusion", "failure"),
+        }
+        for invariant, (field, changed) in initial_denials.items():
+            with self.subTest(invariant=invariant):
+                data = records()
+                data["actions/runs/2001"][field] = changed
+                with self.assertRaisesRegex(
+                    ContractError, "current caller is not trusted: " + invariant
+                ):
+                    execute(Stub(data))
+        ended_failure = records()
+        ended_failure["actions/runs/2001"].update(
+            status="completed", conclusion="failure",
+        )
+        with self.assertRaisesRegex(ContractError, "completed_success"):
+            execute(Stub(ended_failure))
+
         for name, override in {
             "negative run id": {"dispatched_run_id": -2},
             "same run": {"dispatched_run_id": 1001},
