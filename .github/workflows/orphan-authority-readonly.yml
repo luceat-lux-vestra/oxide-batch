@@ -39,7 +39,10 @@ on:
         description: "Exact current PR HEAD commit SHA"
         required: true
         type: string
-  workflow_run:
+  # SECURITY: GitHub emits run ID, but every identity is re-fetched; checkout
+  # always uses trusted main, never the triggering PR head or its artifacts.
+  # No repository-write permissions or untrusted data execution.
+  workflow_run: # zizmor: ignore[dangerous-triggers]
     workflows: ["PR CI"]
     types: [completed]
   push:
@@ -123,9 +126,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      contents: read
-      actions: read
-      pull-requests: read
+      contents: read # Only trusted main checkout; never PR-head content.
+      actions: read # GET run metadata; never cancel or dispatch.
+      pull-requests: read # GET PR identity and commit associations.
     steps:
       - name: Check out exact trusted main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
