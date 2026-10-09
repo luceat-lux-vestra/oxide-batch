@@ -1,3 +1,3 @@
-M6 #433 / controlled exact-denial live cancellation experiment
-HEAD A: wait for independently dispatched CodeQL workflow_dispatch attempt 1 to become in_progress before supersession.
-Non-production marker. Experiment MUST NEVER BE MERGED.
+M6 #433 / controlled live cancellation experiment
+HEAD B supersedes A=b1b16fb9469e74e298227c8f32be70173361f101 only after old independent CodeQL run 37905894942, attempt 1 was verified in_progress.
+Old caller=37905852638. Do not merge this experimental PR. Only obsolete CodeQL can be cancelled.
