@@ -1,3 +1,3 @@
-oxide-batch #433 / M6 controlled orphan CodeQL dry-run acceptance
-HEAD B — supersedes HEAD A 52601d8990232986e61c39d9ed1977ffe92b7312 while independently dispatched CodeQL 37893355354 was in_progress.
-Not a runtime fixture, authorization policy, workflow, or test assertion.
+oxide-batch #433 / M6 controlled live CodeQL cancellation acceptance
+HEAD C — create an independently dispatched CodeQL Authority run, then supersede only after status in_progress.
+This is a non-production marker; do not merge the experiment PR.
