@@ -1426,6 +1426,34 @@ class RuntimeContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ContractError, "final readback"):
             execute(Changing(records()))
 
+    def test_auto_orphan_untrusted_inputs_denied_without_api_calls(self) -> None:
+        authority = _test_authorities()[2]
+
+        class NeverGet:
+            repository = "owner/repo"
+
+            def _read_json(self, path: str) -> dict[str, object]:
+                raise AssertionError("invalid input must not make GitHub API request")
+
+        fake = NeverGet()
+        for bad in (0, -1, True, "1001", None):
+            with self.subTest(old_run=bad), self.assertRaises(ContractError):
+                audit_orphan_auto_readonly(
+                    client=fake, authorities=[authority],
+                    old_caller_run_id=bad, trusted_main_sha="a" * 40,
+                )
+        for bad_sha in ("", "a" * 39, "g" * 40, None, 123):
+            with self.subTest(main_sha=bad_sha), self.assertRaises(ContractError):
+                audit_orphan_auto_readonly(
+                    client=fake, authorities=[authority],
+                    old_caller_run_id=1001, trusted_main_sha=bad_sha,
+                )
+        with self.assertRaisesRegex(ContractError, "protected policy"):
+            audit_orphan_auto_readonly(
+                client=fake, authorities=[authority], authority_id="arbitrary",
+                old_caller_run_id=1001, trusted_main_sha="a" * 40,
+            )
+
     def test_auto_orphan_discovery_is_get_only_and_fail_closed(self) -> None:
         authority = _test_authorities()[2]
         repo = {"id": 1315088383, "full_name": "owner/repo"}
@@ -1521,6 +1549,19 @@ class RuntimeContractTests(unittest.TestCase):
         non_cancelled.metadata["actions/runs/1001"]["conclusion"] = "success"
         self.assertEqual("NO_CANDIDATE", check(non_cancelled)["decision"])
         self.assertNotIn("GET-LINK " + old_sha, non_cancelled.calls)
+
+        # A failed/timed-out/neutral predecessor is NOT proof of supersession.
+        # Do not probe commit associations or an old independent Authority.
+        for conclusion in ("failure", "timed_out", "skipped", "neutral", "action_required"):
+            stalled = Stub(data())
+            stalled.metadata["actions/runs/1001"]["conclusion"] = conclusion
+            with self.subTest(old_conclusion=conclusion):
+                status = check(stalled)
+                self.assertEqual("NO_CANDIDATE", status["decision"])
+                self.assertEqual("old_caller_not_cancelled", status["reason"])
+                self.assertNotIn("GET-LINK " + old_sha, stalled.calls)
+                self.assertFalse(any(c.startswith("GET-BOUNDED ") for c in stalled.calls))
+
 
         completed = Stub(data())
         completed.targets[0] = dict(completed.targets[0], status="completed", conclusion="success")
