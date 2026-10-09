@@ -676,6 +676,8 @@ def audit_orphan_live_readonly(
         "trusted_main_sha": trusted_main_sha,
         "current_head_sha": expected_current_head_sha,
         "current_caller_run_id": current_caller_run_id,
+        "pr_number": pr_number,
+        "base_sha": expected_base_sha,
         **result,
     }
 
@@ -833,6 +835,90 @@ def audit_orphan_auto_readonly(
         expected_base_sha=base_sha, expected_current_head_sha=current_sha,
         trusted_main_sha=trusted_main_sha,
     )
+
+
+def preflight_orphan_codeql_cancel(
+    *,
+    client: GitHubActionsClient,
+    authorities: list[Authority],
+    old_caller_run_id: int,
+    trusted_main_sha: str,
+) -> dict[str, object]:
+    """M5 pre-write boundary: independently rediscover and recheck CodeQL.
+
+    Not a cancellation grant: GitHub has no conditional run-attempt cancel
+    and no atomic PR/run snapshot. The future writer must recheck before POST.
+    """
+    choices = [a for a in authorities if a.id == "codeql"]
+    if len(choices) != 1 or choices[0].workflow != ".github/workflows/codeql.yml":
+        raise ContractError("M5 preflight requires exact protected CodeQL workflow")
+
+    first = audit_orphan_auto_readonly(
+        client=client, authorities=authorities,
+        old_caller_run_id=old_caller_run_id,
+        trusted_main_sha=trusted_main_sha, authority_id="codeql",
+    )
+    if first.get("decision") == "NO_CANDIDATE":
+        return {
+            "schema": "orphan-cancel-preflight-v1", "decision": "NO_WRITE",
+            "reason": first["reason"], "cancel_authorized": False,
+            "transactional_snapshot": False,
+        }
+    if (
+        first.get("decision") != "READ_ONLY_CANDIDATE"
+        or first.get("candidate_only") is not True
+        or first.get("cancel_authorized") is not False
+        or first.get("transactional_snapshot") is not False
+        or first.get("authority") != "codeql"
+        or type(first.get("pr_number")) is not int
+        or type(first.get("dispatched_run_id")) is not int
+    ):
+        raise ContractError("M5 preflight cannot promote audit into write authority")
+
+    # Independently GET all live identities again, never trust an earlier
+    # observer report or the workflow_run payload as cancellation permission.
+    second = audit_orphan_live_readonly(
+        client=client, authority=choices[0],
+        pr_number=first["pr_number"],
+        old_caller_run_id=old_caller_run_id,
+        current_caller_run_id=first["current_caller_run_id"],
+        dispatched_run_id=first["dispatched_run_id"],
+        expected_base_sha=first["base_sha"],
+        expected_current_head_sha=first["current_head_sha"],
+        trusted_main_sha=trusted_main_sha,
+    )
+    for key in (
+        "authority", "pr_number", "base_sha", "old_caller_run_id",
+        "old_head_sha", "current_head_sha", "current_caller_run_id",
+        "dispatched_run_id", "trusted_main_sha",
+    ):
+        if first.get(key) != second.get(key):
+            raise ContractError("M5 preflight identity drift on independent recheck")
+    target_id = first["dispatched_run_id"]
+    target = client._read_json(f"actions/runs/{target_id}")
+    if (
+        target.get("id") != target_id
+        or target.get("run_attempt") != 1
+        or target.get("path") != choices[0].workflow
+        or target.get("status") not in {"queued", "in_progress", "waiting", "pending", "requested"}
+        or target.get("conclusion") is not None
+    ):
+        raise ContractError("M5 preflight target changed before write boundary")
+    return {
+        "schema": "orphan-cancel-preflight-v1",
+        "decision": "PREWRITE_CANDIDATE",
+        "authority": "codeql",
+        "pr_number": first["pr_number"],
+        "base_sha": first["base_sha"],
+        "old_caller_run_id": old_caller_run_id,
+        "old_head_sha": first["old_head_sha"],
+        "current_head_sha": first["current_head_sha"],
+        "current_caller_run_id": first["current_caller_run_id"],
+        "dispatched_run_id": target_id,
+        "run_attempt": 1,
+        "cancel_authorized": False,
+        "transactional_snapshot": False,
+    }
 
 
 def verify_runs(
@@ -1544,6 +1630,63 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(2, healthy.calls.count("GET " + query))
         self.assertEqual(2, healthy.calls.count("GET-LINK " + old_sha))
         self.assertTrue(all(c.startswith(("GET ", "GET-LINK ", "GET-BOUNDED ")) for c in healthy.calls))
+
+        # M5 pre-write boundary is callable but cannot POST or authorize POST.
+        preflight_client = Stub(data())
+        preflight = preflight_orphan_codeql_cancel(
+            client=preflight_client, authorities=[authority],
+            old_caller_run_id=old_id, trusted_main_sha=base,
+        )
+        self.assertEqual("PREWRITE_CANDIDATE", preflight["decision"])
+        self.assertEqual(target_id, preflight["dispatched_run_id"])
+        self.assertEqual(1, preflight["run_attempt"])
+        self.assertIs(preflight["cancel_authorized"], False)
+        self.assertIs(preflight["transactional_snapshot"], False)
+        self.assertEqual(4, preflight_client.calls.count("GET pulls/42"))
+        self.assertTrue(all(call.startswith(("GET ", "GET-LINK ", "GET-BOUNDED "))
+                            for call in preflight_client.calls))
+
+        completed_preflight = Stub(data())
+        completed_preflight.targets[0] = dict(completed_preflight.targets[0],
+                                              status="completed", conclusion="success")
+        self.assertEqual(
+            "NO_WRITE", preflight_orphan_codeql_cancel(
+                client=completed_preflight, authorities=[authority],
+                old_caller_run_id=old_id, trusted_main_sha=base,
+            )["decision"],
+        )
+        with self.assertRaisesRegex(ContractError, "exact protected CodeQL"):
+            preflight_orphan_codeql_cancel(
+                client=Stub(data()),
+                authorities=[Authority("codeql", ".github/workflows/other.yml", "non_docs")],
+                old_caller_run_id=old_id, trusted_main_sha=base,
+            )
+
+        class AttemptDrift(Stub):
+            def _read_json(self, path: str) -> dict[str, object]:
+                value = super()._read_json(path)
+                if path == "actions/runs/1002" and self.calls.count("GET " + path) == 5:
+                    value["run_attempt"] = 2
+                return value
+
+        with self.assertRaisesRegex(ContractError, "target changed"):
+            preflight_orphan_codeql_cancel(
+                client=AttemptDrift(data()), authorities=[authority],
+                old_caller_run_id=old_id, trusted_main_sha=base,
+            )
+
+        class HeadDrift(Stub):
+            def _read_json(self, path: str) -> dict[str, object]:
+                value = super()._read_json(path)
+                if path == "pulls/42" and self.calls.count("GET " + path) == 3:
+                    value["head"]["sha"] = old_sha
+                return value
+
+        with self.assertRaises(ContractError):
+            preflight_orphan_codeql_cancel(
+                client=HeadDrift(data()), authorities=[authority],
+                old_caller_run_id=old_id, trusted_main_sha=base,
+            )
 
         non_cancelled = Stub(data())
         non_cancelled.metadata["actions/runs/1001"]["conclusion"] = "success"
