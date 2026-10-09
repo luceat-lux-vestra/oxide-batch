@@ -1,0 +1,2 @@
+CI wall-clock validation fixture: non-Rust, non-docs synthetic change.
+This test-only marker exists solely to measure exact-final-HEAD PR trigger to Required Gate success under protected main CodeQL routing; it must never be merged.
