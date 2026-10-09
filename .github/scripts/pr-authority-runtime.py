@@ -168,6 +168,75 @@ def validate_correlation(
             raise ContractError(f"{label} must be a positive integer string")
 
 
+
+def _snapshot_repository(value: object) -> tuple[object, object] | None:
+    """Only stable repository ownership, never changing description/metrics."""
+    if not isinstance(value, dict):
+        return None
+    return value.get("id"), value.get("full_name")
+
+
+def _snapshot_actor(value: object) -> tuple[object, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return value.get("id"), value.get("login")
+
+
+def _snapshot_pr_ref(value: object) -> tuple[object, object, object] | None:
+    if not isinstance(value, dict):
+        return None
+    return value.get("ref"), value.get("sha"), _snapshot_repository(value.get("repo"))
+
+
+def _snapshot_pr_identity(value: dict[str, object]) -> tuple[object, ...]:
+    """Identity and security-relevant PR state for repeat pagination reads."""
+    return (
+        value.get("number"), value.get("id"), value.get("node_id"),
+        value.get("state"), value.get("draft"), value.get("merged_at"),
+        _snapshot_actor(value.get("user")),
+        _snapshot_pr_ref(value.get("head")),
+        _snapshot_pr_ref(value.get("base")),
+    )
+
+
+def _snapshot_run_identity(value: dict[str, object]) -> tuple[object, ...]:
+    """Invariant workflow run provenance. Excludes mutable status and timestamps."""
+    return (
+        value.get("id"), value.get("run_number"), value.get("run_attempt"),
+        value.get("workflow_id"), value.get("event"), value.get("path"),
+        value.get("head_sha"), value.get("head_branch"),
+        value.get("display_title"), _snapshot_repository(value.get("repository")),
+        _snapshot_repository(value.get("head_repository")),
+        _snapshot_actor(value.get("actor")),
+        _snapshot_actor(value.get("triggering_actor")),
+    )
+
+
+def _snapshot_safe_run_transition(before: dict[str, object], after: dict[str, object]) -> bool:
+    """Permit forward-only run progress; never accept terminal regression/rerun."""
+    old, new = before.get("status"), after.get("status")
+    initial, final = before.get("conclusion"), after.get("conclusion")
+    # Minimal test fixtures can omit status; real run APIs always supply it.
+    if old is None and new is None:
+        return initial is None and final is None
+    ranks = {
+        "requested": 0, "pending": 0, "queued": 1, "waiting": 1,
+        "in_progress": 2, "completed": 3,
+    }
+    if old not in ranks or new not in ranks or ranks[new] < ranks[old]:
+        return False
+    if old == "completed":
+        return new == "completed" and final == initial and initial is not None
+    if initial is not None:
+        return False
+    if new == "completed":
+        return final in {
+            "success", "failure", "cancelled", "skipped", "timed_out",
+            "action_required", "neutral", "stale",
+        }
+    return final is None
+
+
 class GitHubActionsClient:
     def __init__(
         self,
@@ -294,9 +363,14 @@ class GitHubActionsClient:
                     raise ContractError("orphan audit workflow run is duplicate or malformed")
                 seen.add(run_id)
                 results.append(row)
-        if read_page(1) != (count, first):
-            raise ContractError("orphan audit workflow first page changed during inspection")
-        return results
+        latest_count, latest_first = read_page(1)
+        if latest_count != count or len(latest_first) != len(first):
+            raise ContractError("orphan audit workflow first page membership drift")
+        for before, after in zip(first, latest_first):
+            if (_snapshot_run_identity(before) != _snapshot_run_identity(after)
+                    or not _snapshot_safe_run_transition(before, after)):
+                raise ContractError("orphan audit workflow first page provenance drift")
+        return latest_first + results[len(first):]
 
     def audit_commit_prs_bounded(
         self, commit_sha: str, *, max_pages: int = 3
@@ -424,9 +498,16 @@ class GitHubActionsClient:
             raise ContractError("Link audit page budget exhausted")
 
         initial = scan()
-        if scan() != initial:
-            raise ContractError("Link audit changed across complete passes")
-        return [record for page, _ in initial for record in page]
+        latest = scan()
+        # GitHub mutates updated_at, mergeable status, review metadata, etc.
+        # Comparing whole PR objects falsely rejects legitimate active runs.
+        # Pagination shape/order and provenance-relevant PR identity must match.
+        def projection(pages: list[tuple[list[dict[str, object]], bool]]) -> list[tuple[bool, list[tuple[object, ...]]]]:
+            return [(more, [_snapshot_pr_identity(row) for row in rows])
+                    for rows, more in pages]
+        if projection(latest) != projection(initial):
+            raise ContractError("Link audit stable PR identity/page drift")
+        return [record for page, _ in latest for record in page]
 
 
 
@@ -848,8 +929,17 @@ def audit_orphan_auto_readonly(
         or any(not isinstance(x, dict) for x in rows)
     ):
         raise ContractError("automatic orphan audit current run page incomplete")
-    if client._read_json(path) != initial:
-        raise ContractError("automatic orphan audit current run page drift")
+    latest = client._read_json(path)
+    latest_count, latest_rows = latest.get("total_count"), latest.get("workflow_runs")
+    if (latest_count != total or not isinstance(latest_rows, list)
+            or len(latest_rows) != len(rows)
+            or any(not isinstance(row, dict) for row in latest_rows)):
+        raise ContractError("automatic orphan audit current run page membership drift")
+    for before, after in zip(rows, latest_rows):
+        if (_snapshot_run_identity(before) != _snapshot_run_identity(after)
+                or not _snapshot_safe_run_transition(before, after)):
+            raise ContractError("automatic orphan audit current run page provenance drift")
+    rows = latest_rows
     matches = [
         run for run in rows
         if (
@@ -1180,6 +1270,115 @@ class RuntimeContractTests(unittest.TestCase):
 
 
 
+
+    def test_m6_snapshot_security_invariants(self) -> None:
+        repo = {"id": 1, "full_name": "owner/repo"}
+        before_pr = {
+            "id": 22, "number": 42, "state": "open", "draft": False,
+            "user": {"id": 7, "login": "owner"},
+            "head": {"sha": "a" * 40, "ref": "feature", "repo": repo},
+            "base": {"sha": "b" * 40, "ref": "main", "repo": repo},
+            "updated_at": "old", "mergeable": None,
+        }
+        newer_pr = copy.deepcopy(before_pr)
+        newer_pr["updated_at"] = "new"
+        newer_pr["mergeable"] = True
+        self.assertEqual(_snapshot_pr_identity(before_pr),
+                         _snapshot_pr_identity(newer_pr))
+        for path, field, value in (
+            ("root", "number", 99),
+            ("root", "draft", True),
+            ("head", "sha", "c" * 40),
+            ("head", "ref", "elsewhere"),
+            ("base", "sha", "d" * 40),
+            ("user", "login", "attacker"),
+            ("head_repo", "id", 999),
+        ):
+            changed = copy.deepcopy(before_pr)
+            if path == "root":
+                changed[field] = value
+            elif path == "head_repo":
+                changed["head"]["repo"][field] = value
+            else:
+                changed[path][field] = value
+            with self.subTest(path=path, field=field):
+                self.assertNotEqual(_snapshot_pr_identity(before_pr),
+                                    _snapshot_pr_identity(changed))
+
+        before_run = {
+            "id": 100, "run_attempt": 1, "event": "pull_request",
+            "path": ".github/workflows/pr-ci.yml",
+            "head_sha": "a" * 40, "head_branch": "feature",
+            "actor": {"id": 7, "login": "owner"},
+            "repository": repo, "head_repository": repo,
+            "status": "queued", "conclusion": None,
+        }
+        active = copy.deepcopy(before_run)
+        active.update(status="in_progress", updated_at="new")
+        self.assertEqual(_snapshot_run_identity(before_run),
+                         _snapshot_run_identity(active))
+        self.assertTrue(_snapshot_safe_run_transition(before_run, active))
+        done = copy.deepcopy(active)
+        done.update(status="completed", conclusion="success")
+        self.assertTrue(_snapshot_safe_run_transition(active, done))
+        self.assertFalse(_snapshot_safe_run_transition(done, active))
+        failed = copy.deepcopy(active)
+        failed.update(status="completed", conclusion="failure")
+        self.assertTrue(_snapshot_safe_run_transition(active, failed))
+        self.assertFalse(_snapshot_safe_run_transition(failed, done))
+        for key, value in (
+            ("id", 101), ("run_attempt", 2), ("head_sha", "c" * 40),
+            ("path", ".github/workflows/other.yml"),
+            ("head_branch", "other"),
+        ):
+            mutated = copy.deepcopy(active)
+            mutated[key] = value
+            with self.subTest(key=key):
+                self.assertNotEqual(_snapshot_run_identity(active),
+                                    _snapshot_run_identity(mutated))
+        actor_drift = copy.deepcopy(active)
+        actor_drift["actor"]["login"] = "attacker"
+        self.assertNotEqual(_snapshot_run_identity(active),
+                            _snapshot_run_identity(actor_drift))
+
+    def test_m6_link_page_metadata_allowed_identity_rejected(self) -> None:
+        class Response(io.StringIO):
+            headers: dict[str, str] = {}
+
+        for kind in ("benign", "head-drift", "actor-drift", "page-drift"):
+            calls = [0]
+            def opener(request: urllib.request.Request, timeout: int) -> Response:
+                calls[0] += 1
+                record: dict[str, object] = {
+                    "number": 466, "id": 123, "updated_at": "before",
+                    "head": {"sha": "a" * 40, "ref": "feature",
+                             "repo": {"id": 1, "full_name": "owner/repo"}},
+                    "base": {"sha": "b" * 40, "ref": "main",
+                             "repo": {"id": 1, "full_name": "owner/repo"}},
+                    "user": {"id": 7, "login": "owner"},
+                }
+                if calls[0] == 2:
+                    record["updated_at"] = "after"
+                    if kind == "head-drift":
+                        record["head"]["sha"] = "c" * 40
+                    elif kind == "actor-drift":
+                        record["user"]["login"] = "attacker"
+                    elif kind == "page-drift":
+                        record["number"] = 467
+                return Response(json.dumps([record]))
+            api = GitHubActionsClient(
+                api_url="https://api.github.test", repository="owner/repo",
+                token="test", opener=opener,
+            )
+            with self.subTest(kind=kind):
+                if kind == "benign":
+                    self.assertEqual(466, api.audit_commit_prs_link_bounded("a" * 40)[0]["number"])
+                    self.assertEqual(2, calls[0])
+                else:
+                    with self.assertRaisesRegex(ContractError, "stable PR identity/page drift"):
+                        api.audit_commit_prs_link_bounded("a" * 40)
+
+
     def test_link_audit_two_pages_fail_closed_and_get_only(self) -> None:
         sha = "a" * 40
 
@@ -1243,6 +1442,55 @@ class RuntimeContractTests(unittest.TestCase):
             api.audit_commit_prs_link_bounded(sha, max_pages=1)
         with self.assertRaises(ContractError):
             api.audit_commit_prs_link_bounded("bad")
+
+
+    def test_m6_bounded_workflow_page_forward_progress(self) -> None:
+        class MutableClient(GitHubActionsClient):
+            def __init__(self, mode: str) -> None:
+                super().__init__(
+                    api_url="https://api.github.test", repository="owner/repo",
+                    token="test", opener=lambda *_a, **_k: None,
+                )
+                self.calls = 0
+                self.mode = mode
+
+            def _read_json(self, path: str) -> dict[str, object]:
+                self.calls += 1
+                run = {
+                    "id": 81, "event": "workflow_dispatch", "run_attempt": 1,
+                    "path": ".github/workflows/codeql.yml",
+                    "head_sha": "a" * 40, "status": "in_progress",
+                    "conclusion": None,
+                    "repository": {"id": 1, "full_name": "owner/repo"},
+                }
+                if self.calls == 2:
+                    run["updated_at"] = "new timestamp"
+                    if self.mode == "status-forward":
+                        run.update(status="completed", conclusion="success")
+                    elif self.mode == "attempt-drift":
+                        run["run_attempt"] = 2
+                    elif self.mode == "repo-drift":
+                        run["repository"]["id"] = 2
+                    elif self.mode == "head-drift":
+                        run["head_sha"] = "b" * 40
+                return {"total_count": 1, "workflow_runs": [run]}
+
+        for mode in ("metadata", "status-forward"):
+            with self.subTest(mode=mode):
+                client = MutableClient(mode)
+                self.assertEqual([81], [
+                    row["id"] for row in client.audit_workflow_runs_bounded(
+                        ".github/workflows/codeql.yml"
+                    )
+                ])
+                self.assertEqual(2, client.calls)
+        for mode in ("attempt-drift", "repo-drift", "head-drift"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(
+                ContractError, "first page provenance drift"
+            ):
+                MutableClient(mode).audit_workflow_runs_bounded(
+                    ".github/workflows/codeql.yml"
+                )
 
     def test_link_audit_single_page_still_get_only(self) -> None:
         class Response(io.StringIO):
@@ -1906,8 +2154,49 @@ class RuntimeContractTests(unittest.TestCase):
                     result["total_count"] = 2
                 return result
 
-        with self.assertRaisesRegex(ContractError, "page drift"):
+        with self.assertRaisesRegex(ContractError, "page membership drift"):
             check(Drifting(data()))
+
+
+        # Duplicate GETs of a *live* current caller may disagree on updated_at
+        # and forward status transitions without any PR/run identity drift.
+        class PageReread(Stub):
+            def __init__(self, metadata: dict[str, object], mode: str) -> None:
+                super().__init__(metadata)
+                self.mode = mode
+
+            def _read_json(self, path: str) -> dict[str, object]:
+                result = super()._read_json(path)
+                if path == query and self.calls.count("GET " + query) == 2:
+                    row = result["workflow_runs"][0]
+                    row["updated_at"] = "2026-10-09T06:36:09Z"
+                    if self.mode == "status-forward":
+                        row["status"] = "completed"
+                        row["conclusion"] = "success"
+                    elif self.mode == "head-drift":
+                        row["head_sha"] = old_sha
+                    elif self.mode == "attempt-drift":
+                        row["run_attempt"] = 2
+                    elif self.mode == "repo-drift":
+                        row["repository"]["id"] = 999
+                    elif self.mode == "status-regression":
+                        row["status"] = "queued"
+                return result
+
+        for mode in ("metadata", "status-forward"):
+            with self.subTest(mode=mode):
+                self.assertEqual("READ_ONLY_CANDIDATE",
+                                 check(PageReread(data(), mode))["decision"])
+        for mode in ("head-drift", "attempt-drift", "repo-drift"):
+            with self.subTest(mode=mode), self.assertRaisesRegex(
+                ContractError, "page provenance drift"
+            ):
+                check(PageReread(data(), mode))
+        completed_caller = data()
+        completed_caller[query]["workflow_runs"][0]["status"] = "completed"
+        completed_caller[query]["workflow_runs"][0]["conclusion"] = "success"
+        with self.assertRaisesRegex(ContractError, "page provenance drift"):
+            check(PageReread(completed_caller, "status-regression"))
 
     def test_workflow_runs_uses_workflow_filename_endpoint(self) -> None:
         seen: dict[str, object] = {}
