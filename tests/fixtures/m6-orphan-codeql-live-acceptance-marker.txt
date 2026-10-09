@@ -1,3 +1,3 @@
-oxide-batch #433 / M6 new live orphan CodeQL cancellation test
-HEAD A — independently dispatched CodeQL must reach in_progress before HEAD B.
-Non-production experiment marker. Do not merge this PR.
+oxide-batch #433 / M6 controlled live CodeQL cancellation test
+HEAD B — supersedes HEAD A 68422b9e784448bbe3efba9d9973bf026a5ddfae while old independent CodeQL 37900796163 was in_progress (attempt 1).
+Only the obsolete CodeQL run may be cancelled. Non-production experiment; do not merge.
