@@ -152,10 +152,11 @@ jobs:
 
   rust-impact:
     name: codeql-rust-impact
-    if: ${{ github.event_name == 'pull_request' }}
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
+      actions: read # Verify exact caller PR CI run and first-attempt provenance.
       contents: read # Fetch the classifier from the exact protected base SHA.
       pull-requests: read # Reconcile live PR identity and the complete changed-file list.
     outputs:
@@ -167,9 +168,12 @@ jobs:
         id: route
         env:
           GITHUB_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event_name == 'workflow_dispatch' && inputs.pr_number || github.event.pull_request.number }}
+          HEAD_REPO: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name }}
+          CALLER_RUN_ID: ${{ inputs.caller_run_id }}
+          CALLER_RUN_ATTEMPT: ${{ inputs.caller_run_attempt }}
         shell: bash
         run: |
           set -euo pipefail
@@ -190,6 +194,46 @@ jobs:
           token = os.environ["GITHUB_TOKEN"]
           classifier_path = ".github/scripts/codeql-rust-impact.py"
 
+          def trusted_dispatch_identity():
+              # No PR-head checkout/execution. For workflow_dispatch require an
+              # exact trusted-main workflow source and independently verified
+              # originating first-attempt PR CI before suppressing Rust analysis.
+              if os.environ.get("GITHUB_EVENT_NAME") != "workflow_dispatch":
+                  return
+              if os.environ.get("GITHUB_REF") != "refs/heads/main":
+                  raise RuntimeError("dispatch is not on the protected main ref")
+              if os.environ.get("GITHUB_SHA") != base_sha:
+                  raise RuntimeError("dispatch base SHA differs from trusted main workflow source")
+              if os.environ.get("HEAD_REPO") != repository:
+                  raise RuntimeError("dispatch source must belong to protected repository")
+              if os.environ.get("CALLER_RUN_ATTEMPT") != "1":
+                  raise RuntimeError("dispatch caller must be first attempt")
+              caller_id = os.environ.get("CALLER_RUN_ID", "")
+              if not caller_id.isdecimal() or int(caller_id) < 1:
+                  raise RuntimeError("dispatch caller id invalid")
+              caller_url = f"{api_url}/repos/{repository}/actions/runs/{caller_id}"
+              request = urllib.request.Request(
+                  caller_url,
+                  headers={
+                      "Authorization": f"Bearer {token}",
+                      "Accept": "application/vnd.github+json",
+                      "X-GitHub-Api-Version": "2022-11-28",
+                      "User-Agent": "oxide-batch-codeql-rust-route",
+                  },
+              )
+              with urllib.request.urlopen(request, timeout=20) as response:
+                  caller = json.load(response)
+              if (
+                  caller.get("id") != int(caller_id)
+                  or caller.get("event") != "pull_request"
+                  or caller.get("run_attempt") != 1
+                  or caller.get("path") != ".github/workflows/pr-ci.yml"
+                  or caller.get("head_sha") != os.environ["HEAD_SHA"]
+                  or caller.get("status") not in {"in_progress", "completed"}
+                  or (caller.get("status") == "completed" and caller.get("conclusion") != "success")
+              ):
+                  raise RuntimeError("dispatch caller provenance failed")
+
           def fallback(reason):
               safe = str(reason).replace("\n", " ").replace("\r", " ")
               with output.open("a", encoding="utf-8") as handle:
@@ -199,6 +243,7 @@ jobs:
               print(f"::warning::Rust CodeQL routing fell back to full analysis: {safe}")
 
           try:
+              trusted_dispatch_identity()
               encoded_path = urllib.parse.quote(classifier_path, safe="/")
               url = (
                   f"{api_url}/repos/{repository}/contents/{encoded_path}"
@@ -241,10 +286,10 @@ jobs:
     needs: rust-impact
     if: >-
       ${{ !cancelled() && github.event_name != 'workflow_run' &&
-          (github.event_name != 'pull_request' ||
-           (github.event.pull_request.draft == false &&
-            (needs.rust-impact.result != 'success' ||
-             needs.rust-impact.outputs.run_rust != 'false'))) }}
+          (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+          ((github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch') ||
+           needs.rust-impact.result != 'success' ||
+           needs.rust-impact.outputs.run_rust != 'false') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

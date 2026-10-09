@@ -46,7 +46,7 @@ def codeql_routing_violations(workflow: str) -> list[str]:
     return MODULE.check_codeql_rust_routing_contract_text(textwrap.dedent(workflow).lstrip())
 
 
-CODEQL_ROUTING_FIXTURE = """
+LEGACY_CODEQL_ROUTING_FIXTURE = """
 name: CodeQL
 on:
   pull_request:
@@ -84,6 +84,67 @@ jobs:
            (github.event.pull_request.draft == false &&
             (needs.rust-impact.result != 'success' ||
              needs.rust-impact.outputs.run_rust != 'false'))) }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: github/codeql-action/init@0000000000000000000000000000000000000001
+        with:
+          languages: rust
+          build-mode: none
+      - uses: github/codeql-action/analyze@0000000000000000000000000000000000000001
+        with:
+          category: /language:rust
+"""
+# The current activated validator requires independent dispatch caller evidence.
+# Retain this historical fixture for separate M6 staged-validator contracts.
+CODEQL_ROUTING_FIXTURE = """
+name: CodeQL
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "47 18 * * 1"
+  workflow_dispatch:
+jobs:
+  rust-impact:
+    name: codeql-rust-impact
+    if: ${{ github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+    outputs:
+      run_rust: ${{ steps.route.outputs.run_rust }}
+    steps:
+      - name: Resolve exact-base Rust CodeQL impact
+        id: route
+        run: |
+          classifier_path = ".github/scripts/codeql-rust-impact.py"
+          def trusted_dispatch_identity():
+              if os.environ.get("GITHUB_SHA") != base_sha:
+                  raise RuntimeError("wrong main")
+              if os.environ.get("HEAD_REPO") != repository:
+                  raise RuntimeError("wrong repo")
+              if caller.get("path") != ".github/workflows/pr-ci.yml":
+                  raise RuntimeError("caller path")
+              if caller.get("run_attempt") != 1:
+                  raise RuntimeError("first attempt required")
+          trusted_dispatch_identity()
+          encoded_path = classifier_path
+          base_sha = os.environ["BASE_SHA"]
+          url = f"contents/{encoded_path}?ref={base_sha}"
+          handle.write("run_rust=true\\n")
+          handle.write("changed_files=unknown\\n")
+          subprocess.run(["python3", classifier_path])
+  analyze-rust:
+    name: Analyze (rust)
+    needs: rust-impact
+    if: >-
+      ${{ !cancelled() &&
+          (github.event_name != 'pull_request' || github.event.pull_request.draft == false) &&
+          ((github.event_name != 'pull_request' && github.event_name != 'workflow_dispatch') ||
+           needs.rust-impact.result != 'success' ||
+           needs.rust-impact.outputs.run_rust != 'false') }}
     runs-on: ubuntu-latest
     steps:
       - uses: github/codeql-action/init@0000000000000000000000000000000000000001
@@ -157,11 +218,11 @@ def staged_routing_violations(workflow: str) -> list[str]:
 
 STAGED_WORKFLOW = STAGED_WORKFLOW_PATH.read_text(encoding="utf-8")
 assert not staged_routing_violations(STAGED_WORKFLOW), "M6 future CodeQL workflow fails future security contract"
-CANCELLABLE_FIXTURE = CODEQL_ROUTING_FIXTURE
+CANCELLABLE_FIXTURE = LEGACY_CODEQL_ROUTING_FIXTURE
 assert not staged_routing_violations(CANCELLABLE_FIXTURE), "M6 cancellable routing fixture rejected"
 
 for label, unsafe_fixture, expected in (
-    ("old always", CODEQL_ROUTING_FIXTURE.replace("!cancelled()", "always()"), "!cancelled()"),
+    ("old always", LEGACY_CODEQL_ROUTING_FIXTURE.replace("!cancelled()", "always()"), "!cancelled()"),
     ("always mixed with guard", CANCELLABLE_FIXTURE.replace(
         "!cancelled() &&", "always() || !cancelled() &&"), "must not use always()"),
     ("missing cancellation guard", CANCELLABLE_FIXTURE.replace(
@@ -528,17 +589,21 @@ assert STAGED_WRITER.is_file() and STAGED_CODEQL.is_file(), "missing M6 pre-admi
 for path in (STAGED_WRITER, ACTIVE_WRITER):
     assert m6_git_blob(path) == "89fd82a519b43c5fad5d7300c9ab42e09392e9da", f"M6 active/staged writer drift: {path}"
 assert ACTIVE_WRITER.read_bytes() == STAGED_WRITER.read_bytes(), "M6 writer differs from admitted source"
-for path in (STAGED_CODEQL, ACTIVE_CODEQL):
-    assert m6_git_blob(path) == "2d6e80287d137c2d63da431ed9c085e24a920071", (
-        f"M6 active/staged CodeQL drift: {path}"
-    )
-assert ACTIVE_CODEQL.read_bytes() == STAGED_CODEQL.read_bytes(), "M6 CodeQL differs from admitted source"
+assert m6_git_blob(STAGED_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071", (
+    "Historical M6 CodeQL stage changed without review"
+)
+assert m6_git_blob(ACTIVE_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232", (
+    "Active wall-clock CodeQL must match exact pre-admitted candidate"
+)
+assert ACTIVE_CODEQL.read_bytes() == (
+    ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
+).read_bytes(), "Active CodeQL differs from exact pre-admitted wall-clock candidate"
 
 activated_codeql = ACTIVE_CODEQL.read_text(encoding="utf-8")
 assert activated_codeql.count("89fd82a519b43c5fad5d7300c9ab42e09392e9da") == 2, "M6 CodeQL writer SHA must occur exactly twice"
 assert "beb69de6b58d89b3814b23017e408775659b275f" not in activated_codeql, "M6 CodeQL retains stale writer SHA"
 assert "!cancelled()" in activated_codeql, "M6 Rust Analyze cancellation guard regressed"
-assert not staged_routing_violations(activated_codeql), "M6 active CodeQL Rust routing rejected"
+assert not codeql_routing_violations(activated_codeql), "active CodeQL must pass the activated trusted-dispatch security validator"
 
 policy = json.loads(POLICY.read_text(encoding="utf-8"))
 approved = next(
@@ -575,12 +640,14 @@ with tempfile.TemporaryDirectory(prefix="oxide-m6-active-writer-") as td:
 WALLCLOCK_CODEQL = ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
 WALLCLOCK_VALIDATOR = ROOT / "docs/engineering/ci-staging/actions-security-wallclock-rust-impact-candidate.py"
 assert WALLCLOCK_CODEQL.is_file() and WALLCLOCK_VALIDATOR.is_file()
-assert m6_git_blob(ACTIVE_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071"
+assert m6_git_blob(ACTIVE_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232"
 assert m6_git_blob(ROOT / ".github/scripts/validate_actions_security.py") == (
-    "bbec03ce7e6f4696fc56c19c76f62e0cc7c3acc1"
+    "29fe8e7a6778f433c6f0390f11aed10820764ee4"
 )
 assert m6_git_blob(WALLCLOCK_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232"
+assert ACTIVE_CODEQL.read_bytes() == WALLCLOCK_CODEQL.read_bytes()
 assert m6_git_blob(WALLCLOCK_VALIDATOR) == "29fe8e7a6778f433c6f0390f11aed10820764ee4"
+assert (ROOT / ".github/scripts/validate_actions_security.py").read_bytes() == WALLCLOCK_VALIDATOR.read_bytes()
 
 future_spec = importlib.util.spec_from_file_location("wallclock_validator", WALLCLOCK_VALIDATOR)
 assert future_spec is not None and future_spec.loader is not None
