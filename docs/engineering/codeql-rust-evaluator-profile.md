@@ -82,6 +82,6 @@ DB/copy separate from existing CI/security scanning.
   **not** security-validation evidence, and its completion never authorizes PR
   merging; maintain exact-final-HEAD first-attempt required CI independently.
 - Unit tests are deterministic mocks (do not claim actual CodeQL profiling has
-  been performed). Run `python3 .github/scripts/test-profile_codeql_rust.py`.
+  been performed). Run `python3 .github/scripts/test_profile_codeql_rust.py`.
 
 Reference: [CodeQL CLI database run-queries](https://docs.github.com/en/code-security/reference/code-scanning/codeql/codeql-cli-manual/database-run-queries) and [generate log-summary](https://docs.github.com/en/code-security/reference/code-scanning/codeql/codeql-cli-manual/generate-log-summary).
