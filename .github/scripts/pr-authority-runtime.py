@@ -542,6 +542,144 @@ def audit_orphan_authority_candidate(
         "dispatched_run_id": run_id,
     }
 
+
+def audit_orphan_live_readonly(
+    *,
+    client: GitHubActionsClient,
+    authority: Authority,
+    pr_number: int,
+    old_caller_run_id: int,
+    current_caller_run_id: int,
+    dispatched_run_id: int,
+    expected_base_sha: str,
+    expected_current_head_sha: str,
+    trusted_main_sha: str,
+) -> dict[str, object]:
+    """GET-only, non-authorizing orphan provenance audit against live GitHub.
+
+    A positive audit is NOT cancellation authority: GitHub provides no atomic
+    commit/PR/run snapshot and rechecks cannot prevent ABA or post-read drift.
+    """
+    for label, number in (
+        ("pr_number", pr_number),
+        ("old_caller_run_id", old_caller_run_id),
+        ("current_caller_run_id", current_caller_run_id),
+        ("dispatched_run_id", dispatched_run_id),
+    ):
+        if type(number) is not int or number <= 0:
+            raise ContractError(f"live orphan audit {label} must be positive")
+    if len({old_caller_run_id, current_caller_run_id, dispatched_run_id}) != 3:
+        raise ContractError("live orphan audit run identities are not distinct")
+    for label, sha in (
+        ("expected_base_sha", expected_base_sha),
+        ("expected_current_head_sha", expected_current_head_sha),
+        ("trusted_main_sha", trusted_main_sha),
+    ):
+        if not isinstance(sha, str) or not SHA_RE.fullmatch(sha):
+            raise ContractError(f"live orphan audit {label} is invalid")
+
+    main_branch = client._read_json("branches/main")
+    main_info = main_branch.get("commit")
+    if not isinstance(main_info, dict) or main_info.get("sha") != trusted_main_sha:
+        raise ContractError("live orphan audit trusted main SHA changed")
+
+    def fetch_run(number: int) -> dict[str, object]:
+        record = client._read_json(f"actions/runs/{number}")
+        if record.get("id") != number:
+            raise ContractError("live orphan audit requested run ID mismatched")
+        return record
+
+    current = fetch_run(current_caller_run_id)
+    old = fetch_run(old_caller_run_id)
+    target = fetch_run(dispatched_run_id)
+    live = client.pull_request(str(pr_number))
+    current_head = live.get("head")
+    current_base = live.get("base")
+    if not isinstance(current_head, dict) or not isinstance(current_base, dict):
+        raise ContractError("live orphan audit PR head/base is malformed")
+    repo_info = current_base.get("repo")
+    head_repo = current_head.get("repo")
+    if not isinstance(repo_info, dict) or not isinstance(head_repo, dict):
+        raise ContractError("live orphan audit PR repositories are malformed")
+    repo_id = repo_info.get("id")
+    if (
+        live.get("number") != pr_number or live.get("state") != "open"
+        or live.get("draft") is not False
+        or current_base.get("ref") != "main"
+        or current_base.get("sha") != expected_base_sha
+        or current_head.get("sha") != expected_current_head_sha
+        or repo_info.get("full_name") != client.repository
+        or head_repo.get("full_name") != client.repository
+        or type(repo_id) is not int or repo_id <= 0
+        or head_repo.get("id") != repo_id
+    ):
+        raise ContractError("live orphan audit exact current PR identity changed")
+
+    def run_repository_matches(record: dict[str, object]) -> bool:
+        return (
+            isinstance(record.get("repository"), dict)
+            and isinstance(record.get("head_repository"), dict)
+            and record["repository"].get("id") == repo_id
+            and record["head_repository"].get("id") == repo_id
+        )
+
+    if (
+        current.get("event") != "pull_request"
+        or current.get("path") != ".github/workflows/pr-ci.yml"
+        or current.get("head_sha") != expected_current_head_sha
+        or current.get("head_branch") != current_head.get("ref")
+        or current.get("run_attempt") != 1
+        or not run_repository_matches(current)
+        or current.get("status") not in {"in_progress", "completed"}
+        or (current.get("status") == "completed" and
+            current.get("conclusion") != "success")
+        or (current.get("status") == "in_progress" and
+            current.get("conclusion") is not None)
+    ):
+        raise ContractError("live orphan audit current caller is not trusted")
+    if (
+        old.get("status") != "completed" or old.get("conclusion") != "cancelled"
+        or old.get("run_attempt") != 1
+    ):
+        raise ContractError("live orphan audit old caller is not cancelled")
+
+    old_sha = old.get("head_sha")
+    if not isinstance(old_sha, str) or not SHA_RE.fullmatch(old_sha):
+        raise ContractError("live orphan audit old caller SHA is malformed")
+    associations = client.audit_commit_prs_link_bounded(old_sha)
+    result = audit_orphan_authority_candidate(
+        authority=authority,
+        old_caller=old,
+        dispatched=target,
+        live_pr=live,
+        associated_prs=associations,
+        pr_number=pr_number,
+        current_caller_run_id=current_caller_run_id,
+        repository=client.repository,
+    )
+
+    # Detect obvious drift after pagination. This is NOT an atomic snapshot.
+    if (
+        client.pull_request(str(pr_number)) != live
+        or fetch_run(current_caller_run_id) != current
+        or fetch_run(old_caller_run_id) != old
+        or fetch_run(dispatched_run_id) != target
+        or client._read_json("branches/main") != main_branch
+    ):
+        raise ContractError("live orphan audit changed during final readback")
+    return {
+        "schema": "orphan-readonly-audit-v1",
+        "decision": "READ_ONLY_CANDIDATE",
+        "candidate_only": True,
+        "cancel_authorized": False,
+        "transactional_snapshot": False,
+        "trusted_main_sha": trusted_main_sha,
+        "current_head_sha": expected_current_head_sha,
+        "current_caller_run_id": current_caller_run_id,
+        **result,
+    }
+
+
 def verify_runs(
     *,
     authorities: list[Authority],
@@ -1013,6 +1151,126 @@ class RuntimeContractTests(unittest.TestCase):
                 audit_orphan_authority_candidate(**case)
 
 
+    def test_live_orphan_audit_get_only_and_fail_closed(self) -> None:
+        authority = _test_authorities()[2]
+        repo = {"id": 1315088383, "full_name": "owner/repo"}
+        old_head, new_head, base = "b" * 40, "c" * 40, "a" * 40
+
+        def records() -> dict[str, object]:
+            return {
+                "branches/main": {"commit": {"sha": base}},
+                "pulls/42": {
+                    "number": 42, "state": "open", "draft": False,
+                    "base": {"sha": base, "ref": "main", "repo": dict(repo)},
+                    "head": {"sha": new_head, "ref": "feat/pr-42", "repo": dict(repo)},
+                },
+                "actions/runs/1001": {
+                    "id": 1001, "event": "pull_request",
+                    "path": ".github/workflows/pr-ci.yml",
+                    "head_sha": old_head, "head_branch": "feat/pr-42",
+                    "run_attempt": 1, "status": "completed", "conclusion": "cancelled",
+                    "repository": dict(repo), "head_repository": dict(repo),
+                },
+                "actions/runs/2001": {
+                    "id": 2001, "event": "pull_request",
+                    "path": ".github/workflows/pr-ci.yml",
+                    "head_sha": new_head, "head_branch": "feat/pr-42",
+                    "run_attempt": 1, "status": "in_progress", "conclusion": None,
+                    "repository": dict(repo), "head_repository": dict(repo),
+                },
+                "actions/runs/1002": {
+                    "id": 1002, "event": "workflow_dispatch",
+                    "path": authority.workflow, "head_sha": base,
+                    "head_branch": "main", "run_attempt": 1,
+                    "status": "in_progress", "conclusion": None,
+                    "actor": {"login": "github-actions[bot]"},
+                    "display_title": expected_run_name(
+                        authority, pr_number="42", head_sha=old_head,
+                        caller_run_id="1001", caller_run_attempt="1",
+                    ),
+                    "repository": dict(repo), "head_repository": dict(repo),
+                },
+            }
+
+        class Stub:
+            repository = "owner/repo"
+
+            def __init__(self, entries: dict[str, object]) -> None:
+                self.entries = entries
+                self.calls: list[str] = []
+
+            def _read_json(self, path: str) -> dict[str, object]:
+                self.calls.append("GET " + path)
+                return copy.deepcopy(self.entries[path])
+
+            def pull_request(self, number: str) -> dict[str, object]:
+                return self._read_json("pulls/" + number)
+
+            def audit_commit_prs_link_bounded(self, sha: str) -> list[dict[str, object]]:
+                self.calls.append("GET-LINK " + sha)
+                return [{
+                    "number": 42, "head": {"ref": "feat/pr-42"},
+                    "base": {"ref": "main"},
+                }]
+
+        def execute(stub: Stub, **overrides: object) -> dict[str, object]:
+            args: dict[str, object] = {
+                "client": stub, "authority": authority, "pr_number": 42,
+                "old_caller_run_id": 1001, "current_caller_run_id": 2001,
+                "dispatched_run_id": 1002, "expected_base_sha": base,
+                "expected_current_head_sha": new_head, "trusted_main_sha": base,
+            }
+            args.update(overrides)
+            return audit_orphan_live_readonly(**args)
+
+        stub = Stub(records())
+        result = execute(stub)
+        self.assertEqual("READ_ONLY_CANDIDATE", result["decision"])
+        self.assertIs(result["cancel_authorized"], False)
+        self.assertIs(result["transactional_snapshot"], False)
+        self.assertEqual(1002, result["dispatched_run_id"])
+        self.assertEqual(1, stub.calls.count("GET-LINK " + old_head))
+        self.assertTrue(all(call.startswith(("GET ", "GET-LINK ")) for call in stub.calls))
+        self.assertEqual(2, stub.calls.count("GET pulls/42"))
+
+        cases = {
+            "wrong new sha": ("actions/runs/2001", "head_sha", old_head),
+            "new rerun": ("actions/runs/2001", "run_attempt", 2),
+            "foreign current repo": ("actions/runs/2001", "repository", {"id": 1}),
+            "failed current": ("actions/runs/2001", "conclusion", "failure"),
+            "active old caller": ("actions/runs/1001", "status", "in_progress"),
+            "old failed not superseded": ("actions/runs/1001", "conclusion", "failure"),
+            "untrusted target": ("actions/runs/1002", "actor", {"login": "attacker"}),
+            "wrong target": ("actions/runs/1002", "id", 123),
+            "wrong PR": ("pulls/42", "number", 43),
+            "closed PR": ("pulls/42", "state", "closed"),
+            "stale PR head": ("pulls/42", "head", {"sha": old_head}),
+            "wrong main": ("branches/main", "commit", {"sha": "f" * 40}),
+        }
+        for name, (path, key, value) in cases.items():
+            data = records()
+            data[path][key] = value
+            with self.subTest(name=name), self.assertRaises(ContractError):
+                execute(Stub(data))
+        for name, override in {
+            "negative run id": {"dispatched_run_id": -2},
+            "same run": {"dispatched_run_id": 1001},
+            "head mismatch": {"expected_current_head_sha": old_head},
+            "untrusted base": {"expected_base_sha": "f" * 40},
+        }.items():
+            with self.subTest(name=name), self.assertRaises(ContractError):
+                execute(Stub(records()), **override)
+
+        class Changing(Stub):
+            def pull_request(self, number: str) -> dict[str, object]:
+                value = super().pull_request(number)
+                if self.calls.count("GET pulls/42") == 2:
+                    value["state"] = "closed"
+                return value
+
+        with self.assertRaisesRegex(ContractError, "final readback"):
+            execute(Changing(records()))
+
     def test_workflow_runs_uses_workflow_filename_endpoint(self) -> None:
         seen: dict[str, object] = {}
 
@@ -1371,6 +1629,17 @@ def build_parser() -> argparse.ArgumentParser:
     verify.add_argument("--timeout-seconds", type=float, default=300.0)
     verify.add_argument("--poll-interval-seconds", type=float, default=5.0)
 
+    audit = subparsers.add_parser("audit-orphan-readonly")
+    audit.add_argument("--policy", default=".github/merge-gate-policy.json")
+    audit.add_argument("--authority-id", required=True)
+    audit.add_argument("--pr-number", required=True, type=int)
+    audit.add_argument("--old-caller-run-id", required=True, type=int)
+    audit.add_argument("--current-caller-run-id", required=True, type=int)
+    audit.add_argument("--dispatched-run-id", required=True, type=int)
+    audit.add_argument("--expected-base-sha", required=True)
+    audit.add_argument("--expected-current-head-sha", required=True)
+    audit.add_argument("--trusted-main-sha", required=True)
+
     subparsers.add_parser("self-test")
     return parser
 
@@ -1380,6 +1649,33 @@ def main() -> int:
     try:
         if args.command == "self-test":
             return run_self_tests()
+
+        if args.command == "audit-orphan-readonly":
+            if (
+                os.environ.get("GITHUB_REF") != "refs/heads/main"
+                or os.environ.get("GITHUB_SHA") != args.trusted_main_sha
+            ):
+                raise ContractError("orphan read-only audit requires exact trusted main checkout")
+            authorities = load_authorities(args.policy)
+            choices = [a for a in authorities if a.id == args.authority_id]
+            if len(choices) != 1:
+                raise ContractError("orphan read-only audit authority is not in trusted policy")
+            client = GitHubActionsClient(
+                api_url=os.environ.get("GITHUB_API_URL", "https://api.github.com"),
+                repository=os.environ.get("GITHUB_REPOSITORY", ""),
+                token=os.environ.get("GH_TOKEN", ""),
+            )
+            report = audit_orphan_live_readonly(
+                client=client, authority=choices[0], pr_number=args.pr_number,
+                old_caller_run_id=args.old_caller_run_id,
+                current_caller_run_id=args.current_caller_run_id,
+                dispatched_run_id=args.dispatched_run_id,
+                expected_base_sha=args.expected_base_sha,
+                expected_current_head_sha=args.expected_current_head_sha,
+                trusted_main_sha=args.trusted_main_sha,
+            )
+            print(json.dumps(report, separators=(",", ":")))
+            return 0
 
         authorities, required = required_from_args(args)
         if args.command == "plan":
