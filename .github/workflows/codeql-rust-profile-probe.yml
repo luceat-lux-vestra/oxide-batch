@@ -3,7 +3,7 @@
 name: CodeQL Rust offline evaluator experiment - DO NOT MERGE
 on:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize]
     branches: [main]
     paths:
       - .github/workflows/codeql-rust-profile-probe.yml
@@ -23,11 +23,13 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
+          fetch-depth: 2
       - name: Initialize original pinned CodeQL engine (no upload)
         uses: github/codeql-action/init@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
         with:
           languages: rust
           build-mode: none
+          tools: https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.2/codeql-bundle-linux-arm64.tar.zst
       - name: Reproduce original rust extraction and run private evaluator
         shell: bash
         env:
