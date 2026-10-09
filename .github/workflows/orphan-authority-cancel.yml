@@ -1,0 +1,105 @@
+name: Orphan CodeQL cancellation (opt-in)
+
+# Disabled by default. Explicit owner opt-in requires both repository variables:
+# ORPHAN_CODEQL_CANCEL_ENABLED=true and ORPHAN_CODEQL_CANCEL_MODE=live.
+on:
+  workflow_run: # zizmor: ignore[dangerous-triggers]
+    workflows: ["PR CI"]
+    types: [completed]
+  push:
+    branches-ignore:
+      - main
+    paths:
+      - .github/workflows/orphan-authority-cancel.yml
+      - .github/scripts/orphan-codeql-cancel.py
+
+permissions:
+  contents: read
+
+concurrency:
+  group: orphan-codeql-cancel-${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  branch-contracts:
+    name: orphan-codeql-cancel-contracts
+    if: ${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Check out exact branch source (test-only)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Run old provenance and new cancel contract tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/pr-authority-runtime.py self-test
+          python3 .github/scripts/orphan-codeql-cancel.py self-test
+
+  dry-run:
+    name: orphan-codeql-cancel-dry-run
+    if: ${{ github.event_name == 'workflow_run' && github.ref == 'refs/heads/main' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.run_attempt == 1 && github.run_attempt == 1 && vars.ORPHAN_CODEQL_CANCEL_ENABLED == 'true' && vars.ORPHAN_CODEQL_CANCEL_MODE == 'dry-run' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: read
+    steps:
+      - name: Check out exact trusted main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Read-only precise candidate, no write
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD_CALLER_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "luceat-lux-vestra/oxide-batch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 .github/scripts/orphan-codeql-cancel.py execute \
+            --mode dry-run --old-caller-run-id "$OLD_CALLER_RUN_ID" \
+            --trusted-main-sha "$GITHUB_SHA"
+
+  cancel:
+    name: orphan-codeql-cancel-live
+    if: ${{ github.event_name == 'workflow_run' && github.ref == 'refs/heads/main' && github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'cancelled' && github.event.workflow_run.run_attempt == 1 && github.run_attempt == 1 && vars.ORPHAN_CODEQL_CANCEL_ENABLED == 'true' && vars.ORPHAN_CODEQL_CANCEL_MODE == 'live' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: write # Only this job may POST ordinary cancel.
+      pull-requests: read
+    steps:
+      - name: Check out exact trusted main, never triggering PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Verify identity and cancel only obsolete CodeQL
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OLD_CALLER_RUN_ID: ${{ github.event.workflow_run.id }}
+          ORPHAN_CODEQL_CANCEL_ENABLED: ${{ vars.ORPHAN_CODEQL_CANCEL_ENABLED }}
+          ORPHAN_CODEQL_CANCEL_MODE: ${{ vars.ORPHAN_CODEQL_CANCEL_MODE }}
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REPOSITORY" = "luceat-lux-vestra/oxide-batch"
+          test "$GITHUB_REF" = "refs/heads/main"
+          test "$GITHUB_RUN_ATTEMPT" = "1"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$ORPHAN_CODEQL_CANCEL_ENABLED" = "true"
+          test "$ORPHAN_CODEQL_CANCEL_MODE" = "live"
+          python3 .github/scripts/orphan-codeql-cancel.py execute \
+            --mode live --old-caller-run-id "$OLD_CALLER_RUN_ID" \
+            --trusted-main-sha "$GITHUB_SHA"
