@@ -1,3 +1,3 @@
 M6 #433 / controlled cancellable Rust CodeQL effectiveness experiment
-HEAD A marker: 2026-10-09, after protected PR #474 activation
-No production code modified; do NOT merge the experiment.
+HEAD B supersedes exact HEAD A=d5ee32b124d79d33d8172a4dc4a0d9b6ba2056ef only after old independent CodeQL run 37921977941 attempt=1 and Rust job 113791826168 were observed in_progress, Analyze step active.
+Old PR CI caller=37921938844. Only exact obsolete CodeQL may be cancelled. DO NOT MERGE.
