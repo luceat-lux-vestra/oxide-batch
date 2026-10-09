@@ -4,6 +4,9 @@
 from __future__ import annotations
 
 import importlib.util
+import json
+import subprocess
+import sys
 import tempfile
 import textwrap
 from pathlib import Path
@@ -503,5 +506,68 @@ missing_default_branch_ref = ISSUE_LABELER_CONTRACT.replace(
 )
 observed = MODULE.check_issue_labeler_contract_text(missing_default_branch_ref)
 assert any("issue reconciliation safety contract missing" in item for item in observed), observed
+
+
+# M6 staged readiness candidate proof: keep active Live writer/pin byte-identical
+# until the future protected workflow SHA is admitted in a separate PR.
+import hashlib
+import shutil
+
+ROOT = Path(__file__).resolve().parents[2]
+STAGED_WRITER = ROOT / "docs/engineering/ci-staging/orphan-codeql-caller-readiness-candidate.py"
+STAGED_CODEQL = ROOT / "docs/engineering/ci-staging/codeql-caller-readiness-candidate.yml"
+ACTIVE_WRITER = ROOT / ".github/scripts/orphan-codeql-cancel.py"
+ACTIVE_CODEQL = ROOT / ".github/workflows/codeql.yml"
+POLICY = ROOT / ".github/merge-gate-policy.json"
+
+def m6_git_blob(path: Path) -> str:
+    payload = path.read_bytes()
+    return hashlib.sha1(b"blob " + str(len(payload)).encode("ascii") + b"\x00" + payload).hexdigest()
+
+assert STAGED_WRITER.is_file() and STAGED_CODEQL.is_file(), "missing future protected candidates"
+assert m6_git_blob(ACTIVE_WRITER) == "beb69de6b58d89b3814b23017e408775659b275f", (
+    "M6 pre-admission must not activate privileged cancellation writer"
+)
+assert m6_git_blob(STAGED_WRITER) == "89fd82a519b43c5fad5d7300c9ab42e09392e9da", (
+    "M6 future writer blob drifted"
+)
+assert m6_git_blob(STAGED_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071", (
+    "M6 future protected CodeQL workflow blob drifted"
+)
+
+existing_codeql = ACTIVE_CODEQL.read_text(encoding="utf-8")
+assert existing_codeql.count("beb69de6b58d89b3814b23017e408775659b275f") == 2
+assert STAGED_CODEQL.read_text(encoding="utf-8") == existing_codeql.replace(
+    "beb69de6b58d89b3814b23017e408775659b275f",
+    "89fd82a519b43c5fad5d7300c9ab42e09392e9da",
+), "M6 future workflow may only repin the trusted cancellation writer"
+
+future_policy = json.loads(POLICY.read_text(encoding="utf-8"))
+approved = next(
+    item["accepted_blobs"]
+    for item in future_policy["repository_merge_gate"]["protected_workflows"]
+    if item["workflow"] == ".github/workflows/codeql.yml"
+)
+assert "025a05b98eb6dc2c5cfc6dbfddef905664a0d6c8" in approved
+assert "2d6e80287d137c2d63da431ed9c085e24a920071" in approved, (
+    "M6 activation candidate is not pre-admitted"
+)
+
+# Staged writer imports its trusted helper from its own directory. Copy exactly
+# that pair to a throwaway read-only test environment; do not run active writer
+# or invoke a real privileged workflow/cancellation.
+with tempfile.TemporaryDirectory(prefix="oxide-m6-stage-writer-") as td:
+    root = Path(td)
+    shutil.copyfile(STAGED_WRITER, root / "orphan-codeql-cancel.py")
+    shutil.copyfile(ROOT / ".github/scripts/pr-authority-runtime.py",
+                    root / "pr-authority-runtime.py")
+    writer_contract = subprocess.run(
+        [sys.executable, str(root / "orphan-codeql-cancel.py"), "self-test"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    assert writer_contract.returncode == 0, (
+        "M6 staged writer cancellation contract regression:\n"
+        + writer_contract.stdout + writer_contract.stderr
+    )
 
 print("GitHub Actions security policy negative fixtures: PASS")
