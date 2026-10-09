@@ -1,3 +1,3 @@
 oxide-batch #433 / M6 controlled orphan CodeQL cancellation acceptance
-PR HEAD B / supersession experiment marker
+PR HEAD C / dry-run opt-in old CodeQL candidate
 Not a runtime fixture, authorization policy, or test assertion.
