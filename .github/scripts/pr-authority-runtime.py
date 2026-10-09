@@ -1642,7 +1642,7 @@ class RuntimeContractTests(unittest.TestCase):
         self.assertEqual(1, preflight["run_attempt"])
         self.assertIs(preflight["cancel_authorized"], False)
         self.assertIs(preflight["transactional_snapshot"], False)
-        self.assertEqual(4, preflight_client.calls.count("GET pulls/42"))
+        self.assertEqual(5, preflight_client.calls.count("GET pulls/42"))
         self.assertTrue(all(call.startswith(("GET ", "GET-LINK ", "GET-BOUNDED "))
                             for call in preflight_client.calls))
 
@@ -1678,7 +1678,7 @@ class RuntimeContractTests(unittest.TestCase):
         class HeadDrift(Stub):
             def _read_json(self, path: str) -> dict[str, object]:
                 value = super()._read_json(path)
-                if path == "pulls/42" and self.calls.count("GET " + path) == 3:
+                if path == "pulls/42" and self.calls.count("GET " + path) == 4:
                     value["head"]["sha"] = old_sha
                 return value
 
