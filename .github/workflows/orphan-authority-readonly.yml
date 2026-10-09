@@ -50,6 +50,8 @@ on:
       - main
     paths:
       - .github/workflows/orphan-authority-readonly.yml
+      - .github/scripts/pr-authority-runtime.py
+      - .github/scripts/orphan-codeql-cancel.py
 
 # Read-only even on branch pushes. No job can cancel another workflow.
 permissions:
@@ -71,8 +73,10 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - name: Exercise original and live GET-only audit contracts
-        run: python3 .github/scripts/pr-authority-runtime.py self-test
+      - name: Exercise runtime provenance and cancellation writer contracts
+        run: |
+          python3 .github/scripts/pr-authority-runtime.py self-test
+          python3 .github/scripts/orphan-codeql-cancel.py self-test
 
   trusted-main-audit:
     name: orphan-audit-trusted-main

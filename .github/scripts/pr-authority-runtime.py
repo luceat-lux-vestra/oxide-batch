@@ -658,15 +658,77 @@ def audit_orphan_live_readonly(
         repository=client.repository,
     )
 
-    # Detect obvious drift after pagination. This is NOT an atomic snapshot.
-    if (
-        client.pull_request(str(pr_number)) != live
-        or fetch_run(current_caller_run_id) != current
-        or fetch_run(old_caller_run_id) != old
-        or fetch_run(dispatched_run_id) != target
-        or client._read_json("branches/main") != main_branch
+    # A GitHub run can advance while these independent GETs are in flight.
+    # Compare trusted identities, not whole mutable API records (updated_at,
+    # status, timing, PR descriptions). This is still NOT an atomic snapshot.
+    def repo_identity(value: object) -> tuple[object, object] | None:
+        if not isinstance(value, dict):
+            return None
+        return value.get("id"), value.get("full_name")
+
+    def pr_identity(value: dict[str, object]) -> tuple[object, ...]:
+        base, head = value.get("base"), value.get("head")
+        if not isinstance(base, dict) or not isinstance(head, dict):
+            return (None,)
+        return (
+            value.get("number"), value.get("state"), value.get("draft"),
+            base.get("ref"), base.get("sha"), repo_identity(base.get("repo")),
+            head.get("ref"), head.get("sha"), repo_identity(head.get("repo")),
+        )
+
+    def run_identity(value: dict[str, object]) -> tuple[object, ...]:
+        actor = value.get("actor")
+        return (
+            value.get("id"), value.get("event"), value.get("path"),
+            value.get("head_sha"), value.get("head_branch"),
+            value.get("run_attempt"), value.get("display_title"),
+            actor.get("login") if isinstance(actor, dict) else None,
+            repo_identity(value.get("repository")),
+            repo_identity(value.get("head_repository")),
+        )
+
+    reread_pr = client.pull_request(str(pr_number))
+    reread_current = fetch_run(current_caller_run_id)
+    reread_old = fetch_run(old_caller_run_id)
+    reread_target = fetch_run(dispatched_run_id)
+    reread_main = client._read_json("branches/main")
+    if pr_identity(reread_pr) != pr_identity(live):
+        raise ContractError("live orphan audit PR identity changed during final readback")
+    for label, earlier, later in (
+        ("current caller", current, reread_current),
+        ("old caller", old, reread_old),
+        ("CodeQL target", target, reread_target),
     ):
-        raise ContractError("live orphan audit changed during final readback")
+        if run_identity(later) != run_identity(earlier):
+            raise ContractError(
+                f"live orphan audit {label} identity changed during final readback"
+            )
+    new_main = reread_main.get("commit")
+    if not isinstance(new_main, dict) or new_main.get("sha") != trusted_main_sha:
+        raise ContractError("live orphan audit main identity changed during final readback")
+
+    # Permit in-progress -> completed/success for the NEW caller, but never
+    # accept a failed/retried caller or any backwards state transition.
+    new_current_state = (reread_current.get("status"), reread_current.get("conclusion"))
+    if new_current_state not in {
+        ("in_progress", None), ("completed", "success")
+    } or (
+        current.get("status") == "completed"
+        and new_current_state != ("completed", "success")
+    ):
+        raise ContractError("live orphan audit current caller state changed unsafely")
+    if (reread_old.get("status"), reread_old.get("conclusion")) != (
+        "completed", "cancelled"
+    ):
+        raise ContractError("live orphan audit old caller state changed unsafely")
+    active = {"queued", "in_progress", "waiting", "pending", "requested"}
+    if (
+        reread_target.get("status") not in active
+        or reread_target.get("conclusion") is not None
+        or (target.get("status") == "in_progress"
+            and reread_target.get("status") != "in_progress")
+    ):
+        raise ContractError("live orphan audit CodeQL target state changed unsafely")
     return {
         "schema": "orphan-readonly-audit-v1",
         "decision": "READ_ONLY_CANDIDATE",
@@ -1501,6 +1563,91 @@ class RuntimeContractTests(unittest.TestCase):
         }.items():
             with self.subTest(name=name), self.assertRaises(ContractError):
                 execute(Stub(records()), **override)
+
+        # A normal in-flight caller or CodeQL metadata update is NOT an
+        # authorization identity change. These scenarios previously failed
+        # because full GitHub API JSON records were compared byte-for-byte.
+        class Reread(Stub):
+            def __init__(
+                self, entries: dict[str, object],
+                changes: dict[str, dict[str, object]],
+            ) -> None:
+                super().__init__(entries)
+                self.changes = changes
+
+            def _read_json(self, path: str) -> dict[str, object]:
+                value = super()._read_json(path)
+                if self.calls.count("GET " + path) == 2:
+                    for dotted, changed in self.changes.get(path, {}).items():
+                        node = value
+                        parts = dotted.split(".")
+                        for part in parts[:-1]:
+                            node = node[part]
+                        node[parts[-1]] = changed
+                return value
+
+        benign = {
+            "pulls/42": {"updated_at": "2026-10-09T04:50:20Z"},
+            "actions/runs/1001": {"updated_at": "2026-10-09T04:50:21Z"},
+            "actions/runs/2001": {
+                "updated_at": "2026-10-09T04:50:22Z",
+                "status": "completed", "conclusion": "success",
+            },
+            "actions/runs/1002": {"updated_at": "2026-10-09T04:50:23Z"},
+            "branches/main": {"protected": True},
+        }
+        self.assertEqual(
+            "READ_ONLY_CANDIDATE",
+            execute(Reread(records(), benign))["decision"],
+        )
+        initially_queued = records()
+        initially_queued["actions/runs/1002"]["status"] = "queued"
+        self.assertEqual(
+            "READ_ONLY_CANDIDATE",
+            execute(Reread(initially_queued, {
+                "actions/runs/1002": {"status": "in_progress"},
+            }))["decision"],
+        )
+
+        unsafe = {
+            "draft transition": ("pulls/42", "draft", True),
+            "PR head drift": ("pulls/42", "head.sha", "f" * 40),
+            "PR base repo drift": ("pulls/42", "base.repo.id", 5),
+            "main SHA drift": ("branches/main", "commit.sha", "f" * 40),
+            "old caller rerun": ("actions/runs/1001", "run_attempt", 2),
+            "old caller no longer cancelled": (
+                "actions/runs/1001", "conclusion", "success",
+            ),
+            "new caller rerun": ("actions/runs/2001", "run_attempt", 2),
+            "new caller failure": ("actions/runs/2001", "conclusion", "failure"),
+            "new caller identity": ("actions/runs/2001", "head_sha", old_head),
+            "target rerun ABA": ("actions/runs/1002", "run_attempt", 2),
+            "target completed": ("actions/runs/1002", "status", "completed"),
+            "target workflow drift": (
+                "actions/runs/1002", "path", ".github/workflows/ci.yml",
+            ),
+            "target actor drift": (
+                "actions/runs/1002", "actor.login", "attacker",
+            ),
+            "target repository drift": (
+                "actions/runs/1002", "head_repository.id", 5,
+            ),
+        }
+        for name, (path, key, value) in unsafe.items():
+            with self.subTest(unsafe_transition=name), self.assertRaises(ContractError):
+                execute(Reread(records(), {path: {key: value}}))
+        already_complete = records()
+        already_complete["actions/runs/2001"].update(
+            status="completed", conclusion="success",
+        )
+        with self.assertRaisesRegex(ContractError, "state changed unsafely"):
+            execute(Reread(already_complete, {
+                "actions/runs/2001": {"status": "in_progress", "conclusion": None},
+            }))
+        with self.assertRaisesRegex(ContractError, "state changed unsafely"):
+            execute(Reread(records(), {
+                "actions/runs/1002": {"status": "queued"},
+            }))
 
         class Changing(Stub):
             def pull_request(self, number: str) -> dict[str, object]:
