@@ -15,7 +15,7 @@ on:
       - .github/merge-gate-policy.json
 
 permissions:
-  contents: read
+  contents: read # Workflow default read-only; only live cancel job has actions:write.
 
 concurrency:
   group: orphan-codeql-cancel-${{ github.event_name == 'workflow_run' && github.event.workflow_run.id || github.sha }}
@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
-      contents: read
+      contents: read # Branch contract tests only; no token write access.
     steps:
       - name: Check out exact branch source (test-only)
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -48,9 +48,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
-      contents: read
-      actions: read
-      pull-requests: read
+      contents: read # Checkout exact trusted main only.
+      actions: read # Audit run metadata with GET only.
+      pull-requests: read # Check exact open PR identity with GET only.
     steps:
       - name: Check out exact trusted main
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -77,9 +77,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     permissions:
-      contents: read
+      contents: read # Checkout exact trusted main; no PR-head scripts.
       actions: write # Only this job may POST ordinary cancel.
-      pull-requests: read
+      pull-requests: read # Verify PR association and head before POST.
     steps:
       - name: Check out exact trusted main, never triggering PR head
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
