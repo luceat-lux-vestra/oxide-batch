@@ -225,13 +225,15 @@
       {
         "path": ".github/scripts/verify-merge-gates.rb",
         "accepted_blobs": [
-          "51b080a11cd96cb8f4d4bd908a11cb753304764e"
+          "51b080a11cd96cb8f4d4bd908a11cb753304764e",
+          "8c85d9da0fa659a9bf662ae37a17df99401ffcf5"
         ]
       },
       {
         "path": ".github/scripts/test-merge-gates.rb",
         "accepted_blobs": [
-          "7e543fe3cefa0426f934dc6dc59519ff50fa3f64"
+          "7e543fe3cefa0426f934dc6dc59519ff50fa3f64",
+          "79c96855e7a4e5f3227069e43680dfb7cec228ff"
         ]
       },
       {
