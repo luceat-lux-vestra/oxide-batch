@@ -65,7 +65,9 @@ def _objects(reader):
         while pending:
             try:
                 record, end = DECODER.raw_decode(pending)
-            except json.JSONDecodeError:
+            except IncompleteEvidence:
+                raise
+            except (json.JSONDecodeError, ValueError, OverflowError):
                 if not chunk:
                     raise IncompleteEvidence("malformed_or_truncated_json") from None
                 if len(pending.encode("utf-8")) > MAX_RECORD_BYTES:

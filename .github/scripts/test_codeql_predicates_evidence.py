@@ -103,6 +103,23 @@ class Tests(unittest.TestCase):
     def test_huge_integer_iteration_fails_closed(self):
         self.fails(payload(event(), event("IN_LAYER", predicateIterationMillis=[10**1000])))
 
+    def test_json_integer_above_decoder_digit_limit_fails_closed(self):
+        oversized = '{"evaluationStrategy":"COMPUTE_SIMPLE","millis":' + "9" * 5000 + "}\n"
+        self.fails(oversized)
+
+    def test_json_integer_decoder_error_does_not_leak_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "very-private-secret.log"
+            path.write_text('{"evaluationStrategy":"COMPUTE_SIMPLE","millis":'
+                            + "9" * 5000 + "}\n")
+            run = subprocess.run([sys.executable, "-S", str(SCRIPT), str(path)],
+                                 capture_output=True, text=True)
+            self.assertEqual(run.returncode, 2)
+            self.assertEqual(run.stdout, "")
+            self.assertIn("INCOMPLETE_DO_NOT_USE", run.stderr)
+            self.assertNotIn("Traceback", run.stderr)
+            self.assertNotIn("very-private-secret", run.stderr)
+
     def test_malformed_json_rejected(self):
         self.fails(payload(event()) + "{private")
 
