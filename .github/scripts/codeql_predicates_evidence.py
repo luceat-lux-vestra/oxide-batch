@@ -103,6 +103,15 @@ def analyze(reader) -> dict:
         strategy = record.get("evaluationStrategy")
         if type(strategy) is not str or strategy not in STRATEGIES:
             raise IncompleteEvidence("unrecognized_evaluation_strategy")
+        # The public CodeQL performance consumer ignores completed events
+        # whose explicit completionType is not SUCCESS. This offline evidence
+        # parser instead fails closed for the entire stream: never rank
+        # metrics from failed, cancelled or structurally invalid evaluations.
+        # Upstream published predicates fixtures omit this optional field.
+        if "completionType" in record and (
+                type(record["completionType"]) is not str
+                or record["completionType"] != "SUCCESS"):
+            raise IncompleteEvidence("non_success_completion")
         counts[strategy] += 1
         if strategy in ("COMPUTE_SIMPLE", "COMPUTE_RECURSIVE"):
             value = _millis(record.get("millis"))
