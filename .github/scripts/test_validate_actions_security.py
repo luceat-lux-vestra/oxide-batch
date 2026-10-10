@@ -787,3 +787,8 @@ assert classifier_test.returncode == 0, (
     "trusted-base classifier regression: " + classifier_test.stdout + classifier_test.stderr
 )
 print("CI wall-clock trusted dispatch routing candidate contract: PASS")
+
+# Future CodeQL caller-provenance retry pre-admission: execute the exact
+# staged embedded-function mock contract as part of the required security suite.
+from test_codeql_rust_caller_recheck_stage import run_checks as verify_caller_recheck_stage
+verify_caller_recheck_stage()
