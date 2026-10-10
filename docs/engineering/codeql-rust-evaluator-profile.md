@@ -61,10 +61,31 @@ DB/copy separate from existing CI/security scanning.
 4. Local-only artifacts (directory permissions 0700, summary metadata 0600):
    `evaluator-events.json` (raw, potentially sensitive),
    `overall-summary.json` (generated with `codeql generate log-summary
-   --format=overall`), `run-queries.log`, and `metadata.json`. On error the
-   directory contains `INCOMPLETE_DO_NOT_USE`; it is never considered a valid
-   security result. Do **not** publish raw evaluator logs, CodeQL DBs, or source
-   archives as GitHub Actions artifacts. Do not commit their output.
+   --format=overall`), `run-queries.log`, `sanitized-hotspots.json`, and
+   `metadata.json`. All stay private on the local host. The **new** sanitized
+   report includes a maximum of five source-order entries from each of
+   `mostExpensivePerQuery` and `mostExpensivePerStage` and up to eight explicitly
+   allowlisted numeric performance fields per entry. Arbitrary names, strings,
+   source/predicate paths, query arguments, unknown fields, and sensitive text
+   are discarded. A query identity is retained **only** when it matches the
+   frozen 37-query manifest exactly; otherwise the item is anonymous.
+   List entries preserve CodeQL's order; object-map entries are explicitly
+   **unranked**. Numeric field names/units are preserved verbatim; do not
+   assume numbers represent seconds or that shared/parallel stages sum to wall
+   time. The report includes the local-only privacy classification, schema
+   version, and source record counts. `metadata.json` records the new report
+   SHA-256, not its potentially sensitive contents.
+
+   Both `sanitized-hotspots.json` and `metadata.json` have mode 0600 under an
+   output directory of mode 0700. If the CLI changes the overall-summary JSON
+   shape such that either rank group has no recognized metrics, the profile fails closed
+   and records `INCOMPLETE_DO_NOT_USE`. **The installed CLI's exact nested
+   overall JSON field names were not established by the prior ARM64 run**:
+   this is a defensive extractor validated by mock tests, not a live-schema
+   certification. Before sharing even sanitized output, review its contents
+   for sensitive metrics or inadvertent identifiability. Do **not** publish raw
+   evaluator logs, full overall summaries, CodeQL DBs, or source archives as
+   GitHub Actions artifacts. Do not commit their output.
 
 5. For actual performance comparison, repeat on the **same machine/architecture**,
    source SHA, QL pack and query set with warmup and multiple samples, measure
