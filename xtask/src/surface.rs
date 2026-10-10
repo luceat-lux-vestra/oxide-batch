@@ -36,9 +36,6 @@ use std::process::Command;
 
 use serde_json::Value;
 
-/// The crate whose public surface the preview claims.
-const FACADE: &str = "oxide-batch";
-
 /// The rendered documentation directory for that crate.
 const FACADE_DOCS: &str = "oxide_batch";
 
