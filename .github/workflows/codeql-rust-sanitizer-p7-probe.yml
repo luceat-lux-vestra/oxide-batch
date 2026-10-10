@@ -1,0 +1,132 @@
+# DISPOSABLE MEASUREMENT ONLY. DO NOT MERGE. This workflow is NOT a security authority.
+# No artifacts, SARIF, databases, raw evaluator events, raw CLI logs, or unreviewed JSON upload.
+name: P7 Rust CodeQL sanitizer ARM64 schema probe - DO NOT MERGE
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+    paths:
+      - .github/workflows/codeql-rust-sanitizer-p7-probe.yml
+permissions:
+  contents: read
+jobs:
+  p7-schema:
+    name: P7 non-authoritative ARM64 schema probe
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'experiment/433-p7-arm64-private-schema' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out immutable experiment HEAD without persisted token
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Prepare pinned standalone CodeQL CLI 2.27.2 (no Action init or SARIF)
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_BASE: 9ee41e28a51fba8e3fefa83aba777e6dbbad4cf7
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = "aarch64"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git merge-base --is-ancestor "$EXPECTED_BASE" "$EXPECTED_HEAD"
+          test "$(git hash-object .github/scripts/profile_codeql_rust.py)" = "15e09f6c26a0d1c9053a059d2bcd8a38f8688bcb"
+          mkdir -p "$RUNNER_TEMP/codeql-dist"
+          curl --fail --location --silent --show-error --retry 2 \
+            "https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.2/codeql-bundle-linux-arm64.tar.zst" \
+            -o "$RUNNER_TEMP/codeql-arm64.tar.zst"
+          tar --use-compress-program=unzstd -xf "$RUNNER_TEMP/codeql-arm64.tar.zst" -C "$RUNNER_TEMP/codeql-dist"
+          CODEQL="$RUNNER_TEMP/codeql-dist/codeql/codeql"
+          test -x "$CODEQL"
+          "$CODEQL" version | grep -F '2.27.2'
+      - name: Private DB extraction and locked-manifest profiling
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          CODEQL="$RUNNER_TEMP/codeql-dist/codeql/codeql"
+          DB="$RUNNER_TEMP/p7-codeql-rust-db"
+          OUT="$RUNNER_TEMP/p7-private-profile"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          python3 .github/scripts/test_profile_codeql_rust.py -q
+          "$CODEQL" database init --language=rust --build-mode=none --source-root="$GITHUB_WORKSPACE" -- "$DB"
+          "$CODEQL" database trace-command --use-build-mode --working-dir="$GITHUB_WORKSPACE" "$DB"
+          "$CODEQL" database finalize --finalize-dataset --threads=4 --ram=14535 "$DB"
+          # Keep all raw output private; print only controlled numeric/shape results below.
+          set +e
+          python3 .github/scripts/profile_codeql_rust.py \
+            --codeql "$CODEQL" --database "$DB" --output-dir "$OUT" \
+            --timeout-seconds 900 >"$RUNNER_TEMP/p7-private-stdout" 2>"$RUNNER_TEMP/p7-private-stderr"
+          PROFILE_RC=$?
+          set -e
+          export PROFILE_RC
+          python3 - <<'PY'
+          import importlib.util, json, os, pathlib, sys
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          out = root / "p7-private-profile"
+          module = pathlib.Path(".github/scripts/profile_codeql_rust.py")
+          spec = importlib.util.spec_from_file_location("p7_profiler", module)
+          profile = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(profile)
+          rc = int(os.environ["PROFILE_RC"])
+          summary = out / "overall-summary.json"
+          report = out / "sanitized-hotspots.json"
+          def describe(node):
+              # Never log strings, predicates, user paths or arbitrary object field names.
+              if isinstance(node, list):
+                  return {"container":"list","items":len(node),
+                          "first_item_types":[type(v).__name__ for v in node[:5]]}
+              if isinstance(node, dict):
+                  return {"container":"dict","items":len(node),
+                          "known_metric_fields":sum(k in profile.SAFE_METRIC_KEYS and
+                              profile._safe_number(v) for k,v in node.items()),
+                          "value_types":sorted(set(type(v).__name__ for v in node.values()))}
+              return {"container":type(node).__name__}
+          if rc or not report.exists():
+              details = {"classification":"P7_FAIL_CLOSED_NOT_SECURITY_SCAN",
+                         "profile_exit":rc,"summary_exists":summary.is_file(),
+                         "incomplete_marker":(out/"INCOMPLETE_DO_NOT_USE").is_file()}
+              if summary.is_file():
+                  data = json.loads(summary.read_text())
+                  details["top_level"] = describe(data)
+                  if isinstance(data, dict):
+                      for key in ("mostExpensivePerQuery","mostExpensivePerStage","stats"):
+                          details[key] = describe(data.get(key))
+              print("P7_SCHEMA_FAILURE_SAFE_SHAPES="+json.dumps(details,sort_keys=True))
+              sys.exit(1)
+          data = json.loads(report.read_text())
+          assert data["classification"] == "PRIVATE_AGGREGATES_ONLY_NOT_A_SECURITY_SCAN"
+          assert data["schema_version"] == 1
+          approved = {"classification":"P7_REVIEWED_SANITIZED_NUMERIC_ONLY_NOT_SECURITY_SCAN"}
+          for group in ("query_ranks","stage_ranks"):
+              g=data[group]
+              assert len(g["items"]) <= 5
+              items=[]
+              for row in g["items"]:
+                  assert set(row).issubset({"numeric_metrics","query_id_from_frozen_manifest"})
+                  numeric=row["numeric_metrics"]
+                  assert len(numeric) <= 8
+                  assert all(k in profile.SAFE_METRIC_KEYS and profile._safe_number(v)
+                             for k,v in numeric.items())
+                  validated={"numeric_metrics":numeric}
+                  q=row.get("query_id_from_frozen_manifest")
+                  if q is not None:
+                      assert group == "query_ranks" and q in profile.EXPECTED_QUERIES
+                      validated["frozen_query_id"]=q
+                  items.append(validated)
+              approved[group]={"source_item_count":g["source_item_count"],
+                               "order":g["order"],"items":items}
+          print("P7_SAFE_AGGREGATES="+json.dumps(approved,sort_keys=True))
+          meta=json.loads((out/"metadata.json").read_text())
+          print("P7_PROFILE_PARITY="+json.dumps({
+              "head":os.environ["EXPECTED_HEAD"],"version":meta["cli_version"],
+              "pack":meta["query_pack"],"queries":meta["query_count"],
+              "arch":meta["architecture"],"profiled_seconds":meta["elapsed_seconds"],
+              "sanitized_sha256":meta["sanitized_report_sha256"],
+              "no_raw_artifacts_uploaded":True},sort_keys=True))
+          PY
