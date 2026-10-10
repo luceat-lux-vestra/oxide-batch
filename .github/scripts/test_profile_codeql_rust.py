@@ -43,7 +43,15 @@ elif args[:2] == ["database", "run-queries"]:
     print(pathlib.Path(os.environ["MOCK_LOG"]).read_text(), end="")
     sys.exit(int(os.environ.get("MOCK_FAIL", "0")))
 elif args[:2] == ["generate", "log-summary"]:
-    pathlib.Path(args[-1]).write_text('{"overall": {"time": 1}}')
+    pathlib.Path(args[-1]).write_text(os.environ.get("MOCK_SUMMARY", json.dumps({
+        "mostExpensivePerQuery": [
+            {"query": "queries/security/CWE-078/CommandInjection.qlx",
+             "totalTimeMs": 1123, "rawSource": "PRIVATE_USER_CODE"},
+            {"query": "unknown/internal/query", "cpuTime": 22}],
+        "mostExpensivePerStage": [
+            {"durationMs": 420, "stageName": "PRIVATE_STORAGE_PATH"}],
+        "stats": {"totalTimeMs": 1200, "secret": "PRIVATE_INTERNAL_HOST"}
+    })))
 else:
     sys.exit(18)
 ''')
@@ -66,6 +74,68 @@ else:
         self.assertIn("--threads=4", args)
         self.assertNotIn("--no-rerun", args)
         self.assertEqual((self.base/"out").stat().st_mode & 0o777, 0o700)
+
+    def test_sanitized_hotspots_contains_only_allowlisted_numeric_metrics(self):
+        self.assertEqual(self.invoke(), 0)
+        path = self.base / "out/sanitized-hotspots.json"
+        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+        safe = json.loads(path.read_text())
+        self.assertEqual(safe["query_ranks"]["items"][0]["numeric_metrics"],
+                         {"totalTimeMs": 1123})
+        self.assertEqual(safe["query_ranks"]["items"][0]["query_id_from_frozen_manifest"],
+                         "queries/security/CWE-078/CommandInjection.qlx")
+        self.assertNotIn("query_id_from_frozen_manifest", safe["query_ranks"]["items"][1])
+        self.assertEqual(safe["stage_ranks"]["items"][0]["numeric_metrics"],
+                         {"durationMs": 420})
+        serialized = json.dumps(safe)
+        for secret in ("PRIVATE_USER_CODE", "PRIVATE_STORAGE_PATH", "PRIVATE_INTERNAL_HOST", "unknown/internal"):
+            self.assertNotIn(secret, serialized)
+        meta = json.loads((self.base / "out/metadata.json").read_text())
+        self.assertEqual(len(meta["sanitized_report_sha256"]), 64)
+        self.assertEqual(meta["sanitized_report_schema"], 1)
+
+    def test_unrecognized_overall_shape_fails_closed_without_metadata(self):
+        self.assertEqual(self.invoke(MOCK_SUMMARY=json.dumps({"overall": {"time": 9}})), 1)
+        self.assertTrue((self.base / "out/INCOMPLETE_DO_NOT_USE").exists())
+        self.assertFalse((self.base / "out/metadata.json").exists())
+
+    def test_no_unrecognized_strings_or_false_numbers_escape(self):
+        data = {"mostExpensivePerQuery": [
+            {"query": "SECRET_CUSTOM_QUERY", "totalTimeMs": True,
+             "durationMs": -1, "cpuTime": 42, "message": "SECRET_SQL"}],
+                "mostExpensivePerStage": [{"stageName": "SECRET_PATH", "time": 10}],
+                "stats": {"totalTimeMs": 50, "sourceSnippet": "SECRET_SOURCE"}}
+        self.assertEqual(self.invoke(MOCK_SUMMARY=json.dumps(data)), 0)
+        payload = (self.base / "out/sanitized-hotspots.json").read_text()
+        self.assertNotIn("SECRET", payload)
+        self.assertNotIn("-1", payload)
+        self.assertIn('"cpuTime": 42', payload)
+
+    def test_no_numeric_performance_fields_fails_closed(self):
+        data = {"mostExpensivePerQuery": [{"query": "SENSITIVE", "durationMs": "x"}],
+                "mostExpensivePerStage": [], "stats": {"secret": 1234}}
+        self.assertEqual(self.invoke(MOCK_SUMMARY=json.dumps(data)), 1)
+        self.assertTrue((self.base / "out/INCOMPLETE_DO_NOT_USE").exists())
+
+    def test_summary_is_bounded_and_does_not_mislabel_object_order(self):
+        data = {"mostExpensivePerQuery": [{"timeMs": i, "trace": "TOP_SECRET"}
+                 for i in range(20)],
+                "mostExpensivePerStage": {"SECRET_KEY": {"time": 2}},
+                "stats": {"duration": 9}}
+        self.assertEqual(self.invoke(MOCK_SUMMARY=json.dumps(data)), 0)
+        result = json.loads((self.base / "out/sanitized-hotspots.json").read_text())
+        self.assertEqual(len(result["query_ranks"]["items"]), 5)
+        self.assertEqual(result["query_ranks"]["source_item_count"], 20)
+        self.assertEqual(result["stage_ranks"]["order"], "object_iteration_order_unranked")
+        self.assertNotIn("SECRET_KEY", json.dumps(result))
+
+    def test_stats_only_metrics_does_not_falsely_validate_hotspots(self):
+        data = {"mostExpensivePerQuery": [{"query": "SENSITIVE", "durationMs": "unknown"}],
+                "mostExpensivePerStage": [{"time": 10}],
+                "stats": {"totalTimeMs": 100}}
+        self.assertEqual(self.invoke(MOCK_SUMMARY=json.dumps(data)), 1)
+        self.assertTrue((self.base / "out/INCOMPLETE_DO_NOT_USE").is_file())
+        self.assertFalse((self.base / "out/sanitized-hotspots.json").exists())
 
     def test_missing_one_query_fails_closed(self):
         self.log.write_text("\n".join(self.log.read_text().splitlines()[1:]))
