@@ -73,6 +73,55 @@ class Tests(unittest.TestCase):
         self.assertEqual(self.valid(payload(event(), event("COMPUTE_RECURSIVE", millis=10000)))
                          ["compute_simple_largest_five_millis_anonymous"], [120.25])
 
+    def test_explicit_success_completion_is_accepted(self):
+        d = self.valid(payload(event(completionType="SUCCESS")))
+        self.assertEqual(d["compute_simple_largest_five_millis_anonymous"], [120.25])
+
+    def test_absent_completion_is_accepted_for_public_fixture_shape(self):
+        # Upstream vscode-codeql valid-summary.jsonl omits completionType.
+        d = self.valid(payload(event(), event("COMPUTE_RECURSIVE")))
+        self.assertEqual(d["records_checked"], 2)
+
+    def test_explicit_failure_completion_fail_closed(self):
+        self.fails(payload(event(completionType="FAILURE", millis=999999)))
+
+    def test_cancelled_completion_fail_closed(self):
+        self.fails(payload(event(completionType="CANCELLED")))
+
+    def test_empty_completion_fail_closed(self):
+        self.fails(payload(event(completionType="")))
+
+    def test_bool_completion_fail_closed(self):
+        self.fails(payload(event(completionType=True)))
+
+    def test_null_completion_fail_closed(self):
+        self.fails(payload(event(completionType=None)))
+
+    def test_number_completion_fail_closed(self):
+        self.fails(payload(event(completionType=1)))
+
+    def test_dict_completion_fail_closed(self):
+        self.fails(payload(event(completionType={"secret":"PRIVATE"})))
+
+    def test_non_simple_non_success_completion_fail_closed(self):
+        self.fails(payload(event(), event("CACHE_HIT", completionType="FAILURE")))
+
+    def test_cli_failure_after_good_record_no_partial_metrics_or_secret(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "private-evaluator-secret.jsonl"
+            path.write_text(payload(
+                event(millis=17, predicateName="PRIVATE_ALPHA"),
+                event(millis=10000, completionType="FAILURE",
+                      predicateName="VERY_PRIVATE_BETA")))
+            run = subprocess.run([sys.executable, "-S", str(SCRIPT), str(path)],
+                                 capture_output=True, text=True)
+            self.assertEqual(run.returncode, 2)
+            self.assertEqual(run.stdout, "")
+            self.assertIn("INCOMPLETE_DO_NOT_USE: non_success_completion", run.stderr)
+            for sensitive in ("PRIVATE_ALPHA", "VERY_PRIVATE_BETA",
+                              "private-evaluator-secret", "Traceback"):
+                self.assertNotIn(sensitive, run.stderr)
+
     def test_missing_simple_fail_closed(self):
         self.fails(payload(event("COMPUTE_RECURSIVE")))
 
