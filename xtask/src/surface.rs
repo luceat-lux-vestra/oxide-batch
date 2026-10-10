@@ -36,9 +36,6 @@ use std::process::Command;
 
 use serde_json::Value;
 
-/// The crate whose public surface the preview claims.
-const FACADE: &str = "oxide-batch";
-
 /// The rendered documentation directory for that crate.
 const FACADE_DOCS: &str = "oxide_batch";
 
@@ -153,10 +150,21 @@ pub fn check() -> Result<Vec<String>, String> {
     Ok(reconcile(&found))
 }
 
-/// Renders the complete public surface, including every optional adapter.
+/// Renders every workspace member and its dependencies, failing on warnings.
+///
+/// A workspace-wide documentation pass retains the former `--no-deps`
+/// coverage while documenting dependencies whose public types would otherwise
+/// be invisible to the facade disclosure scan.
+fn documentation_command() -> Command {
+    let mut command = Command::new("cargo");
+    command.args(["doc", "--workspace", "--all-features"]);
+    command.env("RUSTDOCFLAGS", "-D warnings");
+    command
+}
+
+/// Builds fresh documentation before scanning, never trusting a previous build.
 fn build_documentation() -> Result<(), String> {
-    let status = Command::new("cargo")
-        .args(["doc", "--package", FACADE, "--all-features"])
+    let status = documentation_command()
         .status()
         .map_err(|error| format!("could not run cargo doc: {error}"))?;
 
@@ -539,6 +547,7 @@ mod tests {
 
     use super::{against, declared, depth_of, disclosures, foreign, item_prefix};
     use std::collections::BTreeSet;
+    use std::ffi::OsStr;
     use std::fs;
     use std::path::{Path, PathBuf};
 
@@ -557,6 +566,26 @@ mod tests {
             .into_iter()
             .map(|(_, dependency)| dependency)
             .collect()
+    }
+
+    #[test]
+    fn documentation_command_covers_workspace_dependencies_and_denies_warnings() {
+        let command = super::documentation_command();
+        assert_eq!(command.get_program(), OsStr::new("cargo"));
+        assert_eq!(
+            command.get_args().collect::<Vec<_>>(),
+            [
+                OsStr::new("doc"),
+                OsStr::new("--workspace"),
+                OsStr::new("--all-features")
+            ],
+            "every workspace member must be documented, with dependencies enabled"
+        );
+        assert_eq!(
+            command.get_envs().collect::<Vec<_>>(),
+            [(OsStr::new("RUSTDOCFLAGS"), Some(OsStr::new("-D warnings")))],
+            "warnings must fail the combined documentation build"
+        );
     }
 
     #[test]
