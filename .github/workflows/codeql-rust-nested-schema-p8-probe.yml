@@ -1,0 +1,169 @@
+# DISPOSABLE MEASUREMENT ONLY; NEVER MERGE. No security authority or artifacts.
+name: P8 Rust CodeQL nested schema private probe - DO NOT MERGE
+on:
+  pull_request:
+    types: [opened, synchronize]
+    branches: [main]
+    paths:
+      - .github/workflows/codeql-rust-nested-schema-p8-probe.yml
+permissions:
+  contents: read
+concurrency:
+  group: p8-schema-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: false
+jobs:
+  p8-schema:
+    name: P8 non-authoritative ARM64 nested structure
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository && github.head_ref == 'experiment/433-p8-arm64-private-nested-shape' }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout exact experiment HEAD with no retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Fetch standalone exact CodeQL CLI 2.27.2
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+          EXPECTED_BASE: 9ee41e28a51fba8e3fefa83aba777e6dbbad4cf7
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(uname -m)" = aarch64
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          git merge-base --is-ancestor "$EXPECTED_BASE" "$EXPECTED_HEAD"
+          test "$(git hash-object .github/scripts/profile_codeql_rust.py)" = 15e09f6c26a0d1c9053a059d2bcd8a38f8688bcb
+          mkdir -p "$RUNNER_TEMP/p8-codeql-dist"
+          curl --fail --location --silent --show-error --retry 2 \
+            https://github.com/github/codeql-action/releases/download/codeql-bundle-v2.27.2/codeql-bundle-linux-arm64.tar.zst \
+            -o "$RUNNER_TEMP/p8-codeql-arm64.tar.zst"
+          tar --use-compress-program=unzstd -xf "$RUNNER_TEMP/p8-codeql-arm64.tar.zst" -C "$RUNNER_TEMP/p8-codeql-dist"
+          CODEQL="$RUNNER_TEMP/p8-codeql-dist/codeql/codeql"
+          test -x "$CODEQL"
+          "$CODEQL" version > "$RUNNER_TEMP/p8-version-private" 2>&1
+          grep -Fq '2.27.2' "$RUNNER_TEMP/p8-version-private"
+          echo 'P8 pinned CLI preflight: PASS (2.27.2 / aarch64)'
+      - name: Private extraction and fail-closed live JSON shape probe
+        shell: bash
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD"
+          CODEQL="$RUNNER_TEMP/p8-codeql-dist/codeql/codeql"
+          DB="$RUNNER_TEMP/p8-rust-db"
+          OUT="$RUNNER_TEMP/p8-private-profile"
+          python3 .github/scripts/test_profile_codeql_rust.py -q > "$RUNNER_TEMP/p8-tests-private" 2>&1
+          grep -Eq 'Ran 14 tests in' "$RUNNER_TEMP/p8-tests-private"
+          grep -Eq '^OK$' "$RUNNER_TEMP/p8-tests-private"
+          "$CODEQL" database init --language=rust --build-mode=none --source-root="$GITHUB_WORKSPACE" -- "$DB" > "$RUNNER_TEMP/p8-init-private" 2>&1
+          "$CODEQL" database trace-command --use-build-mode --working-dir="$GITHUB_WORKSPACE" "$DB" > "$RUNNER_TEMP/p8-extract-private" 2>&1
+          "$CODEQL" database finalize --finalize-dataset --threads=4 --ram=14535 "$DB" > "$RUNNER_TEMP/p8-finalize-private" 2>&1
+          echo 'P8 extraction/finalize: PASS; all raw stdout/stderr in private runner temp'
+          set +e
+          python3 .github/scripts/profile_codeql_rust.py \
+            --codeql "$CODEQL" --database "$DB" --output-dir "$OUT" --timeout-seconds 900 \
+            > "$RUNNER_TEMP/p8-profile-private-stdout" 2> "$RUNNER_TEMP/p8-profile-private-stderr"
+          PROFILE_RC=$?
+          set -e
+          export PROFILE_RC
+          python3 - <<'PY'
+          import collections
+          import importlib.util
+          import json
+          import os
+          import pathlib
+          import sys
+
+          root = pathlib.Path(os.environ["RUNNER_TEMP"])
+          out = root / "p8-private-profile"
+          spec = importlib.util.spec_from_file_location("offline_profiler", ".github/scripts/profile_codeql_rust.py")
+          profiler = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(profiler)
+          def fail(code):
+              print("P8_FAIL_CLOSED=" + code)
+              sys.exit(1)
+          summary = out / "overall-summary.json"
+          if int(os.environ["PROFILE_RC"]) != 1 or not summary.is_file():
+              fail("EXPECTED_SANITIZER_REJECTION_OR_SUMMARY_MISSING")
+          if not (out / "INCOMPLETE_DO_NOT_USE").is_file() or (out / "sanitized-hotspots.json").exists():
+              fail("INCOMPLETE_MARKER_OR_OUTPUT_CONTRACT")
+          try:
+              data = json.loads(summary.read_text(encoding="utf-8"))
+          except (OSError, ValueError):
+              fail("INVALID_SUMMARY")
+          if type(data) is not dict or set(data) != {
+              "mostExpensivePerQuery","mostExpensivePerStage","stats"
+          }:
+              fail("UNEXPECTED_TOP_LEVEL")
+          if any(type(data[group]) is not dict or len(data[group]) != 37 for group in (
+              "mostExpensivePerQuery","mostExpensivePerStage"
+          )):
+              fail("UNEXPECTED_RANK_GROUPS")
+
+          def label(value):
+              if type(value) is dict: return "dict"
+              if type(value) is list: return "list"
+              if type(value) is bool: return "bool"
+              if type(value) in (int,float): return "number"
+              if type(value) is str: return "string"
+              if value is None: return "null"
+              return "unexpected"
+
+          # Only structural direction is released. Runtime keys, strings,
+          # arbitrary values, paths and predicate/query names NEVER logged.
+          groups = {}
+          for group in ("mostExpensivePerQuery","mostExpensivePerStage","stats"):
+              nodes = collections.Counter()
+              allowlisted = collections.Counter()
+              root_types = collections.Counter()
+              state = [0,False]
+              def walk(value,path,depth):
+                  state[0] += 1
+                  if state[0] > 100000 or depth > 9:
+                      state[1] = True
+                      return
+                  nodes[(path,label(value))] += 1
+                  if type(value) is dict:
+                      for k,v in value.items():
+                          if type(k) is str and k in profiler.SAFE_METRIC_KEYS and profiler._safe_number(v):
+                              allowlisted[(path,k)] += 1
+                          walk(v,path+".value",depth+1)
+                  elif type(value) is list:
+                      for v in value:
+                          walk(v,path+".item",depth+1)
+              for value in data[group].values():
+                  root_types[label(value)] += 1
+                  walk(value,"value",0)
+              if state[1]:
+                  fail("SHAPE_DEPTH_OR_NODE_LIMIT")
+              if len(nodes) > 60 or len(allowlisted) > 60:
+                  fail("SHAPE_CARDINALITY_LIMIT")
+              layout = [{"path":p,"type":t,"count":n} for (p,t),n in sorted(nodes.items())]
+              vetted = [{"path":p,"metric":k,"count":n,
+                         "unit":("name-implies-ms" if k.endswith(("Ms","Millis","Milliseconds"))
+                                 else "name-implies-ns" if k.endswith("Ns")
+                                 else "name-implies-seconds" if k.endswith(("Seconds","second","seconds"))
+                                 else "UNVERIFIED")}
+                        for (p,k),n in sorted(allowlisted.items())]
+              groups[group] = {"root_entries":len(data[group]),
+                               "root_value_types":dict(sorted(root_types.items())),
+                               "nested_shape":layout,"allowlisted_metrics":vetted,
+                               "traversed_nodes":state[0]}
+          print("P8_PRIVATE_SHAPE_ONLY=" + json.dumps({
+              "classification":"NON_AUTH_ARM64_PRIVATE_CODEQL_SHAPE_ONLY",
+              "head":os.environ["EXPECTED_HEAD"],"cli":"2.27.2","arch":"aarch64",
+              "frozen_profiler_mock_tests":14,
+              "real_overall_created":True,
+              "real_sanitizer_fail_closed":True,
+              "no_raw_stdout_or_artifact_uploaded":True,
+              "units_not_independently_validated":True,
+              "groups":groups
+          },sort_keys=True))
+          PY
