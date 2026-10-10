@@ -184,6 +184,7 @@ jobs:
           import pathlib
           import subprocess
           import sys
+          import time
           import urllib.parse
           import urllib.request
 
@@ -221,18 +222,26 @@ jobs:
                       "User-Agent": "oxide-batch-codeql-rust-route",
                   },
               )
-              with urllib.request.urlopen(request, timeout=20) as response:
-                  caller = json.load(response)
-              if (
-                  caller.get("id") != int(caller_id)
-                  or caller.get("event") != "pull_request"
-                  or caller.get("run_attempt") != 1
-                  or caller.get("path") != ".github/workflows/pr-ci.yml"
-                  or caller.get("head_sha") != os.environ["HEAD_SHA"]
-                  or caller.get("status") not in {"in_progress", "completed"}
-                  or (caller.get("status") == "completed" and caller.get("conclusion") != "success")
-              ):
-                  raise RuntimeError("dispatch caller provenance failed")
+              # A newly dispatched canonical PR CI run may briefly expose
+              # unsettled REST metadata. Retry *read-only* verification; do
+              # not accept any caller until ALL existing identity predicates pass.
+              for attempt in range(3):
+                  with urllib.request.urlopen(request, timeout=20) as response:
+                      caller = json.load(response)
+                  if (
+                      caller.get("id") != int(caller_id)
+                      or caller.get("event") != "pull_request"
+                      or caller.get("run_attempt") != 1
+                      or caller.get("path") != ".github/workflows/pr-ci.yml"
+                      or caller.get("head_sha") != os.environ["HEAD_SHA"]
+                      or caller.get("status") not in {"in_progress", "completed"}
+                      or (caller.get("status") == "completed" and caller.get("conclusion") != "success")
+                  ):
+                      if attempt < 2:
+                          time.sleep(1)
+                          continue
+                      raise RuntimeError("dispatch caller provenance failed after 3 read-only checks")
+                  return
 
           def fallback(reason):
               safe = str(reason).replace("\n", " ").replace("\r", " ")
