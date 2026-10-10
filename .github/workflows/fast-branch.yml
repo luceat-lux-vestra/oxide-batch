@@ -33,6 +33,11 @@ jobs:
       - name: Check commit hygiene
         run: git log -1 --check
 
+      - name: Validate offline CodeQL predicate summary privacy contract
+        run: |
+          python3 -S .github/scripts/test_codeql_predicates_evidence.py -q
+          python3 -S -m py_compile .github/scripts/codeql_predicates_evidence.py .github/scripts/test_codeql_predicates_evidence.py
+
       - name: Resolve exact protected trusted base
         id: resolve-trusted-base
         continue-on-error: true
