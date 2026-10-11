@@ -1,0 +1,44 @@
+name: Ruleset GET diagnostics (advisory, read-only)
+on:
+  push:
+    paths:
+      - .github/workflows/ruleset-read-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Compare unauthenticated and ephemeral-token Ruleset reads
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          url="${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/rulesets/19905142"
+          for mode in anonymous ephemeral_token; do
+            headers="$(mktemp)"
+            body="$(mktemp)"
+            args=(-H 'Accept: application/vnd.github+json')
+            if [ "$mode" = ephemeral_token ]; then
+              args+=(-H "Authorization: Bearer ${GH_TOKEN}")
+            fi
+            status="$(curl --silent --show-error --location --max-time 20 --retry 0 \
+              "${args[@]}" --dump-header "$headers" --output "$body" \
+              --write-out '%{http_code}' "$url")"
+            echo "mode=$mode http_status=$status"
+            for header in x-ratelimit-limit x-ratelimit-remaining x-ratelimit-reset x-ratelimit-resource retry-after x-github-request-id; do
+              value="$(awk -v wanted="$header" 'BEGIN{IGNORECASE=1} {line=$0; sub(/\r$/, "", line); key=line; sub(/:.*/, "", key); if(tolower(key)==wanted){ sub(/^[^:]+:[[:space:]]*/, "", line); found=line }} END{ print found }' "$headers")"
+              if [ -n "$value" ]; then echo "mode=$mode $header=$value"; fi
+            done
+            if [ "$status" = 200 ]; then
+              jq -erc '{id,name,enforcement,required_status_checks:[.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks]}' "$body"
+            else
+              jq -r '.message // "non-JSON/unknown API failure"' "$body" 2>/dev/null | head -c 300 || true
+              echo
+            fi
+            rm -f "$headers" "$body"
+          done
