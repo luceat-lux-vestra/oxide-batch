@@ -1,0 +1,76 @@
+name: Research Rustdoc dependency-link fidelity
+on:
+  push:
+    branches: [research/433-surface-rustdoc-profile-ab-20261011]
+    paths: [.github/workflows/research-433-surface-scope-fidelity.yml]
+permissions:
+  contents: read
+jobs:
+  fidelity:
+    name: surface-${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [full, no-deps, facade-only]
+    steps:
+      - name: Check out pinned production source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 33adce70d02913c9aded38edc27160fba104f757
+          persist-credentials: false
+      - name: Verify unchanged source and build inspector
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "33adce70d02913c9aded38edc27160fba104f757"
+          grep -Fq 'command.args(["doc", "--workspace", "--all-features"])' xtask/src/surface.rs
+          grep -Fq 'command.env("RUSTDOCFLAGS", "-D warnings")' xtask/src/surface.rs
+          cargo build -p oxide-batch-xtask --locked
+      - name: Generate docs under the A/B scope
+        id: docs
+        env:
+          RESEARCH_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export RUSTDOCFLAGS="-D warnings"
+          start="$SECONDS"
+          case "$RESEARCH_MODE" in
+            full) cargo doc --workspace --all-features --locked ;;
+            no-deps) cargo doc --workspace --all-features --no-deps --locked ;;
+            facade-only) cargo doc -p oxide-batch --all-features --locked ;;
+            *) exit 44 ;;
+          esac
+          echo "SURFACE_DOCS_BUILD mode=$RESEARCH_MODE seconds=$((SECONDS-start)) source=33adce70d02913c9aded38edc27160fba104f757"
+      - name: Run EXACT original scanner over generated HTML, without rebuilding docs
+        env:
+          RESEARCH_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          real_cargo="$(command -v cargo)"
+          bindir="$RUNNER_TEMP/surface-research-wrapper"
+          mkdir -p "$bindir"
+          cat > "$bindir/cargo" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" == 3 && "$1" == "doc" && "$2" == "--workspace" && "$3" == "--all-features" ]]; then
+            echo "RESEARCH_ONLY: bypass redundant doc build; run original scanner on existing generated HTML" >&2
+            exit 0
+          fi
+          exec "$REAL_CARGO" "$@"
+          EOF
+          chmod +x "$bindir/cargo"
+          start="$SECONDS"
+          set +e
+          REAL_CARGO="$real_cargo" PATH="$bindir:$PATH" target/debug/oxide-batch-xtask surface > "$RUNNER_TEMP/scan.txt" 2>&1
+          result="$?"
+          set -e
+          echo "SURFACE_SCAN_RESULT mode=$RESEARCH_MODE exit=$result seconds=$((SECONDS-start)) source=33adce70d02913c9aded38edc27160fba104f757"
+          grep -E '^disclosure:|^facade surface|^could not inspect' "$RUNNER_TEMP/scan.txt" | head -40 || true
+          if [[ "$RESEARCH_MODE" == "full" ]]; then
+            test "$result" -eq 0
+            grep -Fq "facade surface discloses nothing further" "$RUNNER_TEMP/scan.txt"
+          fi
