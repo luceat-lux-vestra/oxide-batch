@@ -1,0 +1,360 @@
+name: Research exact-main ARM64 vs x64 crossover (no merge authority)
+# Research branch only. Mirrors the exact protected-main PG repository and quality-bin-doc
+# commands at a single SHA. Two bounded concurrent runners, three repeats per cell.
+# This workflow is not a protected PR/merge-gate authority. No write permissions.
+on:
+  push:
+    branches:
+      - research/521-arch-crossover-20261011
+    paths:
+      - .github/workflows/research-521-arch-crossover.yml
+permissions:
+  contents: read
+env:
+  SOURCE_SHA: 1c29a0dafab7d6b8e3b830cfb136cb86e974dd5e
+jobs:
+  postgres-ab:
+    name: pg-${{ matrix.postgres }}-${{ matrix.arch }}-r${{ matrix.repeat }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - arch: x64
+            repeat: 1
+            postgres: '15'
+          - arch: arm64
+            repeat: 1
+            postgres: '15'
+          - arch: x64
+            repeat: 1
+            postgres: '18'
+          - arch: arm64
+            repeat: 1
+            postgres: '18'
+          - arch: arm64
+            repeat: 2
+            postgres: '15'
+          - arch: x64
+            repeat: 2
+            postgres: '15'
+          - arch: arm64
+            repeat: 2
+            postgres: '18'
+          - arch: x64
+            repeat: 2
+            postgres: '18'
+          - arch: x64
+            repeat: 3
+            postgres: '15'
+          - arch: arm64
+            repeat: 3
+            postgres: '15'
+          - arch: x64
+            repeat: 3
+            postgres: '18'
+          - arch: arm64
+            repeat: 3
+            postgres: '18'
+    services:
+      postgres:
+        # matrix.postgres is the checked-in 15/18 allowlist. Both branches are
+        # immutable official image digests; unsupported values fail to resolve.
+        image: postgres:${{ matrix.postgres }}@sha256:${{ matrix.postgres == '15' && '926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561' || matrix.postgres == '18' && '4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280' || 'unsupported' }} # zizmor: ignore[unpinned-images]
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_repository
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_repository"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+    steps:
+      - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: 1c29a0dafab7d6b8e3b830cfb136cb86e974dd5e
+          persist-credentials: false
+
+
+      - name: Audit exact source, runner CPU, image and Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          case "$RUNNER_ARCH" in
+            ARM64) expected=aarch64 ;;
+            X64) expected=x86_64 ;;
+            *) exit 1 ;;
+          esac
+          test "$(uname -m)" = "$expected"
+          test -z "${RUSTC_WRAPPER:-}"
+          echo "BENCHMARK_META arch=${{ matrix.arch }} source=$SOURCE_SHA"
+          echo "BENCHMARK_META runner_arch=$RUNNER_ARCH image=$ImageOS"
+          uname -a
+          lscpu | grep -E '^(Architecture|Model name|CPU\(s\)|Vendor ID|Hypervisor vendor|BogoMIPS|L1d cache|L2 cache|L3 cache|NUMA node)' || true
+          grep MemTotal /proc/meminfo
+          rustc --version --verbose
+          cargo --version --verbose
+          (ld --version || true) | head -n 1
+          (cc --version || true) | head -n 1
+          sha256sum Cargo.lock rust-toolchain.toml .cargo/config.toml
+          echo "CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-UNSET}"
+
+      # Build the exact 14 integration-test executables plus --lib in one
+      # Cargo graph. Original 29 test invocations, filters, ordering, service
+      # DB state and --test-threads=1 remain unchanged below.
+      - name: Grouped prebuild PostgreSQL repository test executables
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        env:
+          POSTGRES_VERSION: ${{ matrix.postgres }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$SECONDS"
+          targets=(
+            --lib
+            --test postgres_repository
+            --test postgres_flow
+            --test postgres_nested_job
+            --test postgres_crash_recovery
+            --test postgres_fault_crash_recovery
+            --test postgres_flow_crash_recovery
+            --test postgres_local_partition_crash_recovery
+            --test postgres_local_split_crash_recovery
+            --test postgres_advanced_flow_crash_recovery
+            --test postgres_nested_job_crash_recovery
+            --test postgres_scope_resolution_crash_recovery
+            --test postgres_custom_leaf_crash_recovery
+            --test postgres_item_stream_crash_recovery
+            --test postgres_retention_component_state
+          )
+          cargo test -p oxide-batch --features postgres "${targets[@]}" --no-run
+          elapsed="$((SECONDS - start))"
+          echo "PG_REPOSITORY_GROUPED_PREBUILD postgres=$POSTGRES_VERSION seconds=$elapsed"
+
+      - name: Apply and reapply immutable migrations
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          migration_is_idempotent_when_migrator_fixture_is_available
+          -- --nocapture --test-threads=1
+
+      - name: Run shared PostgreSQL repository contract
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            shared_repository_contract_passes_on_postgres \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            concurrent_launch_creates_single_instance \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            committed_chunk_advances_checkpoint \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            writer_failure_rolls_back_business_and_checkpoint \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            optimistic_conflict_has_one_winner \
+            -- --nocapture --test-threads=1
+
+      - name: Run shared PostgreSQL operator, explorer, and retention contract
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          shared_service_contract_passes_on_postgres
+          -- --nocapture --test-threads=1
+
+      - name: Verify durable fault-tolerance state
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            retry_reservation_is_a_durable_compare_and_swap \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            skips_counters_and_fault_state_commit_with_the_chunk \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            corrupt_fault_state_fails_before_component_work \
+            -- --nocapture --test-threads=1
+
+      - name: Verify durable flow traversal
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_flow
+          -- --nocapture --test-threads=1
+
+      - name: Verify PostgreSQL nested-job durable linkage
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_nested_job
+          -- --nocapture --test-threads=1
+
+      - name: Verify scoped job-context late binding
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres --lib
+          scope_runtime::tests::postgres_job_context_source_resolves_and_records_provenance
+          -- --nocapture --test-threads=1
+
+      - name: Verify scope-provenance compatible restart refusal
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          compatible_restart_with_scope_resolution_provenance_fails_closed
+          -- --nocapture --test-threads=1
+
+      - name: Verify scope-provenance retention protection
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          retention_excludes_execution_referenced_by_scope_provenance
+          -- --nocapture --test-threads=1
+
+      - name: Verify disconnect and schema-version classifications
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            disconnect_during_commit_never_guesses_outcome \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            postgres_chunk_disconnect_is_known_not_committed_before_commit \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            newer_schema_is_rejected_without_guessing_compatibility \
+            -- --nocapture --test-threads=1
+
+      - name: Run process-kill crash and restart matrix
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_fault_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_flow_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_local_partition_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_local_split_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_advanced_flow_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_nested_job_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_scope_resolution_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_custom_leaf_crash_recovery \
+            -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_item_stream_crash_recovery
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL M6 #144 retention component-state evidence
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_retention_component_state
+          -- --nocapture --test-threads=1
+  quality-bin-doc-ab:
+    name: quality-bin-doc-${{ matrix.arch }}-r${{ matrix.repeat }}
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - arch: x64
+            repeat: 1
+          - arch: arm64
+            repeat: 1
+          - arch: arm64
+            repeat: 2
+          - arch: x64
+            repeat: 2
+          - arch: x64
+            repeat: 3
+          - arch: arm64
+            repeat: 3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: 1c29a0dafab7d6b8e3b830cfb136cb86e974dd5e
+          persist-credentials: false
+
+
+      - name: Audit exact source, runner CPU, image and Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          case "$RUNNER_ARCH" in
+            ARM64) expected=aarch64 ;;
+            X64) expected=x86_64 ;;
+            *) exit 1 ;;
+          esac
+          test "$(uname -m)" = "$expected"
+          test -z "${RUSTC_WRAPPER:-}"
+          echo "BENCHMARK_META arch=${{ matrix.arch }} source=$SOURCE_SHA"
+          echo "BENCHMARK_META runner_arch=$RUNNER_ARCH image=$ImageOS"
+          uname -a
+          lscpu | grep -E '^(Architecture|Model name|CPU\(s\)|Vendor ID|Hypervisor vendor|BogoMIPS|L1d cache|L2 cache|L3 cache|NUMA node)' || true
+          grep MemTotal /proc/meminfo
+          rustc --version --verbose
+          cargo --version --verbose
+          (ld --version || true) | head -n 1
+          (cc --version || true) | head -n 1
+          sha256sum Cargo.lock rust-toolchain.toml .cargo/config.toml
+          echo "CARGO_INCREMENTAL=${CARGO_INCREMENTAL:-UNSET}"
+
+      - name: Run final-only binary tests
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: cargo test --workspace --all-features --bins
+
+      - name: Run final-only documentation tests
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: cargo test --workspace --all-features --doc
