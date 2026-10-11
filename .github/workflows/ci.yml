@@ -840,7 +840,7 @@ jobs:
           persist-credentials: false
 
 
-      # Build the exact 13 integration-test executables plus --lib in one
+      # Build the exact 14 integration-test executables plus --lib in one
       # Cargo graph. Original 29 test invocations, filters, ordering, service
       # DB state and --test-threads=1 remain unchanged below.
       - name: Grouped prebuild PostgreSQL repository test executables
