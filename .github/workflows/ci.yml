@@ -845,6 +845,8 @@ jobs:
       # DB state and --test-threads=1 remain unchanged below.
       - name: Grouped prebuild PostgreSQL repository test executables
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        env:
+          POSTGRES_VERSION: ${{ matrix.postgres }}
         shell: bash
         run: |
           set -euo pipefail
@@ -868,7 +870,7 @@ jobs:
           )
           cargo test -p oxide-batch --features postgres "${targets[@]}" --no-run
           elapsed="$((SECONDS - start))"
-          echo "PG_REPOSITORY_GROUPED_PREBUILD postgres=${{ matrix.postgres }} seconds=$elapsed"
+          echo "PG_REPOSITORY_GROUPED_PREBUILD postgres=$POSTGRES_VERSION seconds=$elapsed"
 
       - name: Apply and reapply immutable migrations
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
