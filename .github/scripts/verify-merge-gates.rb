@@ -457,7 +457,7 @@ module MergeGateVerifier
       return violations + ["#{FAST_WORKFLOW} must declare canonical #{FAST_JOB} job"]
     end
     violations << "#{FAST_WORKFLOW}##{FAST_JOB} must emit context fast" unless job['name'] == 'fast'
-    violations << "#{FAST_WORKFLOW}##{FAST_JOB} must run on ubuntu-latest" unless job['runs-on'] == 'ubuntu-latest'
+    violations << "#{FAST_WORKFLOW}##{FAST_JOB} must run on ubuntu-24.04-arm" unless job['runs-on'] == 'ubuntu-24.04-arm'
     violations << "#{FAST_WORKFLOW}##{FAST_JOB} timeout must remain 15 minutes" unless job['timeout-minutes'] == 15
 
     steps = job['steps']

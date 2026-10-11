@@ -315,7 +315,7 @@ class MergeGateVerifierTest < Minitest::Test
         jobs:
           fast:
             name: fast
-            runs-on: ubuntu-latest
+            runs-on: ubuntu-24.04-arm
             timeout-minutes: 15
             steps:
               - name: Check out repository
@@ -1692,6 +1692,28 @@ class MergeGateVerifierTest < Minitest::Test
       assert_includes verify(root).join('\n'), 'required context emitter must not declare services'
     end
   end
+  def test_fast_arm_runner_must_not_regress_to_x64
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/fast-branch.yml')
+      original = File.read(path)
+      body = original.sub('runs-on: ubuntu-24.04-arm', 'runs-on: ubuntu-latest')
+      refute_equal original, body
+      write(root, '.github/workflows/fast-branch.yml', body)
+      assert_includes verify(root).join("\n"), 'must run on ubuntu-24.04-arm'
+    end
+  end
+
+  def test_fast_arm_runner_expression_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/fast-branch.yml')
+      original = File.read(path)
+      body = original.sub('runs-on: ubuntu-24.04-arm', 'runs-on: ${{ vars.FAST_RUNNER }}')
+      refute_equal original, body
+      write(root, '.github/workflows/fast-branch.yml', body)
+      assert_includes verify(root).join("\n"), 'must run on ubuntu-24.04-arm'
+    end
+  end
+
   def test_fast_docs_only_true_guard_weakening_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/fast-branch.yml')
