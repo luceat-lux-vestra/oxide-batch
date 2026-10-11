@@ -43,7 +43,6 @@ jobs:
       SCCACHE_TRIPLE: ${{ matrix.artifact_triple }}
       SCCACHE_SHA256: ${{ matrix.artifact_sha256 }}
       ARCH_SUFFIX: ${{ matrix.arch_suffix }}
-      SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
       SCCACHE_CACHE_SIZE: 768M
       SCCACHE_LOCAL_RW_MODE: READ_ONLY
       RUSTC_WRAPPER: sccache
@@ -68,9 +67,11 @@ jobs:
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           family="oxide-fast-sccache-v1-linux${ARCH_SUFFIX}-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
-          echo "key=${lock_prefix}${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
-          echo "lock_prefix=${lock_prefix}" >> "$GITHUB_OUTPUT"
-          echo "family=${family}" >> "$GITHUB_OUTPUT"
+          {
+            echo "key=${lock_prefix}${SOURCE_SHA}"
+            echo "lock_prefix=${lock_prefix}"
+            echo "family=${family}"
+          } >> "$GITHUB_OUTPUT"
       - name: Install SHA256-verified native sccache
         shell: bash
         run: |
@@ -95,6 +96,8 @@ jobs:
           set -euo pipefail
           test "${{ steps.restore.outputs.cache-hit }}" = true
       - name: Execute production integration shard
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
         shell: bash
         run: |
           set -euo pipefail
@@ -105,6 +108,8 @@ jobs:
           echo "AB_RESULT class=integration shard=${{ matrix.shard }} arch=${{ matrix.arch }} repeat=${{ matrix.repeat }} duration_s=$((end-start)) source=$SOURCE_SHA"
       - name: Show compiler-cache stats
         if: ${{ always() }}
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
         run: sccache --show-stats --stats-format=json
 
   postgres-repository:
