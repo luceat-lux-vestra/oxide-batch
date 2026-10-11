@@ -38,9 +38,9 @@ jobs:
           /// Negative fixture: foreign return type in the public function signature.
           pub fn surface_leak_return_sqlx() -> sqlx::PgPool { panic!("unreachable fixture") }
           /// Negative fixture: foreign type in a public field.
-          pub struct SurfaceLeakFieldCsv { pub value: csv::Reader<std::fs::File> }
+          pub struct SurfaceLeakFieldCsv { /** Foreign type in documented field. */ pub value: csv::Reader<std::fs::File> }
           /// Negative fixture: foreign type in public trait method signature.
-          pub trait SurfaceLeakTraitSha2 { fn consume(&self, value: sha2::Sha256); }
+          pub trait SurfaceLeakTraitSha2 { /** Foreign type in documented method. */ fn consume(&self, value: sha2::Sha256); }
           /// Negative fixture: foreign generic type in a public alias.
           pub type SurfaceLeakGenericSerde<T> = serde_json::Map<String, T>;
           EOF
