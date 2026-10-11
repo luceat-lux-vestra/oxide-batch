@@ -1934,20 +1934,25 @@ module MergeGateVerifier
     if contracts.is_a?(Hash)
       commands = Array(contracts['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
       unless commands.include?('cargo doc --workspace --all-features --no-deps')
-        source_path = Pathname(root).join('xtask/src/surface.rs')
-        source = source_path.file? ? source_path.read : ''
-        required = [
-          'pub fn check() -> Result<Vec<String>, String> {',
-          'build_documentation()?;',
-          'let found = scan(&documentation_root()?)?;',
-          'fn documentation_command() -> Command {',
-          'command.args(["doc", "--workspace", "--all-features"]);',
-          'command.env("RUSTDOCFLAGS", "-D warnings");',
-          'let status = documentation_command()'
-        ]
-        missing = required.reject { |token| source.include?(token) }
-        unless missing.empty?
-          violations << "#{QUALITY_WORKFLOW}#quality-contracts is missing strict full-workspace dependency rustdoc surface guarantees: #{missing.join(', ')}"
+        # The optimized route must preserve the actual, previously exercised
+        # source, CLI dispatcher and Cargo package entrypoint. Searching for
+        # tokens in mutable Rust sources is spoofable via comments or dead code.
+        # Any revision of these three files needs renewed protected admission.
+        attested_sources = {
+          'xtask/src/surface.rs' => '8493ff4dbfc05c307f9b3942bd2c2bf364497fd5',
+          'xtask/src/main.rs' => '532387eed2211aea77f2155b91144407a7f507cf',
+          'xtask/Cargo.toml' => '66baa4116ac013dce114c313dc9f910be67373aa'
+        }
+        mismatches = attested_sources.filter_map do |relative_path, expected_blob|
+          path = Pathname(root).join(relative_path)
+          bytes = path.file? ? path.binread : nil
+          actual_blob = bytes && Digest::SHA1.hexdigest("blob #{bytes.bytesize}\0#{bytes}")
+          next if actual_blob == expected_blob
+
+          "#{relative_path} expected #{expected_blob} got #{actual_blob || 'missing'}"
+        end
+        unless mismatches.empty?
+          violations << "#{QUALITY_WORKFLOW}#quality-contracts is missing strict full-workspace dependency rustdoc surface guarantees: attested xtask source/dispatcher/manifest mismatch (#{mismatches.join('; ')})"
         end
       end
     end
