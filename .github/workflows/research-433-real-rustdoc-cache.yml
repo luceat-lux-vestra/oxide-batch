@@ -1,0 +1,180 @@
+name: Research genuine Rustdoc artifact restore
+on:
+  push:
+    branches: [research/433-real-rustdoc-cache-20261011]
+    paths: [.github/workflows/research-433-real-rustdoc-cache.yml]
+permissions:
+  contents: read
+jobs:
+  real-workspace-artifact-reuse:
+    name: pinned-main real-doc cold/warm/reconstituted and invalidation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - name: Check out immutable production main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 33adce70d02913c9aded38edc27160fba104f757
+          path: src
+          persist-credentials: false
+      - name: Prove source/host authority and preserved scanner command
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = 33adce70d02913c9aded38edc27160fba104f757
+          test "$(uname -m)" = x86_64
+          grep -Fq 'command.args(["doc", "--workspace", "--all-features"])' xtask/src/surface.rs
+          grep -Fq 'command.env("RUSTDOCFLAGS", "-D warnings")' xtask/src/surface.rs
+          command -v zstd
+          rustc --version
+          rustdoc --version
+          cargo --version
+      - name: Cold full dependency docs then exact warm replay
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/real-rustdoc-target"
+          mkdir -p "$CARGO_TARGET_DIR"
+          test ! -e "$CARGO_TARGET_DIR/doc"
+          before="$SECONDS"
+          cargo doc --workspace --all-features --locked > "$RUNNER_TEMP/cold-full.log" 2>&1
+          echo "RESEARCH_REAL_DOC_COLD seconds=$((SECONDS-before))"
+          test -f "$CARGO_TARGET_DIR/doc/oxide_batch/index.html"
+          echo "RESEARCH_REAL_DOC_UNCOMPRESSED_BYTES=$(du -sb "$CARGO_TARGET_DIR" | cut -f1)"
+          echo "RESEARCH_REAL_DOC_DOC_BYTES=$(du -sb "$CARGO_TARGET_DIR/doc" | cut -f1)"
+          before="$SECONDS"
+          cargo doc --workspace --all-features --locked > "$RUNNER_TEMP/warm-replay.log" 2>&1
+          echo "RESEARCH_REAL_DOC_WARM_REPLAY seconds=$((SECONDS-before))"
+          echo "RESEARCH_REAL_DOC_WARM_REPLAY_DOCUMENTING_COUNT=$(grep -c 'Documenting ' "$RUNNER_TEMP/warm-replay.log" || true)"
+          before="$SECONDS"
+          cargo run --package oxide-batch-xtask -- surface > "$RUNNER_TEMP/pre-restore-scan.log" 2>&1
+          echo "RESEARCH_REAL_DOC_PRE_RESTORE_SCAN seconds=$((SECONDS-before))"
+          grep -E '^(accepted finding:|disclosure:)' "$RUNNER_TEMP/pre-restore-scan.log" | LC_ALL=C sort > "$RUNNER_TEMP/pre-restore-findings.txt"
+          test "$(wc -l < "$RUNNER_TEMP/pre-restore-findings.txt")" -eq 12
+          echo "RESEARCH_REAL_DOC_PRE_RESTORE_FINDINGS=12"
+      - name: Reconstitute authentic complete Cargo target at identical absolute path
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/real-rustdoc-target"
+          before_bytes="$(du -sb "$CARGO_TARGET_DIR" | cut -f1)"
+          echo "RESEARCH_REAL_DOC_PRE_ARCHIVE_BYTES=$before_bytes"
+          # Bounded research: a multi-GB archival cost is itself a NO-GO signal.
+          if [ "$before_bytes" -gt 3000000000 ]; then
+            echo "::error::Full target exceeds 3 GB; do not experiment with a costly restore artifact."
+            exit 41
+          fi
+          before="$SECONDS"
+          tar --use-compress-program='zstd -T2 -3' -cf "$RUNNER_TEMP/real-rustdoc-target.tar.zst" -C "$RUNNER_TEMP" real-rustdoc-target
+          pack_seconds="$((SECONDS-before))"
+          archive_bytes="$(stat -c %s "$RUNNER_TEMP/real-rustdoc-target.tar.zst")"
+          echo "RESEARCH_REAL_DOC_COMPRESSED_BYTES=$archive_bytes"
+          echo "RESEARCH_REAL_DOC_PACK_SECONDS=$pack_seconds"
+          rm -rf "$CARGO_TARGET_DIR"
+          test ! -e "$CARGO_TARGET_DIR"
+          before="$SECONDS"
+          tar --use-compress-program='zstd -d -T2' -xf "$RUNNER_TEMP/real-rustdoc-target.tar.zst" -C "$RUNNER_TEMP"
+          unpack_seconds="$((SECONDS-before))"
+          test -f "$CARGO_TARGET_DIR/doc/oxide_batch/index.html"
+          echo "RESEARCH_REAL_DOC_UNPACK_SECONDS=$unpack_seconds"
+          before="$SECONDS"
+          cargo doc --workspace --all-features --locked > "$RUNNER_TEMP/reconstituted-doc.log" 2>&1
+          replay_seconds="$((SECONDS-before))"
+          echo "RESEARCH_REAL_DOC_RESTORED_REPLAY_SECONDS=$replay_seconds"
+          echo "RESEARCH_REAL_DOC_RESTORED_DOCUMENTING_COUNT=$(grep -c 'Documenting ' "$RUNNER_TEMP/reconstituted-doc.log" || true)"
+          before="$SECONDS"
+          cargo run --package oxide-batch-xtask -- surface > "$RUNNER_TEMP/post-restore-scan.log" 2>&1
+          scan_seconds="$((SECONDS-before))"
+          grep -E '^(accepted finding:|disclosure:)' "$RUNNER_TEMP/post-restore-scan.log" | LC_ALL=C sort > "$RUNNER_TEMP/post-restore-findings.txt"
+          diff -u "$RUNNER_TEMP/pre-restore-findings.txt" "$RUNNER_TEMP/post-restore-findings.txt"
+          echo "RESEARCH_REAL_DOC_RESTORED_SCAN_SECONDS=$scan_seconds"
+          echo "RESEARCH_REAL_DOC_FINDING_SET_PARITY=PASS"
+      - name: Reject newly introduced documentation warning after restore
+        working-directory: src
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/real-rustdoc-target"
+          cat >> crates/oxide-batch-core/src/lib.rs <<'EOF'
+
+          #[warn(rustdoc::broken_intra_doc_links)]
+          /// Adversarial doc-only edit: [DefinitelyMissingDocsReuseType].
+          pub struct ResearchDocCacheInvalidationProbe;
+          EOF
+          test -n "$(git status --short -- crates/oxide-batch-core/src/lib.rs)"
+          before="$SECONDS"
+          set +e
+          cargo doc --workspace --all-features --locked > "$RUNNER_TEMP/changed-workspace-doc.log" 2>&1
+          result="$?"
+          set -e
+          echo "RESEARCH_REAL_DOC_WORKSPACE_CHANGE_EXIT=$result seconds=$((SECONDS-before))"
+          test "$result" -ne 0
+          grep -Eq 'unresolved link|broken_intra_doc_links' "$RUNNER_TEMP/changed-workspace-doc.log"
+          echo "RESEARCH_REAL_DOC_WORKSPACE_WARNING_INVALIDATION=PASS"
+  dependency-only-warning-invalidation:
+    name: real-doc restored path dependency lint invalidation
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      RUSTDOCFLAGS: -D warnings
+    steps:
+      - name: Establish isolated local path dependency without registry/network
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/cache-fixture/dependency/src" "$RUNNER_TEMP/cache-fixture/workspace/app/src"
+          cat > "$RUNNER_TEMP/cache-fixture/dependency/Cargo.toml" <<'EOF'
+          [package]
+          name = "dependency-doc-cache-probe"
+          version = "0.1.0"
+          edition = "2021"
+          [workspace]
+          EOF
+          cat > "$RUNNER_TEMP/cache-fixture/dependency/src/lib.rs" <<'EOF'
+          /// A valid initially cached dependency document.
+          pub struct ValidDependency;
+          EOF
+          cat > "$RUNNER_TEMP/cache-fixture/workspace/Cargo.toml" <<'EOF'
+          [workspace]
+          members = ["app"]
+          resolver = "2"
+          EOF
+          cat > "$RUNNER_TEMP/cache-fixture/workspace/app/Cargo.toml" <<'EOF'
+          [package]
+          name = "consumer-doc-cache-probe"
+          version = "0.1.0"
+          edition = "2021"
+          [dependencies]
+          dependency-doc-cache-probe = { path = "../../dependency" }
+          EOF
+          cat > "$RUNNER_TEMP/cache-fixture/workspace/app/src/lib.rs" <<'EOF'
+          /// Consumer uses the external dependency in a public signature.
+          pub fn consume(_: dependency_doc_cache_probe::ValidDependency) {}
+          EOF
+          cd "$RUNNER_TEMP/cache-fixture/workspace"
+          cargo generate-lockfile --offline
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/cache-fixture/real-target"
+          cargo doc --workspace --all-features --locked --offline > "$RUNNER_TEMP/dep-cold.log" 2>&1
+          test -f "$CARGO_TARGET_DIR/doc/dependency_doc_cache_probe/index.html"
+          tar --use-compress-program='zstd -T2 -3' -cf "$RUNNER_TEMP/dependency-target.tar.zst" -C "$RUNNER_TEMP/cache-fixture" real-target
+          rm -rf "$CARGO_TARGET_DIR"
+          tar --use-compress-program='zstd -d -T2' -xf "$RUNNER_TEMP/dependency-target.tar.zst" -C "$RUNNER_TEMP/cache-fixture"
+          cargo doc --workspace --all-features --locked --offline > "$RUNNER_TEMP/dep-restored.log" 2>&1
+          cat >> "$RUNNER_TEMP/cache-fixture/dependency/src/lib.rs" <<'EOF'
+          #[warn(rustdoc::broken_intra_doc_links)]
+          /// Changed dependency docs contain [DefinitelyMissingPathDependencyType].
+          pub struct BrokenDependencyDocs;
+          EOF
+          set +e
+          cargo doc --workspace --all-features --locked --offline > "$RUNNER_TEMP/dep-mutated.log" 2>&1
+          code="$?"
+          set -e
+          echo "RESEARCH_REAL_DOC_PATH_DEP_MUTATION_EXIT=$code"
+          test "$code" -ne 0
+          grep -Eq 'unresolved link|broken_intra_doc_links' "$RUNNER_TEMP/dep-mutated.log"
+          echo "RESEARCH_REAL_DOC_PATH_DEP_WARNING_INVALIDATION=PASS"
