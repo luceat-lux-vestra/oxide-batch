@@ -42,7 +42,7 @@ jobs:
   quality-fast:
     name: quality-fast-internal
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
       - name: Resolve exact-SHA Fast evidence
@@ -741,7 +741,7 @@ jobs:
 
   packaging:
     name: packaging
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -759,7 +759,7 @@ jobs:
 
   msrv:
     name: msrv
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -782,7 +782,7 @@ jobs:
 
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate
-    runs-on: ubuntu-latest
+    runs-on: ${{ (matrix.postgres == '15' || matrix.postgres == '17') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
