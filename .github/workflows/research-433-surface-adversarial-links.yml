@@ -1,0 +1,87 @@
+name: Research Rustdoc adversarial disclosure fidelity
+on:
+  push:
+    branches: [research/433-surface-rustdoc-profile-ab-20261011]
+    paths: [.github/workflows/research-433-surface-adversarial-links.yml]
+permissions:
+  contents: read
+jobs:
+  poison:
+    name: injected-${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [full, no-deps]
+    steps:
+      - name: Check out exact production source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 33adce70d02913c9aded38edc27160fba104f757
+          persist-credentials: false
+      - name: Inject disposable public type leaks for negative tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "33adce70d02913c9aded38edc27160fba104f757"
+          grep -Fq 'command.args(["doc", "--workspace", "--all-features"])' xtask/src/surface.rs
+          cat >> crates/oxide-batch/src/lib.rs <<'EOF'
+          
+          /// Adversarial fixture: public alias exposing Tokio runtime type.
+          pub type SurfaceLeakTokio = tokio::runtime::Runtime;
+          /// Adversarial fixture: public alias exposing SQLx database driver type.
+          pub type SurfaceLeakSqlx = sqlx::PgPool;
+          /// Adversarial fixture: public alias exposing an otherwise accepted serializer in an unapproved item.
+          pub type SurfaceLeakJson = serde_json::Value;
+          /// Adversarial fixture: public alias exposing a CSV reader type.
+          pub type SurfaceLeakCsv = csv::Reader<std::fs::File>;
+          /// Adversarial fixture: public alias exposing a SHA2 digest hasher type.
+          pub type SurfaceLeakSha2 = sha2::Sha256;
+          EOF
+          cargo build -p oxide-batch-xtask --locked
+      - name: Render fixture documentation
+        env:
+          RESEARCH_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          export RUSTDOCFLAGS="-D warnings"
+          start="$SECONDS"
+          case "$RESEARCH_MODE" in
+            full) cargo doc --workspace --all-features --locked ;;
+            no-deps) cargo doc --workspace --all-features --no-deps --locked ;;
+            *) exit 44 ;;
+          esac
+          echo "SURFACE_POISON_BUILD mode=$RESEARCH_MODE seconds=$((SECONDS-start)) source=33adce70d02913c9aded38edc27160fba104f757"
+      - name: Run original unchanged leak scanner over poisoned HTML
+        env:
+          RESEARCH_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          real_cargo="$(command -v cargo)"
+          bindir="$RUNNER_TEMP/adversarial-cargo-wrapper"
+          mkdir -p "$bindir"
+          cat > "$bindir/cargo" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" == 3 && "$1" == "doc" && "$2" == "--workspace" && "$3" == "--all-features" ]]; then
+            exit 0
+          fi
+          exec "$REAL_CARGO" "$@"
+          EOF
+          chmod +x "$bindir/cargo"
+          set +e
+          REAL_CARGO="$real_cargo" PATH="$bindir:$PATH" target/debug/oxide-batch-xtask surface > "$RUNNER_TEMP/poison-scan.txt" 2>&1
+          result="$?"
+          set -e
+          count="$(grep -c '^disclosure:' "$RUNNER_TEMP/poison-scan.txt" || true)"
+          echo "SURFACE_POISON_SCAN mode=$RESEARCH_MODE exit=$result unapproved_disclosures=$count"
+          grep '^disclosure:' "$RUNNER_TEMP/poison-scan.txt" | grep -E 'SurfaceLeak|oxide_batch' | head -25 || true
+          if [[ "$RESEARCH_MODE" == "full" ]]; then
+            test "$result" -ne 0
+            for fixture in SurfaceLeakTokio SurfaceLeakSqlx SurfaceLeakJson SurfaceLeakCsv SurfaceLeakSha2; do
+              grep -Fq "$fixture" "$RUNNER_TEMP/poison-scan.txt"
+            done
+          fi
