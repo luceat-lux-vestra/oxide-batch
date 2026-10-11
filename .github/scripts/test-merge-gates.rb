@@ -894,6 +894,35 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_only_explicitly_allowlisted_main_cache_prime_push_is_allowed
+    with_repo do |root, policy|
+      cache_prime = '.github/workflows/sccache-main-prime.yml'
+      policy['post_main']['allowed_push_workflows'] = [cache_prime]
+      write_json(root, '.github/merge-gate-policy.json', policy)
+      write(root, cache_prime, <<~YAML)
+        name: Protected-main cache prime
+        on:
+          push:
+            branches: [main]
+        jobs:
+          prime:
+            runs-on: ubuntu-24.04
+      YAML
+
+      refute_includes verify(root).join("\n"), "#{cache_prime} targets push to main"
+      write(root, '.github/workflows/unauthorized-post-main.yml', <<~YAML)
+        name: Unauthorized post-main
+        on:
+          push:
+            branches: [main]
+        jobs:
+          validate:
+            runs-on: ubuntu-latest
+      YAML
+      assert_includes verify(root).join("\n"), 'unauthorized-post-main.yml targets push to main'
+    end
+  end
+
   def test_main_push_ignore_is_allowed
     with_repo do |root, _policy|
       write(root, '.github/workflows/feature-push.yml', <<~YAML)
