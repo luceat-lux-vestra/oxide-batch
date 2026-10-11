@@ -105,9 +105,7 @@
   },
   "post_main": {
     "default_branch": "main",
-    "allowed_push_workflows": [
-      ".github/workflows/sccache-main-prime.yml"
-    ]
+    "allowed_push_workflows": []
   },
   "repository_merge_gate": {
     "context": "merge-gate",
