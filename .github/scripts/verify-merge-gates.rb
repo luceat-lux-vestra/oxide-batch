@@ -1887,7 +1887,6 @@ module MergeGateVerifier
         'tokens' => [
           'cargo check -p oxide-batch --no-default-features',
           'cargo check -p oxide-batch-cli --no-default-features --all-targets',
-          'cargo doc --workspace --all-features --no-deps',
           'cargo run --package oxide-batch-xtask -- deps',
           'cargo run --package oxide-batch-xtask -- surface',
           'cargo run --package oxide-batch-xtask -- release-crates'
@@ -1925,6 +1924,31 @@ module MergeGateVerifier
       missing = spec['tokens'].reject { |token| body.include?(token) }
       unless missing.empty?
         violations << "#{QUALITY_WORKFLOW}##{job_id} is missing quality obligations: #{missing.join(', ')}"
+      end
+    end
+
+    # The original workspace --no-deps docs pass may be replaced only by
+    # the strictly stronger fresh dependency-linked workspace docs build in
+    # xtask surface. A workflow token alone is not proof of that coverage.
+    contracts = jobs['quality-contracts']
+    if contracts.is_a?(Hash)
+      commands = Array(contracts['steps']).filter_map { |step| step.is_a?(Hash) ? step['run'] : nil }.join("\n")
+      unless commands.include?('cargo doc --workspace --all-features --no-deps')
+        source_path = Pathname(root).join('xtask/src/surface.rs')
+        source = source_path.file? ? source_path.read : ''
+        required = [
+          'pub fn check() -> Result<Vec<String>, String> {',
+          'build_documentation()?;',
+          'let found = scan(&documentation_root()?)?;',
+          'fn documentation_command() -> Command {',
+          'command.args(["doc", "--workspace", "--all-features"]);',
+          'command.env("RUSTDOCFLAGS", "-D warnings");',
+          'let status = documentation_command()'
+        ]
+        missing = required.reject { |token| source.include?(token) }
+        unless missing.empty?
+          violations << "#{QUALITY_WORKFLOW}#quality-contracts is missing strict full-workspace dependency rustdoc surface guarantees: #{missing.join(', ')}"
+        end
       end
     end
 
