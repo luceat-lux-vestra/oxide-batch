@@ -1080,6 +1080,49 @@ def preflight_orphan_codeql_cancel(
     }
 
 
+def _correlated_runs_by_attempt(
+    authority: Authority,
+    runs: Iterable[dict[str, object]],
+    *,
+    pr_number: str,
+    head_sha: str,
+    caller_run_id: str,
+    current_caller_run_attempt: int,
+) -> dict[int, list[dict[str, object]]]:
+    prefix = (
+        f"pr-authority/{authority.id}/pr-{pr_number}/{head_sha}/"
+        f"caller-{caller_run_id}-"
+    )
+    correlated: dict[int, list[dict[str, object]]] = {}
+    for run in runs:
+        if run.get("event") != "workflow_dispatch":
+            continue
+        title = run.get("display_title")
+        if not isinstance(title, str) or not title.startswith(prefix):
+            continue
+        suffix = title[len(prefix) :]
+        if not suffix.isdigit() or int(suffix) <= 0:
+            raise ContractError(
+                f"{authority.id} has malformed correlated caller attempt in {title!r}"
+            )
+        attempt = int(suffix)
+        if attempt > current_caller_run_attempt:
+            raise ContractError(
+                f"{authority.id} has future correlated caller attempt {attempt} "
+                f"(current={current_caller_run_attempt})"
+            )
+        correlated.setdefault(attempt, []).append(run)
+
+    for attempt, matches in correlated.items():
+        if len(matches) > 1:
+            raise ContractError(
+                f"{authority.id} has duplicate correlated workflow runs for caller "
+                f"attempt {attempt}: "
+                + ", ".join(str(run.get("id", "unknown")) for run in matches)
+            )
+    return correlated
+
+
 def verify_runs(
     *,
     authorities: list[Authority],
@@ -1106,6 +1149,7 @@ def verify_runs(
     if poll_interval_seconds < 0 or poll_interval_seconds > 60:
         raise ContractError("poll_interval_seconds must be between 0 and 60")
 
+    current_attempt = int(caller_run_attempt)
     required_ids = {authority.id for authority in required}
     deadline = monotonic() + timeout_seconds
 
@@ -1128,41 +1172,62 @@ def verify_runs(
         if live_head.get("sha") != head_sha or head_repo_data.get("full_name") != head_repo:
             raise ContractError("live PR head identity changed during polling")
 
-        waiting: list[str] = []
-        evidence: dict[str, dict[str, object]] = {}
-
+        by_authority: dict[str, dict[int, list[dict[str, object]]]] = {}
+        materialized_attempts: set[int] = set()
         for authority in authorities:
-            title = expected_run_name(
+            correlated = _correlated_runs_by_attempt(
                 authority,
+                client.workflow_runs(authority.workflow),
                 pr_number=pr_number,
                 head_sha=head_sha,
                 caller_run_id=caller_run_id,
-                caller_run_attempt=caller_run_attempt,
+                current_caller_run_attempt=current_attempt,
             )
-            runs = client.workflow_runs(authority.workflow)
-            matches = [
-                run
-                for run in runs
-                if run.get("event") == "workflow_dispatch"
-                and run.get("display_title") == title
-            ]
-            if len(matches) > 1:
-                raise ContractError(
-                    f"{authority.id} has duplicate correlated workflow runs: "
-                    + ", ".join(str(run.get("id", "unknown")) for run in matches)
-                )
+            by_authority[authority.id] = correlated
+            materialized_attempts.update(correlated)
 
+        if not required_ids:
+            unexpected = [
+                f"{authority.id}@{attempt}:run-{matches[0].get('id', 'unknown')}"
+                for authority in authorities
+                for attempt, matches in by_authority[authority.id].items()
+            ]
+            if unexpected:
+                raise ContractError(
+                    "non-applicable authority unexpectedly materialized: "
+                    + ", ".join(unexpected)
+                )
+            return {
+                "schema": PR_PROOF_SCHEMA,
+                "authority_caller_run_attempt": current_attempt,
+                "verified": {},
+            }
+
+        # A full rerun that actually redispatches authorities owns the newest
+        # materialized caller attempt. A failed-jobs-only rerun has no new
+        # authority generation, so proof reuses the newest prior generation.
+        # Never combine authorities from different caller attempts.
+        selected_attempt = max(materialized_attempts, default=current_attempt)
+
+        waiting: list[str] = []
+        missing_ids: list[str] = []
+        evidence: dict[str, dict[str, object]] = {}
+
+        for authority in authorities:
+            matches = by_authority[authority.id].get(selected_attempt, [])
             required_here = authority.id in required_ids
             if not required_here:
                 if matches:
                     raise ContractError(
                         f"non-applicable authority {authority.id} unexpectedly materialized "
+                        f"for caller attempt {selected_attempt} "
                         f"(run_id={matches[0].get('id', 'unknown')})"
                     )
                 continue
 
             if not matches:
                 waiting.append(f"{authority.id}:missing")
+                missing_ids.append(authority.id)
                 continue
 
             run = matches[0]
@@ -1184,18 +1249,44 @@ def verify_runs(
             evidence[authority.id] = {
                 "workflow": authority.workflow,
                 "run_id": run_id,
-                "display_title": title,
+                "display_title": expected_run_name(
+                    authority,
+                    pr_number=pr_number,
+                    head_sha=head_sha,
+                    caller_run_id=caller_run_id,
+                    caller_run_attempt=str(selected_attempt),
+                ),
                 "conclusion": "success",
             }
 
         if not waiting:
             return {
                 "schema": PR_PROOF_SCHEMA,
+                "authority_caller_run_attempt": selected_attempt,
                 "verified": evidence,
             }
 
         now = monotonic()
         if now >= deadline:
+            split = []
+            for authority in authorities:
+                if authority.id not in missing_ids:
+                    continue
+                other_attempts = sorted(
+                    attempt
+                    for attempt in by_authority[authority.id]
+                    if attempt != selected_attempt
+                )
+                if other_attempts:
+                    split.append(
+                        f"{authority.id}@{','.join(str(value) for value in other_attempts)}"
+                    )
+            if split:
+                raise ContractError(
+                    "required authority evidence is split across caller attempts; "
+                    "refusing cross-attempt mixing: "
+                    + ", ".join(split)
+                )
             raise ContractError(
                 "timed out waiting for required authority runs: " + ", ".join(waiting)
             )
@@ -1257,7 +1348,14 @@ def _test_authorities() -> list[Authority]:
     ]
 
 
-def _run(authority: Authority, *, conclusion: str = "success", run_id: int = 10) -> dict[str, object]:
+def _run(
+    authority: Authority,
+    *,
+    conclusion: str = "success",
+    run_id: int = 10,
+    caller_run_attempt: str = "2",
+    workflow_run_attempt: int = 1,
+) -> dict[str, object]:
     return {
         "id": run_id,
         "event": "workflow_dispatch",
@@ -1266,8 +1364,9 @@ def _run(authority: Authority, *, conclusion: str = "success", run_id: int = 10)
             pr_number="42",
             head_sha="b" * 40,
             caller_run_id="1001",
-            caller_run_attempt="2",
+            caller_run_attempt=caller_run_attempt,
         ),
+        "run_attempt": workflow_run_attempt,
         "status": "completed",
         "conclusion": conclusion,
     }
@@ -2472,6 +2571,152 @@ class RuntimeContractTests(unittest.TestCase):
             {"rust", "dependency", "codeql"},
             set(result["verified"]),
         )
+
+    def test_selective_rerun_reuses_latest_materialized_dispatch_attempt(self) -> None:
+        authorities = _test_authorities()
+        required = authorities[:3]
+        client = _FakeClient(
+            {
+                authority.workflow: [
+                    _run(authority, run_id=100 + index, caller_run_attempt="1")
+                ]
+                for index, authority in enumerate(required)
+            }
+        )
+        result = verify_runs(
+            authorities=authorities,
+            required=required,
+            client=client,
+            dispatch_result="success",
+            pr_number="42",
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            head_repo="owner/repo",
+            caller_run_id="1001",
+            caller_run_attempt="2",
+            timeout_seconds=0,
+            poll_interval_seconds=0,
+        )
+        self.assertEqual(1, result["authority_caller_run_attempt"])
+        self.assertEqual(
+            {"rust", "dependency", "codeql"},
+            set(result["verified"]),
+        )
+
+    def test_authority_workflow_rerun_preserves_caller_generation(self) -> None:
+        authority = _test_authorities()[0]
+        rerun = _run(
+            authority,
+            caller_run_attempt="1",
+            workflow_run_attempt=2,
+        )
+        result = verify_runs(
+            authorities=[authority],
+            required=[authority],
+            client=_FakeClient({authority.workflow: [rerun]}),
+            dispatch_result="success",
+            pr_number="42",
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            head_repo="owner/repo",
+            caller_run_id="1001",
+            caller_run_attempt="2",
+            timeout_seconds=0,
+            poll_interval_seconds=0,
+        )
+        self.assertEqual(1, result["authority_caller_run_attempt"])
+        self.assertEqual({"rust"}, set(result["verified"]))
+
+    def test_full_rerun_prefers_newest_materialized_caller_generation(self) -> None:
+        authority = _test_authorities()[0]
+        result = verify_runs(
+            authorities=[authority],
+            required=[authority],
+            client=_FakeClient(
+                {
+                    authority.workflow: [
+                        _run(authority, run_id=10, caller_run_attempt="1"),
+                        _run(authority, run_id=11, caller_run_attempt="2"),
+                    ]
+                }
+            ),
+            dispatch_result="success",
+            pr_number="42",
+            base_sha="a" * 40,
+            head_sha="b" * 40,
+            head_repo="owner/repo",
+            caller_run_id="1001",
+            caller_run_attempt="2",
+            timeout_seconds=0,
+            poll_interval_seconds=0,
+        )
+        self.assertEqual(2, result["authority_caller_run_attempt"])
+        self.assertEqual(11, result["verified"]["rust"]["run_id"])
+
+    def test_split_authority_generations_are_not_mixed(self) -> None:
+        rust, dependency = _test_authorities()[:2]
+        with self.assertRaisesRegex(
+            ContractError,
+            "split across caller attempts",
+        ):
+            verify_runs(
+                authorities=[rust, dependency],
+                required=[rust, dependency],
+                client=_FakeClient(
+                    {
+                        rust.workflow: [
+                            _run(rust, caller_run_attempt="1"),
+                        ],
+                        dependency.workflow: [
+                            _run(dependency, caller_run_attempt="2"),
+                        ],
+                    }
+                ),
+                dispatch_result="success",
+                pr_number="42",
+                base_sha="a" * 40,
+                head_sha="b" * 40,
+                head_repo="owner/repo",
+                caller_run_id="1001",
+                caller_run_attempt="2",
+                timeout_seconds=0,
+                poll_interval_seconds=0,
+            )
+
+    def test_stale_pr_head_or_caller_evidence_is_not_reused(self) -> None:
+        authority = _test_authorities()[0]
+        cases = (
+            ("pr", "43", "b" * 40, "1001"),
+            ("head", "42", "c" * 40, "1001"),
+            ("caller", "42", "b" * 40, "9999"),
+        )
+        for name, stale_pr, stale_head, stale_caller in cases:
+            stale = _run(authority, caller_run_attempt="1")
+            stale["display_title"] = expected_run_name(
+                authority,
+                pr_number=stale_pr,
+                head_sha=stale_head,
+                caller_run_id=stale_caller,
+                caller_run_attempt="1",
+            )
+            with self.subTest(name=name), self.assertRaisesRegex(
+                ContractError,
+                "timed out waiting",
+            ):
+                verify_runs(
+                    authorities=[authority],
+                    required=[authority],
+                    client=_FakeClient({authority.workflow: [stale]}),
+                    dispatch_result="success",
+                    pr_number="42",
+                    base_sha="a" * 40,
+                    head_sha="b" * 40,
+                    head_repo="owner/repo",
+                    caller_run_id="1001",
+                    caller_run_attempt="2",
+                    timeout_seconds=0,
+                    poll_interval_seconds=0,
+                )
 
     def test_verify_rejects_missing_required_run(self) -> None:
         authorities = _test_authorities()
