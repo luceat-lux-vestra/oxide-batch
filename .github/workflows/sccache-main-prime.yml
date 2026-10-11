@@ -1,6 +1,10 @@
 name: Fast compiler cache prime
 
 on:
+  # Cache population runs from the protected default-branch checkout after merge.
+  # This is the sole permitted post-main push workflow; PR-head code is never executed.
+  push:
+    branches: [main]
   schedule:
     - cron: "17 */4 * * *"
   workflow_dispatch:
