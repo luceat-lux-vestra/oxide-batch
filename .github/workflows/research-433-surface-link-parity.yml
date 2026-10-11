@@ -1,0 +1,122 @@
+name: Research Rustdoc index hints semantic cross-validation
+on:
+  push:
+    branches: [research/433-surface-rustdoc-profile-ab-20261011]
+    paths: [.github/workflows/research-433-surface-link-parity.yml]
+permissions:
+  contents: read
+jobs:
+  parity:
+    name: parity-${{ matrix.mode }}-${{ matrix.fixture }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [full, link-hints]
+        fixture: [clean, signatures]
+    steps:
+      - name: Checkout immutable protected source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 33adce70d02913c9aded38edc27160fba104f757
+          persist-credentials: false
+      - name: Validate source, prepare optional signature fixtures, build scanner
+        env:
+          FIXTURE_MODE: ${{ matrix.fixture }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "33adce70d02913c9aded38edc27160fba104f757"
+          test "$(uname -m)" = "x86_64"
+          grep -Fq 'command.args(["doc", "--workspace", "--all-features"])' xtask/src/surface.rs
+          if [[ "$FIXTURE_MODE" == "signatures" ]]; then
+            cat >> crates/oxide-batch/src/lib.rs <<'EOF'
+
+          /// Negative fixture: a re-exported foreign runtime type.
+          pub use tokio::runtime::Runtime as SurfaceLeakReexportTokio;
+          /// Negative fixture: foreign return type in the public function signature.
+          pub fn surface_leak_return_sqlx() -> sqlx::PgPool { panic!("unreachable fixture") }
+          /// Negative fixture: foreign type in a public field.
+          pub struct SurfaceLeakFieldCsv { pub value: csv::Reader<std::fs::File> }
+          /// Negative fixture: foreign type in public trait method signature.
+          pub trait SurfaceLeakTraitSha2 { fn consume(&self, value: sha2::Sha256); }
+          /// Negative fixture: foreign generic type in a public alias.
+          pub type SurfaceLeakGenericSerde<T> = serde_json::Map<String, T>;
+          EOF
+          fi
+          cargo build -p oxide-batch-xtask --locked
+      - name: Create dependency-index hints from the entire resolved Cargo graph
+        env:
+          DOC_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$DOC_MODE" != "link-hints" ]]; then exit 0; fi
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+          meta = json.loads(subprocess.check_output(["cargo", "metadata", "--locked", "--format-version", "1"]))
+          root = Path(meta["target_directory"]) / "doc"
+          cratenames = set()
+          for p in meta["packages"]:
+              for target in p["targets"]:
+                  if {"lib", "rlib", "proc-macro", "dylib"} & set(target["kind"]):
+                      cratenames.add(target["name"].replace("-", "_"))
+          for name in sorted(cratenames):
+              directory = root / name
+              directory.mkdir(parents=True, exist_ok=True)
+              (directory / "index.html").write_text("<!doctype html><title>CI-only Rustdoc link placeholder</title>")
+          print(f"RESEARCH_RESOLVED_LINK_HINTS crates={len(cratenames)}")
+          PY
+      - name: Render complete-workspace HTML under selected mode
+        env:
+          DOC_MODE: ${{ matrix.mode }}
+          FIXTURE_MODE: ${{ matrix.fixture }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$SECONDS"
+          if [[ "$DOC_MODE" == "full" ]]; then
+            RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --locked
+          else
+            RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+          fi
+          echo "RESEARCH_PARITY_BUILD mode=$DOC_MODE fixture=$FIXTURE_MODE seconds=$((SECONDS-start))"
+      - name: Run byte-identical production scanner against generated HTML
+        env:
+          DOC_MODE: ${{ matrix.mode }}
+          FIXTURE_MODE: ${{ matrix.fixture }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          realcargo="$(command -v cargo)"
+          stub="$RUNNER_TEMP/research-inspect"
+          mkdir -p "$stub"
+          cat > "$stub/cargo" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" == 3 && "$1" == "doc" && "$2" == "--workspace" && "$3" == "--all-features" ]]; then exit 0; fi
+          exec "$REAL_CARGO" "$@"
+          EOF
+          chmod +x "$stub/cargo"
+          set +e
+          REAL_CARGO="$realcargo" PATH="$stub:$PATH" target/debug/oxide-batch-xtask surface > "$RUNNER_TEMP/scan.txt" 2>&1
+          code="$?"
+          set -e
+          echo "RESEARCH_PARITY_SCAN mode=$DOC_MODE fixture=$FIXTURE_MODE exit=$code"
+          if [[ "$FIXTURE_MODE" == "clean" ]]; then
+            test "$code" -eq 0
+            grep -Fq "facade surface discloses nothing further" "$RUNNER_TEMP/scan.txt"
+          else
+            test "$code" -ne 0
+            for name in SurfaceLeakReexportTokio surface_leak_return_sqlx SurfaceLeakFieldCsv SurfaceLeakTraitSha2 SurfaceLeakGenericSerde; do
+              if grep -Fq "disclosure: oxide_batch::$name" "$RUNNER_TEMP/scan.txt"; then
+                echo "RESEARCH_SIGNATURE_DETECTED mode=$DOC_MODE name=$name"
+              else
+                echo "RESEARCH_SIGNATURE_MISSED mode=$DOC_MODE name=$name"
+              fi
+            done
+            grep '^disclosure:' "$RUNNER_TEMP/scan.txt" | head -30 || true
+          fi
