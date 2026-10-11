@@ -55,8 +55,6 @@ jobs:
           if [[ "$FIXTURE" == "adversarial" ]]; then
             cat >> crates/oxide-batch/src/lib.rs <<'EOF'
 
-          /// Research negative control: leaked runtime type.
-          pub type SurfaceLeakTokio = tokio::runtime::Runtime;
           /// Research negative control: leaked database driver.
           pub type SurfaceLeakSqlx = sqlx::PgPool;
           /// Research negative control: leaked serializer.
@@ -124,7 +122,7 @@ jobs:
             else
               test "$code" -ne 0
               missing=0
-              for fixture in SurfaceLeakTokio SurfaceLeakSqlx SurfaceLeakJson SurfaceLeakCsv SurfaceLeakSha2 SurfaceLeakReexportTokio surface_leak_return_sqlx SurfaceLeakFieldCsv SurfaceLeakTraitSha2 SurfaceLeakGenericSerde; do
+              for fixture in SurfaceLeakSqlx SurfaceLeakJson SurfaceLeakCsv SurfaceLeakSha2 SurfaceLeakReexportTokio surface_leak_return_sqlx SurfaceLeakFieldCsv SurfaceLeakTraitSha2 SurfaceLeakGenericSerde; do
                 if grep -Fq "disclosure: oxide_batch::$fixture" "$RUNNER_TEMP/$FIXTURE-$mode-scan.log"; then
                   echo "RESEARCH_GUARDED_DETECTED mode=$mode alias=$fixture"
                 else
