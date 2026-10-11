@@ -123,9 +123,19 @@ jobs:
               grep -Fq "facade surface discloses nothing further" "$RUNNER_TEMP/$FIXTURE-$mode-scan.log"
             else
               test "$code" -ne 0
+              missing=0
               for fixture in SurfaceLeakTokio SurfaceLeakSqlx SurfaceLeakJson SurfaceLeakCsv SurfaceLeakSha2 SurfaceLeakReexportTokio surface_leak_return_sqlx SurfaceLeakFieldCsv SurfaceLeakTraitSha2 SurfaceLeakGenericSerde; do
-                grep -Fq "disclosure: oxide_batch::$fixture" "$RUNNER_TEMP/$FIXTURE-$mode-scan.log"
+                if grep -Fq "disclosure: oxide_batch::$fixture" "$RUNNER_TEMP/$FIXTURE-$mode-scan.log"; then
+                  echo "RESEARCH_GUARDED_DETECTED mode=$mode alias=$fixture"
+                else
+                  echo "RESEARCH_GUARDED_MISSED mode=$mode alias=$fixture"
+                  missing=1
+                fi
               done
+              if [[ "$missing" != 0 ]]; then
+                grep '^disclosure:' "$RUNNER_TEMP/$FIXTURE-$mode-scan.log" | head -50 || true
+                exit 42
+              fi
             fi
             grep -E '^(accepted finding:|disclosure:)' "$RUNNER_TEMP/$FIXTURE-$mode-scan.log" | LC_ALL=C sort > "$RUNNER_TEMP/$FIXTURE-$mode-findings.txt"
             echo "RESEARCH_GUARDED_FINDINGS mode=$mode fixture=$FIXTURE count=$(wc -l < "$RUNNER_TEMP/$FIXTURE-$mode-findings.txt")"
