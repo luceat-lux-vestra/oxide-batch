@@ -233,7 +233,8 @@
         "path": ".github/scripts/test-merge-gates.rb",
         "accepted_blobs": [
           "7e543fe3cefa0426f934dc6dc59519ff50fa3f64",
-          "79c96855e7a4e5f3227069e43680dfb7cec228ff"
+          "79c96855e7a4e5f3227069e43680dfb7cec228ff",
+          "4e181245a2f2035f6c131efbd12fa15072a98ebd"
         ]
       },
       {
