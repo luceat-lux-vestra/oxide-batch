@@ -3,7 +3,7 @@ name: Fast compiler cache prime
 on:
   # Trigger only after the read-only merged-PR signal has completed.
   # workflow_run executes the protected default-branch workflow, never PR-head code.
-  workflow_run:
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- trusted default-branch source; upstream job, SHA, ref and live main checked before compiler/cache access.
     workflows: ["Protected main merge signal"]
     types: [completed]
   schedule:
@@ -163,12 +163,10 @@ jobs:
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
-          echo "$install_dir" >> "$GITHUB_PATH"
-
-      - name: Configure local sccache directory
-        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
-        shell: bash
-        run: echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache" >> "$GITHUB_ENV"
+          # The Rust toolchain bin directory is already on PATH; do not write a privileged GITHUB_PATH.
+          cargo_bin_dir="$(dirname "$(command -v cargo)")"
+          test -d "$cargo_bin_dir"
+          install -m 0755 "$install_dir/sccache" "$cargo_bin_dir/sccache"
 
       - name: Fetch locked dependencies
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
@@ -176,6 +174,8 @@ jobs:
 
       - name: Prime exact Fast Rust compiler outputs
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
         shell: bash
         run: |
           set -euo pipefail
