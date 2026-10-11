@@ -1,0 +1,171 @@
+name: Authority ARM64 A/B research (read-only)
+
+# One-shot, branch-scoped research workflow; NOT a production merge authority.
+# Both arms run the identical protected-main SOURCE_SHA with the same checks.
+on:
+  push:
+    branches: [research/433-authority-arm-ab-20261011]
+    paths: [.github/workflows/research-authority-arm64-ab.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: authority-arm64-ab-research
+  cancel-in-progress: true
+
+env:
+  SOURCE_SHA: a76384a5e1d87b81629ffa15aaa9a1406090f5b7
+  CARGO_TERM_COLOR: never
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  integration:
+    name: integration-${{ matrix.shard }}-${{ matrix.arch }}-rep${{ matrix.repeat }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        shard: [0, 3]
+        repeat: [1, 2]
+        include:
+          - arch: x64
+            arch_suffix: ""
+            artifact_triple: x86_64-unknown-linux-musl
+            artifact_sha256: 45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+          - arch: arm64
+            arch_suffix: "-arm64"
+            artifact_triple: aarch64-unknown-linux-musl
+            artifact_sha256: 2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a
+    env:
+      SCCACHE_TRIPLE: ${{ matrix.artifact_triple }}
+      SCCACHE_SHA256: ${{ matrix.artifact_sha256 }}
+      ARCH_SUFFIX: ${{ matrix.arch_suffix }}
+      SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
+      SCCACHE_CACHE_SIZE: 768M
+      SCCACHE_LOCAL_RW_MODE: READ_ONLY
+      RUSTC_WRAPPER: sccache
+    steps:
+      - name: Check out exact identical protected-main source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: a76384a5e1d87b81629ffa15aaa9a1406090f5b7
+          persist-credentials: false
+      - name: Verify A/B source and native architecture
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(uname -m)" = "${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}"
+          git log -1 --check
+      - name: Resolve cache identity identical to production consumer
+        id: cid
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          family="oxide-fast-sccache-v1-linux${ARCH_SUFFIX}-${toolchain_hash}"
+          lock_prefix="${family}-${lock_hash}-"
+          echo "key=${lock_prefix}${SOURCE_SHA}" >> "$GITHUB_OUTPUT"
+          echo "lock_prefix=${lock_prefix}" >> "$GITHUB_OUTPUT"
+          echo "family=${family}" >> "$GITHUB_OUTPUT"
+      - name: Install SHA256-verified native sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v0.18.0-${SCCACHE_TRIPLE}.tar.gz"
+          curl --fail --location --retry 3 --retry-delay 2             "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-${SCCACHE_TRIPLE}.tar.gz" -o "$archive"
+          echo "$SCCACHE_SHA256  $archive" | sha256sum --check --strict
+          mkdir -p "$RUNNER_TEMP/sccache-bin"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/sccache-bin" --strip-components=1
+          echo "$RUNNER_TEMP/sccache-bin" >> "$GITHUB_PATH"
+      - name: Restore exact protected-main compiler cache (never save)
+        id: restore
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.cid.outputs.key }}
+          restore-keys: |
+            ${{ steps.cid.outputs.lock_prefix }}
+            ${{ steps.cid.outputs.family }}-
+      - name: Verify full exact cache hit for matched A/B
+        run: |
+          set -euo pipefail
+          test "${{ steps.restore.outputs.cache-hit }}" = true
+      - name: Execute production integration shard
+        shell: bash
+        run: |
+          set -euo pipefail
+          sccache --zero-stats
+          start="$(date +%s)"
+          python3 .github/scripts/run-integration-shard.py ${{ matrix.shard }} 4
+          end="$(date +%s)"
+          echo "AB_RESULT class=integration shard=${{ matrix.shard }} arch=${{ matrix.arch }} repeat=${{ matrix.repeat }} duration_s=$((end-start)) source=$SOURCE_SHA"
+      - name: Show compiler-cache stats
+        if: ${{ always() }}
+        run: sccache --show-stats --stats-format=json
+
+  postgres-repository:
+    name: pg-${{ matrix.pg }}-${{ matrix.arch }}-rep${{ matrix.repeat }}
+    runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+        pg: ["15", "18"]
+        repeat: [1, 2]
+    services:
+      postgres:
+        image: postgres:${{ matrix.pg }}@sha256:${{ matrix.pg == '15' && '926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561' || '4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280' }} # zizmor: ignore[unpinned-images]
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_repository
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_repository"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+    steps:
+      - name: Check out exact identical protected-main source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: a76384a5e1d87b81629ffa15aaa9a1406090f5b7
+          persist-credentials: false
+      - name: Verify A/B source and native architecture
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(uname -m)" = "${{ matrix.arch == 'arm64' && 'aarch64' || 'x86_64' }}"
+          git log -1 --check
+      - name: Run exact PostgreSQL Authority test calls in original order (no compiler cache)
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          run_repo() {
+            cargo test -p oxide-batch --features postgres --test postgres_repository "$1" -- --nocapture --test-threads=1
+          }
+          # Migration, shared core (five), shared service, fault tolerance (three).
+          for test_name in             migration_is_idempotent_when_migrator_fixture_is_available             shared_repository_contract_passes_on_postgres             concurrent_launch_creates_single_instance             committed_chunk_advances_checkpoint             writer_failure_rolls_back_business_and_checkpoint             optimistic_conflict_has_one_winner             shared_service_contract_passes_on_postgres             retry_reservation_is_a_durable_compare_and_swap             skips_counters_and_fault_state_commit_with_the_chunk             corrupt_fault_state_fails_before_component_work; do
+            run_repo "$test_name"
+          done
+          cargo test -p oxide-batch --features postgres --test postgres_flow -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres --test postgres_nested_job -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres --lib             scope_runtime::tests::postgres_job_context_source_resolves_and_records_provenance -- --nocapture --test-threads=1
+          for test_name in             compatible_restart_with_scope_resolution_provenance_fails_closed             retention_excludes_execution_referenced_by_scope_provenance             disconnect_during_commit_never_guesses_outcome             postgres_chunk_disconnect_is_known_not_committed_before_commit             newer_schema_is_rejected_without_guessing_compatibility; do
+            run_repo "$test_name"
+          done
+          for target in             postgres_crash_recovery postgres_fault_crash_recovery             postgres_flow_crash_recovery postgres_local_partition_crash_recovery             postgres_local_split_crash_recovery postgres_advanced_flow_crash_recovery             postgres_nested_job_crash_recovery postgres_scope_resolution_crash_recovery             postgres_custom_leaf_crash_recovery             postgres_item_stream_crash_recovery postgres_retention_component_state; do
+            cargo test -p oxide-batch --features postgres --test "$target" -- --nocapture --test-threads=1
+          done
+          end="$(date +%s)"
+          echo "AB_RESULT class=postgres pg=${{ matrix.pg }} arch=${{ matrix.arch }} repeat=${{ matrix.repeat }} duration_s=$((end-start)) source=$SOURCE_SHA"
