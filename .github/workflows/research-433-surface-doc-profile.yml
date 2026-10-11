@@ -1,0 +1,55 @@
+name: Research quality-contracts Rustdoc build profile A/B
+on:
+  push:
+    branches: [research/433-surface-rustdoc-profile-ab-20261011]
+    paths:
+      - .github/workflows/research-433-surface-doc-profile.yml
+permissions:
+  contents: read
+jobs:
+  surface-profile:
+    name: doc-${{ matrix.profile }}-r${{ matrix.repeat }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [baseline, debug0, incremental0, both]
+        repeat: [1, 2]
+    steps:
+      - name: Check out exact protected main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 33adce70d02913c9aded38edc27160fba104f757
+          persist-credentials: false
+      - name: Verify exact source and audit commands
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "33adce70d02913c9aded38edc27160fba104f757"
+          test "$(uname -m)" = "x86_64"
+          grep -Fq 'command.args(["doc", "--workspace", "--all-features"])' xtask/src/surface.rs
+          grep -Fq 'command.env("RUSTDOCFLAGS", "-D warnings")' xtask/src/surface.rs
+          echo "SURFACE_SOURCE_COMMIT=33adce70d02913c9aded38edc27160fba104f757"
+      - name: Build unchanged xtask runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo build --package oxide-batch-xtask --locked
+      - name: Measure exact Rustdoc disclosure scan
+        env:
+          DOC_PROFILE_MODE: ${{ matrix.profile }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$DOC_PROFILE_MODE" in
+            baseline) ;;
+            debug0) export CARGO_PROFILE_DEV_DEBUG=0 ;;
+            incremental0) export CARGO_INCREMENTAL=0 ;;
+            both) export CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 ;;
+            *) exit 41 ;;
+          esac
+          start="$SECONDS"
+          target/debug/oxide-batch-xtask surface
+          seconds="$((SECONDS - start))"
+          echo "SURFACE_DOC_PROFILE mode=$DOC_PROFILE_MODE seconds=$seconds source=33adce70d02913c9aded38edc27160fba104f757"
