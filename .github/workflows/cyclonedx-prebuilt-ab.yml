@@ -1,0 +1,77 @@
+# Temporary PR-only A/B proof; remove after collecting successful evidence.
+name: SBOM prebuilt A/B evidence
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - .github/workflows/release-draft.yml
+      - .github/scripts/install-cargo-cyclonedx-prebuilt.sh
+      - .github/workflows/cyclonedx-prebuilt-ab.yml
+
+permissions:
+  contents: read
+
+jobs:
+  ab:
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: A - build pinned cargo-cyclonedx from crates.io source
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          cargo install cargo-cyclonedx --version 0.5.9 --locked --root "$RUNNER_TEMP/cyclonedx-source"
+          echo "SOURCE_INSTALL_SECONDS=$(($(date +%s)-start))" >> "$GITHUB_ENV"
+          PATH="$RUNNER_TEMP/cyclonedx-source/bin:$PATH" cargo cyclonedx --version
+
+      - name: B - install exact official prebuilt with production script
+        run: |
+          set -euo pipefail
+          start="$(date +%s)"
+          bash .github/scripts/install-cargo-cyclonedx-prebuilt.sh
+          echo "PREBUILT_INSTALL_SECONDS=$(($(date +%s)-start))" >> "$GITHUB_ENV"
+
+      - name: Compare generated CycloneDX 1.5 JSON on the same manifest
+        run: |
+          set -euo pipefail
+          export SOURCE_DATE_EPOCH=1700000000
+          test -f crates/oxide-batch/Cargo.toml
+          PATH="$RUNNER_TEMP/cyclonedx-source/bin:$PATH" cargo cyclonedx \
+            --manifest-path crates/oxide-batch/Cargo.toml \
+            --format json --all-features --target all --spec-version 1.5 \
+            --override-filename ab-source
+          PATH="$RUNNER_TEMP/cargo-cyclonedx-0.5.9/bin:$PATH" cargo cyclonedx \
+            --manifest-path crates/oxide-batch/Cargo.toml \
+            --format json --all-features --target all --spec-version 1.5 \
+            --override-filename ab-prebuilt
+          source_file="crates/oxide-batch/ab-source.json"
+          prebuilt_file="crates/oxide-batch/ab-prebuilt.json"
+          test -s "$source_file"
+          test -s "$prebuilt_file"
+          python3 - "$source_file" "$prebuilt_file" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+
+          source = json.loads(Path(sys.argv[1]).read_text())
+          prebuilt = json.loads(Path(sys.argv[2]).read_text())
+          assert source == prebuilt, "A/B SBOM output mismatch (after SOURCE_DATE_EPOCH)"
+          assert source.get("bomFormat") == "CycloneDX"
+          assert source.get("specVersion") == "1.5"
+          assert source.get("components"), "Expected a nonempty package graph"
+          print(f"SBOM parity PASS: {len(source['components'])} components")
+          PY
+          {
+            echo "### cargo-cyclonedx 0.5.9 A/B verification"
+            echo "- Source install: ${SOURCE_INSTALL_SECONDS}s"
+            echo "- Verified prebuilt install: ${PREBUILT_INSTALL_SECONDS}s"
+            echo "- Parity: exact semantic JSON equality with SOURCE_DATE_EPOCH"
+            echo "- SHA-256 (source SBOM): $(sha256sum "$source_file" | cut -d' ' -f1)"
+            echo "- SHA-256 (prebuilt SBOM): $(sha256sum "$prebuilt_file" | cut -d' ' -f1)"
+          } >> "$GITHUB_STEP_SUMMARY"
