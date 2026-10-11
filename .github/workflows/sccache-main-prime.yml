@@ -174,16 +174,6 @@ jobs:
           test "$RUNNER_ARCH" = "$EXPECTED_RUNNER_ARCH"
           test "$(uname -m)" = "$EXPECTED_UNAME_ARCH"
 
-      # A step-level SCCACHE_DIR is too late if the sccache daemon has
-      # already started at its platform-default directory. GITHUB_ENV
-      # propagates the restored directory before any Cargo/sccache process.
-      - name: Configure restored compiler-cache directory
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -d "$RUNNER_TEMP"
-          echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache" >> "$GITHUB_ENV"
-
       - name: Resolve bounded compiler-cache identity
         id: cache-id
         shell: bash
@@ -247,8 +237,13 @@ jobs:
           test -d "$cargo_bin_dir"
           install -m 0755 "$install_dir/sccache" "$cargo_bin_dir/sccache"
 
+      # Explicit, scoped env avoids privileged GITHUB_ENV writes. This is
+      # the FIRST invocation of sccache; it starts the server on the
+      # restored directory before any Cargo subprocess.
       - name: Verify running compiler cache uses restored directory
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
         shell: bash
         run: |
           set -euo pipefail
@@ -270,10 +265,14 @@ jobs:
 
       - name: Fetch locked dependencies
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
         run: cargo fetch --locked
 
       - name: Prime exact Fast Rust compiler outputs
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
         shell: bash
         run: |
           set -euo pipefail
