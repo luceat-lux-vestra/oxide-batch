@@ -1,0 +1,29 @@
+name: Protected main merge signal
+
+# Read-only sentinel: cache production follows only a completed merge to main.
+# No checkout, secrets, artifacts, or PR-head code execution.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions: {}
+
+jobs:
+  merged-main-signal:
+    name: merged-main-signal
+    if: ${{ github.event.pull_request.merged == true && github.event.pull_request.base.ref == github.event.repository.default_branch && github.ref == format('refs/heads/{0}', github.event.repository.default_branch) && github.event.pull_request.merge_commit_sha == github.sha }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 2
+    steps:
+      - name: Confirm merged-main event
+        env:
+          MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          test "$GITHUB_SHA" = "$MERGE_SHA"
+          echo "Trusted protected-main merge event accepted at $MERGE_SHA"
