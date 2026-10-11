@@ -1,0 +1,134 @@
+name: Research guarded Rustdoc link-hint parity
+on:
+  push:
+    branches: [research/433-rustdoc-link-hints-guarded-20261011]
+    paths:
+      - .github/workflows/research-433-rustdoc-hints-parity.yml
+      - .github/scripts/research_rustdoc_link_hints.py
+      - .github/scripts/test_research_rustdoc_link_hints.py
+permissions:
+  contents: read
+jobs:
+  safety:
+    name: deterministic-adversarial-generator-tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out research-only helper
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prove isolated generator guardrails
+        run: python3 .github/scripts/test_research_rustdoc_link_hints.py
+  parity:
+    name: isolated-${{ matrix.fixture }}-parity
+    needs: [safety]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        fixture: [clean, adversarial]
+    steps:
+      - name: Check out research-only generator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: research
+          persist-credentials: false
+      - name: Check out exact immutable protected main into src
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 33adce70d02913c9aded38edc27160fba104f757
+          path: src
+          persist-credentials: false
+      - name: Verify exact source and add optional negative control
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+        shell: bash
+        working-directory: src
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "33adce70d02913c9aded38edc27160fba104f757"
+          test "$(uname -m)" = "x86_64"
+          grep -Fq 'command.args(["doc", "--workspace", "--all-features"])' xtask/src/surface.rs
+          grep -Fq 'command.env("RUSTDOCFLAGS", "-D warnings")' xtask/src/surface.rs
+          if [[ "$FIXTURE" == "adversarial" ]]; then
+            cat >> crates/oxide-batch/src/lib.rs <<'EOF'
+
+          /// Research negative control: leaked runtime type.
+          pub type SurfaceLeakTokio = tokio::runtime::Runtime;
+          /// Research negative control: leaked database driver.
+          pub type SurfaceLeakSqlx = sqlx::PgPool;
+          /// Research negative control: leaked serializer.
+          pub type SurfaceLeakJson = serde_json::Value;
+          /// Research negative control: leaked CSV adapter.
+          pub type SurfaceLeakCsv = csv::Reader<std::fs::File>;
+          /// Research negative control: leaked hash implementation.
+          pub type SurfaceLeakSha2 = sha2::Sha256;
+          /// Research negative control: public runtime re-export.
+          pub use tokio::runtime::Runtime as SurfaceLeakReexportTokio;
+          /// Research negative control: public return type.
+          pub fn surface_leak_return_sqlx() -> sqlx::PgPool { panic!("unreachable fixture") }
+          /// Research negative control: public field type.
+          pub struct SurfaceLeakFieldCsv { /** Documented test field. */ pub value: csv::Reader<std::fs::File> }
+          /// Research negative control: public trait bound.
+          pub trait SurfaceLeakTraitSha2 { /** Documented test method. */ fn consume(&self, value: sha2::Sha256); }
+          /// Research negative control: generic public type alias.
+          pub type SurfaceLeakGenericSerde<T> = serde_json::Map<String, T>;
+          EOF
+          fi
+          cargo build -p oxide-batch-xtask --locked
+      - name: Full dependencies versus graph-guarded isolated stub docs
+        env:
+          FIXTURE: ${{ matrix.fixture }}
+        shell: bash
+        working-directory: src
+        run: |
+          set -euo pipefail
+          script="$GITHUB_WORKSPACE/research/.github/scripts/research_rustdoc_link_hints.py"
+          realcargo="$(command -v cargo)"
+          bindir="$RUNNER_TEMP/rustdoc-scan-wrapper"
+          mkdir -p "$bindir"
+          cat > "$bindir/cargo" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" == 3 && "$1" == "doc" && "$2" == "--workspace" && "$3" == "--all-features" ]]; then
+            exit 0
+          fi
+          exec "$REAL_CARGO" "$@"
+          EOF
+          chmod +x "$bindir/cargo"
+          for mode in full hints; do
+            export CARGO_TARGET_DIR="$RUNNER_TEMP/isolated-$FIXTURE-$mode"
+            mkdir -p "$CARGO_TARGET_DIR"
+            test ! -e "$CARGO_TARGET_DIR/doc"
+            if [[ "$mode" == "hints" ]]; then
+              python3 "$script" --doc-root "$CARGO_TARGET_DIR/doc"
+              test -f "$CARGO_TARGET_DIR/doc/sha2/index.html"
+            fi
+            start="$SECONDS"
+            if [[ "$mode" == "full" ]]; then
+              RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --locked
+            else
+              RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+            fi
+            echo "RESEARCH_GUARDED_DOC mode=$mode fixture=$FIXTURE seconds=$((SECONDS-start))"
+            set +e
+            REAL_CARGO="$realcargo" PATH="$bindir:$PATH" target/debug/oxide-batch-xtask surface > "$RUNNER_TEMP/$FIXTURE-$mode-scan.log" 2>&1
+            code="$?"
+            set -e
+            echo "RESEARCH_GUARDED_SCAN mode=$mode fixture=$FIXTURE exit=$code"
+            if [[ "$FIXTURE" == "clean" ]]; then
+              test "$code" -eq 0
+              grep -Fq "facade surface discloses nothing further" "$RUNNER_TEMP/$FIXTURE-$mode-scan.log"
+            else
+              test "$code" -ne 0
+              for fixture in SurfaceLeakTokio SurfaceLeakSqlx SurfaceLeakJson SurfaceLeakCsv SurfaceLeakSha2 SurfaceLeakReexportTokio surface_leak_return_sqlx SurfaceLeakFieldCsv SurfaceLeakTraitSha2 SurfaceLeakGenericSerde; do
+                grep -Fq "disclosure: oxide_batch::$fixture" "$RUNNER_TEMP/$FIXTURE-$mode-scan.log"
+              done
+            fi
+            grep -E '^(accepted finding:|disclosure:)' "$RUNNER_TEMP/$FIXTURE-$mode-scan.log" | LC_ALL=C sort > "$RUNNER_TEMP/$FIXTURE-$mode-findings.txt"
+            echo "RESEARCH_GUARDED_FINDINGS mode=$mode fixture=$FIXTURE count=$(wc -l < "$RUNNER_TEMP/$FIXTURE-$mode-findings.txt")"
+          done
+          diff -u "$RUNNER_TEMP/$FIXTURE-full-findings.txt" "$RUNNER_TEMP/$FIXTURE-hints-findings.txt"
+          echo "RESEARCH_GUARDED_PARITY=PASS fixture=$FIXTURE"
