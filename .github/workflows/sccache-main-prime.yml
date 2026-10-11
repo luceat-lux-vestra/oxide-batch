@@ -1,6 +1,11 @@
 name: Fast compiler cache prime
 
 on:
+  # Trigger only after the read-only merged-PR signal has completed.
+  # workflow_run executes the protected default-branch workflow, never PR-head code.
+  workflow_run: # zizmor: ignore[dangerous-triggers] -- trusted default-branch source; upstream job, SHA, ref and live main checked before compiler/cache access.
+    workflows: ["M5 post-merge cache signal"]
+    types: [completed]
   schedule:
     - cron: "17 */4 * * *"
   workflow_dispatch:
@@ -21,6 +26,9 @@ env:
 jobs:
   prime:
     name: main ${{ matrix.arch }} compiler cache prime
+    # The successful merged-main signal job is verified again below against the
+    # exact upstream workflow run; closed-without-merge cannot populate caches.
+    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request') }}
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +59,34 @@ jobs:
       actions: write # Prune older protected-main Fast compiler-cache entries after a successful save.
       contents: read # Check out the exact protected default-branch source being cached.
     steps:
+      - name: Verify completed trusted merge signal
+        if: ${{ github.event_name == 'workflow_run' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
+          UPSTREAM_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          UPSTREAM_EVENT: ${{ github.event.workflow_run.event }}
+          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$UPSTREAM_RUN_ID" =~ ^[0-9]+$ ]]
+          test "$UPSTREAM_EVENT" = pull_request
+          test "$UPSTREAM_CONCLUSION" = success
+          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
+          test "$UPSTREAM_HEAD_SHA" = "$GITHUB_SHA"
+          current_main="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/branches/$DEFAULT_BRANCH" --jq '.commit.sha')"
+          test "$current_main" = "$GITHUB_SHA"
+          gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$UPSTREAM_RUN_ID/jobs?per_page=100" |
+            jq -e '
+              .total_count == 1 and
+              (.jobs | length) == 1 and
+              .jobs[0].name == "merged-main-signal" and
+              .jobs[0].conclusion == "success"
+            ' >/dev/null
+
       - name: Check out protected default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -127,12 +163,10 @@ jobs:
           mkdir -p "$install_dir"
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
-          echo "$install_dir" >> "$GITHUB_PATH"
-
-      - name: Configure local sccache directory
-        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
-        shell: bash
-        run: echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache" >> "$GITHUB_ENV"
+          # The Rust toolchain bin directory is already on PATH; do not write a privileged GITHUB_PATH.
+          cargo_bin_dir="$(dirname "$(command -v cargo)")"
+          test -d "$cargo_bin_dir"
+          install -m 0755 "$install_dir/sccache" "$cargo_bin_dir/sccache"
 
       - name: Fetch locked dependencies
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
@@ -140,6 +174,8 @@ jobs:
 
       - name: Prime exact Fast Rust compiler outputs
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        env:
+          SCCACHE_DIR: ${{ runner.temp }}/oxide-fast-sccache
         shell: bash
         run: |
           set -euo pipefail
