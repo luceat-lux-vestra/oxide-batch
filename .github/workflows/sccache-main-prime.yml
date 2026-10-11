@@ -75,9 +75,76 @@ jobs:
           test "$UPSTREAM_EVENT" = pull_request
           test "$UPSTREAM_CONCLUSION" = success
           test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
-          test "$UPSTREAM_HEAD_SHA" = "$GITHUB_SHA"
-          current_main="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/branches/$DEFAULT_BRANCH" --jq '.commit.sha')"
+          [[ "$UPSTREAM_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          # On a closed, squash-merged PR, workflow_run.head_sha is the
+          # PR's last source HEAD, NOT the resulting protected-main merge SHA.
+          # Re-read both identities from GitHub's API rather than equating them.
+          upstream_run="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$UPSTREAM_RUN_ID")"
+          jq -e \
+            --argjson run_id "$UPSTREAM_RUN_ID" \
+            --arg head "$UPSTREAM_HEAD_SHA" \
+            --arg repo "$GITHUB_REPOSITORY" '
+              .id == $run_id and
+              .event == "pull_request" and
+              .status == "completed" and
+              .conclusion == "success" and
+              .path == ".github/workflows/m5-post-merge-cache-signal.yml" and
+              .head_sha == $head and
+              .head_repository.full_name == $repo
+            ' <<<"$upstream_run" >/dev/null
+
+          current_main="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/branches/$DEFAULT_BRANCH" --jq '.commit.sha')"
           test "$current_main" = "$GITHUB_SHA"
+
+          # GitHub's workflow_run.pull_requests can be [] for merged PRs.
+          # Instead, require exactly one PR associated with this main commit
+          # whose source HEAD matches the successful upstream workflow.
+          linked_prs="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls?per_page=100")"
+          pr_number="$(jq -er \
+            --arg main "$GITHUB_SHA" \
+            --arg head "$UPSTREAM_HEAD_SHA" \
+            --arg branch "$DEFAULT_BRANCH" \
+            --arg repo "$GITHUB_REPOSITORY" '
+              [
+                .[] | select(
+                  .state == "closed" and
+                  .merged_at != null and
+                  .merge_commit_sha == $main and
+                  .head.sha == $head and
+                  .head.repo.full_name == $repo and
+                  .base.ref == $branch and
+                  .base.repo.full_name == $repo
+                )
+              ] | if length == 1 then .[0].number else empty end
+            ' <<<"$linked_prs")"
+          [[ "$pr_number" =~ ^[0-9]+$ ]]
+
+          # Confirm the live PR's merged state; association with a commit
+          # alone is insufficient to authorize protected-main cache writes.
+          merged_pr="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/pulls/$pr_number")"
+          jq -e \
+            --argjson number "$pr_number" \
+            --arg main "$GITHUB_SHA" \
+            --arg head "$UPSTREAM_HEAD_SHA" \
+            --arg branch "$DEFAULT_BRANCH" \
+            --arg repo "$GITHUB_REPOSITORY" '
+              .number == $number and
+              .state == "closed" and
+              .merged == true and
+              .merged_at != null and
+              .merge_commit_sha == $main and
+              .head.sha == $head and
+              .head.repo.full_name == $repo and
+              .base.ref == $branch and
+              .base.repo.full_name == $repo
+            ' <<<"$merged_pr" >/dev/null
+
           gh api -H 'Accept: application/vnd.github+json' \
             "repos/$GITHUB_REPOSITORY/actions/runs/$UPSTREAM_RUN_ID/jobs?per_page=100" |
             jq -e '
@@ -86,6 +153,8 @@ jobs:
               .jobs[0].name == "merged-main-signal" and
               .jobs[0].conclusion == "success"
             ' >/dev/null
+
+          echo "Verified merged PR #$pr_number: source $UPSTREAM_HEAD_SHA -> protected main $GITHUB_SHA"
 
       - name: Check out protected default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -206,6 +275,19 @@ jobs:
           if read_errors != 0 or write_errors != 0:
               raise SystemExit("main compiler-cache prime recorded cache I/O errors")
           PY
+
+      # Do not publish a stale cache if another PR was merged while compiling.
+      - name: Recheck protected main before cache publication
+        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          current_main="$(gh api -H 'Accept: application/vnd.github+json' \
+            "repos/$GITHUB_REPOSITORY/branches/$DEFAULT_BRANCH" --jq '.commit.sha')"
+          test "$current_main" = "$GITHUB_SHA"
 
       - name: Save exact protected-main compiler cache
         id: save-cache
