@@ -197,7 +197,8 @@
         "workflow": ".github/workflows/supply-chain.yml",
         "accepted_blobs": [
           "f3ffe4aaf4cab64a315fe94f67a8498e9b6509ad",
-          "c6456410b50ded7b0775c5480179ecf62fbd9517"
+          "c6456410b50ded7b0775c5480179ecf62fbd9517",
+          "02b9f5d8079eb916bb3d6019c38fbb37bf8ee77b"
         ]
       },
       {
