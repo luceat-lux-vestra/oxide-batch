@@ -790,7 +790,7 @@ jobs:
 
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate
-    runs-on: ${{ (matrix.postgres == '15' || matrix.postgres == '17') && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
+    runs-on: ${{ matrix.postgres != '18' && 'ubuntu-24.04-arm' || 'ubuntu-latest' }}
     timeout-minutes: 20
     strategy:
       fail-fast: false
