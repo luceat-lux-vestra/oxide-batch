@@ -1,0 +1,43 @@
+name: ARM cargo-deny trial (advisory only)
+on:
+  push:
+    paths:
+      - .github/workflows/supply-arm-cargo-deny-trial.yml
+      - .github/workflows/supply-chain.yml
+permissions:
+  contents: read
+jobs:
+  supply-proof:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Test supply-chain exception policy
+        run: python3 .github/scripts/test_validate_supply_chain_exceptions.py
+      - name: Validate supply-chain exception registry
+        run: python3 .github/scripts/validate_supply_chain_exceptions.py
+      - name: Check advisories, licenses, bans, and sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = "Linux"
+          test "$RUNNER_ARCH" = "ARM64"
+          test "$(uname -m)" = "aarch64"
+          version="0.20.2"
+          target="aarch64-unknown-linux-musl"
+          sha256="995c82be0defc7a025cae49a2aa2644ce8245c9a3318fc4103907c6a285e8c7d"
+          dir="$(mktemp -d "$RUNNER_TEMP/cargo-deny.XXXXXX")"
+          trap 'rm -rf "$dir"' EXIT
+          archive="$dir/cargo-deny.tar.gz"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$version/cargo-deny-$version-$target.tar.gz" \
+            --output "$archive"
+          echo "$sha256  $archive" | sha256sum --check --strict
+          mkdir -p "$dir/bin"
+          tar -xzf "$archive" -C "$dir/bin" --strip-components=1
+          binary="$dir/bin/cargo-deny"
+          test -x "$binary"
+          test "$("$binary" --version)" = "cargo-deny $version"
+          "$binary" --log-level warn --manifest-path ./Cargo.toml --all-features check
