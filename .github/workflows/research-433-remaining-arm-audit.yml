@@ -1,0 +1,816 @@
+name: Research remaining ARM64 Rust CI - audit only
+# Separate unprivileged research ref, never PR proof / trusted merge authority.
+# Jobs checkout identical pinned protected main source. Compare PG16/18 design.
+on:
+  push:
+    branches:
+      - research/433-remaining-arm-audit-20261012
+    paths:
+      - .github/workflows/research-433-remaining-arm-audit.yml
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit-quality-integration-0:
+    name: quality-integration-0-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: b287975787b87702d8cd895b4200bcdacbb09718
+          persist-credentials: false
+
+      - name: Research exact-source ARM and cache identity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "b287975787b87702d8cd895b4200bcdacbb09718"
+          test "$(uname -m)" = aarch64
+          test "${RUNNER_ARCH}" = ARM64
+          echo "RESEARCH_ARCH=arm64"
+          lscpu | grep -E '^(Model name|CPU\(s\)|Architecture)' || true
+          rustc -vV
+          sha256sum Cargo.lock rust-toolchain.toml
+
+
+      - name: Resolve protected-main compiler cache identity
+        id: integration-cache-id
+        env:
+          BASE_SHA: b287975787b87702d8cd895b4200bcdacbb09718
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+
+          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          lock_prefix="${family}-${lock_hash}-"
+          key="${lock_prefix}${BASE_SHA}"
+
+          {
+            echo "family=${family}"
+            echo "lock_prefix=${lock_prefix}"
+            echo "key=${key}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+
+          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
+            | sha256sum --check --strict
+
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Restore protected-main compiler cache read-only
+        id: integration-restore-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.integration-cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.integration-cache-id.outputs.lock_prefix }}
+            ${{ steps.integration-cache-id.outputs.family }}-
+
+      - name: Enable restore-only sccache
+        id: integration-enable-sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CARGO_TERM_COLOR=never"
+            echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache"
+            echo "SCCACHE_CACHE_SIZE=768M"
+            echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CARGO_INCREMENTAL=0"
+          } >> "$GITHUB_ENV"
+
+          echo "protected-main cache hit: ${{ steps.integration-restore-sccache.outputs.cache-hit }}"
+
+      - name: Validate native sccache executable and cache separation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          sccache --version
+          test "${SCCACHE_DIR:-}" = "$RUNNER_TEMP/oxide-fast-sccache"
+          test "${CARGO_INCREMENTAL:-}" = 0
+
+      - name: Zero compiler cache stats
+        run: sccache --zero-stats
+
+      - name: Run final-only integration shard 0
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/run-integration-shard.py 0 4
+
+      - name: Show integration compiler cache stats
+        if: ${{ always() && steps.integration-enable-sccache.outcome == 'success' }}
+        continue-on-error: true
+        run: sccache --show-stats --stats-format=json
+
+  audit-quality-integration-1:
+    name: quality-integration-1-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: b287975787b87702d8cd895b4200bcdacbb09718
+          persist-credentials: false
+
+      - name: Research exact-source ARM and cache identity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "b287975787b87702d8cd895b4200bcdacbb09718"
+          test "$(uname -m)" = aarch64
+          test "${RUNNER_ARCH}" = ARM64
+          echo "RESEARCH_ARCH=arm64"
+          lscpu | grep -E '^(Model name|CPU\(s\)|Architecture)' || true
+          rustc -vV
+          sha256sum Cargo.lock rust-toolchain.toml
+
+
+      - name: Resolve protected-main compiler cache identity
+        id: integration-cache-id
+        env:
+          BASE_SHA: b287975787b87702d8cd895b4200bcdacbb09718
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+
+          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          lock_prefix="${family}-${lock_hash}-"
+          key="${lock_prefix}${BASE_SHA}"
+
+          {
+            echo "family=${family}"
+            echo "lock_prefix=${lock_prefix}"
+            echo "key=${key}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+
+          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
+            | sha256sum --check --strict
+
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Restore protected-main compiler cache read-only
+        id: integration-restore-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.integration-cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.integration-cache-id.outputs.lock_prefix }}
+            ${{ steps.integration-cache-id.outputs.family }}-
+
+      - name: Enable restore-only sccache
+        id: integration-enable-sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CARGO_TERM_COLOR=never"
+            echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache"
+            echo "SCCACHE_CACHE_SIZE=768M"
+            echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CARGO_INCREMENTAL=0"
+          } >> "$GITHUB_ENV"
+
+          echo "protected-main cache hit: ${{ steps.integration-restore-sccache.outputs.cache-hit }}"
+
+      - name: Validate native sccache executable and cache separation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          sccache --version
+          test "${SCCACHE_DIR:-}" = "$RUNNER_TEMP/oxide-fast-sccache"
+          test "${CARGO_INCREMENTAL:-}" = 0
+
+      - name: Zero compiler cache stats
+        run: sccache --zero-stats
+
+      - name: Run final-only integration shard 1
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/run-integration-shard.py 1 4
+
+      - name: Show integration compiler cache stats
+        if: ${{ always() && steps.integration-enable-sccache.outcome == 'success' }}
+        continue-on-error: true
+        run: sccache --show-stats --stats-format=json
+
+  audit-quality-integration-2:
+    name: quality-integration-2-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: b287975787b87702d8cd895b4200bcdacbb09718
+          persist-credentials: false
+
+      - name: Research exact-source ARM and cache identity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "b287975787b87702d8cd895b4200bcdacbb09718"
+          test "$(uname -m)" = aarch64
+          test "${RUNNER_ARCH}" = ARM64
+          echo "RESEARCH_ARCH=arm64"
+          lscpu | grep -E '^(Model name|CPU\(s\)|Architecture)' || true
+          rustc -vV
+          sha256sum Cargo.lock rust-toolchain.toml
+
+
+      - name: Resolve protected-main compiler cache identity
+        id: integration-cache-id
+        env:
+          BASE_SHA: b287975787b87702d8cd895b4200bcdacbb09718
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+
+          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          lock_prefix="${family}-${lock_hash}-"
+          key="${lock_prefix}${BASE_SHA}"
+
+          {
+            echo "family=${family}"
+            echo "lock_prefix=${lock_prefix}"
+            echo "key=${key}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+
+          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
+            | sha256sum --check --strict
+
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Restore protected-main compiler cache read-only
+        id: integration-restore-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.integration-cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.integration-cache-id.outputs.lock_prefix }}
+            ${{ steps.integration-cache-id.outputs.family }}-
+
+      - name: Enable restore-only sccache
+        id: integration-enable-sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CARGO_TERM_COLOR=never"
+            echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache"
+            echo "SCCACHE_CACHE_SIZE=768M"
+            echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CARGO_INCREMENTAL=0"
+          } >> "$GITHUB_ENV"
+
+          echo "protected-main cache hit: ${{ steps.integration-restore-sccache.outputs.cache-hit }}"
+
+      - name: Validate native sccache executable and cache separation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          sccache --version
+          test "${SCCACHE_DIR:-}" = "$RUNNER_TEMP/oxide-fast-sccache"
+          test "${CARGO_INCREMENTAL:-}" = 0
+
+      - name: Zero compiler cache stats
+        run: sccache --zero-stats
+
+      - name: Run final-only integration shard 2
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/run-integration-shard.py 2 4
+
+      - name: Show integration compiler cache stats
+        if: ${{ always() && steps.integration-enable-sccache.outcome == 'success' }}
+        continue-on-error: true
+        run: sccache --show-stats --stats-format=json
+
+  audit-quality-integration-3:
+    name: quality-integration-3-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: b287975787b87702d8cd895b4200bcdacbb09718
+          persist-credentials: false
+
+      - name: Research exact-source ARM and cache identity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "b287975787b87702d8cd895b4200bcdacbb09718"
+          test "$(uname -m)" = aarch64
+          test "${RUNNER_ARCH}" = ARM64
+          echo "RESEARCH_ARCH=arm64"
+          lscpu | grep -E '^(Model name|CPU\(s\)|Architecture)' || true
+          rustc -vV
+          sha256sum Cargo.lock rust-toolchain.toml
+
+
+      - name: Resolve protected-main compiler cache identity
+        id: integration-cache-id
+        env:
+          BASE_SHA: b287975787b87702d8cd895b4200bcdacbb09718
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+
+          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          lock_prefix="${family}-${lock_hash}-"
+          key="${lock_prefix}${BASE_SHA}"
+
+          {
+            echo "family=${family}"
+            echo "lock_prefix=${lock_prefix}"
+            echo "key=${key}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+
+          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
+            | sha256sum --check --strict
+
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Restore protected-main compiler cache read-only
+        id: integration-restore-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.integration-cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.integration-cache-id.outputs.lock_prefix }}
+            ${{ steps.integration-cache-id.outputs.family }}-
+
+      - name: Enable restore-only sccache
+        id: integration-enable-sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CARGO_TERM_COLOR=never"
+            echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache"
+            echo "SCCACHE_CACHE_SIZE=768M"
+            echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CARGO_INCREMENTAL=0"
+          } >> "$GITHUB_ENV"
+
+          echo "protected-main cache hit: ${{ steps.integration-restore-sccache.outputs.cache-hit }}"
+
+      - name: Validate native sccache executable and cache separation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          sccache --version
+          test "${SCCACHE_DIR:-}" = "$RUNNER_TEMP/oxide-fast-sccache"
+          test "${CARGO_INCREMENTAL:-}" = 0
+
+      - name: Zero compiler cache stats
+        run: sccache --zero-stats
+
+      - name: Run final-only integration shard 3
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/run-integration-shard.py 3 4
+
+      - name: Show integration compiler cache stats
+        if: ${{ always() && steps.integration-enable-sccache.outcome == 'success' }}
+        continue-on-error: true
+        run: sccache --show-stats --stats-format=json
+
+  audit-postgres-item-components:
+    name: postgres-${{ matrix.postgres }}-item-components
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    services:
+      postgres:
+        # matrix.postgres is the checked-in 15/18 allowlist. Both branches are
+        # immutable official image digests; unsupported values fail to resolve.
+        image: postgres:${{ matrix.postgres }}@sha256:${{ matrix.postgres == '15' && '926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561' || matrix.postgres == '18' && '4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280' || 'unsupported' }} # zizmor: ignore[unpinned-images]
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_item_components
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_item_components"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_item_components
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_item_components
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_item_components
+    steps:
+      - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: b287975787b87702d8cd895b4200bcdacbb09718
+          persist-credentials: false
+
+      - name: Research exact-source ARM and cache identity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "b287975787b87702d8cd895b4200bcdacbb09718"
+          test "$(uname -m)" = aarch64
+          test "${RUNNER_ARCH}" = ARM64
+          echo "RESEARCH_ARCH=arm64"
+          lscpu | grep -E '^(Model name|CPU\(s\)|Architecture)' || true
+          rustc -vV
+          sha256sum Cargo.lock rust-toolchain.toml
+
+
+      - name: Resolve protected-main compiler cache identity
+        id: integration-cache-id
+        env:
+          BASE_SHA: b287975787b87702d8cd895b4200bcdacbb09718
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+
+          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          lock_prefix="${family}-${lock_hash}-"
+          key="${lock_prefix}${BASE_SHA}"
+
+          {
+            echo "family=${family}"
+            echo "lock_prefix=${lock_prefix}"
+            echo "key=${key}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+
+          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
+            | sha256sum --check --strict
+
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Restore protected-main compiler cache read-only
+        id: integration-restore-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.integration-cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.integration-cache-id.outputs.lock_prefix }}
+            ${{ steps.integration-cache-id.outputs.family }}-
+
+      - name: Enable restore-only sccache
+        id: integration-enable-sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CARGO_TERM_COLOR=never"
+            echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache"
+            echo "SCCACHE_CACHE_SIZE=768M"
+            echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CARGO_INCREMENTAL=0"
+          } >> "$GITHUB_ENV"
+
+          echo "protected-main cache hit: ${{ steps.integration-restore-sccache.outputs.cache-hit }}"
+
+      - name: Validate native sccache executable and cache separation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          sccache --version
+          test "${SCCACHE_DIR:-}" = "$RUNNER_TEMP/oxide-fast-sccache"
+          test "${CARGO_INCREMENTAL:-}" = 0
+
+      - name: Zero compiler cache stats
+        run: sccache --zero-stats
+
+      - name: Apply migrations
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          migration_is_idempotent_when_migrator_fixture_is_available
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL cursor and keyset paging reader evidence (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_item_components_cursor \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_item_components_paging \
+            -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL SQL batch/enlisted writer evidence (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_item_components_batch_writer
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL cursor/paging real process-kill crash/restart evidence (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_item_components_crash_recovery
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL cursor FETCH-level fault-runtime retry evidence (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_item_components_cursor_fault
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL item-component restart fixtures (#149)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_item_components_db_restart
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL flat-file component restart evidence (#170)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_flat_file_restart
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL JSON/JSONL component restart evidence (#170)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_json_restart
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL peek-decorated reader restart evidence (#170)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_item_components_restart
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL multi-resource restart evidence (#150)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_multi_resource_restart
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL Gate G restart harness (#172)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test restart_harness
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL Gate G repository fixture cleanup (#172)
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch-test --features postgres
+          --test postgres_fixture
+          -- --nocapture --test-threads=1
+      - name: Show PostgreSQL item-components compiler cache stats
+        if: ${{ always() && steps.integration-enable-sccache.outcome == 'success' }}
+        continue-on-error: true
+        run: sccache --show-stats --stats-format=json
+
+  audit-quality-contracts:
+    name: quality-contracts-internal
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: b287975787b87702d8cd895b4200bcdacbb09718
+          persist-credentials: false
+
+      - name: Research exact-source ARM and cache identity audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "b287975787b87702d8cd895b4200bcdacbb09718"
+          test "$(uname -m)" = aarch64
+          test "${RUNNER_ARCH}" = ARM64
+          echo "RESEARCH_ARCH=arm64"
+          lscpu | grep -E '^(Model name|CPU\(s\)|Architecture)' || true
+          rustc -vV
+          sha256sum Cargo.lock rust-toolchain.toml
+
+
+      - name: Check out exact trusted base for merge-gate verification
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: b287975787b87702d8cd895b4200bcdacbb09718
+          path: .merge-gate-trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify merge topology with trusted-base verifier
+        env:
+          RULESET_PATH: ${{ runner.temp }}/protect-main-ruleset.json
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-all-errors \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/rulesets/19905142" \
+            -o "$RULESET_PATH"
+          ruby .merge-gate-trusted-base/.github/scripts/verify-merge-gates.rb \
+            .github/merge-gate-policy.json "$RULESET_PATH"
+
+      - name: Check facade without optional adapters
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: cargo check -p oxide-batch --no-default-features
+
+      - name: Check operator CLI without optional adapters
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: cargo check -p oxide-batch-cli --no-default-features --all-targets
+
+      - name: Check extraction boundaries and workspace cycles
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: cargo run --package oxide-batch-xtask -- deps
+
+      - name: Inspect the facade surface for disclosed dependencies
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: cargo run --package oxide-batch-xtask -- surface
+
+      - name: Verify the canonical publishable-crate release set
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: cargo run --package oxide-batch-xtask -- release-crates
+
+  audit-design-x64:
+    name: audit-pg-${{ matrix.postgres }}-x64-r${{ matrix.repeat }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        postgres: ["16", "18"]
+        repeat: [1, 2]
+    steps:
+      - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: b287975787b87702d8cd895b4200bcdacbb09718
+          persist-credentials: false
+
+
+      - name: Run TLS, roles, schema, and restore fixture
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        # matrix.postgres is the checked-in 15-18 allowlist above, not event input.
+        run: ./tests/fixtures/postgres/run-design-gate.sh ${{ matrix.postgres }} # zizmor: ignore[template-injection]
+
+  audit-design-arm64:
+    name: audit-pg-${{ matrix.postgres }}-arm64-r${{ matrix.repeat }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        postgres: ["16", "18"]
+        repeat: [1, 2]
+    steps:
+      - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: b287975787b87702d8cd895b4200bcdacbb09718
+          persist-credentials: false
+
+
+      - name: Run TLS, roles, schema, and restore fixture
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        # matrix.postgres is the checked-in 15-18 allowlist above, not event input.
+        run: ./tests/fixtures/postgres/run-design-gate.sh ${{ matrix.postgres }} # zizmor: ignore[template-injection]
