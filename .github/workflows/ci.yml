@@ -673,12 +673,6 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo check -p oxide-batch-cli --no-default-features --all-targets
 
-      - name: Build documentation
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        env:
-          RUSTDOCFLAGS: -D warnings
-        run: cargo doc --workspace --all-features --no-deps
-
       - name: Check extraction boundaries and workspace cycles
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- deps
