@@ -9,6 +9,10 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: protected-main-merge-signal-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 jobs:
   merged-main-signal:
     name: merged-main-signal
