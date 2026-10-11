@@ -1020,6 +1020,77 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  # Equivalent doc coverage must be established by the actual xtask source,
+  # not by adding a reassuring comment to the protected workflow.
+  def unified_docs_fixture(root)
+    path = File.join(root, '.github/workflows/ci.yml')
+    old = File.read(path)
+    updated = old.sub(/^[ \t]*- run: cargo doc --workspace --all-features --no-deps[ \t]*\n/, '')
+    refute_equal old, updated
+    write(root, '.github/workflows/ci.yml', updated)
+    write(root, 'xtask/src/surface.rs', <<~RUST)
+      pub fn check() -> Result<Vec<String>, String> {
+        build_documentation()?;
+        let found = scan(&documentation_root()?)?;
+      }
+      fn documentation_command() -> Command {
+        let mut command = Command::new("cargo");
+        command.args(["doc", "--workspace", "--all-features"]);
+        command.env("RUSTDOCFLAGS", "-D warnings");
+        command
+      }
+      fn build_documentation() -> Result<(), String> {
+        let status = documentation_command()
+            .status()?;
+      }
+    RUST
+  end
+
+  def test_unified_workspace_dependency_rustdoc_surface_is_accepted
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      assert_empty verify(root)
+    end
+  end
+
+  def test_removing_old_docs_without_unified_surface_source_is_rejected
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      File.delete(File.join(root, 'xtask/src/surface.rs'))
+      assert_includes verify(root).join("\n"), 'missing strict full-workspace dependency rustdoc surface guarantees'
+    end
+  end
+
+  def test_unified_surface_without_warning_denial_is_rejected
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      path = File.join(root, 'xtask/src/surface.rs')
+      src = File.read(path).sub('command.env("RUSTDOCFLAGS", "-D warnings");', 'command.env("RUSTDOCFLAGS", "");')
+      write(root, 'xtask/src/surface.rs', src)
+      assert_includes verify(root).join("\n"), 'missing strict full-workspace dependency rustdoc surface guarantees'
+    end
+  end
+
+  def test_unified_surface_without_workspace_scope_is_rejected
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      path = File.join(root, 'xtask/src/surface.rs')
+      src = File.read(path).sub('command.args(["doc", "--workspace", "--all-features"]);', 'command.args(["doc", "--package", "oxide-batch", "--all-features"]);')
+      write(root, 'xtask/src/surface.rs', src)
+      assert_includes verify(root).join("\n"), 'missing strict full-workspace dependency rustdoc surface guarantees'
+    end
+  end
+
+  def test_unified_surface_without_fresh_documentation_build_is_rejected
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      path = File.join(root, 'xtask/src/surface.rs')
+      src = File.read(path).sub('build_documentation()?;', '// omitted required build')
+      write(root, 'xtask/src/surface.rs', src)
+      assert_includes verify(root).join("\n"), 'missing strict full-workspace dependency rustdoc surface guarantees'
+    end
+  end
+
   def test_quality_aggregate_result_binding_removal_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/ci.yml')
