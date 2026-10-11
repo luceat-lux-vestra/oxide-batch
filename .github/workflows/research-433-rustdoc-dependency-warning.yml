@@ -1,0 +1,73 @@
+name: Research Rustdoc dependency-warning coverage
+on:
+  push:
+    branches: [research/433-rustdoc-link-hints-guarded-20261011]
+    paths: [.github/workflows/research-433-rustdoc-dependency-warning.yml]
+permissions:
+  contents: read
+jobs:
+  warning-equivalence:
+    name: dependency-documentation-warning-negative-proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exactly pinned protected main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 33adce70d02913c9aded38edc27160fba104f757
+          persist-credentials: false
+      - name: Establish immutable source and isolated local path-dependency workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "33adce70d02913c9aded38edc27160fba104f757"
+          mkdir -p "$RUNNER_TEMP/doc-warning-example/dependency/src" "$RUNNER_TEMP/doc-warning-example/workspace/app/src"
+          cat > "$RUNNER_TEMP/doc-warning-example/dependency/Cargo.toml" <<'EOF'
+          [package]
+          name = "private-doc-dependency"
+          version = "0.1.0"
+          edition = "2021"
+          [workspace]
+          EOF
+          cat > "$RUNNER_TEMP/doc-warning-example/dependency/src/lib.rs" <<'EOF'
+          #![warn(rustdoc::broken_intra_doc_links)]
+          /// This dependency contains a broken rustdoc-only link: [DefinitelyMissingRustdocType].
+          pub struct DependencyApi;
+          EOF
+          cat > "$RUNNER_TEMP/doc-warning-example/workspace/Cargo.toml" <<'EOF'
+          [workspace]
+          members = ["app"]
+          resolver = "2"
+          EOF
+          cat > "$RUNNER_TEMP/doc-warning-example/workspace/app/Cargo.toml" <<'EOF'
+          [package]
+          name = "consumer-doc"
+          version = "0.1.0"
+          edition = "2021"
+          [dependencies]
+          private-doc-dependency = { path = "../../dependency" }
+          EOF
+          cat > "$RUNNER_TEMP/doc-warning-example/workspace/app/src/lib.rs" <<'EOF'
+          /// Consumer links to an otherwise compilable dependency type.
+          pub fn consume(_: private_doc_dependency::DependencyApi) {}
+          EOF
+          cd "$RUNNER_TEMP/doc-warning-example/workspace"
+          cargo generate-lockfile --offline
+      - name: Contrast full docs and no-deps under identical warning flags
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/doc-warning-example/workspace"
+          export RUSTDOCFLAGS="-D warnings"
+          set +e
+          CARGO_TARGET_DIR="$RUNNER_TEMP/doc-warning-target-full" cargo doc --workspace --all-features --locked --offline > "$RUNNER_TEMP/full.log" 2>&1
+          full_result="$?"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/doc-warning-target-no-deps" cargo doc --workspace --all-features --no-deps --locked --offline > "$RUNNER_TEMP/no-deps.log" 2>&1
+          no_deps_result="$?"
+          set -e
+          echo "RESEARCH_DEP_DOC_WARNING full_exit=$full_result no_deps_exit=$no_deps_result"
+          grep -E 'unresolved link|broken_intra_doc_links|could not document' "$RUNNER_TEMP/full.log" | head -18 || true
+          test "$full_result" -ne 0
+          grep -Eq 'unresolved link|broken_intra_doc_links' "$RUNNER_TEMP/full.log"
+          test "$no_deps_result" -eq 0
+          echo "RESEARCH_DEP_DOC_WARNING_GAP=CONFIRMED"
