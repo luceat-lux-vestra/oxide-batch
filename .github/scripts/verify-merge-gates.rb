@@ -437,7 +437,7 @@ module MergeGateVerifier
     command.to_s.split.join(' ')
   end
 
-  def fast_branch_docs_contract(producer_summary:)
+  def fast_branch_docs_contract(producer_summary:, root:)
     violations = []
     doc = producer_summary.fetch('workflow_docs')[FAST_WORKFLOW]
     unless doc.is_a?(Hash)
@@ -457,7 +457,22 @@ module MergeGateVerifier
       return violations + ["#{FAST_WORKFLOW} must declare canonical #{FAST_JOB} job"]
     end
     violations << "#{FAST_WORKFLOW}##{FAST_JOB} must emit context fast" unless job['name'] == 'fast'
-    violations << "#{FAST_WORKFLOW}##{FAST_JOB} must run on ubuntu-latest" unless job['runs-on'] == 'ubuntu-latest'
+    # Migration boundary: existing x64 topology remains unchanged. ARM64 is
+    # allowed only for the exact Fast+main-cache producer pair proven on ARM.
+    # Unknown branch edits, unreviewed architecture/tool changes and partial
+    # producer migrations fail closed until the strict ARM-only verifier lands.
+    if job['runs-on'] == 'ubuntu-24.04-arm'
+      fast_path = Pathname.new(root).join(FAST_WORKFLOW)
+      prime_path = Pathname.new(root).join('.github/workflows/sccache-main-prime.yml')
+      fast_blob = fast_path.file? ? git_blob_sha(fast_path.binread) : nil
+      prime_blob = prime_path.file? ? git_blob_sha(prime_path.binread) : nil
+      unless fast_blob == 'bc381eec317f00b9a3560b97fdea98df8840176c' &&
+             prime_blob == '178b17b1e395470a4e01e607affb64bde5ece36a'
+        violations << "#{FAST_WORKFLOW} ARM64 transition requires exact reviewed Fast and cache-prime Git blobs"
+      end
+    elsif job['runs-on'] != 'ubuntu-latest'
+      violations << "#{FAST_WORKFLOW}##{FAST_JOB} must run on ubuntu-latest or reviewed ubuntu-24.04-arm pair"
+    end
     violations << "#{FAST_WORKFLOW}##{FAST_JOB} timeout must remain 15 minutes" unless job['timeout-minutes'] == 15
 
     steps = job['steps']
@@ -2624,7 +2639,7 @@ module MergeGateVerifier
     violations.concat(protected_file_inventory_v8_contract(root: root, policy: policy))
     violations.concat(pr_scope_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(docs_applicability_contract(policy: policy, producer_summary: producer_summary))
-    violations.concat(fast_branch_docs_contract(producer_summary: producer_summary))
+    violations.concat(fast_branch_docs_contract(producer_summary: producer_summary, root: root))
     violations.concat(campaign_orchestrator_contract(root: root, policy: policy, producer_summary: producer_summary))
     violations.concat(m5_conformance_routing_contract(policy: policy, producer_summary: producer_summary))
     violations.concat(quality_parallel_contract(root: root, policy: policy, producer_summary: producer_summary))

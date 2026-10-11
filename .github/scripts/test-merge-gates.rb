@@ -1692,6 +1692,28 @@ class MergeGateVerifierTest < Minitest::Test
       assert_includes verify(root).join('\n'), 'required context emitter must not declare services'
     end
   end
+  def test_fast_arm_requires_exact_reviewed_workflow_and_cache_prime
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/fast-branch.yml')
+      original = File.read(path)
+      candidate = original.sub('runs-on: ubuntu-latest', 'runs-on: ubuntu-24.04-arm')
+      refute_equal original, candidate
+      write(root, '.github/workflows/fast-branch.yml', candidate)
+      assert_includes verify(root).join("\n"), 'ARM64 transition requires exact reviewed Fast and cache-prime Git blobs'
+    end
+  end
+
+  def test_fast_arm_unreviewed_dynamic_runner_is_rejected
+    with_repo do |root, _policy|
+      path = File.join(root, '.github/workflows/fast-branch.yml')
+      original = File.read(path)
+      candidate = original.sub('runs-on: ubuntu-latest', 'runs-on: ${{ vars.FAST_RUNNER }}')
+      refute_equal original, candidate
+      write(root, '.github/workflows/fast-branch.yml', candidate)
+      assert_includes verify(root).join("\n"), 'must run on ubuntu-latest or reviewed ubuntu-24.04-arm pair'
+    end
+  end
+
   def test_fast_docs_only_true_guard_weakening_is_rejected
     with_repo do |root, _policy|
       path = File.join(root, '.github/workflows/fast-branch.yml')
