@@ -657,9 +657,12 @@ jobs:
       - name: Verify merge topology with trusted-base verifier
         env:
           RULESET_PATH: ${{ runner.temp }}/protect-main-ruleset.json
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           curl -fsSL --retry 3 --retry-all-errors \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
             "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/rulesets/19905142" \
             -o "$RULESET_PATH"
           ruby .merge-gate-trusted-base/.github/scripts/verify-merge-gates.rb \
