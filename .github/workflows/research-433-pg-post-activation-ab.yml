@@ -1,0 +1,243 @@
+name: Research PostgreSQL repository live-main A/B
+# Research-only push workflow; does not mutate protected main or supply merge authority.
+# Pinned exact protected-main Rust code/workflow; all original PG commands preserved.
+on:
+  push:
+    branches: [research/433-pg-post-activation-ab-20261011]
+    paths:
+      - .github/workflows/research-433-pg-post-activation-ab.yml
+permissions:
+  contents: read
+jobs:
+  postgres-repository-ab:
+    name: pg-${{ matrix.postgres }}-${{ matrix.mode }}-r${{ matrix.repeat }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+        mode: [baseline, grouped]
+        repeat: [1, 2]
+    services:
+      postgres:
+        # matrix.postgres is the checked-in 15/18 allowlist. Both branches are
+        # immutable official image digests; unsupported values fail to resolve.
+        image: postgres:${{ matrix.postgres }}@sha256:${{ matrix.postgres == '15' && '926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561' || matrix.postgres == '18' && '4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280' || 'unsupported' }} # zizmor: ignore[unpinned-images]
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_repository
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_repository"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    env:
+      OXIDEBATCH_POSTGRES_ADMIN_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+      OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+      OXIDEBATCH_POSTGRES_TEST_URL: postgres://postgres:postgres@127.0.0.1:5432/oxide_batch_repository
+    steps:
+      - name: Check out repository
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
+          ref: f414fbfc142264da936c21584bc6dc03ae12627f
+          persist-credentials: false
+
+
+      # Build the exact 14 integration-test executables plus --lib in one
+      # Cargo graph. Original 29 test invocations, filters, ordering, service
+      # DB state and --test-threads=1 remain unchanged below.
+      - name: Verify exact protected-main source and workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "f414fbfc142264da936c21584bc6dc03ae12627f"
+          test "$(uname -m)" = "x86_64"
+          test "$(git ls-files -s .github/workflows/ci.yml | awk '{print $2}')" = "42973c784597b21a94cf9f54ae6164dcdc94eb57"
+
+      - name: Grouped prebuild PostgreSQL repository test executables
+        if: ${{ matrix.mode == 'grouped' && (github.event_name != 'pull_request' || github.event.pull_request.draft == false) }}
+        env:
+          POSTGRES_VERSION: ${{ matrix.postgres }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$SECONDS"
+          targets=(
+            --lib
+            --test postgres_repository
+            --test postgres_flow
+            --test postgres_nested_job
+            --test postgres_crash_recovery
+            --test postgres_fault_crash_recovery
+            --test postgres_flow_crash_recovery
+            --test postgres_local_partition_crash_recovery
+            --test postgres_local_split_crash_recovery
+            --test postgres_advanced_flow_crash_recovery
+            --test postgres_nested_job_crash_recovery
+            --test postgres_scope_resolution_crash_recovery
+            --test postgres_custom_leaf_crash_recovery
+            --test postgres_item_stream_crash_recovery
+            --test postgres_retention_component_state
+          )
+          cargo test -p oxide-batch --features postgres "${targets[@]}" --no-run
+          elapsed="$((SECONDS - start))"
+          echo "PG_REPOSITORY_GROUPED_PREBUILD postgres=$POSTGRES_VERSION seconds=$elapsed"
+
+      - name: Apply and reapply immutable migrations
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          migration_is_idempotent_when_migrator_fixture_is_available
+          -- --nocapture --test-threads=1
+
+      - name: Run shared PostgreSQL repository contract
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            shared_repository_contract_passes_on_postgres \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            concurrent_launch_creates_single_instance \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            committed_chunk_advances_checkpoint \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            writer_failure_rolls_back_business_and_checkpoint \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            optimistic_conflict_has_one_winner \
+            -- --nocapture --test-threads=1
+
+      - name: Run shared PostgreSQL operator, explorer, and retention contract
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          shared_service_contract_passes_on_postgres
+          -- --nocapture --test-threads=1
+
+      - name: Verify durable fault-tolerance state
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            retry_reservation_is_a_durable_compare_and_swap \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            skips_counters_and_fault_state_commit_with_the_chunk \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            corrupt_fault_state_fails_before_component_work \
+            -- --nocapture --test-threads=1
+
+      - name: Verify durable flow traversal
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_flow
+          -- --nocapture --test-threads=1
+
+      - name: Verify PostgreSQL nested-job durable linkage
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_nested_job
+          -- --nocapture --test-threads=1
+
+      - name: Verify scoped job-context late binding
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres --lib
+          scope_runtime::tests::postgres_job_context_source_resolves_and_records_provenance
+          -- --nocapture --test-threads=1
+
+      - name: Verify scope-provenance compatible restart refusal
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          compatible_restart_with_scope_resolution_provenance_fails_closed
+          -- --nocapture --test-threads=1
+
+      - name: Verify scope-provenance retention protection
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_repository
+          retention_excludes_execution_referenced_by_scope_provenance
+          -- --nocapture --test-threads=1
+
+      - name: Verify disconnect and schema-version classifications
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            disconnect_during_commit_never_guesses_outcome \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            postgres_chunk_disconnect_is_known_not_committed_before_commit \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            newer_schema_is_rejected_without_guessing_compatibility \
+            -- --nocapture --test-threads=1
+
+      - name: Run process-kill crash and restart matrix
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: |
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_fault_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_flow_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_local_partition_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_local_split_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_advanced_flow_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_nested_job_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_scope_resolution_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_custom_leaf_crash_recovery \
+            -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_item_stream_crash_recovery
+          -- --nocapture --test-threads=1
+
+      - name: Run PostgreSQL M6 #144 retention component-state evidence
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features postgres
+          --test postgres_retention_component_state
+          -- --nocapture --test-threads=1
