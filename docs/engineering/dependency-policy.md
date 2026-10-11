@@ -161,12 +161,15 @@ Stable releases include or link:
 
 ## Release tooling record
 
-`cargo-cyclonedx 0.5.9` is the release-only SBOM generator. It is installed
-with its published lockfile and exact version in the protected tag workflow,
-has Apache-2.0 licensing, declares Rust 1.85 as its MSRV, and does not enter the
-runtime dependency graph. The workflow generates CycloneDX 1.5 JSON for the
-public `oxide-batch` package with all features and target dependencies before
-attesting the exact `.crate` artifact. Upgrading the tool receives the same
+`cargo-cyclonedx 0.5.9` is the release-only SBOM generator. The protected
+tag workflow installs the exact upstream Linux x86_64 prebuilt binary after
+SHA-256 archive verification and a version check (rather than compiling via
+`cargo install`). The pinned installer lives at
+`.github/scripts/install-cargo-cyclonedx-prebuilt.sh`. The tool is
+Apache-2.0-licensed, declares Rust 1.85 as its MSRV, and does not enter the
+runtime dependency graph. The workflow generates CycloneDX 1.5 JSON for each
+published workspace crate with all features and target dependencies before
+attesting the exact `.crate` artifacts. Upgrading the tool receives the same
 workflow, license, output-format, and package-content review as an Action
 upgrade.
 

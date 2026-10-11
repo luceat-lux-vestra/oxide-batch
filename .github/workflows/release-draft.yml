@@ -121,7 +121,7 @@ jobs:
       # release assets for recovery" below).
       - name: Install pinned SBOM generator
         if: github.event_name == 'push'
-        run: cargo install cargo-cyclonedx --version 0.5.9 --locked
+        run: bash .github/scripts/install-cargo-cyclonedx-prebuilt.sh
 
       - name: Generate release SBOM and checksums
         if: github.event_name == 'push'
