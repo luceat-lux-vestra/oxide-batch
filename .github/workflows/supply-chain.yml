@@ -40,7 +40,7 @@ concurrency:
 jobs:
   supply-chain:
     name: supply-chain
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 10
     steps:
       - name: Check out repository
@@ -62,4 +62,25 @@ jobs:
 
       - name: Check advisories, licenses, bans, and sources
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_OS" = "Linux"
+          test "$RUNNER_ARCH" = "ARM64"
+          test "$(uname -m)" = "aarch64"
+          version="0.20.2"
+          target="aarch64-unknown-linux-musl"
+          sha256="995c82be0defc7a025cae49a2aa2644ce8245c9a3318fc4103907c6a285e8c7d"
+          dir="$(mktemp -d "$RUNNER_TEMP/cargo-deny.XXXXXX")"
+          trap 'rm -rf "$dir"' EXIT
+          archive="$dir/cargo-deny.tar.gz"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$version/cargo-deny-$version-$target.tar.gz" \
+            --output "$archive"
+          echo "$sha256  $archive" | sha256sum --check --strict
+          mkdir -p "$dir/bin"
+          tar -xzf "$archive" -C "$dir/bin" --strip-components=1
+          binary="$dir/bin/cargo-deny"
+          test -x "$binary"
+          test "$("$binary" --version)" = "cargo-deny $version"
+          "$binary" --log-level warn --manifest-path ./Cargo.toml --all-features check
