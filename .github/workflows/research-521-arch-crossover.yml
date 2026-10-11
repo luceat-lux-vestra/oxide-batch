@@ -10,6 +10,9 @@ on:
       - .github/workflows/research-521-arch-crossover.yml
 permissions:
   contents: read
+concurrency:
+  group: research-521-arch-crossover
+  cancel-in-progress: true
 env:
   SOURCE_SHA: 1c29a0dafab7d6b8e3b830cfb136cb86e974dd5e
 jobs:
@@ -19,7 +22,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
         include:
           - arch: x64
@@ -303,7 +306,7 @@ jobs:
     timeout-minutes: 20
     strategy:
       fail-fast: false
-      max-parallel: 2
+      max-parallel: 1
       matrix:
         include:
           - arch: x64
