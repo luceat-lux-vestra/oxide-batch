@@ -613,7 +613,7 @@ jobs:
   quality-bin-doc:
     name: quality-bin-doc-internal
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -805,7 +805,7 @@ jobs:
 
   postgres-repository:
     name: postgres-${{ matrix.postgres }}-repository
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false
