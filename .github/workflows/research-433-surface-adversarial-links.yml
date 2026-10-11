@@ -27,7 +27,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "33adce70d02913c9aded38edc27160fba104f757"
           grep -Fq 'command.args(["doc", "--workspace", "--all-features"])' xtask/src/surface.rs
           cat >> crates/oxide-batch/src/lib.rs <<'EOF'
-          
+
           /// Adversarial fixture: public alias exposing Tokio runtime type.
           pub type SurfaceLeakTokio = tokio::runtime::Runtime;
           /// Adversarial fixture: public alias exposing SQLx database driver type.
