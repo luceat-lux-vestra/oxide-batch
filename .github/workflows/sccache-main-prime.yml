@@ -4,7 +4,7 @@ on:
   # Trigger only after the read-only merged-PR signal has completed.
   # workflow_run executes the protected default-branch workflow, never PR-head code.
   workflow_run: # zizmor: ignore[dangerous-triggers] -- trusted default-branch source; upstream job, SHA, ref and live main checked before compiler/cache access.
-    workflows: ["Protected main merge signal"]
+    workflows: ["M5 post-merge cache signal"]
     types: [completed]
   schedule:
     - cron: "17 */4 * * *"
