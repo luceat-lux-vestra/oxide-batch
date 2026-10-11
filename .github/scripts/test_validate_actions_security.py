@@ -592,8 +592,8 @@ assert ACTIVE_WRITER.read_bytes() == STAGED_WRITER.read_bytes(), "M6 writer diff
 assert m6_git_blob(STAGED_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071", (
     "Historical M6 CodeQL stage changed without review"
 )
-assert m6_git_blob(ACTIVE_CODEQL) == "af148fc7f0cee653e2f29e017e2fa73c928c910e", (
-    "Activated CodeQL caller recheck must match its exact pre-admitted blob"
+assert m6_git_blob(ACTIVE_CODEQL) == "fef6dc22f11826543b3099c8e80e0adad928adf1", (
+    "Activated CodeQL must match its new exact pre-admitted Git blob"
 )
 staged_wallclock = (
     ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
@@ -665,8 +665,9 @@ assert STAGED_NO_DB_UPLOAD.read_bytes() == expected_active_codeql, (
 STAGED_CALLER_RECHECK = ROOT / "docs/engineering/ci-staging/codeql-rust-caller-recheck-candidate.yml"
 assert STAGED_CALLER_RECHECK.is_file(), "missing caller recheck pre-approved stage"
 assert m6_git_blob(STAGED_CALLER_RECHECK) == "af148fc7f0cee653e2f29e017e2fa73c928c910e", "caller recheck staged blob drift"
-assert STAGED_CALLER_RECHECK.read_bytes() == active_codeql_bytes, (
-    "Activated CodeQL must be byte-identical to the pre-approved caller recheck stage"
+from test_codeql_rust_caller_recheck_stage import without_caller
+assert without_caller(STAGED_CALLER_RECHECK.read_text(encoding="utf-8")) == without_caller(activated_codeql), (
+    "Activated CodeQL differs beyond the audited caller-provenance retry block"
 )
 assert m6_git_blob(STAGED_NO_DB_UPLOAD) == "894db7fb531721bbb961ce59231e08b9331b7444", (
     "CodeQL no-database-upload candidate Git blob drift"
@@ -699,7 +700,7 @@ with tempfile.TemporaryDirectory(prefix="oxide-m6-active-writer-") as td:
 WALLCLOCK_CODEQL = ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
 WALLCLOCK_VALIDATOR = ROOT / "docs/engineering/ci-staging/actions-security-wallclock-rust-impact-candidate.py"
 assert WALLCLOCK_CODEQL.is_file() and WALLCLOCK_VALIDATOR.is_file()
-assert m6_git_blob(ACTIVE_CODEQL) == "af148fc7f0cee653e2f29e017e2fa73c928c910e"
+assert m6_git_blob(ACTIVE_CODEQL) == "fef6dc22f11826543b3099c8e80e0adad928adf1"
 assert m6_git_blob(ROOT / ".github/scripts/validate_actions_security.py") == (
     "29fe8e7a6778f433c6f0390f11aed10820764ee4"
 )
@@ -795,3 +796,57 @@ print("CI wall-clock trusted dispatch routing candidate contract: PASS")
 # staged embedded-function mock contract as part of the required security suite.
 from test_codeql_rust_caller_recheck_stage import run_checks as verify_caller_recheck_stage
 verify_caller_recheck_stage()
+
+# Exercise the ACTUAL new protected CodeQL code with mocked read-only API
+# responses. Keep the historical three-attempt stage tests above intact.
+import test_codeql_rust_caller_recheck_stage as caller_stage
+import unittest
+
+class ActiveCallerReadbackContract(caller_stage.CallerRecheckContract):
+    def setUp(self):
+        super().setUp()
+        self.source = ACTIVE_CODEQL.read_text(encoding="utf-8")
+        namespace = {
+            "os": caller_stage.os, "json": caller_stage.json,
+            "time": caller_stage.time, "urllib": caller_stage.urllib,
+            "base_sha": caller_stage.BASE, "repository": caller_stage.REPO,
+            "token": "offline-test-token", "api_url": "https://api.invalid",
+        }
+        exec(compile(caller_stage.embedded(self.source), "<active caller>", "exec"), namespace)
+        self.verify = namespace["trusted_dispatch_identity"]
+
+    def test_exact_stage_delta_and_preapproval(self):
+        assert m6_git_blob(ACTIVE_CODEQL) == "fef6dc22f11826543b3099c8e80e0adad928adf1"
+        assert without_caller(STAGED_CALLER_RECHECK.read_text(encoding="utf-8")) == without_caller(self.source)
+        assert "fef6dc22f11826543b3099c8e80e0adad928adf1" in approved
+        assert "attempts = 15" in self.source
+
+    def test_unresolved_queued_remains_fail_closed(self):
+        queued = {**self.valid, "status": "queued"}
+        with self.assertRaisesRegex(RuntimeError, "after 15 read-only checks"):
+            self.call([queued] * 15)
+        self.assertEqual(len(self.requests), 15)
+        self.assertEqual(self.sleeps, [1] * 14)
+
+    def test_mismatched_identity_never_authorized(self):
+        for field, value in [
+            ("id", 8), ("event", "workflow_dispatch"), ("run_attempt", 2),
+            ("path", ".github/workflows/other.yml"), ("head_sha", "b" * 40),
+            ("status", "cancelled"),
+        ]:
+            with self.subTest(field=field):
+                self.requests.clear()
+                self.sleeps.clear()
+                with self.assertRaisesRegex(RuntimeError, "mismatched fields:"):
+                    self.call([{**self.valid, field: value}] * 15)
+                self.assertEqual(len(self.requests), 15)
+                self.assertEqual(len(self.sleeps), 14)
+
+    def test_failed_terminal_caller_never_authorized(self):
+        with self.assertRaisesRegex(RuntimeError, "conclusion"):
+            self.call([{**self.valid, "status": "completed", "conclusion": "failure"}] * 15)
+        self.assertEqual(len(self.requests), 15)
+
+suite = unittest.defaultTestLoader.loadTestsFromTestCase(ActiveCallerReadbackContract)
+result = unittest.TextTestRunner(verbosity=1).run(suite)
+assert result.wasSuccessful(), "Activated CodeQL caller readback fails adversarial tests"
