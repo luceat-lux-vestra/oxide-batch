@@ -1,0 +1,115 @@
+name: Research Rustdoc local-index linking falsification
+on:
+  push:
+    branches: [research/433-surface-rustdoc-profile-ab-20261011]
+    paths: [.github/workflows/research-433-surface-stub-link-fidelity.yml]
+permissions:
+  contents: read
+jobs:
+  stub-test:
+    name: link-hints-${{ matrix.mode }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        mode: [plain-no-deps, local-index-hints]
+    steps:
+      - name: Check out immutable protected main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: 33adce70d02913c9aded38edc27160fba104f757
+          persist-credentials: false
+      - name: Prove source and inject five disposable foreign leak aliases
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "33adce70d02913c9aded38edc27160fba104f757"
+          test "$(uname -m)" = "x86_64"
+          grep -Fq 'command.args(["doc", "--workspace", "--all-features"])' xtask/src/surface.rs
+          cat >> crates/oxide-batch/src/lib.rs <<'EOF'
+
+          /// Research-only negative control: runtime crate leak.
+          pub type SurfaceLeakTokio = tokio::runtime::Runtime;
+          /// Research-only negative control: database crate leak.
+          pub type SurfaceLeakSqlx = sqlx::PgPool;
+          /// Research-only negative control: serializer crate leak.
+          pub type SurfaceLeakJson = serde_json::Value;
+          /// Research-only negative control: CSV crate leak.
+          pub type SurfaceLeakCsv = csv::Reader<std::fs::File>;
+          /// Research-only negative control: hashing crate leak.
+          pub type SurfaceLeakSha2 = sha2::Sha256;
+          EOF
+          cargo build -p oxide-batch-xtask --locked
+      - name: Seed document directories from resolved graph if requested
+        env:
+          RESEARCH_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$RESEARCH_MODE" != "local-index-hints" ]]; then
+            exit 0
+          fi
+          python3 - <<'PY'
+          import json
+          import subprocess
+          from pathlib import Path
+
+          metadata = json.loads(subprocess.check_output(
+              ["cargo", "metadata", "--locked", "--format-version", "1"]
+          ))
+          doc_root = Path(metadata["target_directory"]) / "doc"
+          created = 0
+          for package in metadata["packages"]:
+              for target in package["targets"]:
+                  if not ({"lib", "rlib", "proc-macro", "dylib"} & set(target["kind"])):
+                      continue
+                  crate = target["name"].replace("-", "_")
+                  directory = doc_root / crate
+                  directory.mkdir(parents=True, exist_ok=True)
+                  index = directory / "index.html"
+                  if not index.exists():
+                      index.write_text("<!doctype html><title>research-only link hint</title>")
+                      created += 1
+          print(f"RESEARCH_LINK_HINTS created={created}")
+          PY
+      - name: Generate all workspace docs with unchanged no-deps option
+        env:
+          RESEARCH_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$SECONDS"
+          RUSTDOCFLAGS="-D warnings" cargo doc --workspace --all-features --no-deps --locked
+          echo "RESEARCH_DOC_BUILD mode=$RESEARCH_MODE seconds=$((SECONDS-start))"
+      - name: Scan generated HTML with unchanged inspector and no duplicate generation
+        env:
+          RESEARCH_MODE: ${{ matrix.mode }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          real_cargo="$(command -v cargo)"
+          bindir="$RUNNER_TEMP/cargo-scan-only"
+          mkdir -p "$bindir"
+          cat > "$bindir/cargo" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          if [[ "$#" == 3 && "$1" == "doc" && "$2" == "--workspace" && "$3" == "--all-features" ]]; then
+            exit 0
+          fi
+          exec "$REAL_CARGO" "$@"
+          EOF
+          chmod +x "$bindir/cargo"
+          set +e
+          REAL_CARGO="$real_cargo" PATH="$bindir:$PATH" target/debug/oxide-batch-xtask surface > "$RUNNER_TEMP/result.txt" 2>&1
+          result="$?"
+          set -e
+          echo "RESEARCH_LINK_SCAN mode=$RESEARCH_MODE exit=$result"
+          for fixture in SurfaceLeakTokio SurfaceLeakSqlx SurfaceLeakJson SurfaceLeakCsv SurfaceLeakSha2; do
+            if grep -Fq "$fixture" "$RUNNER_TEMP/result.txt"; then
+              echo "RESEARCH_ALIAS_DETECTED mode=$RESEARCH_MODE alias=$fixture"
+            else
+              echo "RESEARCH_ALIAS_MISSED mode=$RESEARCH_MODE alias=$fixture"
+            fi
+          done
+          grep '^disclosure:' "$RUNNER_TEMP/result.txt" | grep 'SurfaceLeak' | head -25 || true
