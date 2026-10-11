@@ -840,6 +840,36 @@ jobs:
           persist-credentials: false
 
 
+      # Build the exact 13 integration-test executables plus --lib in one
+      # Cargo graph. Original 29 test invocations, filters, ordering, service
+      # DB state and --test-threads=1 remain unchanged below.
+      - name: Grouped prebuild PostgreSQL repository test executables
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          start="$SECONDS"
+          targets=(
+            --lib
+            --test postgres_repository
+            --test postgres_flow
+            --test postgres_nested_job
+            --test postgres_crash_recovery
+            --test postgres_fault_crash_recovery
+            --test postgres_flow_crash_recovery
+            --test postgres_local_partition_crash_recovery
+            --test postgres_local_split_crash_recovery
+            --test postgres_advanced_flow_crash_recovery
+            --test postgres_nested_job_crash_recovery
+            --test postgres_scope_resolution_crash_recovery
+            --test postgres_custom_leaf_crash_recovery
+            --test postgres_item_stream_crash_recovery
+            --test postgres_retention_component_state
+          )
+          cargo test -p oxide-batch --features postgres "${targets[@]}" --no-run
+          elapsed="$((SECONDS - start))"
+          echo "PG_REPOSITORY_GROUPED_PREBUILD postgres=${{ matrix.postgres }} seconds=$elapsed"
+
       - name: Apply and reapply immutable migrations
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: >-
