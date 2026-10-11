@@ -1028,22 +1028,11 @@ class MergeGateVerifierTest < Minitest::Test
     updated = old.sub(/^[ \t]*- run: cargo doc --workspace --all-features --no-deps[ \t]*\n/, '')
     refute_equal old, updated
     write(root, '.github/workflows/ci.yml', updated)
-    write(root, 'xtask/src/surface.rs', <<~RUST)
-      pub fn check() -> Result<Vec<String>, String> {
-        build_documentation()?;
-        let found = scan(&documentation_root()?)?;
-      }
-      fn documentation_command() -> Command {
-        let mut command = Command::new("cargo");
-        command.args(["doc", "--workspace", "--all-features"]);
-        command.env("RUSTDOCFLAGS", "-D warnings");
-        command
-      }
-      fn build_documentation() -> Result<(), String> {
-        let status = documentation_command()
-            .status()?;
-      }
-    RUST
+    # Copy the real SHA-attested implementation; synthetic token-only fixtures
+    # are intentionally insufficient evidence for the deduplicated doc route.
+    %w[xtask/src/surface.rs xtask/src/main.rs xtask/Cargo.toml].each do |relative|
+      write(root, relative, File.binread(File.expand_path("../../#{relative}", __dir__)))
+    end
   end
 
   def test_unified_workspace_dependency_rustdoc_surface_is_accepted
@@ -1088,6 +1077,68 @@ class MergeGateVerifierTest < Minitest::Test
       src = File.read(path).sub('build_documentation()?;', '// omitted required build')
       write(root, 'xtask/src/surface.rs', src)
       assert_includes verify(root).join("\n"), 'missing strict full-workspace dependency rustdoc surface guarantees'
+    end
+  end
+
+  def test_unified_surface_comment_only_spoof_is_rejected
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      path = File.join(root, 'xtask/src/surface.rs')
+      source = File.read(path)
+      # Keeps every old textual token, but turns all executable lines inert.
+      commented = source.lines.map { |line| "// #{line}" }.join
+      assert_includes commented, 'build_documentation()?;'
+      assert_includes commented, 'command.env("RUSTDOCFLAGS", "-D warnings");'
+      write(root, 'xtask/src/surface.rs', commented)
+      assert_includes verify(root).join("\n"), 'attested xtask source/dispatcher/manifest mismatch'
+    end
+  end
+
+  def test_unified_surface_unreachable_build_is_rejected
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      path = File.join(root, 'xtask/src/surface.rs')
+      source = File.read(path)
+      modified = source.sub('build_documentation()?;', 'if false { build_documentation()?; }')
+      refute_equal source, modified
+      write(root, 'xtask/src/surface.rs', modified)
+      assert_includes verify(root).join("\n"), 'attested xtask source/dispatcher/manifest mismatch'
+    end
+  end
+
+  def test_unified_surface_scan_bypassed_with_comment_token_is_rejected
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      path = File.join(root, 'xtask/src/surface.rs')
+      source = File.read(path)
+      modified = source.sub('let found = scan(&documentation_root()?)?;', 'let found = BTreeSet::new(); // let found = scan(&documentation_root()?)?;')
+      refute_equal source, modified
+      write(root, 'xtask/src/surface.rs', modified)
+      assert_includes verify(root).join("\n"), 'attested xtask source/dispatcher/manifest mismatch'
+    end
+  end
+
+  def test_unified_surface_dispatcher_noop_is_rejected
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      path = File.join(root, 'xtask/src/main.rs')
+      source = File.read(path)
+      modified = source.sub('Some("surface") => run_surface_check(),', 'Some("surface") => true,')
+      refute_equal source, modified
+      write(root, 'xtask/src/main.rs', modified)
+      assert_includes verify(root).join("\n"), 'attested xtask source/dispatcher/manifest mismatch'
+    end
+  end
+
+  def test_unified_surface_manifest_redirect_is_rejected
+    with_repo do |root, _policy|
+      unified_docs_fixture(root)
+      path = File.join(root, 'xtask/Cargo.toml')
+      source = File.read(path)
+      modified = source.sub('default-run = "oxide-batch-xtask"', 'default-run = "inert"')
+      refute_equal source, modified
+      write(root, 'xtask/Cargo.toml', modified)
+      assert_includes verify(root).join("\n"), 'attested xtask source/dispatcher/manifest mismatch'
     end
   end
 
