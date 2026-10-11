@@ -1244,7 +1244,7 @@ jobs:
       - postgres-design-gate
       - postgres-item-components
       - postgres-repository
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       actions: read # Read sibling job conclusions for the aggregate; never mutate Actions.
