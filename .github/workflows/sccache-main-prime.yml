@@ -20,9 +20,33 @@ env:
 
 jobs:
   prime:
-    name: main Fast compiler cache prime
-    runs-on: ubuntu-24.04-arm
+    name: main ${{ matrix.arch }} compiler cache prime
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            runner_arch: ARM64
+            uname_arch: aarch64
+            cache_prefix: oxide-fast-sccache-v1-linux-arm64-
+            artifact_triple: aarch64-unknown-linux-musl
+            artifact_sha256: 2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a
+          - arch: x64
+            runner: ubuntu-24.04
+            runner_arch: X64
+            uname_arch: x86_64
+            cache_prefix: oxide-fast-sccache-v1-linux-
+            artifact_triple: x86_64-unknown-linux-musl
+            artifact_sha256: 45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
+    env:
+      CACHE_PREFIX: ${{ matrix.cache_prefix }}
+      EXPECTED_RUNNER_ARCH: ${{ matrix.runner_arch }}
+      EXPECTED_UNAME_ARCH: ${{ matrix.uname_arch }}
+      SCCACHE_ARTIFACT_TRIPLE: ${{ matrix.artifact_triple }}
+      SCCACHE_ARTIFACT_SHA256: ${{ matrix.artifact_sha256 }}
     permissions:
       actions: write # Prune older protected-main Fast compiler-cache entries after a successful save.
       contents: read # Check out the exact protected default-branch source being cached.
@@ -42,6 +66,8 @@ jobs:
           test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
           git log -1 --check
+          test "$RUNNER_ARCH" = "$EXPECTED_RUNNER_ARCH"
+          test "$(uname -m)" = "$EXPECTED_UNAME_ARCH"
 
       - name: Resolve bounded compiler-cache identity
         id: cache-id
@@ -54,8 +80,9 @@ jobs:
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          root_prefix="oxide-fast-sccache-v1-linux-arm64-"
-          family="${root_prefix}${toolchain_hash}"
+          family="${CACHE_PREFIX}${toolchain_hash}"
+          # Match a complete toolchain identity, so the x64 cleanup cannot select ARM64 caches.
+          root_prefix="${family}-"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${GITHUB_SHA}"
 
@@ -87,14 +114,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
+          archive="$RUNNER_TEMP/sccache-v0.18.0-${SCCACHE_ARTIFACT_TRIPLE}.tar.gz"
           install_dir="$RUNNER_TEMP/sccache-v0.18.0"
 
           curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
+            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-${SCCACHE_ARTIFACT_TRIPLE}.tar.gz" \
             --output "$archive"
 
-          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
+          echo "$SCCACHE_ARTIFACT_SHA256  $archive" \
             | sha256sum --check --strict
 
           mkdir -p "$install_dir"
