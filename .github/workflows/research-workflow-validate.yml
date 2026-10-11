@@ -1,0 +1,31 @@
+name: Research workflow syntax validation
+
+on:
+  push:
+    branches: [research/433-authority-arm-ab-20261011]
+    paths:
+      - .github/workflows/research-authority-arm64-ab.yml
+      - .github/workflows/research-workflow-validate.yml
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: actionlint-research-workflow
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out branch exact HEAD
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install pinned actionlint and validate research workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint_1.7.12_linux_amd64.tar.gz"
+          curl --fail --silent --show-error --location             "https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz" -o "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          "$RUNNER_TEMP/actionlint" -color .github/workflows/research-authority-arm64-ab.yml
