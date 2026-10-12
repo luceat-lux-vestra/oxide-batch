@@ -36,6 +36,9 @@ jobs:
       - name: Validate trusted Action pin-only classifier
         run: python3 -m unittest discover -s .github/scripts -p 'test_action_pin_only.py' -v
 
+      - name: Exercise independent trusted-base Action pin verifier
+        run: ruby .github/scripts/test_action_pin_integration.rb
+
       - name: Syntax-check protected merge authorities
         run: |
           ruby -c .github/scripts/verify-merge-gates.rb
