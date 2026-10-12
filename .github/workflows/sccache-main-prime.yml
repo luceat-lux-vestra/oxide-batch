@@ -6,8 +6,8 @@ on:
   workflow_run: # zizmor: ignore[dangerous-triggers] -- trusted default-branch source; upstream job, SHA, ref and live main checked before compiler/cache access.
     workflows: ["M5 post-merge cache signal"]
     types: [completed]
-  schedule:
-    - cron: "17 */4 * * *"
+  # Intentionally no scheduled prime: optional cache work only follows relevant
+  # merged dependency input changes; manual dispatch repairs evicted archives.
   workflow_dispatch:
 
 permissions:

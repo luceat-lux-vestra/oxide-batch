@@ -6,6 +6,19 @@ on:
   pull_request:
     types: [closed]
     branches: [main]
+    # Dependency/toolchain and cache-contract changes only. General source-only
+    # merges reuse the last compatible default-branch sccache archive.
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.cargo/**'
+      - '**/.cargo/**'
+      - 'rust-toolchain'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/m5-post-merge-cache-signal.yml'
+      - '.github/workflows/sccache-main-prime.yml'
 
 permissions: {}
 
