@@ -34,7 +34,7 @@ jobs:
         run: git log -1 --check
 
       - name: Validate trusted Action pin-only classifier
-        run: python3 -m unittest discover -s .github/scripts -p 'test_action_pin_only.py' -v
+        run: python3 -m unittest discover -s .github/scripts -p 'test_action_pin_*.py' -v
 
       - name: Exercise independent trusted-base Action pin verifier
         run: ruby .github/scripts/test_action_pin_integration.rb
