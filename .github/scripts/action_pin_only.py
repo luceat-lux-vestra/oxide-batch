@@ -7,8 +7,11 @@ reviewed and staged. Call only with trusted-base text and candidate text.
 
 from __future__ import annotations
 
+import argparse
 import json
+import os
 import re
+import sys
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
@@ -209,3 +212,42 @@ def github_api(token: str) -> Callable[[str], object]:
         except (OSError, UnicodeError, ValueError) as exc:
             raise AdmissionError("GitHub upstream release metadata unavailable") from exc
     return read
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(description="Fail-closed action pin-only gate")
+    parser.add_argument("--workflow", required=True)
+    parser.add_argument("--trusted-file", required=True)
+    parser.add_argument("--candidate-file", required=True)
+    args = parser.parse_args()
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        print("pin-only: FAIL: missing GitHub API token", file=sys.stderr)
+        return 1
+    try:
+        with open(args.trusted_file, "rb") as f:
+            trusted = f.read()
+        with open(args.candidate_file, "rb") as f:
+            candidate = f.read()
+        patches = classify(args.workflow, trusted, candidate)
+        get_json = github_api(token)
+        for patch in patches:
+            verify_release(patch, get_json)
+    except (OSError, AdmissionError) as exc:
+        print(f"pin-only: FAIL: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps({
+        "classification": "patch-only",
+        "workflow": args.workflow,
+        "verified": len(patches),
+        "releases": [
+            {"repository": p.repository, "old_sha": p.old_sha, "new_sha": p.new_sha,
+             "new_version": ".".join(map(str, p.new_version))}
+            for p in patches
+        ],
+    }, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
