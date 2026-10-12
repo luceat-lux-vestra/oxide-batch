@@ -592,7 +592,7 @@ assert ACTIVE_WRITER.read_bytes() == STAGED_WRITER.read_bytes(), "M6 writer diff
 assert m6_git_blob(STAGED_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071", (
     "Historical M6 CodeQL stage changed without review"
 )
-assert m6_git_blob(ACTIVE_CODEQL) == "fef6dc22f11826543b3099c8e80e0adad928adf1", (
+assert m6_git_blob(ACTIVE_CODEQL) == "68878572050524d1f65e0aa7c14baca49074a953", (
     "Activated CodeQL must match its new exact pre-admitted Git blob"
 )
 staged_wallclock = (
@@ -665,8 +665,22 @@ assert STAGED_NO_DB_UPLOAD.read_bytes() == expected_active_codeql, (
 STAGED_CALLER_RECHECK = ROOT / "docs/engineering/ci-staging/codeql-rust-caller-recheck-candidate.yml"
 assert STAGED_CALLER_RECHECK.is_file(), "missing caller recheck pre-approved stage"
 assert m6_git_blob(STAGED_CALLER_RECHECK) == "af148fc7f0cee653e2f29e017e2fa73c928c910e", "caller recheck staged blob drift"
-from test_codeql_rust_caller_recheck_stage import without_caller
-assert without_caller(STAGED_CALLER_RECHECK.read_text(encoding="utf-8")) == without_caller(activated_codeql), (
+from test_codeql_rust_caller_recheck_stage import without_caller, codeql_before_action_update
+prior_action_codeql = codeql_before_action_update(activated_codeql)
+for unexpected in (
+    activated_codeql.replace("ubuntu-24.04-arm", "ubuntu-latest", 1),
+    activated_codeql.replace("          upload-database: false\n", "", 1),
+    activated_codeql.replace("attempts = 15", "attempts = 16", 1),
+    activated_codeql.replace("# v4.38.3", "# v4.38.2", 1),
+):
+    assert unexpected != activated_codeql, "action-update negative fixture did not mutate"
+    try:
+        codeql_before_action_update(unexpected)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("action update proof accepted non-pin workflow drift")
+assert without_caller(STAGED_CALLER_RECHECK.read_text(encoding="utf-8")) == without_caller(prior_action_codeql), (
     "Activated CodeQL differs beyond the audited caller-provenance retry block"
 )
 assert m6_git_blob(STAGED_NO_DB_UPLOAD) == "894db7fb531721bbb961ce59231e08b9331b7444", (
@@ -700,7 +714,7 @@ with tempfile.TemporaryDirectory(prefix="oxide-m6-active-writer-") as td:
 WALLCLOCK_CODEQL = ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
 WALLCLOCK_VALIDATOR = ROOT / "docs/engineering/ci-staging/actions-security-wallclock-rust-impact-candidate.py"
 assert WALLCLOCK_CODEQL.is_file() and WALLCLOCK_VALIDATOR.is_file()
-assert m6_git_blob(ACTIVE_CODEQL) == "fef6dc22f11826543b3099c8e80e0adad928adf1"
+assert m6_git_blob(ACTIVE_CODEQL) == "68878572050524d1f65e0aa7c14baca49074a953"
 assert m6_git_blob(ROOT / ".github/scripts/validate_actions_security.py") == (
     "29fe8e7a6778f433c6f0390f11aed10820764ee4"
 )
@@ -816,8 +830,9 @@ class ActiveCallerReadbackContract(caller_stage.CallerRecheckContract):
         self.verify = namespace["trusted_dispatch_identity"]
 
     def test_exact_stage_delta_and_preapproval(self):
-        assert m6_git_blob(ACTIVE_CODEQL) == "fef6dc22f11826543b3099c8e80e0adad928adf1"
-        assert without_caller(STAGED_CALLER_RECHECK.read_text(encoding="utf-8")) == without_caller(self.source)
+        assert m6_git_blob(ACTIVE_CODEQL) == "68878572050524d1f65e0aa7c14baca49074a953"
+        assert without_caller(STAGED_CALLER_RECHECK.read_text(encoding="utf-8")) == without_caller(codeql_before_action_update(self.source))
+        assert "68878572050524d1f65e0aa7c14baca49074a953" in approved
         assert "fef6dc22f11826543b3099c8e80e0adad928adf1" in approved
         assert "attempts = 15" in self.source
 
