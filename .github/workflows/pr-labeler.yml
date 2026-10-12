@@ -130,9 +130,12 @@ jobs:
         run: |
           python3 - <<'PY'
           import base64
+          import hashlib
           import json
           import os
+          import subprocess
           import sys
+          import tempfile
           import time
           import urllib.parse
           import urllib.request
@@ -180,6 +183,101 @@ jobs:
           def fail(message):
               print(f"merge-gate: FAIL: {message}", file=sys.stderr)
               raise SystemExit(1)
+
+          # Only the fixed, reviewed workflows below qualify. The elevated
+          # pull_request_target merge-gate workflow remains exact-blob only.
+          PIN_ONLY_HELPER_BLOB = "2ed10e141c7c11b1a88940256e3a68ca272467a4"
+          PIN_ONLY_WORKFLOWS = {
+              ".github/workflows/pr-ci.yml",
+              ".github/workflows/ci.yml",
+              ".github/workflows/dependency-review.yml",
+              ".github/workflows/codeql.yml",
+              ".github/workflows/evidence.yml",
+              ".github/workflows/supply-chain.yml",
+              ".github/workflows/m5-conformance.yml",
+          }
+          pin_only_cache = {}
+
+          def trusted_content(path, ref):
+              item = api(
+                  f"contents/{urllib.parse.quote(path, safe='/')}",
+                  {"ref": ref},
+              )
+              blob = item.get("sha")
+              data64 = item.get("content")
+              if item.get("type") != "file" or item.get("encoding") != "base64":
+                  raise GateError(f"{path}: expected an immutable file response")
+              if not isinstance(data64, str) or not isinstance(blob, str):
+                  raise GateError(f"{path}: missing Git blob or content")
+              try:
+                  data = base64.b64decode(
+                      data64.replace("\n", "").replace("\r", ""),
+                      validate=True,
+                  )
+              except Exception as exc:
+                  raise GateError(f"{path}: invalid base64 content") from exc
+              computed = hashlib.sha1(
+                  b"blob " + str(len(data)).encode("ascii") + b"\x00" + data
+              ).hexdigest()
+              if computed != blob:
+                  raise GateError(f"{path}: Git blob/content mismatch")
+              return blob, data
+
+          def trusted_pin_only(path):
+              if path not in PIN_ONLY_WORKFLOWS:
+                  return False
+              if path in pin_only_cache:
+                  return pin_only_cache[path]
+              # Always require the exact code committed with the protected
+              # evaluator. An unprotected helper change cannot self-authorize.
+              helper_blob, helper_bytes = trusted_content(
+                  ".github/scripts/action_pin_only.py", base_sha
+              )
+              if helper_blob != PIN_ONLY_HELPER_BLOB:
+                  raise GateError("trusted-base pin-only helper is not pinned")
+              old_blob, before = trusted_content(path, base_sha)
+              new_blob, after = trusted_content(path, head_sha)
+              if old_blob == new_blob:
+                  pin_only_cache[path] = True
+                  return True
+              with tempfile.TemporaryDirectory(prefix="oxide-pin-only-") as temp:
+                  script = os.path.join(temp, "trusted-pin.py")
+                  old_file = os.path.join(temp, "before.yml")
+                  new_file = os.path.join(temp, "after.yml")
+                  for filename, data in (
+                      (script, helper_bytes), (old_file, before), (new_file, after)
+                  ):
+                      with open(filename, "wb") as output:
+                          output.write(data)
+                  completed = subprocess.run(
+                      [
+                          "python3", script, "--workflow", path,
+                          "--trusted-file", old_file,
+                          "--candidate-file", new_file,
+                      ],
+                      env={**os.environ, "GH_TOKEN": token},
+                      text=True, capture_output=True, timeout=90,
+                      check=False,
+                  )
+              if completed.returncode:
+                  raise GateError(
+                      f"{path}: changed protected workflow is not a verified "
+                      f"pin-only patch: {completed.stderr[-750:]}"
+                  )
+              try:
+                  verdict = json.loads(completed.stdout)
+              except (ValueError, TypeError) as exc:
+                  raise GateError(f"{path}: malformed pin-only evidence") from exc
+              if (
+                  not isinstance(verdict, dict)
+                  or verdict.get("classification") != "patch-only"
+                  or verdict.get("workflow") != path
+                  or not isinstance(verdict.get("verified"), int)
+                  or verdict["verified"] < 1
+              ):
+                  raise GateError(f"{path}: inconsistent pin-only evidence")
+              pin_only_cache[path] = True
+              return True
 
           try:
               pr = api(f"pulls/{pr_number}")
@@ -351,6 +449,17 @@ jobs:
                                       "accepted blobs; existing trust cannot be removed"
                                   )
                           else:
+                              if (
+                                  label == "protected workflow"
+                                  and head_blob not in base_allowed
+                                  and trusted_pin_only(path)
+                              ):
+                                  if head_allowed != base_allowed:
+                                      raise GateError(
+                                          f"{path}: pin-only activation cannot "
+                                          "change accepted-blob policy"
+                                      )
+                                  continue
                               if head_blob not in base_allowed:
                                   raise GateError(
                                       f"{path}: changed {label} blob {head_blob!r} "
@@ -563,10 +672,10 @@ jobs:
                       {"ref": head_sha},
                   )
                   actual_blob = head_file.get("sha")
-                  if actual_blob not in accepted_blobs:
+                  if actual_blob not in accepted_blobs and not trusted_pin_only(workflow_path):
                       raise GateError(
                           f"{workflow_path}: PR-head blob {actual_blob!r} is not accepted "
-                          f"by trusted-base policy"
+                          f"by trusted-base policy or the audited pin-only exception"
                       )
                   print(
                       f"merge-gate: protected workflow accepted path={workflow_path} "
