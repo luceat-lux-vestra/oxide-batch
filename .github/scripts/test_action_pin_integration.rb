@@ -127,7 +127,7 @@ class TrustedActionPinIntegrationTest < Minitest::Test
     with_trusted_fixture do |root, _|
       patch_codeql(root)
       target = root.join(WORKFLOW)
-      target.binwrite(target.binread.sub('permissions: {}', 'permissions: write-all'))
+      target.binwrite(target.binread.sub("permissions:\n", "permissions: write-all\n"))
       with_token do
         with_stub_upstream(root) do
           refute MergeGateVerifier.trusted_action_patch?(root: root.to_s, workflow: WORKFLOW)
