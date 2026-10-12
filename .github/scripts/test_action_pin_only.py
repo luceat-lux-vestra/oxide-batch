@@ -2,8 +2,9 @@
 """Deterministic negative tests for the non-authoritative pin-only helper."""
 
 import unittest
+from pathlib import Path
 
-from action_pin_only import ALLOWED_SITES, AdmissionError, Patch, classify, verify_release
+from action_pin_only import ACTION, ALLOWED_SITES, AdmissionError, Patch, classify, verify_release
 
 OLD = "1" * 40
 NEW = "2" * 40
@@ -28,6 +29,46 @@ class PinOnlyTests(unittest.TestCase):
                 results = classify(path, fixture(path), bump(path, fixture(path)))
                 self.assertTrue(results)
                 self.assertEqual({p.new_sha for p in results}, {NEW})
+
+    def test_audited_sites_match_real_workflow_and_replay(self):
+        root = Path(__file__).resolve().parents[2]
+        for workflow, sites in ALLOWED_SITES.items():
+            with self.subTest(workflow=workflow):
+                original = (root / workflow).read_bytes()
+                lines = original.decode("utf-8").splitlines(keepends=True)
+                repos = {}
+                for number, action in sites.items():
+                    self.assertLessEqual(number, len(lines))
+                    match = ACTION.fullmatch(lines[number - 1])
+                    self.assertIsNotNone(match, f"{workflow}:{number} not an immutable action site")
+                    self.assertEqual(match.group("action"), action)
+                    repo = "/".join(action.split("/")[:2])
+                    repos.setdefault(repo, []).append((number, match))
+                for repo, positions in repos.items():
+                    with self.subTest(action_repo=repo):
+                        updated = lines.copy()
+                        for number, match in positions:
+                            old_sha = match.group("sha")
+                            old_patch = int(match.group("patch"))
+                            self.assertNotEqual(old_sha, NEW)
+                            # Replay only the exact audited SHA and comment; all
+                            # other bytes remain identical to protected main.
+                            updated[number - 1] = lines[number - 1].replace(
+                                old_sha + " # v" + ".".join(
+                                    match.group(p) for p in ("major", "minor", "patch")
+                                ),
+                                NEW + " # v" + ".".join(
+                                    [match.group("major"), match.group("minor"), str(old_patch + 1)]
+                                ),
+                            )
+                        results = classify(workflow, original, "".join(updated).encode("utf-8"))
+                        self.assertEqual([p.repository for p in results], [repo])
+                        self.assertEqual(results[0].new_sha, NEW)
+
+    def test_elevated_gate_workflow_stays_exact_blob_only(self):
+        path = ".github/workflows/pr-labeler.yml"
+        with self.assertRaises(AdmissionError):
+            classify(path, b"uses: actions/github-script@" + OLD.encode(), b"uses: actions/github-script@" + NEW.encode())
 
     def test_non_action_change_rejected(self):
         path = ".github/workflows/codeql.yml"
