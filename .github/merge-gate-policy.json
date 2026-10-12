@@ -189,7 +189,8 @@
           "351638668c6e19dd171293f4f15d16409c5558e9",
           "894db7fb531721bbb961ce59231e08b9331b7444",
         "af148fc7f0cee653e2f29e017e2fa73c928c910e",
-          "fef6dc22f11826543b3099c8e80e0adad928adf1"
+          "fef6dc22f11826543b3099c8e80e0adad928adf1",
+          "68878572050524d1f65e0aa7c14baca49074a953"
         ]
       },
       {
@@ -210,7 +211,8 @@
       {
         "workflow": ".github/workflows/m5-conformance.yml",
         "accepted_blobs": [
-          "5e8c3cba0ae1c9f3d7c454c5a6004e71ad58c0ae"
+          "5e8c3cba0ae1c9f3d7c454c5a6004e71ad58c0ae",
+          "0d590fdd1130f462d31f353ed4394822b3c424fa"
         ]
       },
       {
