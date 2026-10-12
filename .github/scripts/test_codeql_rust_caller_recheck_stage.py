@@ -36,6 +36,19 @@ def without_caller(text: str) -> str:
     return ("".join(lines[:begin]) + "          # <<caller provenance isolated>>\n"
             + "".join(lines[finish:])).replace("          import time\n", "", 1)
 
+def codeql_before_action_update(text: str) -> str:
+    """Prove the reviewed four-pin patch against the immutable active baseline."""
+    old = "@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2"
+    new = "@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3"
+    assert text.count(new) == 4 and old not in text, "CodeQL action pin delta drift"
+    prior = text.replace(new, old)
+    payload = prior.encode("utf-8")
+    blob = hashlib.sha1(b"blob " + str(len(payload)).encode("ascii") + b"\x00" + payload).hexdigest()
+    assert blob == "fef6dc22f11826543b3099c8e80e0adad928adf1", (
+        "CodeQL changed beyond the reviewed four action pins"
+    )
+    return prior
+
 class CallerRecheckContract(unittest.TestCase):
     def setUp(self):
         self.source = STAGED.read_text(encoding="utf-8")
@@ -77,7 +90,7 @@ class CallerRecheckContract(unittest.TestCase):
         sha = hashlib.sha1(f"blob {len(actual)}\\0".encode().replace(b"\\0", bytes([0])) + actual).hexdigest()
         self.assertEqual(sha, FUTURE_BLOB)
         active = ACTIVE.read_text(encoding="utf-8")
-        self.assertEqual(without_caller(active), without_caller(self.source))
+        self.assertEqual(without_caller(codeql_before_action_update(active)), without_caller(self.source))
         data = json.loads(POLICY.read_text(encoding="utf-8"))
         accepted = next(x["accepted_blobs"] for x in data["repository_merge_gate"]["protected_workflows"]
                         if x["workflow"] == ".github/workflows/codeql.yml")

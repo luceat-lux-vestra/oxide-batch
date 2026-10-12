@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the shard/merge scripts. The dedicated workflow owns fail-closed pull-request routing, deterministic PostgreSQL 15/18 target sharding, canonical report merge, and lightweight required-context emission.",
   "identity_note": "workflow_git_blob, script_git_blob, and merge_script_git_blob are the fail-closed authority. Each is the exact git hash-object identity of executable CI machinery; any byte-level drift makes retained evidence stale and must be deliberately re-proved. Literal fields remain readable diagnostics rather than the trust boundary.",
   "workflow_path": ".github/workflows/m5-conformance.yml",
-  "workflow_git_blob": "5e8c3cba0ae1c9f3d7c454c5a6004e71ad58c0ae",
+  "workflow_git_blob": "0d590fdd1130f462d31f353ed4394822b3c424fa",
   "workflow_name": "M5 Conformance",
   "triggers": {
     "pull_request": [
