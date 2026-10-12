@@ -1,6 +1,6 @@
 # CodeQL P9: offline predicate-millisecond evidence contract
 
-**Status:** opt-in PRIVATE utility, synthetic-tested only. NOT a CodeQL security scan, SARIF result, merge authority or performance optimization. Owner: oxide-batch #433. Dependent Arkst optimization: #585.
+**Status:** PAUSED / manual-only (NO-GO after P10b-2 live CLI compatibility failure). This is a PRIVATE research utility, NOT a CodeQL security scan, SARIF result, merge authority or performance optimization. Owner: oxide-batch #433. Dependent Arkst optimization: #585.
 
 ## Published source contracts
 
@@ -12,6 +12,10 @@
   https://github.com/github/vscode-codeql/blob/f90cb50289846e36319edeff7d859726f0f98d91/extensions/ql-vscode/src/log-insights/performance-comparison.ts
 
 These client source definitions are **not a proven live schema match for CodeQL CLI 2.27.2**. The first P8 ARM64 real schema probe produced partial 'overall' structure only and did not validate its unknown deep numeric fields.
+
+## Execution policy (PAUSED)
+
+No profiler, predicate-summary parsing, synthetic regression suite, or CodeQL evaluator replay is invoked automatically by any production workflow. The former Fast branch CI test/compile step was explicitly removed; the code and tests are retained solely for deliberate, local manual re-evaluation of the stopped research campaign. This does **not** alter normal CodeQL security scanning or the required Merge Gate. Resume only after a separately justified, security-equivalent performance lever and controlled benchmark plan are approved. The live CodeQL CLI 2.27.2 tiny fixture generated a 37-query summary but the parser rejected it fail-closed, so compatibility and end-to-end speedups are **not established**. See #433 for immutable evidence.
 
 ## Offline use and privacy
 
@@ -29,4 +33,4 @@ Raw evaluator logs and unfiltered predicates summaries may contain sensitive nam
 
 ## Validation / next P10 gate
 
-**42 adversarial mock-only tests (target; require exact-final-HEAD CI proof)** and Python compilation exercise the offline parser's fixed numeric output, bounded decoding and refusal behavior on synthetic data. They **do not** prove compatibility with CodeQL CLI 2.27.2 live predicates streams or any scan-speed improvement. A later isolated P10 experiment must first prove actual 2.27.2 event shape, 37-query pack/manifest parity, source coverage and errors, runner/CLI identity and private stdout. If the shape differs, keep FAIL-CLOSED; do not expand numeric allowlists without evidence. Do not treat anonymous predicate durations as causally identifying Arkst #585's observed 13-to-14 query-completion gap.
+**42 prior synthetic adversarial tests (run manually only; not part of current CI)** and Python compilation exercise the offline parser's fixed numeric output, bounded decoding and refusal behavior on synthetic data. They **do not** prove compatibility with CodeQL CLI 2.27.2 live predicates streams or any scan-speed improvement. A later isolated P10 experiment must first prove actual 2.27.2 event shape, 37-query pack/manifest parity, source coverage and errors, runner/CLI identity and private stdout. If the shape differs, keep FAIL-CLOSED; do not expand numeric allowlists without evidence. Do not treat anonymous predicate durations as causally identifying Arkst #585's observed 13-to-14 query-completion gap.
