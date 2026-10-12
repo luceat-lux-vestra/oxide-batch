@@ -25,6 +25,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- Locked Tokio 1.53.2 and trybuild 1.0.122, with reviewed campaign dependency
+  closure updates. Tokio's patch includes runtime shutdown, semaphore and
+  timer/waker fixes; public execution and restart contracts are unchanged.
+
 - Custom `CompletionPolicy` implementations must now override
   `fingerprint()` before they can be bound into a restart-compatible
   definition. The trait default is fail-closed and
