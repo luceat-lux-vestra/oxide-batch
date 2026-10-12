@@ -1,0 +1,310 @@
+name: M5 Conformance
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read # Read live PR identity and complete changed-file metadata for trusted routing.
+
+concurrency:
+  group: m5-conformance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  route:
+    if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
+    name: trusted-campaign-route
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      classification_outcome: ${{ steps.classify.outcome }}
+      direct_workflows: ${{ steps.classify.outputs.direct_workflows }}
+    steps:
+      - name: Check out exact trusted base
+        id: trusted-base
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: .trusted-base
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Classify direct-proof campaigns from trusted base
+        id: classify
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_CHECKOUT: ${{ steps.trusted-base.outcome }}
+        shell: bash
+        run: |
+          echo 'direct_workflows=[]' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          test "$TRUSTED_CHECKOUT" = "success"
+
+          pr_json="$(gh api -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}")"
+          jq -e \
+            --arg base "$BASE_SHA" \
+            --arg head "$HEAD_SHA" \
+            --arg repo "$GITHUB_REPOSITORY" \
+            '.base.sha == $base and .head.sha == $head and .base.repo.full_name == $repo and ((.changed_files | type) == "number" and .changed_files > 0)' \
+            <<<"$pr_json" >/dev/null
+          expected_count="$(jq -er '.changed_files' <<<"$pr_json")"
+
+          pages="$(gh api --paginate --slurp -H 'Accept: application/vnd.github+json' "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100")"
+          jq -e 'type == "array" and all(.[]; type == "array")' <<<"$pages" >/dev/null
+          changed_file_records="$(mktemp)"
+          jq -r '.[][] | [.status, .filename, (.previous_filename // "")] | @tsv' <<<"$pages" >"$changed_file_records"
+
+          classification="$(
+            python3 .trusted-base/.github/scripts/pr-scope.py \
+              --repo-root .trusted-base \
+              --policy .github/merge-gate-policy.json \
+              --expected-count "$expected_count" \
+              --trusted-base-sha "$BASE_SHA" \
+              <"$changed_file_records"
+          )"
+          direct_workflows="$(
+            jq -cer '
+              if .classification_valid == true and
+                 (.direct_proof_campaign_workflows | type) == "array" and
+                 all(.direct_proof_campaign_workflows[]; type == "string") and
+                 ((.direct_proof_campaign_workflows | unique | length) ==
+                  (.direct_proof_campaign_workflows | length))
+              then .direct_proof_campaign_workflows
+              else error("invalid direct-proof campaign output")
+              end
+            ' <<<"$classification"
+          )"
+          echo "direct_workflows=$direct_workflows" >> "$GITHUB_OUTPUT"
+
+  conformance-shard-15:
+    name: deep-postgres-15-conformance-shard-${{ matrix.shard }}
+    needs: route
+    if: >-
+      ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    services:
+      postgres:
+        image: postgres:15@sha256:926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561 # zizmor: ignore[unpinned-images]
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_campaign
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_campaign"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
+
+      - name: Run PostgreSQL 15 conformance shard
+        id: conformance-campaign
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: ./tests/fixtures/conformance/run-ci-campaign.sh 15 "$SHARD_INDEX" 2
+
+      - name: Retain PostgreSQL 15 shard evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conformance-shard-postgres-15-${{ matrix.shard }}
+          path: target/m5-campaigns/conformance-shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  conformance-shard-18:
+    name: deep-postgres-18-conformance-shard-${{ matrix.shard }}
+    needs: route
+    if: >-
+      ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1]
+    services:
+      postgres:
+        image: postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280 # zizmor: ignore[unpinned-images]
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oxide_batch_campaign
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username postgres --dbname oxide_batch_campaign"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
+
+      - name: Run PostgreSQL 18 conformance shard
+        id: conformance-campaign
+        env:
+          SHARD_INDEX: ${{ matrix.shard }}
+        run: ./tests/fixtures/conformance/run-ci-campaign.sh 18 "$SHARD_INDEX" 2
+
+      - name: Retain PostgreSQL 18 shard evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conformance-shard-postgres-18-${{ matrix.shard }}
+          path: target/m5-campaigns/conformance-shard-${{ matrix.shard }}.json
+          if-no-files-found: error
+          retention-days: 30
+
+  conformance-deep-15:
+    name: deep-postgres-15-conformance-campaign
+    needs: [route, conformance-shard-15]
+    if: >-
+      ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
+
+      - name: Download PostgreSQL 15 shard evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: conformance-shard-postgres-15-*
+          path: target/m5-campaign-shards
+          merge-multiple: true
+
+      - name: Merge PostgreSQL 15 canonical conformance report
+        run: bash ./tests/fixtures/conformance/merge-ci-campaign.sh 15 2 target/m5-campaign-shards
+
+      - name: Retain the PostgreSQL 15 canonical campaign report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conformance-campaign-postgres-15
+          path: target/m5-campaigns/conformance-campaign.json
+          if-no-files-found: error
+          retention-days: 30
+
+  conformance-deep-18:
+    name: deep-postgres-18-conformance-campaign
+    needs: [route, conformance-shard-18]
+    if: >-
+      ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Fail closed if the execution contract drifts
+        run: ./tests/fixtures/conformance/verify-ci-contract.sh .github/workflows/m5-conformance.yml
+
+      - name: Download PostgreSQL 18 shard evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: conformance-shard-postgres-18-*
+          path: target/m5-campaign-shards
+          merge-multiple: true
+
+      - name: Merge PostgreSQL 18 canonical conformance report
+        run: bash ./tests/fixtures/conformance/merge-ci-campaign.sh 18 2 target/m5-campaign-shards
+
+      - name: Retain the PostgreSQL 18 canonical campaign report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: conformance-campaign-postgres-18
+          path: target/m5-campaigns/conformance-campaign.json
+          if-no-files-found: error
+          retention-days: 30
+
+  conformance-campaign:
+    name: postgres-${{ matrix.postgres }}-conformance-campaign
+    needs: [route, conformance-deep-15, conformance-deep-18]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        postgres: ["15", "18"]
+    steps:
+      - name: Emit required conformance context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          IS_DRAFT: ${{ github.event.pull_request.draft }}
+          ROUTE_RESULT: ${{ needs.route.result }}
+          CLASSIFICATION_OUTCOME: ${{ needs.route.outputs.classification_outcome }}
+          DIRECT_REQUIRED: ${{ contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml') }}
+          POSTGRES: ${{ matrix.postgres }}
+          DEEP_15_RESULT: ${{ needs.conformance-deep-15.result }}
+          DEEP_18_RESULT: ${{ needs.conformance-deep-18.result }}
+        run: |
+          set -euo pipefail
+
+          if [[ "$EVENT_NAME" == "pull_request" && "$IS_DRAFT" == "true" ]]; then
+            echo "M5 conformance is deferred until the pull request is ready for review"
+            exit 0
+          fi
+
+          case "$POSTGRES" in
+            15) DEEP_RESULT="$DEEP_15_RESULT" ;;
+            18) DEEP_RESULT="$DEEP_18_RESULT" ;;
+            *)
+              echo "unsupported required-context PostgreSQL major: $POSTGRES" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ "$EVENT_NAME" == "workflow_dispatch" || "$ROUTE_RESULT" != "success" || "$CLASSIFICATION_OUTCOME" != "success" || "$DIRECT_REQUIRED" == "true" ]]; then
+            if [[ "$DEEP_RESULT" != "success" ]]; then
+              echo "M5 conformance deep proof for PostgreSQL $POSTGRES was required but concluded: $DEEP_RESULT" >&2
+              exit 1
+            fi
+            echo "M5 conformance deep proof for PostgreSQL $POSTGRES completed successfully"
+            exit 0
+          fi
+
+          if [[ "$DEEP_RESULT" != "skipped" ]]; then
+            echo "M5 conformance deep proof for PostgreSQL $POSTGRES was not required but concluded: $DEEP_RESULT" >&2
+            exit 1
+          fi
+          echo "M5 conformance direct proof is not required for this pull request"
