@@ -1,7 +1,6 @@
 # CodeQL Rust evaluator profiling — opt-in, offline, non-authoritative
 
-**Status:** manually invoked experimental harness; **not** a CI authority, not a
-production security-scan substitute. See oxide-batch [#433](https://github.com/luceat-lux-vestra/oxide-batch/issues/433)
+**Status: PAUSED / MANUAL ONLY (NO-GO).** The speculative Rust CodeQL evaluator profiling campaign is stopped after the pinned 2.27.2 P10b-2 live predicate-summary parser rejected actual output. The historical harness is **not scheduled**, is **not invoked by CI**, and must not be run automatically; retain it solely for a separately approved, evidence-backed manual investigation. It is **not** a CI authority or production security-scan substitute. See oxide-batch [#433](https://github.com/luceat-lux-vestra/oxide-batch/issues/433)
 for the measured 2026-10-10 baseline and constraints.
 
 ## Why this exists
@@ -20,6 +19,10 @@ create a database, publish a SARIF report, upload artifacts, change workflow
 permissions or touch the required PR security checks. It **does** execute
 queries and modify the database's `results`/cache, so always use a disposable
 DB/copy separate from existing CI/security scanning.
+
+## Paused execution boundary
+
+No production GitHub Actions workflow invokes this profiler, its synthetic unit tests or the private predicate-summary tool. The unrelated `Fast branch CI` automatic predicate-summary test step was removed in PR #543; all program and test files remain in Git. The examples below are historical **manual-only** commands and are not standing instructions to restart this campaign. Preserve standard CodeQL security scanning, default queries, SARIF and protected merge authority unchanged. Canonical NO-GO evidence: [oxide-batch #433](https://github.com/luceat-lux-vestra/oxide-batch/issues/433).
 
 ## Setup and invocation
 
