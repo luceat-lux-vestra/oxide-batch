@@ -796,10 +796,10 @@
       "version": "0.1.1"
     },
     {
-      "checksum": "202caea871b69668250d242070849eb495be178ed697a3e98aebce5bc81a0bed",
+      "checksum": "e95f91fcc7a621e8b030f6aa23c71fe9838ae2fb4d8118b75602a328f5144044",
       "name": "tokio",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "version": "1.53.1"
+      "version": "1.53.2"
     },
     {
       "checksum": "6328af13490e73a9b4694030fafd93f8c8c6a9dede33e821c3fc63eddf8042ba",
@@ -856,10 +856,10 @@
       "version": "0.1.36"
     },
     {
-      "checksum": "c0cabaa10be1917331a313866bd94526343e03c77bcf69144b62b072ad35d47c",
+      "checksum": "62db9c92d704393fbf2132041720cc80b689f2d3f28521015c2ac866223c11b8",
       "name": "trybuild",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "version": "1.0.121"
+      "version": "1.0.122"
     },
     {
       "checksum": "b6f5e870be6c3b371b77fe0ee0bafb859fa4964b4404c27de1d380043c4dda20",
