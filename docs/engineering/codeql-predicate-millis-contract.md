@@ -17,6 +17,17 @@ These client source definitions are **not a proven live schema match for CodeQL 
 
 No profiler, predicate-summary parsing, synthetic regression suite, or CodeQL evaluator replay is invoked automatically by any production workflow. The former Fast branch CI test/compile step was explicitly removed; the code and tests are retained solely for deliberate, local manual re-evaluation of the stopped research campaign. This does **not** alter normal CodeQL security scanning or the required Merge Gate. Resume only after a separately justified, security-equivalent performance lever and controlled benchmark plan are approved. The live CodeQL CLI 2.27.2 tiny fixture generated a 37-query summary but the parser rejected it fail-closed, so compatibility and end-to-end speedups are **not established**. See #433 for immutable evidence.
 
+## Portfolio execution census (2026-10-12; repository-main scope)
+
+The retirement was rechecked against all **119 default-branch GitHub Actions workflows** across ten Engineering Portfolio repositories. No workflow on those default branches invokes the **live private evaluator profiler**. The only two remaining *automatic synthetic/offline CodeQL timing-test invocations* before the retirement PRs merge are:
+
+- `oxide-batch/.github/workflows/fast-branch.yml` — 42 synthetic predicate-summary tests plus `py_compile` on ordinary branch pushes; removed **only by PR #543 when merged**.
+- `arkst/.github/workflows/ci.yml` — synthetic `test_codeql_rust_log_timing.py` after independent `test_codeql_scope.py`; removed **only by Arkst PR #607 when merged**. The latter `test_codeql_scope.py` is security-scope assurance and must remain active.
+
+Historical research is not limited to these two repositories: CrossInput has a Swift CodeQL process-sampling helper in the **`research/231-free-intel-swift-codeql` branch** (not current PR #231's HEAD or default-main CI), and erdMaid has an isolated CodeQL Java/Kotlin A/B workflow scoped to **research-branch workflow-file pushes**, not protected-main periodic execution. Neither is the stopped P10b-2 Rust predicate profiler. `oxide-batch-workloads` performance benchmarks exercise **application batch workloads**, not CodeQL evaluator queries; its four large benchmark workflows require `workflow_dispatch`. Preserve normal `codeql.yml` security scanning, its query coverage and SARIF, and unrelated product/semantic benchmark gates.
+
+This is an audited **configuration claim**, not proof that PR #543 or Arkst #607 has merged. Do not report the two automatic synthetic tests disabled until the protected-main SHA and actual workflow step listing independently prove that transition.
+
 ## Offline use and privacy
 
 An operator with a PRIVATE, isolated evaluator event log may run, offline and outside any protected CodeQL DB:
