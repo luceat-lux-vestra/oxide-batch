@@ -5,6 +5,7 @@ require 'json'
 require 'yaml'
 require 'pathname'
 require 'digest/sha1'
+require 'open3'
 
 module MergeGateVerifier
   module_function
@@ -1124,6 +1125,54 @@ module MergeGateVerifier
     violations
   end
 
+  # Immutable trusted-base classifier, not the PR-head copy. Pin the Git blob
+  # here so editing the helper itself cannot silently alter gate semantics.
+  ACTION_PIN_ONLY_HELPER_BLOB = '2ed10e141c7c11b1a88940256e3a68ca272467a4'
+  ACTION_PIN_ONLY_WORKFLOWS = %w[
+    .github/workflows/pr-ci.yml
+    .github/workflows/ci.yml
+    .github/workflows/dependency-review.yml
+    .github/workflows/codeql.yml
+    .github/workflows/evidence.yml
+    .github/workflows/supply-chain.yml
+    .github/workflows/m5-conformance.yml
+  ].freeze
+
+  def trusted_action_patch?(root:, workflow:)
+    return false unless ACTION_PIN_ONLY_WORKFLOWS.include?(workflow)
+
+    base = Pathname(root).join('.merge-gate-trusted-base')
+    helper = base.join('.github/scripts/action_pin_only.py')
+    before = base.join(workflow)
+    after = Pathname(root).join(workflow)
+    return false unless helper.file? && before.file? && after.file?
+    return false unless git_blob_sha(helper.binread) == ACTION_PIN_ONLY_HELPER_BLOB
+
+    # Once the reviewed patch becomes the protected main tree, it is a trusted
+    # baseline even though its workflow blob was never pre-admitted.
+    return true if before.binread == after.binread
+
+    token = ENV['GH_TOKEN']
+    return false unless token.is_a?(String) && !token.empty?
+    stdout, stderr, result = Open3.capture3(
+      {'GH_TOKEN' => token}, 'python3', helper.to_s,
+      '--workflow', workflow,
+      '--trusted-file', before.to_s,
+      '--candidate-file', after.to_s
+    )
+    return false unless result.success?
+
+    verdict = JSON.parse(stdout)
+    verdict.is_a?(Hash) &&
+      verdict['classification'] == 'patch-only' &&
+      verdict['workflow'] == workflow &&
+      verdict['verified'].is_a?(Integer) &&
+      verdict['verified'] > 0
+  rescue Errno::ENOENT, JSON::ParserError, IOError, ArgumentError => e
+    warn "trusted pin-only verifier unavailable for #{workflow}: #{e.class}: #{e.message}"
+    false
+  end
+
   def pr_topology_v7_contract(root:, policy:, producer_summary:)
     return [] unless policy['schema_version'].to_i >= 7
 
@@ -1416,7 +1465,7 @@ module MergeGateVerifier
 
         path = Pathname(root).join(workflow)
         actual = path.file? ? git_blob_sha(path.binread) : nil
-        unless accepted.include?(actual)
+        unless accepted.include?(actual) || trusted_action_patch?(root: root, workflow: workflow)
           violations << "schema v7 protected workflow #{workflow} blob #{actual.inspect} is not accepted by policy"
         end
       end
