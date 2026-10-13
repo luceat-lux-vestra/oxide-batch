@@ -5,8 +5,10 @@ use std::error::Error;
 use oxide_batch::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ChunkSize, ComponentRevision,
     ComponentStreamIdentity, DefinitionError, DefinitionIdentity, DefinitionNodeUpgrade,
-    DefinitionRevision, DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformId,
-    DefinitionUpgrade, DefinitionUpgradeKey, DefinitionUpgradeRevision, InFlightPolicy, JobName,
+    DefinitionRevision, DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
+    DefinitionStateTransformId, DefinitionStateTransformer, DefinitionUpgrade,
+    DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, InFlightPolicy,
+    JobName,
     NodeId, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepName,
 };
 
@@ -310,5 +312,65 @@ fn transformed_upgrade_is_injective_and_schema_explicit() -> Result<(), Box<dyn 
         outside,
         Err(DefinitionError::StateTransformOutsideNodeMapping)
     );
+    Ok(())
+}
+
+
+fn identity_upgrade_payload(
+    payload: &[u8],
+) -> Result<Vec<u8>, DefinitionStateTransformError> {
+    Ok(payload.to_vec())
+}
+
+#[test]
+fn transformed_upgrade_execution_requires_exact_live_revision_set() -> Result<(), Box<dyn Error>> {
+    let job = JobName::new("upgrade-execution")?;
+    let from = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("source")?,
+        DefinitionRevision::new("v1")?,
+        &ComponentRevision::new("tasklet-v1")?,
+    )?;
+    let to = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("target")?,
+        DefinitionRevision::new("v2")?,
+        &ComponentRevision::new("tasklet-v2")?,
+    )?;
+    let source = NodeId::new("source")?;
+    let target = NodeId::new("target")?;
+    let transform_revision = DefinitionUpgradeRevision::new("context-v1-to-v2")?;
+    let upgrade = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from,
+        to,
+        [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
+        [DefinitionStateTransform::new(
+            source,
+            target,
+            DefinitionStateKind::ExecutionContext,
+            DefinitionStateTransformId::new("context")?,
+            StateSchemaId::new("context.v1")?,
+            StateSchemaVersion::new(1)?,
+            StateSchemaId::new("context.v2")?,
+            StateSchemaVersion::new(2)?,
+            transform_revision.clone(),
+        )],
+    )?;
+
+    assert_eq!(
+        DefinitionUpgradeExecution::new(upgrade.clone(), []),
+        Err(DefinitionError::StateTransformerSetMismatch)
+    );
+    let execution = DefinitionUpgradeExecution::new(
+        upgrade,
+        [DefinitionStateTransformer::new(
+            transform_revision,
+            identity_upgrade_payload,
+        )],
+    )?;
+    assert!(execution.upgrade().is_transformed());
+    assert_eq!(execution.upgrade().transforms().len(), 1);
     Ok(())
 }

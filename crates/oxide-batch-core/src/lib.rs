@@ -42,8 +42,10 @@ pub use definition::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,
     ComponentRevision, ComponentStreamIdentity, DefinitionArtifactId, DefinitionError,
     DefinitionIdentity, DefinitionManifest, DefinitionNodeUpgrade, DefinitionRevision,
-    DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformId, DefinitionTokenKind,
-    DefinitionUpgrade, DefinitionUpgradeKey, DefinitionUpgradeRevision, InFlightPolicy,
+    DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
+    DefinitionStateTransformId, DefinitionStateTransformer, DefinitionTokenKind,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
+    InFlightPolicy,
     ManifestError, RepeatId, StepDefinitionUpgrade,
 };
 pub use definition::{

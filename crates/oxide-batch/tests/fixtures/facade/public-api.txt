@@ -114,9 +114,12 @@ oxide_batch::DefinitionRegistry
 oxide_batch::DefinitionRevision
 oxide_batch::DefinitionStateKind
 oxide_batch::DefinitionStateTransform
+oxide_batch::DefinitionStateTransformError
 oxide_batch::DefinitionStateTransformId
+oxide_batch::DefinitionStateTransformer
 oxide_batch::DefinitionTokenKind
 oxide_batch::DefinitionUpgrade
+oxide_batch::DefinitionUpgradeExecution
 oxide_batch::DefinitionUpgradeKey
 oxide_batch::DefinitionUpgradeRevision
 oxide_batch::DiagnosticField
