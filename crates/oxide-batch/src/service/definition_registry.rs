@@ -151,6 +151,9 @@ mod tests {
                     revision: first.revision().clone(),
                 }
             );
+            let diagnostic = error.to_string();
+            assert!(!diagnostic.contains("artifact-v1"));
+            assert!(!diagnostic.contains("artifact-v2"));
         });
     }
 
