@@ -68,3 +68,122 @@ impl<R: JobRepository> DefinitionRegistry<R> {
         Ok(registered)
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroU64;
+    use std::sync::Arc;
+
+    use super::DefinitionRegistry;
+    use crate::{
+        ComponentRevision, DefinitionArtifactId, DefinitionIdentity, DefinitionRegistration,
+        DefinitionRegistrationError, DefinitionRevision, InMemoryJobRepository, JobName,
+        RepositoryError, SequentialIdGenerator, StepName, SystemClock,
+    };
+
+    fn registry() -> DefinitionRegistry<InMemoryJobRepository> {
+        DefinitionRegistry::new(InMemoryJobRepository::new(
+            Arc::new(SystemClock),
+            Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN)),
+        ))
+    }
+
+    fn registration(
+        component: &str,
+        artifact: &str,
+    ) -> Result<DefinitionRegistration, Box<dyn std::error::Error>> {
+        let job = JobName::new("registry-job")?;
+        let definition = DefinitionIdentity::tasklet(
+            &job,
+            &StepName::new("only")?,
+            DefinitionRevision::new("v1")?,
+            &ComponentRevision::new(component)?,
+        )?;
+        Ok(DefinitionRegistration::new(
+            definition,
+            DefinitionArtifactId::new(artifact)?,
+        )?)
+    }
+
+    #[test]
+    fn exact_registration_is_idempotent_and_exactly_addressable() {
+        futures_executor::block_on(async {
+            let registry = registry();
+            let registration = registration("component-v1", "artifact-v1").expect("registration");
+
+            let first = registry.register(&registration).await.expect("register");
+            let replay = registry.register(&registration).await.expect("replay");
+            assert_eq!(first, replay);
+
+            let resolved = registry
+                .resolve(registration.job_name(), registration.revision())
+                .await
+                .expect("resolve");
+            assert_eq!(resolved.as_ref(), Some(&registration));
+
+            let missing = registry
+                .resolve(
+                    registration.job_name(),
+                    &DefinitionRevision::new("v2").expect("revision"),
+                )
+                .await
+                .expect("missing lookup");
+            assert!(missing.is_none());
+        });
+    }
+
+    #[test]
+    fn artifact_rebinding_fails_closed() {
+        futures_executor::block_on(async {
+            let registry = registry();
+            let first = registration("component-v1", "artifact-v1").expect("registration");
+            registry.register(&first).await.expect("register");
+
+            let conflicting = registration("component-v1", "artifact-v2").expect("registration");
+            let error = registry
+                .register(&conflicting)
+                .await
+                .expect_err("artifact drift");
+            assert_eq!(
+                error,
+                RepositoryError::DefinitionArtifactDrift {
+                    job_name: first.job_name().clone(),
+                    revision: first.revision().clone(),
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn manifest_rebinding_fails_closed_before_artifact_comparison() {
+        futures_executor::block_on(async {
+            let registry = registry();
+            let first = registration("component-v1", "artifact-v1").expect("registration");
+            registry.register(&first).await.expect("register");
+
+            let conflicting = registration("component-v2", "artifact-v1").expect("registration");
+            let error = registry
+                .register(&conflicting)
+                .await
+                .expect_err("definition drift");
+            assert_eq!(
+                error,
+                RepositoryError::DefinitionDrift {
+                    job_name: first.job_name().clone(),
+                    revision: first.revision().clone(),
+                }
+            );
+        });
+    }
+
+    #[test]
+    fn legacy_unnamed_identity_is_not_registry_addressable() {
+        let error = DefinitionRegistration::new(
+            DefinitionIdentity::legacy(),
+            DefinitionArtifactId::new("legacy-artifact").expect("artifact"),
+        )
+        .expect_err("legacy identity");
+        assert_eq!(error, DefinitionRegistrationError::UnnamedDefinition);
+    }
+}
