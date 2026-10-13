@@ -315,7 +315,6 @@ fn transformed_upgrade_is_injective_and_schema_explicit() -> Result<(), Box<dyn 
     Ok(())
 }
 
-
 fn identity_upgrade_payload(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
     Ok(payload.to_vec())
 }
