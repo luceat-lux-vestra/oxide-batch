@@ -41,14 +41,16 @@ pub use component_state::{
 pub use definition::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,
     ComponentRevision, ComponentStreamIdentity, DefinitionArtifactId, DefinitionError,
-    DefinitionIdentity, DefinitionManifest, DefinitionRevision, DefinitionTokenKind,
-    DefinitionUpgrade, DefinitionUpgradeKey, InFlightPolicy, ManifestError, RepeatId,
-    StepDefinitionUpgrade,
+    DefinitionIdentity, DefinitionManifest, DefinitionNodeUpgrade, DefinitionRevision,
+    DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformId, DefinitionTokenKind,
+    DefinitionUpgrade, DefinitionUpgradeKey, DefinitionUpgradeRevision, InFlightPolicy,
+    ManifestError, RepeatId, StepDefinitionUpgrade,
 };
 pub use definition::{
     MANIFEST_FORMAT_ADVANCED_FLOW, MANIFEST_FORMAT_FLOW, MANIFEST_FORMAT_LOCAL_SCALE,
-    MANIFEST_FORMAT_ONE_STEP, MAX_NODES, MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH,
-    MAX_TRANSITIONS, check_manifest_format, validate_token,
+    MANIFEST_FORMAT_ONE_STEP, MAX_DEFINITION_UPGRADE_NODES, MAX_DEFINITION_UPGRADE_TRANSFORMS,
+    MAX_NODES, MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH, MAX_TRANSITIONS,
+    check_manifest_format, validate_token,
 };
 pub use domain::{
     BatchStatus, DomainError, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
