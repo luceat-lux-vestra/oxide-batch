@@ -21,11 +21,11 @@ use oxide_batch::{
     ChunkStep, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
     ClassifierRevision, Clock, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, DefinitionUpgrade,
-    DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId,
-    FailureSummary, FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule,
-    FaultStateError, FaultStateFormatError, FaultStateStore, ItemProcessor, ItemReader, ItemWriter,
-    JobInstanceKey, JobLauncher, JobName, JobParameter, JobParameters, JobRepository,
-    LifecycleTransition, ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
+    DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId, FailureSummary,
+    FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule, FaultStateError,
+    FaultStateFormatError, FaultStateStore, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey,
+    JobLauncher, JobName, JobParameter, JobParameters, JobRepository, LifecycleTransition,
+    ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
     PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
     PostgresConfigError, PostgresExplorer, PostgresFaultState, PostgresJobRepository,
     PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, PurgeBatchBound,
@@ -216,8 +216,8 @@ fn configuration_bounds_and_diagnostics_are_safe() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
-fn definition_registry_is_exact_immutable_and_artifact_aware_on_postgres(
-) -> Result<(), Box<dyn Error>> {
+fn definition_registry_is_exact_immutable_and_artifact_aware_on_postgres()
+-> Result<(), Box<dyn Error>> {
     let Some(url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());
@@ -243,10 +243,8 @@ fn definition_registry_is_exact_immutable_and_artifact_aware_on_postgres(
             revision.clone(),
             &ComponentRevision::new("component-v1")?,
         )?;
-        let registration = DefinitionRegistration::new(
-            definition,
-            DefinitionArtifactId::new("artifact-v1")?,
-        )?;
+        let registration =
+            DefinitionRegistration::new(definition, DefinitionArtifactId::new("artifact-v1")?)?;
 
         let first = registry.register(&registration).await?;
         let replay = registry.register(&registration).await?;
