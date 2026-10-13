@@ -1824,6 +1824,13 @@ pub enum RepositoryError {
         /// Reused application-owned revision.
         revision: DefinitionRevision,
     },
+    /// No immutable registry record exists for the exact named definition revision.
+    DefinitionNotRegistered {
+        /// Definition whose exact registry binding is absent.
+        job_name: JobName,
+        /// Exact application-owned revision that was requested.
+        revision: DefinitionRevision,
+    },
     /// One immutable definition revision was rebound to another executable artifact.
     DefinitionArtifactDrift {
         /// Definition whose artifact identity drifted.
@@ -2061,6 +2068,11 @@ impl fmt::Display for RepositoryError {
             Self::DefinitionDrift { job_name, revision } => write!(
                 formatter,
                 "job {job_name} definition revision {} has drifted",
+                revision.as_str()
+            ),
+            Self::DefinitionNotRegistered { job_name, revision } => write!(
+                formatter,
+                "job {job_name} definition revision {} is not registered",
                 revision.as_str()
             ),
             Self::DefinitionArtifactDrift { job_name, revision } => write!(
