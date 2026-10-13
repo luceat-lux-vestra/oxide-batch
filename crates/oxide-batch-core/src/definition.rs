@@ -270,48 +270,57 @@ impl DefinitionStateTransform {
         }
     }
 
+    /// Borrows the source durable node.
     #[must_use]
-    /// Borrows the source durable node.\n    #[must_use]\n    pub const fn source_node(&self) -> &NodeId {
+    pub const fn source_node(&self) -> &NodeId {
         &self.source_node
     }
 
+    /// Borrows the target durable node.
     #[must_use]
-    /// Borrows the target durable node.\n    #[must_use]\n    pub const fn target_node(&self) -> &NodeId {
+    pub const fn target_node(&self) -> &NodeId {
         &self.target_node
     }
 
+    /// Returns the durable state family.
     #[must_use]
-    /// Returns the durable state family.\n    #[must_use]\n    pub const fn kind(&self) -> DefinitionStateKind {
+    pub const fn kind(&self) -> DefinitionStateKind {
         self.kind
     }
 
+    /// Borrows the stable identity of the state-family member.
     #[must_use]
-    /// Borrows the stable identity of the state-family member.\n    #[must_use]\n    pub const fn state_id(&self) -> &DefinitionStateTransformId {
+    pub const fn state_id(&self) -> &DefinitionStateTransformId {
         &self.state_id
     }
 
+    /// Borrows the source schema identifier.
     #[must_use]
-    /// Borrows the source schema identifier.\n    #[must_use]\n    pub const fn source_schema(&self) -> &StateSchemaId {
+    pub const fn source_schema(&self) -> &StateSchemaId {
         &self.source_schema
     }
 
+    /// Returns the source schema version.
     #[must_use]
-    /// Returns the source schema version.\n    #[must_use]\n    pub const fn source_version(&self) -> StateSchemaVersion {
+    pub const fn source_version(&self) -> StateSchemaVersion {
         self.source_version
     }
 
+    /// Borrows the target schema identifier.
     #[must_use]
-    /// Borrows the target schema identifier.\n    #[must_use]\n    pub const fn target_schema(&self) -> &StateSchemaId {
+    pub const fn target_schema(&self) -> &StateSchemaId {
         &self.target_schema
     }
 
+    /// Returns the target schema version.
     #[must_use]
-    /// Returns the target schema version.\n    #[must_use]\n    pub const fn target_version(&self) -> StateSchemaVersion {
+    pub const fn target_version(&self) -> StateSchemaVersion {
         self.target_version
     }
 
+    /// Borrows the deterministic transformer revision.
     #[must_use]
-    /// Borrows the deterministic transformer revision.\n    #[must_use]\n    pub const fn revision(&self) -> &DefinitionUpgradeRevision {
+    pub const fn revision(&self) -> &DefinitionUpgradeRevision {
         &self.revision
     }
 }
