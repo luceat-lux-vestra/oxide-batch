@@ -2058,8 +2058,11 @@ async fn materialize_upgrade_job_scope(
 async fn build_postgres_upgrade_seed(
     transaction: &mut PgConnection,
     job_instance_id: JobInstanceId,
+    source_job_execution_id: JobExecutionId,
     upgrade: &DefinitionUpgradeExecution,
 ) -> Result<Value, RepositoryError> {
+    let job_scope =
+        scope_upgrade_seeds(transaction, source_job_execution_id, None, upgrade).await?;
     let mut nodes = Map::new();
     for (source_node, target_node) in upgrade.upgrade().node_mapping() {
         let source_row = sqlx::query(AssertSqlSafe(durable_step_select(
@@ -2103,6 +2106,13 @@ async fn build_postgres_upgrade_seed(
             upgrade,
         )
         .await?;
+        let scope = scope_upgrade_seeds(
+            transaction,
+            durable.step_execution.job_execution_id(),
+            Some(durable.step_execution.id()),
+            upgrade,
+        )
+        .await?;
         nodes.insert(
             target_node.as_str().to_owned(),
             json!({
@@ -2127,7 +2137,7 @@ async fn build_postgres_upgrade_seed(
                 "fault": fault_seed(&fault)?,
                 "components": components,
                 "repeats": repeats,
-                "scope": [],
+                "scope": scope,
             }),
         );
     }
@@ -2142,7 +2152,7 @@ async fn build_postgres_upgrade_seed(
         "source_fingerprint": byte_array_json(upgrade.upgrade().from().manifest_digest()),
         "target_fingerprint": byte_array_json(upgrade.upgrade().to().manifest_digest()),
         "nodes": Value::Object(nodes),
-        "job_scope": [],
+        "job_scope": job_scope,
     }))
 }
 
@@ -2841,18 +2851,11 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                             instance_id: job_instance_id,
                         });
                     }
-                    if super::scope_postgres::has_scope_resolution_provenance(
-                        &mut **self.transaction()?,
-                        previous.id(),
-                    )
-                    .await?
-                    {
-                        return Err(RepositoryError::DefinitionUpgradeFailed);
-                    }
                     upgrade_seed = Some(
                         build_postgres_upgrade_seed(
                             &mut **self.transaction()?,
                             job_instance_id,
+                            previous.id(),
                             selected,
                         )
                         .await?,
@@ -2899,7 +2902,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .bind(upgrade_from)
             .bind(restart_of)
             .bind(attempt)
-            .bind(upgrade_seed.map(Json))
+            .bind(upgrade_seed.as_ref().map(|seed| Json(seed.clone())))
             .bind(parameters)
             .bind(DEFAULT_CONTEXT_SCHEMA)
             .bind(context)
@@ -2907,6 +2910,13 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .fetch_one(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
+            if let Some(seed) = upgrade_seed.as_ref() {
+                let job_scope = seed
+                    .get("job_scope")
+                    .and_then(Value::as_array)
+                    .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+                materialize_upgrade_job_scope(&mut **self.transaction()?, id, job_scope).await?;
+            }
             let id_value =
                 JobExecutionId::new(u64::try_from(id).map_err(|_| RepositoryError::Unavailable)?)?;
             if upgrade_from.is_none()
