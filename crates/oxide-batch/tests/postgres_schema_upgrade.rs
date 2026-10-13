@@ -9,7 +9,7 @@
 //! schema 3 declared, M7 `#265` adds `0006_nested_job_linkage.sql` carrying
 //! the installed schema to 5, M7 `#276` adds value-free scoped-resolution
 //! provenance in `0007_scope_resolution_provenance.sql`, carrying it to 6,
-//! and M7 `#300` adds bounded repeat state in `0008_repeat_state.sql`, carrying it to 7, and M7 `#401` adds durable repeat lineage identity in `0009_repeat_lineage.sql`, carrying it to 8.
+//! and M7 `#300` adds bounded repeat state in `0008_repeat_state.sql`, carrying it to 7, M7 `#401` adds durable repeat lineage identity in `0009_repeat_lineage.sql`, carrying it to 8, and M7 `#550` adds immutable definition artifact binding in `0010_definition_registry.sql`, carrying it to 9.
 //! The historical M5 claim (1/2 -> 3, direct) is
 //! preserved below as an intermediate structural checkpoint every path still
 //! passes through; the report's actual target is now the current schema, and a
@@ -21,7 +21,8 @@
 //! its tables, columns, constraints, indexes, and applied-migration bookkeeping
 //! are the ones that version produced when it was the whole schema. The
 //! populated 4 -> 5, 5 -> 6, 6 -> 7, and 7 -> 8 preservation/restore boundaries
-//! are separately owned by their schema-specific `PostgreSQL` design gates.
+//! are separately owned by their schema-specific `PostgreSQL` design gates; this report
+//! adds the populated 8 -> 9 definition-registry boundary directly.
 //!
 //! Each source is then seeded with the durable state an operator's database
 //! would have held — registered definitions and the upgrade edge between them,
@@ -36,7 +37,7 @@
 //! version becomes the current schema version and every structural checkpoint
 //! from the source's own schema up through the current one appears in order
 //! (so a schema-1 source is still shown passing through schema 3's shape on
-//! its way to schema 8). Every value of every column the source schema
+//! its way to schema 9). Every value of every column the source schema
 //! declared is byte-identical afterwards, compared through the source's own
 //! column list so a column a later schema added cannot mask a loss. The new
 //! `ItemStream` component-state table schema 4 adds carries no row for any of
