@@ -27,8 +27,9 @@ use crate::{
     ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
     CursorError, CursorKey, DefinitionArtifactId, DefinitionDescriptor, DefinitionIdentity,
     DefinitionRegistration, DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
-    DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
-    ExitCode, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, ExternalStateReference,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionContext,
+    ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode,
+    ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, ExternalStateReference,
     FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
     FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
     FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
@@ -1488,7 +1489,6 @@ fn decode_component_state_row(row: &PgRow) -> Result<ComponentStateEnvelope, ()>
     .map_err(|_| ())
 }
 
-
 fn selected_upgrade_transform<'a>(
     upgrade: &'a DefinitionUpgradeExecution,
     source_node: &NodeId,
@@ -1785,8 +1785,8 @@ async fn component_upgrade_seeds(
     .map_err(|_| RepositoryError::Unavailable)?;
     rows.iter()
         .map(|row| {
-            let source =
-                decode_component_state_row(row).map_err(|()| RepositoryError::DefinitionUpgradeFailed)?;
+            let source = decode_component_state_row(row)
+                .map_err(|()| RepositoryError::DefinitionUpgradeFailed)?;
             transformed_component_for_upgrade(upgrade, source_node, &source)
                 .and_then(|state| component_seed(&state))
         })
@@ -1930,15 +1930,18 @@ async fn build_postgres_upgrade_seed(
             transform_checkpoint_for_upgrade(upgrade, source_node, &durable.checkpoint)?;
         let context =
             transform_context_for_upgrade(upgrade, source_node, None, &durable.execution_context)?;
-        let fault =
-            transform_fault_state_for_upgrade(upgrade, source_node, &durable.fault_state)?;
+        let fault = transform_fault_state_for_upgrade(upgrade, source_node, &durable.fault_state)?;
         let counts = durable.step_execution.metadata().counts();
         let fault_progress = durable.fault_progress;
         let retries = fault_progress.retries();
         let skips = fault_progress.skips();
-        let components =
-            component_upgrade_seeds(transaction, durable.step_execution.id(), source_node, upgrade)
-                .await?;
+        let components = component_upgrade_seeds(
+            transaction,
+            durable.step_execution.id(),
+            source_node,
+            upgrade,
+        )
+        .await?;
         let repeats = repeat_upgrade_seeds(
             transaction,
             durable.step_execution.id(),
@@ -2498,11 +2501,11 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?;
                 if previous_definition_id != definition_id {
-                    let selected = selected_upgrade
-                        .as_ref()
-                        .ok_or(RepositoryError::IncompatibleDefinition {
+                    let selected = selected_upgrade.as_ref().ok_or(
+                        RepositoryError::IncompatibleDefinition {
                             instance_id: job_instance_id,
-                        })?;
+                        },
+                    )?;
                     let previous_definition =
                         load_execution_definition(&mut **self.transaction()?, previous.id())
                             .await
