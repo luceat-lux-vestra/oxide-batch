@@ -9,10 +9,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use oxide_batch::{
-    BatchStatus, BoxFuture, Clock, ComponentRevision, DeciderError, DeciderRevision, DecisionInput,
-    DecisionInputVersion, DecisionNode, DefinitionRevision, ExitCode, ExitPattern, ExitStatus,
-    FlowEvent, FlowEventKind, FlowEventSink, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob,
-    FlowLauncher, FlowNode, FlowTarget, FlowTransition, FlowTransitionKind, InMemoryJobRepository,
+    BatchStatus, BoxFuture, Clock, ComponentRevision, DeciderError, DeciderRevision,
+    DecisionInput, DecisionInputVersion, DecisionNode, DefinitionArtifactId,
+    DefinitionRegistration, DefinitionRegistry, DefinitionRevision, ExitCode, ExitPattern,
+    ExitStatus, FlowEvent, FlowEventKind, FlowEventSink, FlowExecutionOutcome, FlowFailure,
+    FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
+    FlowTransitionKind, InMemoryJobRepository,
     JobExecutionDecider, JobInstanceKey, JobName, JobParameters, JobRepository, NodeId,
     RepositoryError, SequentialIdGenerator, ShutdownCoordinator, StartControls, StartLimit,
     StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError,
@@ -211,6 +213,67 @@ fn tasklet_step(
         StepName::new(name)?,
         Arc::new(CountingTasklet { calls, behavior }),
     ))
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn registered_flow_proves_assembly_before_lifecycle_creation() -> Result<(), Box<dyn Error>> {
+    let only = NodeId::new("only")?;
+    let name = JobName::new("registered-flow")?;
+    let plan = FlowGraph::new(only.clone())
+        .with_node(tasklet_node("only", StartControls::default())?)
+        .with_sequence(only.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(name.clone(), plan)?.with_tasklet_step(
+        only,
+        tasklet_step("only", calls.clone(), Behavior::Complete)?,
+    )?;
+    let (clock, ids, repository) = infrastructure();
+    let parameters = JobParameters::new();
+    let key = JobInstanceKey::new(name, &parameters);
+    let (_, stop) = StopSource::new();
+    let artifact = DefinitionArtifactId::new("registered-flow-artifact")?;
+    let wrong_artifact = DefinitionArtifactId::new("wrong-flow-artifact")?;
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+
+    assert!(matches!(
+        launcher
+            .launch_registered(&job, &artifact, &parameters, &stop)
+            .await,
+        Err(FlowRuntimeError::Repository(
+            RepositoryError::DefinitionNotRegistered { .. }
+        ))
+    ));
+    let mut inspection = repository.begin().await?;
+    assert!(inspection.find_job_instance(&key).await?.is_none());
+    inspection.rollback().await?;
+
+    let registration = DefinitionRegistration::new(
+        job.compiled_plan().definition_identity().clone(),
+        artifact.clone(),
+    )?;
+    DefinitionRegistry::new(repository.clone())
+        .register(&registration)
+        .await?;
+
+    assert!(matches!(
+        launcher
+            .launch_registered(&job, &wrong_artifact, &parameters, &stop)
+            .await,
+        Err(FlowRuntimeError::Repository(
+            RepositoryError::DefinitionArtifactDrift { .. }
+        ))
+    ));
+    let mut inspection = repository.begin().await?;
+    assert!(inspection.find_job_instance(&key).await?.is_none());
+    inspection.rollback().await?;
+
+    let report = launcher
+        .launch_registered(&job, &artifact, &parameters, &stop)
+        .await?;
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 
 #[tokio::test(flavor = "current_thread")]

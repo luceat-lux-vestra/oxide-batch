@@ -132,7 +132,7 @@ mod tests {
     use crate::{
         ComponentRevision, DefinitionArtifactId, DefinitionIdentity, DefinitionRegistration,
         DefinitionRegistrationError, DefinitionRevision, InMemoryJobRepository, JobName,
-        RepositoryError, SequentialIdGenerator, StepName, SystemClock,
+        JobRepository, RepositoryError, SequentialIdGenerator, StepName, SystemClock,
     };
 
     fn registry() -> DefinitionRegistry<InMemoryJobRepository> {
@@ -231,6 +231,33 @@ mod tests {
                     revision: first.revision().clone(),
                 })
             );
+            Ok::<(), Box<dyn Error>>(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn concurrent_staged_registration_cannot_overwrite_the_committed_winner(
+    ) -> Result<(), Box<dyn Error>> {
+        block_on(async {
+            let repository = registry().repository().clone();
+            let winner = registration("component-v1", "artifact-v1")?;
+            let loser = registration("component-v1", "artifact-v2")?;
+            let mut first = repository.begin().await?;
+            let mut concurrent = repository.begin().await?;
+
+            first.register_definition(&winner).await?;
+            concurrent.register_definition(&loser).await?;
+            first.commit().await?;
+            assert_eq!(
+                concurrent.commit().await,
+                Err(RepositoryError::ConcurrentModification)
+            );
+
+            let durable = DefinitionRegistry::new(repository)
+                .resolve(winner.job_name(), winner.revision())
+                .await?;
+            assert_eq!(durable, Some(winner));
             Ok::<(), Box<dyn Error>>(())
         })?;
         Ok(())

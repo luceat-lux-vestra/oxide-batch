@@ -297,6 +297,61 @@ fn definition_registry_is_exact_immutable_and_artifact_aware_on_postgres()
 }
 
 #[test]
+fn definition_registry_concurrent_artifact_binding_has_one_durable_winner(
+) -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "definition_registry_concurrent_job";
+        remove_job_rows(&url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(201))),
+        )
+        .await?;
+        let registry = DefinitionRegistry::new(repository.clone());
+        let job_name = JobName::new(JOB)?;
+        let revision = DefinitionRevision::new("v1")?;
+        let definition = DefinitionIdentity::tasklet(
+            &job_name,
+            &StepName::new("only")?,
+            revision.clone(),
+            &ComponentRevision::new("component-v1")?,
+        )?;
+        let left = DefinitionRegistration::new(
+            definition.clone(),
+            DefinitionArtifactId::new("artifact-left")?,
+        )?;
+        let right = DefinitionRegistration::new(
+            definition,
+            DefinitionArtifactId::new("artifact-right")?,
+        )?;
+
+        let (left_result, right_result) =
+            tokio::join!(registry.register(&left), registry.register(&right));
+        let winner = match (&left_result, &right_result) {
+            (Ok(_), Err(RepositoryError::DefinitionArtifactDrift { .. })) => &left,
+            (Err(RepositoryError::DefinitionArtifactDrift { .. }), Ok(_)) => &right,
+            _ => return Err("concurrent registry bind did not yield one winner and one drift".into()),
+        };
+        assert_eq!(
+            registry.resolve(&job_name, &revision).await?,
+            Some(winner.clone())
+        );
+
+        repository.close().await?;
+        remove_job_rows(&url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
 fn shared_repository_contract_passes_on_postgres() -> Result<(), Box<dyn Error>> {
     let Some(url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
