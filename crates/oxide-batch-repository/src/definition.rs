@@ -21,7 +21,7 @@ impl DefinitionRegistration {
     ///
     /// # Errors
     ///
-    /// Returns DefinitionRegistrationError::UnnamedDefinition for the legacy
+    /// Returns `DefinitionRegistrationError::UnnamedDefinition` for the legacy
     /// repository-only identity that predates named canonical manifests.
     pub fn new(
         definition: DefinitionIdentity,
