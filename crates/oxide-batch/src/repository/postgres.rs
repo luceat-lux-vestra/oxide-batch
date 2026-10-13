@@ -1521,19 +1521,19 @@ fn transform_checkpoint_for_upgrade(
     {
         return Err(RepositoryError::DefinitionUpgradeFailed);
     }
-    let transformer = upgrade
+    let implementation = upgrade
         .transformer(transform)
         .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
     let payload = source
         .payload_json()
         .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
-    let transformed = transformer
+    let target_payload = implementation
         .apply(&payload)
         .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
     Checkpoint::from_transformed_payload(
         transform.target_schema().clone(),
         transform.target_version(),
-        &transformed,
+        &target_payload,
         component_state_hard_limits(),
     )
     .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
@@ -1563,19 +1563,19 @@ fn transform_context_for_upgrade(
     {
         return Err(RepositoryError::DefinitionUpgradeFailed);
     }
-    let transformer = upgrade
+    let implementation = upgrade
         .transformer(transform)
         .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
     let payload = source
         .payload_json()
         .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
-    let transformed = transformer
+    let target_payload = implementation
         .apply(&payload)
         .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
     ExecutionContext::from_transformed_payload(
         transform.target_schema().clone(),
         transform.target_version(),
-        &transformed,
+        &target_payload,
         component_state_hard_limits(),
     )
     .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
@@ -1598,21 +1598,21 @@ fn transform_fault_state_for_upgrade(
     {
         return Err(RepositoryError::DefinitionUpgradeFailed);
     }
-    let transformer = upgrade
+    let implementation = upgrade
         .transformer(transform)
         .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
     let payload = source
         .to_canonical_json()
         .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
-    let transformed = transformer
+    let target_payload = implementation
         .apply(&payload)
         .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
-    let checksum: [u8; 32] = Sha256::digest(&transformed).into();
+    let checksum: [u8; 32] = Sha256::digest(&target_payload).into();
     FaultStateEnvelope::from_canonical_json(
         FaultStateEnvelope::FORMAT_VERSION,
         FaultStateEnvelope::FORMAT,
         FaultStateEnvelope::SCHEMA_VERSION,
-        &transformed,
+        &target_payload,
         &checksum,
     )
     .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
@@ -1646,17 +1646,17 @@ fn transformed_component_for_upgrade(
             return Err(RepositoryError::DefinitionUpgradeFailed);
         }
     };
-    let transformer = upgrade
+    let implementation = upgrade
         .transformer(transform)
         .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
-    let transformed = transformer
+    let target_payload = implementation
         .apply(&payload)
         .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
     ComponentStateEnvelope::from_transformed_inline(
         source,
         transform.target_schema().clone(),
         transform.target_version(),
-        transformed,
+        target_payload,
         component_state_hard_limits(),
     )
     .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
