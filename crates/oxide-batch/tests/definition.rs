@@ -230,7 +230,6 @@ fn directed_upgrade_rejects_incomplete_or_ambiguous_mapping() -> Result<(), Box<
     Ok(())
 }
 
-
 #[test]
 fn transformed_upgrade_is_injective_and_schema_explicit() -> Result<(), Box<dyn Error>> {
     let job = JobName::new("daily_import")?;
