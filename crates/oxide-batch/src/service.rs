@@ -17,6 +17,7 @@ mod recovery;
 mod retention;
 
 pub use definition_registry::DefinitionRegistry;
+pub(crate) use definition_registry::verify_registered_definition;
 pub use explorer::JobExplorer;
 pub use operator::{JobOperator, OperatorError, OperatorOutcome};
 pub use recovery::RecoveryProposer;
