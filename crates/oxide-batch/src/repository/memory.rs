@@ -378,7 +378,7 @@ impl InMemoryUnitOfWork<'_> {
         let target_payload = implementation
             .apply(&source_payload)
             .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
-        let payload: serde_json::Value = serde_json::from_slice(&transformed)
+        let payload: serde_json::Value = serde_json::from_slice(&target_payload)
             .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
         if !payload.is_object() {
             return Err(RepositoryError::DefinitionUpgradeFailed);
