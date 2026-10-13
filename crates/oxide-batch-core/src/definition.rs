@@ -256,47 +256,47 @@ impl DefinitionStateTransform {
     }
 
     #[must_use]
-    pub const fn source_node(&self) -> &NodeId {
+    /// Borrows the source durable node.\n    #[must_use]\n    pub const fn source_node(&self) -> &NodeId {
         &self.source_node
     }
 
     #[must_use]
-    pub const fn target_node(&self) -> &NodeId {
+    /// Borrows the target durable node.\n    #[must_use]\n    pub const fn target_node(&self) -> &NodeId {
         &self.target_node
     }
 
     #[must_use]
-    pub const fn kind(&self) -> DefinitionStateKind {
+    /// Returns the durable state family.\n    #[must_use]\n    pub const fn kind(&self) -> DefinitionStateKind {
         self.kind
     }
 
     #[must_use]
-    pub const fn state_id(&self) -> &DefinitionStateTransformId {
+    /// Borrows the stable identity of the state-family member.\n    #[must_use]\n    pub const fn state_id(&self) -> &DefinitionStateTransformId {
         &self.state_id
     }
 
     #[must_use]
-    pub const fn source_schema(&self) -> &StateSchemaId {
+    /// Borrows the source schema identifier.\n    #[must_use]\n    pub const fn source_schema(&self) -> &StateSchemaId {
         &self.source_schema
     }
 
     #[must_use]
-    pub const fn source_version(&self) -> StateSchemaVersion {
+    /// Returns the source schema version.\n    #[must_use]\n    pub const fn source_version(&self) -> StateSchemaVersion {
         self.source_version
     }
 
     #[must_use]
-    pub const fn target_schema(&self) -> &StateSchemaId {
+    /// Borrows the target schema identifier.\n    #[must_use]\n    pub const fn target_schema(&self) -> &StateSchemaId {
         &self.target_schema
     }
 
     #[must_use]
-    pub const fn target_version(&self) -> StateSchemaVersion {
+    /// Returns the target schema version.\n    #[must_use]\n    pub const fn target_version(&self) -> StateSchemaVersion {
         self.target_version
     }
 
     #[must_use]
-    pub const fn revision(&self) -> &DefinitionUpgradeRevision {
+    /// Borrows the deterministic transformer revision.\n    #[must_use]\n    pub const fn revision(&self) -> &DefinitionUpgradeRevision {
         &self.revision
     }
 }
@@ -363,6 +363,12 @@ impl DefinitionUpgrade {
     ///
     /// Completeness against the source definition and committed durable state
     /// is checked by the restart path before lifecycle writes.
+    ///
+    /// # Errors
+    ///
+    /// Rejects self-edges, empty or non-injective node mappings, mappings or
+    /// transform sets beyond their public bounds, duplicate transform
+    /// identities, and transforms outside the declared node mapping.
     pub fn transformed(
         key: DefinitionUpgradeKey,
         revision: DefinitionUpgradeRevision,
