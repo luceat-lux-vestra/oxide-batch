@@ -1902,6 +1902,159 @@ async fn registered_upgrade_matches(
     .map_err(|_| RepositoryError::Unavailable)
 }
 
+
+async fn scope_upgrade_seeds(
+    transaction: &mut PgConnection,
+    owner_job_execution_id: JobExecutionId,
+    owner_step_execution_id: Option<StepExecutionId>,
+    upgrade: &DefinitionUpgradeExecution,
+) -> Result<Vec<Value>, RepositoryError> {
+    let rows = sqlx::query(
+        "SELECT jsonb_build_object( \
+           'scope_kind', scope_kind, 'component_id', component_id, 'input_name', input_name, \
+           'source_kind', source_kind, 'source_parameter_name', source_parameter_name, \
+           'source_node_id', source_node_id, 'source_framework_field', source_framework_field, \
+           'source_job_execution_id', source_job_execution_id, \
+           'source_step_execution_id', source_step_execution_id, \
+           'source_execution_version', source_execution_version, \
+           'source_schema', source_schema, 'source_schema_version', source_schema_version, \
+           'source_path', source_path) AS entry \
+         FROM oxide_batch.ob_scope_resolution_provenance \
+         WHERE owner_job_execution_id = $1 \
+           AND owner_step_execution_id IS NOT DISTINCT FROM $2 \
+         ORDER BY component_id, input_name",
+    )
+    .bind(database_id(owner_job_execution_id.get(), IdentifierKind::JobExecution)?)
+    .bind(
+        owner_step_execution_id
+            .map(|id| database_id(id.get(), IdentifierKind::StepExecution))
+            .transpose()?,
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+
+    let mut seeds = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Json(mut entry) = row
+            .try_get::<Json<Value>, _>("entry")
+            .map_err(|_| RepositoryError::ScopeResolutionStateCorrupt)?;
+        let object = entry
+            .as_object_mut()
+            .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?;
+        let source_kind = object
+            .get("source_kind")
+            .and_then(Value::as_str)
+            .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?
+            .to_owned();
+
+        if source_kind == "framework" {
+            object.insert(
+                String::from("source_job_mode"),
+                Value::String(String::from("owner")),
+            );
+            if owner_step_execution_id.is_some() {
+                object.insert(
+                    String::from("source_step_mode"),
+                    Value::String(String::from("owner")),
+                );
+            }
+            object.insert(String::from("source_job_execution_id"), Value::Null);
+            object.insert(String::from("source_step_execution_id"), Value::Null);
+        } else if source_kind == "step_context" {
+            let source_node = object
+                .get("source_node_id")
+                .and_then(Value::as_str)
+                .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?;
+            let source_node =
+                NodeId::new(source_node).map_err(|_| RepositoryError::ScopeResolutionStateCorrupt)?;
+            let target_node = upgrade
+                .upgrade()
+                .node_mapping()
+                .get(&source_node)
+                .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+            object.insert(
+                String::from("source_node_id"),
+                Value::String(target_node.as_str().to_owned()),
+            );
+            if let Some(transform) = selected_upgrade_transform(
+                upgrade,
+                &source_node,
+                DefinitionStateKind::ExecutionContext,
+                None,
+            )? {
+                object.insert(
+                    String::from("source_schema"),
+                    Value::String(transform.target_schema().as_str().to_owned()),
+                );
+                object.insert(
+                    String::from("source_schema_version"),
+                    Value::from(transform.target_version().get()),
+                );
+            }
+            let had_source = object
+                .get("source_step_execution_id")
+                .is_some_and(|value| !value.is_null());
+            object.insert(
+                String::from("source_step_mode"),
+                Value::String(String::from(if had_source {
+                    "mapped_current"
+                } else {
+                    "absent"
+                })),
+            );
+            object.insert(String::from("source_step_execution_id"), Value::Null);
+            object.insert(String::from("source_execution_version"), Value::Null);
+        }
+        seeds.push(entry);
+    }
+    Ok(seeds)
+}
+
+async fn materialize_upgrade_job_scope(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    entries: &[Value],
+) -> Result<(), RepositoryError> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO oxide_batch.ob_scope_resolution_provenance ( \
+           owner_job_execution_id, owner_step_execution_id, scope_kind, component_id, input_name, \
+           source_kind, source_parameter_name, source_node_id, source_framework_field, \
+           source_job_execution_id, source_step_execution_id, source_execution_version, \
+           source_schema, source_schema_version, source_path) \
+         SELECT $1, NULL, entry #>> '{scope_kind}', entry #>> '{component_id}', \
+           entry #>> '{input_name}', entry #>> '{source_kind}', \
+           entry #>> '{source_parameter_name}', entry #>> '{source_node_id}', \
+           entry #>> '{source_framework_field}', \
+           CASE WHEN entry #>> '{source_job_mode}' = 'owner' THEN $1 \
+                ELSE (entry #>> '{source_job_execution_id}')::bigint END, \
+           CASE WHEN entry #>> '{source_step_mode}' = 'mapped_current' THEN ( \
+                SELECT step.id FROM oxide_batch.ob_step_execution step \
+                WHERE step.job_execution_id = $1 \
+                  AND step.step_logical_id = entry #>> '{source_node_id}' \
+                ORDER BY step.id DESC LIMIT 1) \
+                ELSE NULL END, \
+           CASE WHEN entry #>> '{source_step_mode}' = 'mapped_current' THEN ( \
+                SELECT step.version FROM oxide_batch.ob_step_execution step \
+                WHERE step.job_execution_id = $1 \
+                  AND step.step_logical_id = entry #>> '{source_node_id}' \
+                ORDER BY step.id DESC LIMIT 1) \
+                ELSE (entry #>> '{source_execution_version}')::bigint END, \
+           entry #>> '{source_schema}', (entry #>> '{source_schema_version}')::integer, \
+           entry -> 'source_path' \
+         FROM jsonb_array_elements($2::jsonb) entry",
+    )
+    .bind(job_execution_id)
+    .bind(Json(Value::Array(entries.to_vec())))
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(())
+}
+
 async fn build_postgres_upgrade_seed(
     transaction: &mut PgConnection,
     job_instance_id: JobInstanceId,
