@@ -562,7 +562,10 @@ impl DefinitionUpgrade {
         if node_mapping.keys().any(|node| !source_nodes.contains(node)) {
             return Err(DefinitionError::UnknownUpgradeSourceNode);
         }
-        if source_nodes.iter().any(|node| !node_mapping.contains_key(node)) {
+        if source_nodes
+            .iter()
+            .any(|node| !node_mapping.contains_key(node))
+        {
             return Err(DefinitionError::MissingUpgradeSourceNode);
         }
 
@@ -681,9 +684,7 @@ fn collect_upgrade_node_ids(
     result: &mut BTreeSet<NodeId>,
 ) -> Result<(), DefinitionError> {
     for node in nodes {
-        let object = node
-            .as_object()
-            .ok_or(DefinitionError::ManifestEncoding)?;
+        let object = node.as_object().ok_or(DefinitionError::ManifestEncoding)?;
         if let Some(id) = object.get("id").and_then(serde_json::Value::as_str) {
             result.insert(NodeId::new(id)?);
         }
@@ -692,18 +693,13 @@ fn collect_upgrade_node_ids(
                 collect_upgrade_node_ids(children, result)?;
             }
         }
-        if let Some(branches) = object
-            .get("branches")
-            .and_then(serde_json::Value::as_array)
-        {
+        if let Some(branches) = object.get("branches").and_then(serde_json::Value::as_array) {
             for branch in branches {
                 let branch = branch
                     .as_object()
                     .ok_or(DefinitionError::ManifestEncoding)?;
                 for key in ["members", "steps", "nodes"] {
-                    if let Some(children) =
-                        branch.get(key).and_then(serde_json::Value::as_array)
-                    {
+                    if let Some(children) = branch.get(key).and_then(serde_json::Value::as_array) {
                         collect_upgrade_node_ids(children, result)?;
                     }
                 }
@@ -2076,15 +2072,13 @@ impl fmt::Display for DefinitionError {
             Self::MissingUpgradeSourceNode => {
                 formatter.write_str("definition upgrade omits a durable source node")
             }
-            Self::LegacyUpgradeExecution => {
-                formatter.write_str("legacy definition upgrade has no transformed execution contract")
-            }
+            Self::LegacyUpgradeExecution => formatter
+                .write_str("legacy definition upgrade has no transformed execution contract"),
             Self::DuplicateStateTransformer => {
                 formatter.write_str("definition upgrade repeats a live state transformer revision")
             }
-            Self::StateTransformerSetMismatch => {
-                formatter.write_str("definition upgrade live transformer set does not match metadata")
-            }
+            Self::StateTransformerSetMismatch => formatter
+                .write_str("definition upgrade live transformer set does not match metadata"),
             Self::DeliveryModeMismatch => formatter
                 .write_str("fault runtime and restart contract declare different delivery modes"),
             Self::CompatibilityLowering => {

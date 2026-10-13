@@ -5,11 +5,11 @@ use std::error::Error;
 use oxide_batch::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ChunkSize, ComponentRevision,
     ComponentStreamIdentity, DefinitionError, DefinitionIdentity, DefinitionNodeUpgrade,
-    DefinitionRevision, DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
-    DefinitionStateTransformId, DefinitionStateTransformer, DefinitionUpgrade,
-    DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, InFlightPolicy,
-    JobName,
-    NodeId, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepName,
+    DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
+    DefinitionStateTransformError, DefinitionStateTransformId, DefinitionStateTransformer,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
+    InFlightPolicy, JobName, NodeId, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade,
+    StepName,
 };
 
 #[test]
@@ -316,9 +316,7 @@ fn transformed_upgrade_is_injective_and_schema_explicit() -> Result<(), Box<dyn 
 }
 
 
-fn identity_upgrade_payload(
-    payload: &[u8],
-) -> Result<Vec<u8>, DefinitionStateTransformError> {
+fn identity_upgrade_payload(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
     Ok(payload.to_vec())
 }
 

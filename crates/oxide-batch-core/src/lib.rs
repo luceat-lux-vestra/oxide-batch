@@ -43,9 +43,8 @@ pub use definition::{
     ComponentRevision, ComponentStreamIdentity, DefinitionArtifactId, DefinitionError,
     DefinitionIdentity, DefinitionManifest, DefinitionNodeUpgrade, DefinitionRevision,
     DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
-    DefinitionStateTransformId, DefinitionStateTransformer, DefinitionTokenKind,
-    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
-    InFlightPolicy,
+    DefinitionStateTransformId, DefinitionStateTransformer, DefinitionTokenKind, DefinitionUpgrade,
+    DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, InFlightPolicy,
     ManifestError, RepeatId, StepDefinitionUpgrade,
 };
 pub use definition::{

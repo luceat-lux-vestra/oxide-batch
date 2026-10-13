@@ -14,18 +14,18 @@ use crate::{
     ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity,
     DefinitionRegistration, DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
     DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionAttempt,
-    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
-    ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision,
-    FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind,
-    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
-    JobInstanceKey, JobInstanceProjection, JobName, JobParameters, LifecycleError,
-    LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
-    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorRecord,
-    OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
-    ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan,
-    PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository,
-    RecoverySnapshot, RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution,
-    RepeatId, RepeatLineage, RepeatOrdinal, RetentionAction, RetentionActionId, RetentionHold,
+    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
+    ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
+    FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind, JobExecution,
+    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
+    JobInstanceProjection, JobName, JobParameters, LifecycleError, LifecycleTransition,
+    MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation, NodeId,
+    OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft, OperatorRequestId,
+    OwnerObservation, OwnerToken, ParameterDescriptor, ParameterName, PartitionPlanEntry,
+    PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
+    QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
+    RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId,
+    RepeatLineage, RepeatOrdinal, RetentionAction, RetentionActionId, RetentionHold,
     RetentionRecord, RetentionRecordDraft, ScopeKind, ScopedComponentId, StartLimit,
     StateEnvelopeDescriptor, StateLimits, StepExecution, StepExecutionId, StepExecutionProjection,
     StepName, StepPartition, StepPartitionId, StepPartitionProjection,
@@ -347,15 +347,11 @@ impl InMemoryUnitOfWork<'_> {
         kind: DefinitionStateKind,
         state_id: Option<&str>,
     ) -> Result<Option<&'a DefinitionStateTransform>, RepositoryError> {
-        let mut matches = upgrade
-            .upgrade()
-            .transforms()
-            .iter()
-            .filter(|transform| {
-                transform.source_node() == source_node
-                    && transform.kind() == kind
-                    && state_id.is_none_or(|id| transform.state_id().as_str() == id)
-            });
+        let mut matches = upgrade.upgrade().transforms().iter().filter(|transform| {
+            transform.source_node() == source_node
+                && transform.kind() == kind
+                && state_id.is_none_or(|id| transform.state_id().as_str() == id)
+        });
         let selected = matches.next();
         if matches.next().is_some() {
             return Err(RepositoryError::DefinitionUpgradeFailed);
@@ -394,8 +390,8 @@ impl InMemoryUnitOfWork<'_> {
             "schema_version": transform.target_version().get(),
             "payload": payload,
         });
-        let bytes = serde_json::to_vec(&envelope)
-            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+        let bytes =
+            serde_json::to_vec(&envelope).map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
         ExecutionContext::from_json(&bytes, StateLimits::new(1_048_576, 64).unwrap_or_default())
             .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
     }
@@ -1282,11 +1278,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 let definition_changed =
                     previous_definition.manifest_digest() != definition.manifest_digest();
                 if definition_changed {
-                    let upgrade = selected_upgrade
-                        .as_ref()
-                        .ok_or(RepositoryError::IncompatibleDefinition {
+                    let upgrade = selected_upgrade.as_ref().ok_or(
+                        RepositoryError::IncompatibleDefinition {
                             instance_id: job_instance_id,
-                        })?;
+                        },
+                    )?;
                     let edge = upgrade.upgrade();
                     let registered = self.staged.definition_upgrades.get(&(
                         job_name.clone(),
@@ -1643,9 +1639,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .map(|state| (state.execution().job_execution_id(), state.execution().id()));
             let counts = upgrade_seed.as_ref().map_or_else(
                 || {
-                    prior.as_ref().map_or_else(ExecutionCounts::default, |state| {
-                        state.execution().metadata().counts()
-                    })
+                    prior
+                        .as_ref()
+                        .map_or_else(ExecutionCounts::default, |state| {
+                            state.execution().metadata().counts()
+                        })
                 },
                 |seed| seed.counts,
             );
