@@ -852,6 +852,34 @@ impl<'a> JobLauncher<'a> {
         self
     }
 
+    /// Creates and executes one registry-proven launch or restart attempt.
+    ///
+    /// The exact live definition fingerprint and application-owned executable artifact
+    /// identity are verified against the immutable registry before any lifecycle unit
+    /// of work is opened for the attempt.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LaunchError`] before lifecycle creation when the exact definition is
+    /// unregistered, drifted, or bound to another artifact; otherwise returns the same
+    /// failures as [`Self::launch`].
+    pub async fn launch_registered(
+        &self,
+        job: &TaskletJob,
+        artifact: &crate::DefinitionArtifactId,
+        parameters: &JobParameters,
+        stop: &StopToken,
+    ) -> Result<LaunchReport, LaunchError> {
+        self.ensure_accepting()?;
+        crate::service::verify_registered_definition(
+            self.repository,
+            job.definition_identity(),
+            artifact,
+        )
+        .await?;
+        self.launch(job, parameters, stop).await
+    }
+
     /// Creates and executes one launch or restart attempt.
     ///
     /// Creation is committed before the `STARTED` transition, and `STARTED` is
