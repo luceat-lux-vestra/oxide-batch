@@ -3,9 +3,7 @@
 use std::error::Error;
 use std::fmt;
 
-use oxide_batch_core::{
-    DefinitionArtifactId, DefinitionIdentity, DefinitionRevision, JobName,
-};
+use oxide_batch_core::{DefinitionArtifactId, DefinitionIdentity, DefinitionRevision, JobName};
 
 /// One immutable registry binding between a canonical definition and executable artifact.
 ///

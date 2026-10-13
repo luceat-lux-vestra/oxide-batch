@@ -26,29 +26,30 @@ use crate::{
     ChunkTransactionError, ChunkTransactionManager, ClassifierRevision, Clock,
     ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
     CursorError, CursorKey, DefinitionArtifactId, DefinitionDescriptor, DefinitionIdentity,
-    DefinitionRegistration, DefinitionRevision, DefinitionUpgrade, DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata,
-    ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, ExplorerError, ExplorerQuery,
-    ExplorerRepository, ExternalStateReference, FailureCategory, FailureId, FailureSummary,
-    FaultPhase, FaultPolicy, FaultProgress, FaultStateEntry, FaultStateEnvelope, FaultStateError,
-    FaultStateFormatError, FaultStateStore, FlowDecision, FlowDecisionId, FlowDecisionRequest,
-    FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind, IdentifierKind,
-    InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance,
-    JobInstanceId, JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName,
-    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
-    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
-    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorOutcomeClass,
-    OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequestId, ParameterDescriptor,
-    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, PartitionKey,
-    PartitionPlanEntry, PartitionResult, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan,
-    PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId,
-    RecoveryRequest, RecoveryResult, RepeatCommitRequest, RepeatDecision, RepeatExecution,
-    RepeatId, RepeatLineage, RepeatOrdinal, RepositoryCapability, RepositoryDescriptor,
-    RepositoryError, RepositoryUnitOfWork, RequestDigest, RetentionAction, RetentionActionId,
-    RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey,
-    RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId,
-    SkipCounts, StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepExecution, StepExecutionId, StepExecutionProjection, StepName,
-    StepPartition, StepPartitionId, StepPartitionProjection, TerminalKind,
+    DefinitionRegistration, DefinitionRevision, DefinitionUpgrade, DurableStateKind,
+    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
+    ExitCode, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, ExternalStateReference,
+    FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
+    FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
+    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
+    FlowTarget, FlowTransitionKind, IdentifierKind, InheritedStepProgress, JobExecution,
+    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
+    JobInstanceProjection, JobInstanceSelection, JobName, JobParameter, JobParameters,
+    JobRepository, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
+    MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation, NodeId,
+    OperationId, OperatorAction, OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft,
+    OperatorRejection, OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole,
+    ParameterValue, ParameterValueKind, PartitionKey, PartitionPlanEntry, PartitionResult,
+    PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
+    QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId, RecoveryRequest, RecoveryResult,
+    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal,
+    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    RequestDigest, RetentionAction, RetentionActionId, RetentionHold, RetentionOutcome,
+    RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey, RetryLimit, RetryOrdinal,
+    RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId, SkipCounts, StartLimit,
+    StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion, StepExecution,
+    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
+    StepPartitionProjection, TerminalKind,
 };
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 9;
@@ -5898,16 +5899,13 @@ async fn copy_forward_component_state(
     Ok(())
 }
 
-fn decode_definition_registration(
-    row: &PgRow,
-) -> Result<DefinitionRegistration, RepositoryError> {
+fn decode_definition_registration(row: &PgRow) -> Result<DefinitionRegistration, RepositoryError> {
     let corrupt = || RepositoryError::DefinitionRegistryStateCorrupt;
-    let job_name = JobName::new(read_text(row, "job_name").map_err(|_| corrupt())?)
-        .map_err(|_| corrupt())?;
-    let revision = DefinitionRevision::new(
-        read_text(row, "definition_revision").map_err(|_| corrupt())?,
-    )
-    .map_err(|_| corrupt())?;
+    let job_name =
+        JobName::new(read_text(row, "job_name").map_err(|_| corrupt())?).map_err(|_| corrupt())?;
+    let revision =
+        DefinitionRevision::new(read_text(row, "definition_revision").map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
     let format = row
         .try_get::<i16, _>("manifest_format")
         .map_err(|_| corrupt())
@@ -5924,10 +5922,9 @@ fn decode_definition_registration(
     let definition =
         DefinitionIdentity::from_durable(job_name, revision, format, &canonical, digest)
             .map_err(|_| corrupt())?;
-    let artifact = DefinitionArtifactId::new(
-        read_text(row, "artifact_identity").map_err(|_| corrupt())?,
-    )
-    .map_err(|_| corrupt())?;
+    let artifact =
+        DefinitionArtifactId::new(read_text(row, "artifact_identity").map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
     DefinitionRegistration::new(definition, artifact).map_err(|_| corrupt())
 }
 

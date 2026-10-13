@@ -69,7 +69,6 @@ impl<R: JobRepository> DefinitionRegistry<R> {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use std::num::NonZeroU64;
