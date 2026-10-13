@@ -4,9 +4,10 @@ use std::error::Error;
 
 use oxide_batch::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ChunkSize, ComponentRevision,
-    ComponentStreamIdentity, DefinitionError, DefinitionIdentity, DefinitionRevision,
-    DefinitionUpgrade, DefinitionUpgradeKey, InFlightPolicy, JobName, StateSchemaId,
-    StateSchemaVersion, StepDefinitionUpgrade, StepName,
+    ComponentStreamIdentity, DefinitionError, DefinitionIdentity, DefinitionNodeUpgrade,
+    DefinitionRevision, DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformId,
+    DefinitionUpgrade, DefinitionUpgradeKey, DefinitionUpgradeRevision, InFlightPolicy, JobName,
+    NodeId, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepName,
 };
 
 #[test]
@@ -226,5 +227,86 @@ fn directed_upgrade_rejects_incomplete_or_ambiguous_mapping() -> Result<(), Box<
         [StepDefinitionUpgrade::new(old_step, new_step)],
     )?;
     assert_eq!(upgrade.key().as_str(), "v1-to-v2");
+    Ok(())
+}
+
+
+#[test]
+fn transformed_upgrade_is_injective_and_schema_explicit() -> Result<(), Box<dyn Error>> {
+    let job = JobName::new("daily_import")?;
+    let from = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("load-v1")?,
+        DefinitionRevision::new("v1")?,
+        &ComponentRevision::new("tasklet-v1")?,
+    )?;
+    let to = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("load-v2")?,
+        DefinitionRevision::new("v2")?,
+        &ComponentRevision::new("tasklet-v2")?,
+    )?;
+    let source = NodeId::new("load-v1")?;
+    let target = NodeId::new("load-v2")?;
+    let transform = DefinitionStateTransform::new(
+        source.clone(),
+        target.clone(),
+        DefinitionStateKind::Checkpoint,
+        DefinitionStateTransformId::new("reader-checkpoint")?,
+        StateSchemaId::new("reader.position")?,
+        StateSchemaVersion::new(1)?,
+        StateSchemaId::new("reader.position")?,
+        StateSchemaVersion::new(2)?,
+        DefinitionUpgradeRevision::new("checkpoint-v1-to-v2")?,
+    );
+    let edge = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from.clone(),
+        to.clone(),
+        [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
+        [transform],
+    )?;
+
+    assert!(edge.is_transformed());
+    assert_eq!(edge.revision().expect("revision").as_str(), "edge-v1");
+    assert_eq!(edge.node_mapping().get(&source), Some(&target));
+    assert_eq!(edge.transforms().len(), 1);
+
+    let duplicate_target = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("duplicate-target")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from.clone(),
+        to.clone(),
+        [
+            DefinitionNodeUpgrade::new(NodeId::new("source-a")?, target.clone()),
+            DefinitionNodeUpgrade::new(NodeId::new("source-b")?, target.clone()),
+        ],
+        [],
+    );
+    assert_eq!(duplicate_target, Err(DefinitionError::DuplicateTargetNode));
+
+    let outside = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("outside")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from,
+        to,
+        [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
+        [DefinitionStateTransform::new(
+            NodeId::new("other")?,
+            target,
+            DefinitionStateKind::ExecutionContext,
+            DefinitionStateTransformId::new("context")?,
+            StateSchemaId::new("context.v1")?,
+            StateSchemaVersion::new(1)?,
+            StateSchemaId::new("context.v2")?,
+            StateSchemaVersion::new(2)?,
+            DefinitionUpgradeRevision::new("context-v1-to-v2")?,
+        )],
+    );
+    assert_eq!(
+        outside,
+        Err(DefinitionError::StateTransformOutsideNodeMapping)
+    );
     Ok(())
 }
