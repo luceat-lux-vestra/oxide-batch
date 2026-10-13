@@ -1831,6 +1831,8 @@ pub enum RepositoryError {
         /// Reused application-owned revision.
         revision: DefinitionRevision,
     },
+    /// Durable definition-registry state is contradictory or cannot be decoded.
+    DefinitionRegistryStateCorrupt,
     /// A manifest was registered or launched under a different job name.
     DefinitionJobMismatch {
         /// Job name selected by the instance or registration call.
@@ -2066,6 +2068,9 @@ impl fmt::Display for RepositoryError {
                 "job {job_name} definition revision {} is already bound to another artifact",
                 revision.as_str()
             ),
+            Self::DefinitionRegistryStateCorrupt => {
+                formatter.write_str("durable definition registry state is corrupt")
+            }
             Self::DefinitionJobMismatch { expected, actual } => write!(
                 formatter,
                 "definition for job {actual} cannot be used for job {expected}"
