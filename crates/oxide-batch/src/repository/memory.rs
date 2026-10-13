@@ -369,13 +369,13 @@ impl InMemoryUnitOfWork<'_> {
         {
             return Err(RepositoryError::DefinitionUpgradeFailed);
         }
-        let transformer = upgrade
+        let implementation = upgrade
             .transformer(transform)
             .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
         let source_payload = source
             .payload_json()
             .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
-        let transformed = transformer
+        let target_payload = implementation
             .apply(&source_payload)
             .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
         let payload: serde_json::Value = serde_json::from_slice(&transformed)
