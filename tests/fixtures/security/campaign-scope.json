@@ -3,7 +3,7 @@
   "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
   "gate": "docs/project/m5-design-gate-evidence.md",
   "plan": "docs/engineering/performance-plan.md",
-  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage, M7 #276 adds schema 6 value-free scope-resolution provenance, and M7 #300 adds schema 7 durable repeat state, M7 #401 adds schema 8 repeat lineage identity, and M7 #550 adds schema 9 definition artifact identity. The same five privilege classes remain; each newly durable table has a dedicated restricted-role report.",
+  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage, M7 #276 adds schema 6 value-free scope-resolution provenance, and M7 #300 adds schema 7 durable repeat state, M7 #401 adds schema 8 repeat lineage identity, M7 #550 adds schema 9 definition artifact identity, and M7 #551 adds schema 10 transformed compatible-upgrade metadata. The same five privilege classes remain; each newly durable table has a dedicated restricted-role report.",
   "support_contract": {
     "postgres_versions": [
       "15",
@@ -15,7 +15,7 @@
       "15",
       "18"
     ],
-    "installed_schema_version": 9,
+    "installed_schema_version": 10,
     "tls_mode": "verify-full",
     "privilege_classes": [
       "migration",

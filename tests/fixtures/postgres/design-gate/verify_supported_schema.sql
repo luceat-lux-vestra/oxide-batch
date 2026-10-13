@@ -9,9 +9,9 @@ BEGIN
     FROM oxide_batch.ob_schema_version
     WHERE singleton = true;
 
-    IF installed > 9 THEN
+    IF installed > 10 THEN
         RAISE EXCEPTION
-            'OxideBatch metadata schema % is newer than supported version 9',
+            'OxideBatch metadata schema % is newer than supported version 10',
             installed;
     END IF;
 END

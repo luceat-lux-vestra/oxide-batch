@@ -145,6 +145,16 @@ pub const SCHEMA9_TABLES: &[&str] = &[];
 /// Columns schema 9 adds to tables schema 8 already declared.
 pub const SCHEMA9_COLUMNS: &[(&str, &str)] = &[("ob_job_definition", "artifact_identity")];
 
+/// Schema 10 adds no table; it extends explicit definition-upgrade metadata.
+pub const SCHEMA10_TABLES: &[&str] = &[];
+
+/// Columns schema 10 adds to the existing definition-upgrade edge.
+pub const SCHEMA10_COLUMNS: &[(&str, &str)] = &[
+    ("ob_definition_upgrade", "upgrade_revision"),
+    ("ob_definition_upgrade", "node_mapping"),
+    ("ob_definition_upgrade", "state_transforms"),
+];
+
 /// Columns schema 2 added to tables schema 1 already declared.
 pub const SCHEMA2_COLUMNS: &[(&str, &str)] = &[
     ("ob_step_execution", "step_logical_id"),
@@ -328,6 +338,7 @@ pub async fn assert_historical_shape(url: &str, version: u32) -> Result<(), Box<
         (version >= 7, SCHEMA7_TABLES, SCHEMA7_COLUMNS),
         (version >= 8, SCHEMA8_TABLES, SCHEMA8_COLUMNS),
         (version >= 9, SCHEMA9_TABLES, SCHEMA9_COLUMNS),
+        (version >= 10, SCHEMA10_TABLES, SCHEMA10_COLUMNS),
     ] {
         for table in tables {
             if table_exists(url, table).await? != present {
