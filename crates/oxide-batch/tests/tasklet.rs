@@ -20,8 +20,9 @@ use futures_util::future::join_all;
 use ids::DeterministicIds;
 use oxide_batch::{
     ActorRef, BatchStatus, BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext,
-    BoxFuture, ComponentRevision, DefinitionRevision, FailureCategory, InMemoryJobRepository,
-    JobInstanceKey, JobLauncher, JobName, JobParameter, JobParameters, JobRepository, LaunchError,
+    BoxFuture, ComponentRevision, DefinitionArtifactId, DefinitionRegistration, DefinitionRegistry,
+    DefinitionRevision, FailureCategory, InMemoryJobRepository, JobInstanceKey, JobLauncher,
+    JobName, JobParameter, JobParameters, JobRepository, LaunchError,
     OwnerToken, ParameterName, ParameterRole, ParameterValue, RepositoryError, ShutdownCoordinator,
     StopPollInterval, StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
     TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
@@ -149,6 +150,63 @@ async fn successful_launch_borrows_context_and_persists_final_graph() -> Result<
     assert_eq!(report.job_execution().version().get(), 3);
     assert_eq!(report.step_execution().version().get(), 3);
     assert_report_is_persisted(&fixture.repository, &report).await
+}
+
+#[tokio::test]
+async fn registered_launch_proves_assembly_before_lifecycle_creation() -> Result<(), Box<dyn Error>>
+{
+    let fixture = Fixture::new()?;
+    let called = Arc::new(AtomicUsize::new(0));
+    let definition = job(Arc::new(BorrowingTasklet {
+        called: Arc::clone(&called),
+    }))?;
+    let parameters = parameters()?;
+    let (_source, stop) = StopSource::new();
+    let artifact = DefinitionArtifactId::new("tasklet-test-artifact")?;
+    let wrong_artifact = DefinitionArtifactId::new("wrong-tasklet-artifact")?;
+    let key = JobInstanceKey::new(JobName::new("daily_import")?, &parameters);
+
+    let missing = fixture
+        .launcher()
+        .launch_registered(&definition, &artifact, &parameters, &stop)
+        .await;
+    assert!(matches!(
+        missing,
+        Err(LaunchError::Repository(
+            RepositoryError::DefinitionNotRegistered { .. }
+        ))
+    ));
+    let mut inspection = fixture.repository.begin().await?;
+    assert!(inspection.find_job_instance(&key).await?.is_none());
+    inspection.rollback().await?;
+
+    let registration =
+        DefinitionRegistration::new(definition.definition_identity().clone(), artifact.clone())?;
+    DefinitionRegistry::new(fixture.repository.clone())
+        .register(&registration)
+        .await?;
+
+    let mismatch = fixture
+        .launcher()
+        .launch_registered(&definition, &wrong_artifact, &parameters, &stop)
+        .await;
+    assert!(matches!(
+        mismatch,
+        Err(LaunchError::Repository(
+            RepositoryError::DefinitionArtifactDrift { .. }
+        ))
+    ));
+    let mut inspection = fixture.repository.begin().await?;
+    assert!(inspection.find_job_instance(&key).await?.is_none());
+    inspection.rollback().await?;
+
+    let report = fixture
+        .launcher()
+        .launch_registered(&definition, &artifact, &parameters, &stop)
+        .await?;
+    assert_eq!(report.outcome(), TaskletExecutionOutcome::Completed);
+    assert_eq!(called.load(Ordering::SeqCst), 1);
+    Ok(())
 }
 
 struct StartedObservingTasklet {
