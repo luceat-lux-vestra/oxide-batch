@@ -1993,6 +1993,169 @@ async fn build_postgres_upgrade_seed(
     }))
 }
 
+
+async fn upgrade_seed_node(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    node_id: &NodeId,
+) -> Result<Option<Value>, RepositoryError> {
+    let seed: Option<Json<Value>> = sqlx::query_scalar(
+        "SELECT upgrade_seed -> 'nodes' -> $2 \
+         FROM oxide_batch.ob_job_execution \
+         WHERE id = $1 AND upgrade_seed IS NOT NULL",
+    )
+    .bind(job_execution_id)
+    .bind(node_id.as_str())
+    .fetch_optional(transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?
+    .flatten();
+    Ok(seed.map(|Json(value)| value).filter(|value| !value.is_null()))
+}
+
+async fn insert_step_from_upgrade_seed(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    step_name: &StepName,
+    node_id: &NodeId,
+    seed: &Value,
+    created_ms: i64,
+) -> Result<i64, RepositoryError> {
+    sqlx::query_scalar(
+        "WITH seed(node) AS (VALUES ($4::jsonb)) \
+         INSERT INTO oxide_batch.ob_step_execution ( \
+           job_execution_id, step_name, step_logical_id, status, exit_code, \
+           read_count, processed_count, write_count, filter_count, commit_count, rollback_count, \
+           checkpoint_format, checkpoint_schema, checkpoint_schema_version, checkpoint_payload, \
+           context_format, context_schema, context_schema_version, context_payload, \
+           read_retry_count, process_retry_count, write_retry_count, \
+           read_skip_count, process_skip_count, write_skip_count, no_rollback_count, \
+           fault_state_format, fault_state_schema, fault_state_schema_version, \
+           fault_state_payload, fault_state_checksum, created_at, updated_at, version) \
+         SELECT $1, $2, $3, 'STARTING', 'UNKNOWN', \
+           (node #>> '{counts,read}')::bigint, \
+           (node #>> '{counts,processed}')::bigint, \
+           (node #>> '{counts,written}')::bigint, \
+           (node #>> '{counts,filtered}')::bigint, \
+           (node #>> '{counts,committed}')::bigint, \
+           (node #>> '{counts,rolled_back}')::bigint, \
+           (node #>> '{checkpoint,format}')::smallint, \
+           node #>> '{checkpoint,schema}', \
+           (node #>> '{checkpoint,schema_version}')::integer, \
+           node #> '{checkpoint,payload}', \
+           (node #>> '{context,format}')::smallint, \
+           node #>> '{context,schema}', \
+           (node #>> '{context,schema_version}')::integer, \
+           node #> '{context,payload}', \
+           (node #>> '{counts,read_retry}')::bigint, \
+           (node #>> '{counts,process_retry}')::bigint, \
+           (node #>> '{counts,write_retry}')::bigint, \
+           (node #>> '{counts,read_skip}')::bigint, \
+           (node #>> '{counts,process_skip}')::bigint, \
+           (node #>> '{counts,write_skip}')::bigint, \
+           (node #>> '{counts,no_rollback}')::bigint, \
+           (node #>> '{fault,format}')::smallint, \
+           node #>> '{fault,schema}', \
+           (node #>> '{fault,schema_version}')::integer, \
+           node #> '{fault,payload}', \
+           decode(node #>> '{fault,checksum}', 'hex'), \
+           to_timestamp($5::double precision / 1000.0), \
+           to_timestamp($5::double precision / 1000.0), 0 \
+         FROM seed RETURNING id",
+    )
+    .bind(job_execution_id)
+    .bind(step_name.as_str())
+    .bind(node_id.as_str())
+    .bind(Json(seed.clone()))
+    .bind(created_ms)
+    .fetch_one(transaction)
+    .await
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+async fn materialize_upgrade_seed_children(
+    transaction: &mut PgConnection,
+    step_execution_id: i64,
+    seed: &Value,
+    created_ms: i64,
+) -> Result<(), RepositoryError> {
+    sqlx::query(
+        "INSERT INTO oxide_batch.ob_component_state ( \
+           step_execution_id, namespace, schema_id, schema_version, codec_id, codec_version, \
+           checksum_algorithm, checksum_algorithm_version, checksum, payload_kind, payload, \
+           external_content_id, external_encoded_len, version, updated_at) \
+         SELECT $1, component #>> '{namespace}', component #>> '{schema}', \
+           (component #>> '{schema_version}')::integer, component #>> '{codec}', \
+           (component #>> '{codec_version}')::integer, \
+           (component #>> '{checksum_algorithm}')::smallint, \
+           (component #>> '{checksum_algorithm_version}')::smallint, \
+           decode(component #>> '{checksum}', 'hex'), component #>> '{payload,kind}', \
+           CASE WHEN component #>> '{payload,kind}' = 'INLINE' \
+                THEN decode(component #>> '{payload,bytes}', 'hex') ELSE NULL END, \
+           CASE WHEN component #>> '{payload,kind}' = 'EXTERNAL' \
+                THEN decode(component #>> '{payload,content_id}', 'hex') ELSE NULL END, \
+           CASE WHEN component #>> '{payload,kind}' = 'EXTERNAL' \
+                THEN (component #>> '{payload,encoded_len}')::bigint ELSE NULL END, \
+           0, to_timestamp($3::double precision / 1000.0) \
+         FROM jsonb_array_elements($2::jsonb -> 'components') component",
+    )
+    .bind(step_execution_id)
+    .bind(Json(seed.clone()))
+    .bind(created_ms)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+
+    sqlx::query(
+        "INSERT INTO oxide_batch.ob_repeat_execution ( \
+           step_execution_id, repeat_id, ordinal, state_format, state_schema, \
+           state_schema_version, state_payload, state_checksum, decision, plan_fingerprint, \
+           definition_node_id, lineage, updated_at) \
+         SELECT $1, repeat #>> '{repeat_id}', (repeat #>> '{ordinal}')::bigint, \
+           (repeat #>> '{state,format}')::smallint, repeat #>> '{state,schema}', \
+           (repeat #>> '{state,schema_version}')::integer, repeat #> '{state,payload}', \
+           decode(repeat #>> '{state_checksum}', 'hex'), repeat #>> '{decision}', \
+           decode(repeat #>> '{plan_fingerprint}', 'hex'), repeat #>> '{definition_node_id}', \
+           repeat -> 'lineage', to_timestamp($3::double precision / 1000.0) \
+         FROM jsonb_array_elements($2::jsonb -> 'repeats') repeat",
+    )
+    .bind(step_execution_id)
+    .bind(Json(seed.clone()))
+    .bind(created_ms)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(())
+}
+
+async fn fresh_step_execution(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    step_name: &StepName,
+    node_id: &NodeId,
+    created_ms: i64,
+) -> Result<i64, RepositoryError> {
+    sqlx::query_scalar(
+        "INSERT INTO oxide_batch.ob_step_execution \
+         (job_execution_id, step_name, step_logical_id, status, exit_code, \
+          checkpoint_format, checkpoint_schema, checkpoint_schema_version, checkpoint_payload, \
+          context_format, context_schema, context_schema_version, context_payload, \
+          created_at, updated_at, version) \
+         VALUES ($1, $2, $3, 'STARTING', 'UNKNOWN', 1, $4, 1, $5, 1, $4, 1, $5, \
+          to_timestamp($6::double precision / 1000.0), \
+          to_timestamp($6::double precision / 1000.0), 0) RETURNING id",
+    )
+    .bind(job_execution_id)
+    .bind(step_name.as_str())
+    .bind(node_id.as_str())
+    .bind(DEFAULT_CONTEXT_SCHEMA)
+    .bind(Json(json!({})))
+    .bind(created_ms)
+    .fetch_one(transaction)
+    .await
+    .map_err(|_| RepositoryError::ConcurrentModification)
+}
+
 /// The bounds `ob_component_state.payload`'s own `CHECK` constraints already
 /// enforce (1 MiB, depth 64) -- read-side reconstruction validates against
 /// exactly this ceiling rather than a smaller configured default, since the
