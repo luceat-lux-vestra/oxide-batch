@@ -236,6 +236,15 @@ bash "${fixture_root}/design-gate/run-schema8-upgrade-gate.sh" \
   "${fixture_root}" \
   "${temporary_root}"
 
+# Schema-8 to schema-9 adds immutable application-owned artifact identity.
+# Existing definitions stay explicitly unbound until registered; one fixture
+# row is then bound to prove the new identity survives dump/restore.
+bash "${fixture_root}/design-gate/run-schema9-upgrade-gate.sh" \
+  "${container_name}" \
+  "${repository_root}" \
+  "${fixture_root}" \
+  "${temporary_root}"
+
 (
   cd "${repository_root}"
   OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
@@ -317,13 +326,13 @@ docker exec \
   --command \
   "SELECT version FROM oxide_batch.ob_schema_version WHERE singleton = true" \
   | tr -d '[:space:]' \
-  | grep -qx '8'
+  | grep -qx '9'
 docker exec \
   --env PGPASSWORD=fixture-migrator-only \
   "${container_name}" \
   psql \
   "host=localhost dbname=oxide_batch_restore user=oxide_batch_migrator sslmode=verify-full sslrootcert=/tls/ca.crt" \
-  --command "UPDATE oxide_batch.ob_schema_version SET version = 9" \
+  --command "UPDATE oxide_batch.ob_schema_version SET version = 10" \
   >/dev/null
 
 set +e
@@ -342,7 +351,7 @@ if [[ ${newer_schema_status} -eq 0 ]]; then
   echo "newer metadata schema was not rejected" >&2
   exit 1
 fi
-if [[ "${newer_schema_output}" != *"newer than supported version 8"* ]]; then
+if [[ "${newer_schema_output}" != *"newer than supported version 9"* ]]; then
   echo "${newer_schema_output}" >&2
   echo "newer-schema rejection returned an unexpected diagnostic" >&2
   exit 1
