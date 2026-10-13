@@ -2931,7 +2931,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
 
     #[allow(
         clippy::too_many_lines,
-        reason = "exact and mapped restart-state insertion remain visible in one transaction"
+        reason = "strict restart copy and transformed-seed materialization remain visible in one transaction"
     )]
     fn create_step_execution<'a>(
         &'a mut self,
@@ -2941,7 +2941,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         Box::pin(async move {
             let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
             let execution_row = sqlx::query(
-                "SELECT restart_of_execution_id, upgrade_from_definition_id \
+                "SELECT restart_of_execution_id, upgrade_from_definition_id, upgrade_seed \
                  FROM oxide_batch.ob_job_execution WHERE id = $1",
             )
             .bind(job_id)
@@ -2958,116 +2958,126 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .try_get::<Option<i64>, _>("upgrade_from_definition_id")
                 .map_err(|_| RepositoryError::Unavailable)?
                 .is_some();
+            let seed_present = execution_row
+                .try_get::<Option<Json<Value>>, _>("upgrade_seed")
+                .map_err(|_| RepositoryError::Unavailable)?
+                .is_some();
+            if upgraded && !seed_present {
+                return Err(RepositoryError::InvalidDefinitionUpgrade {
+                    execution_id: job_execution_id,
+                });
+            }
+
             let created_at = self.repository.clock.now();
             let created_ms = system_time_millis(created_at)?;
-            let (restarted_id, source_step_execution_id) = if let Some(source_job_id) =
-                restart_source
-            {
-                let source_step_name = if upgraded {
-                    sqlx::query_scalar(
-                        "SELECT mapping.key \
-                         FROM oxide_batch.ob_job_execution execution \
-                         JOIN oxide_batch.ob_definition_upgrade upgrade \
-                           ON upgrade.from_definition_id = execution.upgrade_from_definition_id \
-                          AND upgrade.to_definition_id = execution.definition_id \
-                         CROSS JOIN LATERAL jsonb_each_text(upgrade.step_mapping) mapping \
-                         WHERE execution.id = $1 AND mapping.value = $2",
+            let node_id = NodeId::new(step_name.as_str())
+                .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+
+            let (id, strict_source) = if upgraded {
+                let seed = upgrade_seed_node(
+                    &mut **self.transaction()?,
+                    job_id,
+                    &node_id,
+                )
+                .await?;
+                let id = match seed.as_ref() {
+                    Some(seed) => insert_step_from_upgrade_seed(
+                        &mut **self.transaction()?,
+                        job_id,
+                        step_name,
+                        &node_id,
+                        seed,
+                        created_ms,
                     )
-                    .bind(job_id)
-                    .bind(step_name.as_str())
-                    .fetch_optional(&mut **self.transaction()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?
-                    .ok_or(RepositoryError::InvalidDefinitionUpgrade {
-                        execution_id: job_execution_id,
-                    })?
-                } else {
-                    step_name.as_str().to_owned()
+                    .await?,
+                    None => fresh_step_execution(
+                        &mut **self.transaction()?,
+                        job_id,
+                        step_name,
+                        &node_id,
+                        created_ms,
+                    )
+                    .await?,
                 };
+                if let Some(seed) = seed.as_ref() {
+                    materialize_upgrade_seed_children(
+                        &mut **self.transaction()?,
+                        id,
+                        seed,
+                        created_ms,
+                    )
+                    .await?;
+                }
+                (id, None)
+            } else if let Some(source_job_id) = restart_source {
                 let source_id: Option<i64> = sqlx::query_scalar(
                     "SELECT source.id FROM oxide_batch.ob_step_execution source \
                      WHERE source.job_execution_id = $1 AND source.step_name = $2 \
                      ORDER BY source.id DESC LIMIT 1",
                 )
                 .bind(source_job_id)
-                .bind(&source_step_name)
+                .bind(step_name.as_str())
                 .fetch_optional(&mut **self.transaction()?)
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?;
-                let restarted_id = match source_id {
-                    Some(source_id) => sqlx::query_scalar(
-                        "INSERT INTO oxide_batch.ob_step_execution \
-                         (job_execution_id, step_name, step_logical_id, status, exit_code, \
-                          read_count, processed_count, write_count, filter_count, commit_count, \
-                          rollback_count, checkpoint_format, checkpoint_schema, \
-                          checkpoint_schema_version, checkpoint_payload, context_format, \
-                          context_schema, context_schema_version, context_payload, \
-                          read_retry_count, process_retry_count, write_retry_count, \
-                          read_skip_count, process_skip_count, write_skip_count, \
-                          no_rollback_count, fault_state_format, fault_state_schema, \
-                          fault_state_schema_version, fault_state_payload, fault_state_checksum, \
-                          created_at, updated_at, version) \
-                         SELECT $1, $2, $2, 'STARTING', 'UNKNOWN', source.read_count, \
-                          source.processed_count, source.write_count, source.filter_count, \
-                          source.commit_count, source.rollback_count, source.checkpoint_format, \
-                          source.checkpoint_schema, source.checkpoint_schema_version, \
-                          source.checkpoint_payload, source.context_format, source.context_schema, \
-                          source.context_schema_version, source.context_payload, \
-                          source.read_retry_count, source.process_retry_count, \
-                          source.write_retry_count, source.read_skip_count, \
-                          source.process_skip_count, source.write_skip_count, \
-                          source.no_rollback_count, source.fault_state_format, \
-                          source.fault_state_schema, source.fault_state_schema_version, \
-                          source.fault_state_payload, source.fault_state_checksum, \
-                          to_timestamp($3::double precision / 1000.0), \
-                          to_timestamp($3::double precision / 1000.0), 0 \
-                         FROM oxide_batch.ob_step_execution source WHERE source.id = $4 \
-                         RETURNING id",
-                    )
-                    .bind(job_id)
-                    .bind(step_name.as_str())
-                    .bind(created_ms)
-                    .bind(source_id)
-                    .fetch_optional(&mut **self.transaction()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?,
-                    None => None,
-                };
-                (restarted_id, source_id)
-            } else {
-                (None, None)
-            };
-            let id: i64 = match (restart_source, restarted_id) {
-                (Some(_), Some(id)) => id,
-                (Some(_), None) => {
-                    return Err(RepositoryError::RestartStateNotFound {
-                        execution_id: job_execution_id,
-                        step_name: step_name.clone(),
-                    });
-                }
-                (None, _) => sqlx::query_scalar(
+                let source_id = source_id.ok_or(RepositoryError::RestartStateNotFound {
+                    execution_id: job_execution_id,
+                    step_name: step_name.clone(),
+                })?;
+                let id: i64 = sqlx::query_scalar(
                     "INSERT INTO oxide_batch.ob_step_execution \
                      (job_execution_id, step_name, step_logical_id, status, exit_code, \
-                      checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
-                      checkpoint_payload, context_format, context_schema, \
-                      context_schema_version, context_payload, created_at, updated_at, version) \
-                     VALUES ($1, $2, $2, 'STARTING', 'UNKNOWN', 1, $3, 1, $4, 1, $3, 1, $4, \
-                      to_timestamp($5::double precision / 1000.0), \
-                      to_timestamp($5::double precision / 1000.0), 0) \
+                      read_count, processed_count, write_count, filter_count, commit_count, \
+                      rollback_count, checkpoint_format, checkpoint_schema, \
+                      checkpoint_schema_version, checkpoint_payload, context_format, \
+                      context_schema, context_schema_version, context_payload, \
+                      read_retry_count, process_retry_count, write_retry_count, \
+                      read_skip_count, process_skip_count, write_skip_count, \
+                      no_rollback_count, fault_state_format, fault_state_schema, \
+                      fault_state_schema_version, fault_state_payload, fault_state_checksum, \
+                      created_at, updated_at, version) \
+                     SELECT $1, $2, $2, 'STARTING', 'UNKNOWN', source.read_count, \
+                      source.processed_count, source.write_count, source.filter_count, \
+                      source.commit_count, source.rollback_count, source.checkpoint_format, \
+                      source.checkpoint_schema, source.checkpoint_schema_version, \
+                      source.checkpoint_payload, source.context_format, source.context_schema, \
+                      source.context_schema_version, source.context_payload, \
+                      source.read_retry_count, source.process_retry_count, \
+                      source.write_retry_count, source.read_skip_count, \
+                      source.process_skip_count, source.write_skip_count, \
+                      source.no_rollback_count, source.fault_state_format, \
+                      source.fault_state_schema, source.fault_state_schema_version, \
+                      source.fault_state_payload, source.fault_state_checksum, \
+                      to_timestamp($3::double precision / 1000.0), \
+                      to_timestamp($3::double precision / 1000.0), 0 \
+                     FROM oxide_batch.ob_step_execution source WHERE source.id = $4 \
                      RETURNING id",
                 )
                 .bind(job_id)
                 .bind(step_name.as_str())
-                .bind(DEFAULT_CONTEXT_SCHEMA)
-                .bind(Json(json!({})))
                 .bind(created_ms)
+                .bind(source_id)
                 .fetch_one(&mut **self.transaction()?)
                 .await
-                .map_err(|_| RepositoryError::Unavailable)?,
+                .map_err(|_| RepositoryError::Unavailable)?;
+                (id, Some(source_id))
+            } else {
+                (
+                    fresh_step_execution(
+                        &mut **self.transaction()?,
+                        job_id,
+                        step_name,
+                        &node_id,
+                        created_ms,
+                    )
+                    .await?,
+                    None,
+                )
             };
+
             let id_value =
                 StepExecutionId::new(u64::try_from(id).map_err(|_| RepositoryError::Unavailable)?)?;
-            if let Some(source_step_execution_id) = source_step_execution_id {
+            if let Some(source_step_execution_id) = strict_source {
                 copy_forward_component_state(
                     &mut **self.transaction()?,
                     source_step_execution_id,
@@ -3086,17 +3096,15 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 )
                 .await?;
             }
-            let execution = self
-                .step_execution(id_value)
+            self.step_execution(id_value)
                 .await?
-                .ok_or(RepositoryError::StepExecutionNotFound { id: id_value })?;
-            Ok(execution)
+                .ok_or(RepositoryError::StepExecutionNotFound { id: id_value })
         })
     }
 
     #[allow(
         clippy::too_many_lines,
-        reason = "the instance lock, start-limit check, and state-copy insert form one visible atomic rule"
+        reason = "the instance lock, start-limit check, and strict-or-upgraded state insert form one visible atomic rule"
     )]
     fn create_flow_step_execution<'a>(
         &'a mut self,
@@ -3107,8 +3115,9 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
     ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
         Box::pin(async move {
             let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
-            let instance_id: i64 = sqlx::query_scalar(
-                "SELECT job_instance_id FROM oxide_batch.ob_job_execution WHERE id = $1",
+            let execution_row = sqlx::query(
+                "SELECT job_instance_id, upgrade_from_definition_id, upgrade_seed \
+                 FROM oxide_batch.ob_job_execution WHERE id = $1",
             )
             .bind(job_id)
             .fetch_optional(&mut **self.transaction()?)
@@ -3117,6 +3126,23 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .ok_or(RepositoryError::JobExecutionNotFound {
                 id: job_execution_id,
             })?;
+            let instance_id = execution_row
+                .try_get::<i64, _>("job_instance_id")
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let upgraded = execution_row
+                .try_get::<Option<i64>, _>("upgrade_from_definition_id")
+                .map_err(|_| RepositoryError::Unavailable)?
+                .is_some();
+            let seed_present = execution_row
+                .try_get::<Option<Json<Value>>, _>("upgrade_seed")
+                .map_err(|_| RepositoryError::Unavailable)?
+                .is_some();
+            if upgraded && !seed_present {
+                return Err(RepositoryError::InvalidDefinitionUpgrade {
+                    execution_id: job_execution_id,
+                });
+            }
+
             sqlx::query("SELECT id FROM oxide_batch.ob_job_instance WHERE id = $1 FOR UPDATE")
                 .bind(instance_id)
                 .fetch_one(&mut **self.transaction()?)
@@ -3146,81 +3172,108 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             }
 
             let created_ms = system_time_millis(self.repository.clock.now())?;
-            let source_id: Option<i64> = sqlx::query_scalar(
-                "SELECT step.id FROM oxide_batch.ob_step_execution step \
-                 JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id \
-                 WHERE job.job_instance_id = $1 AND step.step_logical_id = $2 \
-                 ORDER BY job.attempt DESC, step.id DESC LIMIT 1",
-            )
-            .bind(instance_id)
-            .bind(node_id.as_str())
-            .fetch_optional(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-
-            let id: i64 = if let Some(source_id) = source_id {
-                sqlx::query_scalar(
-                    "INSERT INTO oxide_batch.ob_step_execution \
-                     (job_execution_id, step_name, step_logical_id, status, exit_code, \
-                      read_count, processed_count, write_count, filter_count, commit_count, \
-                      rollback_count, checkpoint_format, checkpoint_schema, \
-                      checkpoint_schema_version, checkpoint_payload, context_format, \
-                      context_schema, context_schema_version, context_payload, \
-                      read_retry_count, process_retry_count, write_retry_count, \
-                      read_skip_count, process_skip_count, write_skip_count, \
-                      no_rollback_count, fault_state_format, fault_state_schema, \
-                      fault_state_schema_version, fault_state_payload, fault_state_checksum, \
-                      created_at, updated_at, version) \
-                     SELECT $1, $2, $3, 'STARTING', 'UNKNOWN', source.read_count, \
-                      source.processed_count, source.write_count, source.filter_count, \
-                      source.commit_count, source.rollback_count, source.checkpoint_format, \
-                      source.checkpoint_schema, source.checkpoint_schema_version, \
-                      source.checkpoint_payload, source.context_format, source.context_schema, \
-                      source.context_schema_version, source.context_payload, \
-                      source.read_retry_count, source.process_retry_count, \
-                      source.write_retry_count, source.read_skip_count, \
-                      source.process_skip_count, source.write_skip_count, \
-                      source.no_rollback_count, source.fault_state_format, \
-                      source.fault_state_schema, source.fault_state_schema_version, \
-                      source.fault_state_payload, source.fault_state_checksum, \
-                      to_timestamp($4::double precision / 1000.0), \
-                      to_timestamp($4::double precision / 1000.0), 0 \
-                     FROM oxide_batch.ob_step_execution source WHERE source.id = $5 \
-                     RETURNING id",
-                )
-                .bind(job_id)
-                .bind(step_name.as_str())
-                .bind(node_id.as_str())
-                .bind(created_ms)
-                .bind(source_id)
-                .fetch_one(&mut **self.transaction()?)
-                .await
-                .map_err(|_| RepositoryError::ConcurrentModification)?
+            let (id, strict_source) = if upgraded {
+                let seed =
+                    upgrade_seed_node(&mut **self.transaction()?, job_id, node_id).await?;
+                let id = match seed.as_ref() {
+                    Some(seed) => insert_step_from_upgrade_seed(
+                        &mut **self.transaction()?,
+                        job_id,
+                        step_name,
+                        node_id,
+                        seed,
+                        created_ms,
+                    )
+                    .await?,
+                    None => fresh_step_execution(
+                        &mut **self.transaction()?,
+                        job_id,
+                        step_name,
+                        node_id,
+                        created_ms,
+                    )
+                    .await?,
+                };
+                if let Some(seed) = seed.as_ref() {
+                    materialize_upgrade_seed_children(
+                        &mut **self.transaction()?,
+                        id,
+                        seed,
+                        created_ms,
+                    )
+                    .await?;
+                }
+                (id, None)
             } else {
-                sqlx::query_scalar(
-                    "INSERT INTO oxide_batch.ob_step_execution \
-                     (job_execution_id, step_name, step_logical_id, status, exit_code, \
-                      checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
-                      checkpoint_payload, context_format, context_schema, \
-                      context_schema_version, context_payload, created_at, updated_at, version) \
-                     VALUES ($1, $2, $3, 'STARTING', 'UNKNOWN', 1, $4, 1, $5, 1, $4, 1, $5, \
-                      to_timestamp($6::double precision / 1000.0), \
-                      to_timestamp($6::double precision / 1000.0), 0) RETURNING id",
+                let source_id: Option<i64> = sqlx::query_scalar(
+                    "SELECT step.id FROM oxide_batch.ob_step_execution step \
+                     JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id \
+                     WHERE job.job_instance_id = $1 AND step.step_logical_id = $2 \
+                     ORDER BY job.attempt DESC, step.id DESC LIMIT 1",
                 )
-                .bind(job_id)
-                .bind(step_name.as_str())
+                .bind(instance_id)
                 .bind(node_id.as_str())
-                .bind(DEFAULT_CONTEXT_SCHEMA)
-                .bind(Json(json!({})))
-                .bind(created_ms)
-                .fetch_one(&mut **self.transaction()?)
+                .fetch_optional(&mut **self.transaction()?)
                 .await
-                .map_err(|_| RepositoryError::ConcurrentModification)?
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if let Some(source_id) = source_id {
+                    let id: i64 = sqlx::query_scalar(
+                        "INSERT INTO oxide_batch.ob_step_execution \
+                         (job_execution_id, step_name, step_logical_id, status, exit_code, \
+                          read_count, processed_count, write_count, filter_count, commit_count, \
+                          rollback_count, checkpoint_format, checkpoint_schema, \
+                          checkpoint_schema_version, checkpoint_payload, context_format, \
+                          context_schema, context_schema_version, context_payload, \
+                          read_retry_count, process_retry_count, write_retry_count, \
+                          read_skip_count, process_skip_count, write_skip_count, \
+                          no_rollback_count, fault_state_format, fault_state_schema, \
+                          fault_state_schema_version, fault_state_payload, fault_state_checksum, \
+                          created_at, updated_at, version) \
+                         SELECT $1, $2, $3, 'STARTING', 'UNKNOWN', source.read_count, \
+                          source.processed_count, source.write_count, source.filter_count, \
+                          source.commit_count, source.rollback_count, source.checkpoint_format, \
+                          source.checkpoint_schema, source.checkpoint_schema_version, \
+                          source.checkpoint_payload, source.context_format, source.context_schema, \
+                          source.context_schema_version, source.context_payload, \
+                          source.read_retry_count, source.process_retry_count, \
+                          source.write_retry_count, source.read_skip_count, \
+                          source.process_skip_count, source.write_skip_count, \
+                          source.no_rollback_count, source.fault_state_format, \
+                          source.fault_state_schema, source.fault_state_schema_version, \
+                          source.fault_state_payload, source.fault_state_checksum, \
+                          to_timestamp($4::double precision / 1000.0), \
+                          to_timestamp($4::double precision / 1000.0), 0 \
+                         FROM oxide_batch.ob_step_execution source WHERE source.id = $5 \
+                         RETURNING id",
+                    )
+                    .bind(job_id)
+                    .bind(step_name.as_str())
+                    .bind(node_id.as_str())
+                    .bind(created_ms)
+                    .bind(source_id)
+                    .fetch_one(&mut **self.transaction()?)
+                    .await
+                    .map_err(|_| RepositoryError::ConcurrentModification)?;
+                    (id, Some(source_id))
+                } else {
+                    (
+                        fresh_step_execution(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            node_id,
+                            created_ms,
+                        )
+                        .await?,
+                        None,
+                    )
+                }
             };
+
             let id = StepExecutionId::new(
                 u64::try_from(id).map_err(|_| RepositoryError::FlowStateCorrupt)?,
             )?;
-            if let Some(source_id) = source_id {
+            if let Some(source_id) = strict_source {
                 copy_forward_component_state(
                     &mut **self.transaction()?,
                     source_id,
