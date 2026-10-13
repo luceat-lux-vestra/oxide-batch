@@ -1993,7 +1993,6 @@ async fn build_postgres_upgrade_seed(
     }))
 }
 
-
 async fn upgrade_seed_node(
     transaction: &mut PgConnection,
     job_execution_id: i64,
@@ -2010,7 +2009,9 @@ async fn upgrade_seed_node(
     .await
     .map_err(|_| RepositoryError::Unavailable)?
     .flatten();
-    Ok(seed.map(|Json(value)| value).filter(|value| !value.is_null()))
+    Ok(seed
+        .map(|Json(value)| value)
+        .filter(|value| !value.is_null()))
 }
 
 async fn insert_step_from_upgrade_seed(
@@ -2974,30 +2975,29 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
 
             let (id, strict_source) = if upgraded {
-                let seed = upgrade_seed_node(
-                    &mut **self.transaction()?,
-                    job_id,
-                    &node_id,
-                )
-                .await?;
+                let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, &node_id).await?;
                 let id = match seed.as_ref() {
-                    Some(seed) => insert_step_from_upgrade_seed(
-                        &mut **self.transaction()?,
-                        job_id,
-                        step_name,
-                        &node_id,
-                        seed,
-                        created_ms,
-                    )
-                    .await?,
-                    None => fresh_step_execution(
-                        &mut **self.transaction()?,
-                        job_id,
-                        step_name,
-                        &node_id,
-                        created_ms,
-                    )
-                    .await?,
+                    Some(seed) => {
+                        insert_step_from_upgrade_seed(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            &node_id,
+                            seed,
+                            created_ms,
+                        )
+                        .await?
+                    }
+                    None => {
+                        fresh_step_execution(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            &node_id,
+                            created_ms,
+                        )
+                        .await?
+                    }
                 };
                 if let Some(seed) = seed.as_ref() {
                     materialize_upgrade_seed_children(
@@ -3173,26 +3173,29 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
 
             let created_ms = system_time_millis(self.repository.clock.now())?;
             let (id, strict_source) = if upgraded {
-                let seed =
-                    upgrade_seed_node(&mut **self.transaction()?, job_id, node_id).await?;
+                let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, node_id).await?;
                 let id = match seed.as_ref() {
-                    Some(seed) => insert_step_from_upgrade_seed(
-                        &mut **self.transaction()?,
-                        job_id,
-                        step_name,
-                        node_id,
-                        seed,
-                        created_ms,
-                    )
-                    .await?,
-                    None => fresh_step_execution(
-                        &mut **self.transaction()?,
-                        job_id,
-                        step_name,
-                        node_id,
-                        created_ms,
-                    )
-                    .await?,
+                    Some(seed) => {
+                        insert_step_from_upgrade_seed(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            node_id,
+                            seed,
+                            created_ms,
+                        )
+                        .await?
+                    }
+                    None => {
+                        fresh_step_execution(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            node_id,
+                            created_ms,
+                        )
+                        .await?
+                    }
                 };
                 if let Some(seed) = seed.as_ref() {
                     materialize_upgrade_seed_children(
