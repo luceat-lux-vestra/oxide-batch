@@ -330,7 +330,7 @@ impl DefinitionStateTransform {
 /// The function is deliberately not serializable or durable. Registration
 /// persists only the bounded revision/schema descriptor, while a compatible
 /// restart must supply the exact live implementation again.
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct DefinitionStateTransformer {
     revision: DefinitionUpgradeRevision,
     apply: fn(&[u8]) -> Result<Vec<u8>, DefinitionStateTransformError>,
