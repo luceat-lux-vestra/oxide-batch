@@ -268,7 +268,10 @@ fn transformed_upgrade_is_injective_and_schema_explicit() -> Result<(), Box<dyn 
     )?;
 
     assert!(edge.is_transformed());
-    assert_eq!(edge.revision().expect("revision").as_str(), "edge-v1");
+    assert_eq!(
+        edge.revision().map(DefinitionUpgradeRevision::as_str),
+        Some("edge-v1")
+    );
     assert_eq!(edge.node_mapping().get(&source), Some(&target));
     assert_eq!(edge.transforms().len(), 1);
 
