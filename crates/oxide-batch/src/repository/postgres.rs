@@ -1995,6 +1995,9 @@ async fn scope_upgrade_seeds(
             let had_source = object
                 .get("source_step_execution_id")
                 .is_some_and(|value| !value.is_null());
+            if owner_step_execution_id.is_none() && had_source {
+                return Err(RepositoryError::DefinitionUpgradeFailed);
+            }
             object.insert(
                 String::from("source_step_mode"),
                 Value::String(String::from(if had_source {
@@ -2175,6 +2178,32 @@ async fn upgrade_seed_node(
     Ok(seed
         .map(|Json(value)| value)
         .filter(|value| !value.is_null()))
+}
+
+async fn validate_upgrade_seed_scope_sources(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    seed: &Value,
+) -> Result<(), RepositoryError> {
+    let valid: bool = sqlx::query_scalar(
+        "SELECT NOT EXISTS ( \
+           SELECT 1 FROM jsonb_array_elements($2::jsonb -> 'scope') entry \
+           WHERE entry #>> '{source_step_mode}' = 'mapped_current' \
+             AND NOT EXISTS ( \
+               SELECT 1 FROM oxide_batch.ob_step_execution source \
+               WHERE source.job_execution_id = $1 \
+                 AND source.step_logical_id = entry #>> '{source_node_id}'))",
+    )
+    .bind(job_execution_id)
+    .bind(Json(seed.clone()))
+    .fetch_one(transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+    if valid {
+        Ok(())
+    } else {
+        Err(RepositoryError::DefinitionUpgradeFailed)
+    }
 }
 
 async fn insert_step_from_upgrade_seed(
@@ -3148,6 +3177,14 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
 
             let (id, strict_source) = if upgraded {
                 let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, &node_id).await?;
+                if let Some(seed) = seed.as_ref() {
+                    validate_upgrade_seed_scope_sources(
+                        &mut **self.transaction()?,
+                        job_id,
+                        seed,
+                    )
+                    .await?;
+                }
                 let id = match seed.as_ref() {
                     Some(seed) => {
                         insert_step_from_upgrade_seed(
@@ -3346,6 +3383,14 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let created_ms = system_time_millis(self.repository.clock.now())?;
             let (id, strict_source) = if upgraded {
                 let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, node_id).await?;
+                if let Some(seed) = seed.as_ref() {
+                    validate_upgrade_seed_scope_sources(
+                        &mut **self.transaction()?,
+                        job_id,
+                        seed,
+                    )
+                    .await?;
+                }
                 let id = match seed.as_ref() {
                     Some(seed) => {
                         insert_step_from_upgrade_seed(
