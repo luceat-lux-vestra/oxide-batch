@@ -57,7 +57,7 @@ upgrade10_psql <"${fixture_root}/design-gate/verify-schema9-upgrade.sql"
 
 # One real schema-9 compatibility edge must remain a legacy row after schema 10.
 upgrade10_psql <<'SQL'
-INSERT INTO ob_definition_upgrade (
+INSERT INTO oxide_batch.ob_definition_upgrade (
     from_definition_id,
     to_definition_id,
     upgrade_key,

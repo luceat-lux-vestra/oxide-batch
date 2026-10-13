@@ -211,7 +211,7 @@ fn configuration_bounds_and_diagnostics_are_safe() -> Result<(), Box<dyn Error>>
         CaCertificate::new(Vec::new()).err(),
         Some(PostgresConfigError::EmptyCaCertificate)
     );
-    assert_eq!(PostgresMigrator::supported_schema_version(), 9);
+    assert_eq!(PostgresMigrator::supported_schema_version(), 10);
     Ok(())
 }
 

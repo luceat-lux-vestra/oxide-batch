@@ -80,7 +80,10 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // #265 adds the facade-owned bounded mapping diagnostic.
     ("nested_job_runtime", 1),
     // #550 adds the bounded executable artifact identity token.
-    ("oxide_batch_core", 110),
+    // #551 adds the explicit transformed-upgrade descriptor: revision, durable
+    // node mapping, state-family/schema transform identity, and their two
+    // public capacity ceilings.
+    ("oxide_batch_core", 117),
     // #264 adds the reviewed M7 plan surface: CompiledFlowScope, NestedFlow,
     // and MAX_FLOW_COMPOSITION_DEPTH. #265 adds the nested-job declaration
     // contract. #266 adds CustomLeafKind and CustomLeafNode. #276 adds only
