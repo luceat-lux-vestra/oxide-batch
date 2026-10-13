@@ -1,8 +1,8 @@
 //! Portable immutable definition-registry service.
 
 use crate::{
-    DefinitionRegistration, DefinitionRevision, JobName, JobRepository, RepositoryCapability,
-    RepositoryError,
+    DefinitionArtifactId, DefinitionIdentity, DefinitionRegistration, DefinitionRevision, JobName,
+    JobRepository, RepositoryCapability, RepositoryError,
 };
 
 /// Public facade for exact, bounded definition registration and lookup.
@@ -48,6 +48,23 @@ impl<R: JobRepository> DefinitionRegistry<R> {
         Ok(registered)
     }
 
+    /// Verifies one live executable assembly against its immutable registry record.
+    ///
+    /// Verification is read-only and exact: no revision scan, fallback, or compatibility
+    /// inference occurs.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed missing-registration, definition-drift, artifact-drift,
+    /// capability, or repository failure.
+    pub async fn verify(
+        &self,
+        definition: &DefinitionIdentity,
+        artifact: &DefinitionArtifactId,
+    ) -> Result<DefinitionRegistration, RepositoryError> {
+        verify_registered_definition(&self.repository, definition, artifact).await
+    }
+
     /// Resolves one exact registered definition revision.
     ///
     /// # Errors
@@ -67,6 +84,40 @@ impl<R: JobRepository> DefinitionRegistry<R> {
         unit.rollback().await?;
         Ok(registered)
     }
+}
+
+pub(crate) async fn verify_registered_definition(
+    repository: &dyn JobRepository,
+    definition: &DefinitionIdentity,
+    artifact: &DefinitionArtifactId,
+) -> Result<DefinitionRegistration, RepositoryError> {
+    repository
+        .descriptor()
+        .require(RepositoryCapability::DefinitionRegistry)?;
+    let job_name = definition
+        .job_name()
+        .ok_or(RepositoryError::DefinitionRegistryStateCorrupt)?;
+    let revision = definition.revision();
+    let mut unit = repository.begin().await?;
+    let registered = unit.definition(job_name, revision).await?;
+    unit.rollback().await?;
+    let registered = registered.ok_or_else(|| RepositoryError::DefinitionNotRegistered {
+        job_name: job_name.clone(),
+        revision: revision.clone(),
+    })?;
+    if registered.definition() != definition {
+        return Err(RepositoryError::DefinitionDrift {
+            job_name: job_name.clone(),
+            revision: revision.clone(),
+        });
+    }
+    if registered.artifact() != artifact {
+        return Err(RepositoryError::DefinitionArtifactDrift {
+            job_name: job_name.clone(),
+            revision: revision.clone(),
+        });
+    }
+    Ok(registered)
 }
 
 #[cfg(test)]
