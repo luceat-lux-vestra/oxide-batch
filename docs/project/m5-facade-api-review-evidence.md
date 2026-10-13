@@ -91,8 +91,8 @@ would have become had it been carried rather than removed.
 
 ## The delivered surface
 
-The current facade claims exactly one crate. `oxide-batch` exports **546
-names**: 534 always and 12 more under the optional `postgres` feature. The
+The current facade claims exactly one crate. `oxide-batch` exports **550
+names**: 538 always and 12 more under the optional `postgres` feature. The
 committed snapshot at
 `crates/oxide-batch/tests/fixtures/facade/public-api.txt` is the authoritative
 name list; this table is the reviewed enumeration by the `src/lib.rs`
@@ -103,9 +103,9 @@ be added or moved without revisiting this record.
 
 | Group | Names | What it delivers |
 | --- | ---: | --- |
-| `oxide_batch_repository` | 118 | repository, explorer, operator, recovery, retention, paging, M7 durable-link ports/values, and #300 bounded durable repeat authority |
+| `oxide_batch_repository` | 120 | repository, explorer, operator, recovery, retention, paging, M7 durable-link ports/values, #300 bounded durable repeat authority, and #550 immutable definition registration values |
 | `repeat_runtime` | 14 | #301 process-local repeat policy/interceptor contracts, redacted callback/failure/context values, runtime registrations, policy outcome, and bounded secondary diagnostics |
-| `oxide_batch_core` | 109 | durable domain values, definition identity, state, parameters, fault-policy values, the two M7 repeat capacity ceilings, and #300's shared `RepeatId` ownership |
+| `oxide_batch_core` | 110 | durable domain values, definition identity, #550 bounded artifact identity, state, parameters, fault-policy values, the two M7 repeat capacity ceilings, and #300's shared `RepeatId` ownership |
 | `oxide_batch_plan` | 61 | compiled flow/plan declarations, M7 composition, structured scope/late-binding values, and #299 bounded repeat definition identity other than `RepeatId`, whose facade path is unchanged after #300 moves its ownership to core |
 | `telemetry` | 38 | framework-owned event, metric, span, and export contracts |
 | `chunk` | 32 | chunk component contracts, business transaction ports, outcomes, and bounded execution values |
@@ -121,7 +121,7 @@ be added or moved without revisiting this record.
 | `diagnostics` | 9 | lifecycle events, correlation, and metric labels |
 | `scope_live` | 9 | #277 process-local scoped factories, registrations, opaque handles, value-redacted errors, and the dependency-depth ceiling |
 | `listener` | 7 | job and step execution listeners |
-| `service` | 7 | explorer, operator, recovery, and retention services |
+| `service` | 8 | explorer, operator, recovery, retention, and #550 exact definition registry services |
 | `custom_leaf` | 4 | M7 custom-leaf execution/registration contracts |
 | `chunk_builder` | 2 | bounded chunk-pipeline construction helpers |
 | `fault` | 2 | injected backoff sleeper and its outcome |
