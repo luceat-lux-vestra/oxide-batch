@@ -11,23 +11,23 @@ use oxide_batch_repository::{
 };
 
 use crate::{
-    ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity, DefinitionRevision,
-    DefinitionUpgrade, DurableStateKind, ExecutionAttempt, ExecutionContext, ExecutionCounts,
-    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus, ExplorerError,
-    ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId, FlowDecisionRequest,
-    FlowStepState, FlowTransitionKind, IdentifierKind, JobExecution, JobExecutionId,
-    JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey, JobInstanceProjection,
-    JobName, JobParameters, LifecycleError, LifecycleTransition, MAX_PARTITIONS, NestedJobLink,
-    NestedJobLinkRequest, NestedJobTerminalObservation, NodeId, OperationId, OperatorAction,
-    OperatorRecord, OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken,
-    ParameterDescriptor, ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate,
-    PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
-    RecoveryDecisionId, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence,
-    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal,
-    RetentionAction, RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft,
-    ScopeKind, ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StepExecution,
-    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
-    StepPartitionProjection,
+    ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity,
+    DefinitionRegistration, DefinitionRevision, DefinitionUpgrade, DurableStateKind,
+    ExecutionAttempt, ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
+    ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision,
+    FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind,
+    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
+    JobInstanceKey, JobInstanceProjection, JobName, JobParameters, LifecycleError,
+    LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
+    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorRecord,
+    OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
+    ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan,
+    PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository,
+    RecoverySnapshot, RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution,
+    RepeatId, RepeatLineage, RepeatOrdinal, RetentionAction, RetentionActionId, RetentionHold,
+    RetentionRecord, RetentionRecordDraft, ScopeKind, ScopedComponentId, StartLimit,
+    StateEnvelopeDescriptor, StepExecution, StepExecutionId, StepExecutionProjection, StepName,
+    StepPartition, StepPartitionId, StepPartitionProjection,
 };
 use crate::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
@@ -108,6 +108,7 @@ impl JobRepository for InMemoryJobRepository {
             0,
             [
                 RepositoryCapability::CustomLeafState,
+                RepositoryCapability::DefinitionRegistry,
                 RepositoryCapability::ExecutionOwnership,
                 RepositoryCapability::InstanceHolds,
                 RepositoryCapability::NestedJobs,
@@ -177,6 +178,7 @@ struct MemoryState {
     repeat_executions: BTreeMap<(StepExecutionId, RepeatId), RepeatExecution>,
     recovery_decisions: BTreeMap<JobExecutionId, Vec<RecoveryDecision>>,
     definitions: BTreeMap<(JobName, DefinitionRevision), DefinitionIdentity>,
+    definition_registry: BTreeMap<(JobName, DefinitionRevision), DefinitionRegistration>,
     execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
     definition_upgrades: BTreeMap<(JobName, [u8; 32], [u8; 32]), DefinitionUpgrade>,
     job_name_order: BTreeMap<JobName, u64>,
@@ -976,6 +978,54 @@ impl InMemoryUnitOfWork<'_> {
 }
 
 impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
+    fn register_definition<'a>(
+        &'a mut self,
+        registration: &'a DefinitionRegistration,
+    ) -> BoxFuture<'a, Result<DefinitionRegistration, RepositoryError>> {
+        Box::pin(async move {
+            self.ensure_definition(registration.job_name(), registration.definition())?;
+            let key = (
+                registration.job_name().clone(),
+                registration.revision().clone(),
+            );
+            if let Some(existing) = self.staged.definition_registry.get(&key) {
+                if existing.definition().manifest_digest()
+                    != registration.definition().manifest_digest()
+                {
+                    return Err(RepositoryError::DefinitionDrift {
+                        job_name: registration.job_name().clone(),
+                        revision: registration.revision().clone(),
+                    });
+                }
+                if existing.artifact() != registration.artifact() {
+                    return Err(RepositoryError::DefinitionArtifactDrift {
+                        job_name: registration.job_name().clone(),
+                        revision: registration.revision().clone(),
+                    });
+                }
+                return Ok(existing.clone());
+            }
+            self.staged
+                .definition_registry
+                .insert(key, registration.clone());
+            Ok(registration.clone())
+        })
+    }
+
+    fn definition<'a>(
+        &'a mut self,
+        job_name: &'a JobName,
+        revision: &'a DefinitionRevision,
+    ) -> BoxFuture<'a, Result<Option<DefinitionRegistration>, RepositoryError>> {
+        Box::pin(async move {
+            Ok(self
+                .staged
+                .definition_registry
+                .get(&(job_name.clone(), revision.clone()))
+                .cloned())
+        })
+    }
+
     fn register_definition_upgrade<'a>(
         &'a mut self,
         job_name: &'a JobName,

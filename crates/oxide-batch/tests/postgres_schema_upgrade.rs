@@ -9,7 +9,7 @@
 //! schema 3 declared, M7 `#265` adds `0006_nested_job_linkage.sql` carrying
 //! the installed schema to 5, M7 `#276` adds value-free scoped-resolution
 //! provenance in `0007_scope_resolution_provenance.sql`, carrying it to 6,
-//! and M7 `#300` adds bounded repeat state in `0008_repeat_state.sql`, carrying it to 7, and M7 `#401` adds durable repeat lineage identity in `0009_repeat_lineage.sql`, carrying it to 8.
+//! and M7 `#300` adds bounded repeat state in `0008_repeat_state.sql`, carrying it to 7, M7 `#401` adds durable repeat lineage identity in `0009_repeat_lineage.sql`, carrying it to 8, and M7 `#550` adds immutable definition artifact binding in `0010_definition_registry.sql`, carrying it to 9.
 //! The historical M5 claim (1/2 -> 3, direct) is
 //! preserved below as an intermediate structural checkpoint every path still
 //! passes through; the report's actual target is now the current schema, and a
@@ -21,7 +21,8 @@
 //! its tables, columns, constraints, indexes, and applied-migration bookkeeping
 //! are the ones that version produced when it was the whole schema. The
 //! populated 4 -> 5, 5 -> 6, 6 -> 7, and 7 -> 8 preservation/restore boundaries
-//! are separately owned by their schema-specific `PostgreSQL` design gates.
+//! are separately owned by their schema-specific `PostgreSQL` design gates; this report
+//! adds the populated 8 -> 9 definition-registry boundary directly.
 //!
 //! Each source is then seeded with the durable state an operator's database
 //! would have held — registered definitions and the upgrade edge between them,
@@ -36,7 +37,7 @@
 //! version becomes the current schema version and every structural checkpoint
 //! from the source's own schema up through the current one appears in order
 //! (so a schema-1 source is still shown passing through schema 3's shape on
-//! its way to schema 8). Every value of every column the source schema
+//! its way to schema 9). Every value of every column the source schema
 //! declared is byte-identical afterwards, compared through the source's own
 //! column list so a column a later schema added cannot mask a loss. The new
 //! `ItemStream` component-state table schema 4 adds carries no row for any of
@@ -77,9 +78,66 @@ use upgrade::{
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade must reach: the current installed schema
-/// (8, since M7 `#401`'s repeat-lineage migration), not the schema-3 target
+/// (9, since M7 `#550`'s definition-registry migration), not the schema-3 target
 /// the M5 preview named when it was current.
-const TARGET_VERSION: u32 = 8;
+const TARGET_VERSION: u32 = 9;
+
+#[test]
+fn schema8_definition_registry_migration_preserves_existing_rows() -> Result<(), Box<dyn Error>> {
+    let Some(migrator) = migrator_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(admin) = admin_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_BACKUP_TEST_URL is not set");
+        return Ok(());
+    };
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            const DATABASE: &str = "oxide_batch_m7_registry_upgrade_from_8";
+            let url = with_database(&migrator, DATABASE)?;
+            recreate_database(&admin, DATABASE).await?;
+            install_historical_schema(&url, 8).await?;
+            assert_historical_shape(&url, 8).await?;
+
+            let pool = PgPoolOptions::new().max_connections(1).connect(&url).await?;
+            sqlx::query(
+                "INSERT INTO oxide_batch.ob_job_definition                  (job_name, definition_revision, manifest_format, manifest_digest, manifest, registered_at)                  VALUES ('registry-seed', 'v8', 1, decode(repeat('11', 32), 'hex'),                          '{\"source\":\"schema8\"}'::jsonb, to_timestamp(1))",
+            )
+            .execute(&pool)
+            .await?;
+            let before: (String, String, i16, Vec<u8>, Value) = sqlx::query_as(
+                "SELECT job_name, definition_revision, manifest_format, manifest_digest, manifest                  FROM oxide_batch.ob_job_definition WHERE job_name = 'registry-seed'",
+            )
+            .fetch_one(&pool)
+            .await?;
+            pool.close().await;
+
+            PostgresMigrator::migrate(&config(url.clone())?).await?;
+            assert_eq!(schema_version(&url).await?, Some(TARGET_VERSION));
+            assert_historical_shape(&url, TARGET_VERSION).await?;
+
+            let pool = PgPoolOptions::new().max_connections(1).connect(&url).await?;
+            let after: (String, String, i16, Vec<u8>, Value, Option<String>) = sqlx::query_as(
+                "SELECT job_name, definition_revision, manifest_format, manifest_digest, manifest,                         artifact_identity                  FROM oxide_batch.ob_job_definition WHERE job_name = 'registry-seed'",
+            )
+            .fetch_one(&pool)
+            .await?;
+            pool.close().await;
+            assert_eq!(
+                (&after.0, &after.1, after.2, &after.3, &after.4),
+                (&before.0, &before.1, before.2, &before.3, &before.4)
+            );
+            assert!(
+                after.5.is_none(),
+                "schema 9 must not invent an artifact identity for a pre-registry definition"
+            );
+            Ok::<(), Box<dyn Error>>(())
+        })
+}
 
 #[test]
 fn schema1_and_schema2_upgrade_directly_to_schema3() -> Result<(), Box<dyn Error>> {

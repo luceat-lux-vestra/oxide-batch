@@ -10,11 +10,14 @@
 //! The request envelope, the durable records the services exchange with a
 //! repository, and the ports they call live in `oxide-batch-repository`.
 
+mod definition_registry;
 mod explorer;
 mod operator;
 mod recovery;
 mod retention;
 
+pub use definition_registry::DefinitionRegistry;
+pub(crate) use definition_registry::verify_registered_definition;
 pub use explorer::JobExplorer;
 pub use operator::{JobOperator, OperatorError, OperatorOutcome};
 pub use recovery::RecoveryProposer;

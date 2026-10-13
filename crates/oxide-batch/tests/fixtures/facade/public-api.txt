@@ -102,10 +102,14 @@ oxide_batch::DecisionInputVersion
 oxide_batch::DecisionNode
 oxide_batch::DecisionStepInput
 oxide_batch::DefaultComponentCodec
+oxide_batch::DefinitionArtifactId
 oxide_batch::DefinitionDescriptor
 oxide_batch::DefinitionError
 oxide_batch::DefinitionIdentity
 oxide_batch::DefinitionManifest
+oxide_batch::DefinitionRegistration
+oxide_batch::DefinitionRegistrationError
+oxide_batch::DefinitionRegistry
 oxide_batch::DefinitionRevision
 oxide_batch::DefinitionTokenKind
 oxide_batch::DefinitionUpgrade

@@ -25,33 +25,34 @@ use crate::{
     ChunkCommitReceipt, ChunkCounts, ChunkFaultProgress, ChunkTransaction, ChunkTransactionContext,
     ChunkTransactionError, ChunkTransactionManager, ClassifierRevision, Clock,
     ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
-    CursorError, CursorKey, DefinitionDescriptor, DefinitionIdentity, DefinitionRevision,
-    DefinitionUpgrade, DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata,
-    ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, ExplorerError, ExplorerQuery,
-    ExplorerRepository, ExternalStateReference, FailureCategory, FailureId, FailureSummary,
-    FaultPhase, FaultPolicy, FaultProgress, FaultStateEntry, FaultStateEnvelope, FaultStateError,
-    FaultStateFormatError, FaultStateStore, FlowDecision, FlowDecisionId, FlowDecisionRequest,
-    FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind, IdentifierKind,
-    InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance,
-    JobInstanceId, JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName,
-    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
-    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
-    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorOutcomeClass,
-    OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequestId, ParameterDescriptor,
-    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, PartitionKey,
-    PartitionPlanEntry, PartitionResult, PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan,
-    PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId,
-    RecoveryRequest, RecoveryResult, RepeatCommitRequest, RepeatDecision, RepeatExecution,
-    RepeatId, RepeatLineage, RepeatOrdinal, RepositoryCapability, RepositoryDescriptor,
-    RepositoryError, RepositoryUnitOfWork, RequestDigest, RetentionAction, RetentionActionId,
-    RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey,
-    RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId,
-    SkipCounts, StartLimit, StateEnvelopeDescriptor, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepExecution, StepExecutionId, StepExecutionProjection, StepName,
-    StepPartition, StepPartitionId, StepPartitionProjection, TerminalKind,
+    CursorError, CursorKey, DefinitionArtifactId, DefinitionDescriptor, DefinitionIdentity,
+    DefinitionRegistration, DefinitionRevision, DefinitionUpgrade, DurableStateKind,
+    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
+    ExitCode, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, ExternalStateReference,
+    FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
+    FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
+    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
+    FlowTarget, FlowTransitionKind, IdentifierKind, InheritedStepProgress, JobExecution,
+    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
+    JobInstanceProjection, JobInstanceSelection, JobName, JobParameter, JobParameters,
+    JobRepository, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
+    MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation, NodeId,
+    OperationId, OperatorAction, OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft,
+    OperatorRejection, OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole,
+    ParameterValue, ParameterValueKind, PartitionKey, PartitionPlanEntry, PartitionResult,
+    PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
+    QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId, RecoveryRequest, RecoveryResult,
+    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal,
+    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    RequestDigest, RetentionAction, RetentionActionId, RetentionHold, RetentionOutcome,
+    RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey, RetryLimit, RetryOrdinal,
+    RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId, SkipCounts, StartLimit,
+    StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion, StepExecution,
+    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
+    StepPartitionProjection, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 8;
+const SUPPORTED_SCHEMA_VERSION: u32 = 9;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
@@ -860,6 +861,7 @@ impl JobRepository for PostgresJobRepository {
             SUPPORTED_SCHEMA_VERSION,
             [
                 RepositoryCapability::CustomLeafState,
+                RepositoryCapability::DefinitionRegistry,
                 RepositoryCapability::ExecutionOwnership,
                 RepositoryCapability::InstanceHolds,
                 RepositoryCapability::NestedJobs,
@@ -1671,6 +1673,64 @@ impl PostgresUnitOfWork<'_> {
 }
 
 impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
+    fn register_definition<'a>(
+        &'a mut self,
+        registration: &'a DefinitionRegistration,
+    ) -> BoxFuture<'a, Result<DefinitionRegistration, RepositoryError>> {
+        Box::pin(async move {
+            let registered_at = self.repository.clock.now();
+            let definition_id = ensure_definition(
+                &mut **self.transaction()?,
+                registration.job_name().as_str(),
+                registration.definition(),
+                registered_at,
+            )
+            .await?;
+            sqlx::query(
+                "UPDATE oxide_batch.ob_job_definition                  SET artifact_identity = $2                  WHERE id = $1 AND artifact_identity IS NULL",
+            )
+            .bind(definition_id)
+            .bind(registration.artifact().as_str())
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+
+            let row = sqlx::query(
+                "SELECT job_name, definition_revision, manifest_format, manifest_digest,                  manifest, artifact_identity                  FROM oxide_batch.ob_job_definition WHERE id = $1",
+            )
+            .bind(definition_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let durable = decode_definition_registration(&row)?;
+            if durable.artifact() != registration.artifact() {
+                return Err(RepositoryError::DefinitionArtifactDrift {
+                    job_name: registration.job_name().clone(),
+                    revision: registration.revision().clone(),
+                });
+            }
+            Ok(durable)
+        })
+    }
+
+    fn definition<'a>(
+        &'a mut self,
+        job_name: &'a JobName,
+        revision: &'a DefinitionRevision,
+    ) -> BoxFuture<'a, Result<Option<DefinitionRegistration>, RepositoryError>> {
+        Box::pin(async move {
+            let row = sqlx::query(
+                "SELECT job_name, definition_revision, manifest_format, manifest_digest,                  manifest, artifact_identity                  FROM oxide_batch.ob_job_definition                  WHERE job_name = $1 AND definition_revision = $2                    AND artifact_identity IS NOT NULL",
+            )
+            .bind(job_name.as_str())
+            .bind(revision.as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.as_ref().map(decode_definition_registration).transpose()
+        })
+    }
+
     fn register_definition_upgrade<'a>(
         &'a mut self,
         job_name: &'a JobName,
@@ -5837,6 +5897,35 @@ async fn copy_forward_component_state(
     .await
     .map_err(|_| RepositoryError::Unavailable)?;
     Ok(())
+}
+
+fn decode_definition_registration(row: &PgRow) -> Result<DefinitionRegistration, RepositoryError> {
+    let corrupt = || RepositoryError::DefinitionRegistryStateCorrupt;
+    let job_name =
+        JobName::new(read_text(row, "job_name").map_err(|_| corrupt())?).map_err(|_| corrupt())?;
+    let revision =
+        DefinitionRevision::new(read_text(row, "definition_revision").map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
+    let format = row
+        .try_get::<i16, _>("manifest_format")
+        .map_err(|_| corrupt())
+        .and_then(|value| u16::try_from(value).map_err(|_| corrupt()))?;
+    let digest: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("manifest_digest")
+        .map_err(|_| corrupt())?
+        .try_into()
+        .map_err(|_| corrupt())?;
+    let manifest = row
+        .try_get::<Json<Value>, _>("manifest")
+        .map_err(|_| corrupt())?;
+    let canonical = serde_json::to_vec(&manifest.0).map_err(|_| corrupt())?;
+    let definition =
+        DefinitionIdentity::from_durable(job_name, revision, format, &canonical, digest)
+            .map_err(|_| corrupt())?;
+    let artifact =
+        DefinitionArtifactId::new(read_text(row, "artifact_identity").map_err(|_| corrupt())?)
+            .map_err(|_| corrupt())?;
+    DefinitionRegistration::new(definition, artifact).map_err(|_| corrupt())
 }
 
 async fn ensure_definition(
