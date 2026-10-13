@@ -1806,10 +1806,16 @@ impl fmt::Display for DefinitionError {
                 formatter.write_str("definition upgrade reuses a target step")
             }
             Self::TooManyUpgradeNodes { max } => {
-                write!(formatter, "definition upgrade exceeds {max} mapped source nodes")
+                write!(
+                    formatter,
+                    "definition upgrade exceeds {max} mapped source nodes"
+                )
             }
             Self::TooManyUpgradeTransforms { max } => {
-                write!(formatter, "definition upgrade exceeds {max} state transforms")
+                write!(
+                    formatter,
+                    "definition upgrade exceeds {max} state transforms"
+                )
             }
             Self::DuplicateSourceNode => {
                 formatter.write_str("definition upgrade repeats a durable source node")
