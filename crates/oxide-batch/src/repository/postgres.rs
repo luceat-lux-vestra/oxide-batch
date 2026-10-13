@@ -26,8 +26,8 @@ use crate::{
     ChunkTransactionError, ChunkTransactionManager, ClassifierRevision, Clock,
     ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
     CursorError, CursorKey, DefinitionArtifactId, DefinitionDescriptor, DefinitionIdentity,
-    DefinitionRegistration, DefinitionRevision, DefinitionUpgrade, DurableStateKind,
-    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
+    DefinitionRegistration, DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
     ExitCode, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, ExternalStateReference,
     FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
     FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
@@ -1485,6 +1485,440 @@ fn decode_component_state_row(row: &PgRow) -> Result<ComponentStateEnvelope, ()>
         component_state_hard_limits(),
     )
     .map_err(|_| ())
+}
+
+
+fn selected_upgrade_transform<'a>(
+    upgrade: &'a DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    kind: DefinitionStateKind,
+    state_id: Option<&str>,
+) -> Result<Option<&'a DefinitionStateTransform>, RepositoryError> {
+    let mut matches = upgrade.upgrade().transforms().iter().filter(|transform| {
+        transform.source_node() == source_node
+            && transform.kind() == kind
+            && state_id.is_none_or(|id| transform.state_id().as_str() == id)
+    });
+    let selected = matches.next();
+    if matches.next().is_some() {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    Ok(selected)
+}
+
+fn transform_checkpoint_for_upgrade(
+    upgrade: &DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    source: &Checkpoint,
+) -> Result<Checkpoint, RepositoryError> {
+    let Some(transform) =
+        selected_upgrade_transform(upgrade, source_node, DefinitionStateKind::Checkpoint, None)?
+    else {
+        return Ok(source.clone());
+    };
+    if source.schema_id() != transform.source_schema()
+        || source.schema_version() != transform.source_version()
+    {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    let transformer = upgrade
+        .transformer(transform)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = source
+        .payload_json()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let transformed = transformer
+        .apply(&payload)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Checkpoint::from_transformed_payload(
+        transform.target_schema().clone(),
+        transform.target_version(),
+        &transformed,
+        component_state_hard_limits(),
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+fn transform_context_for_upgrade(
+    upgrade: &DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    state_id: Option<&str>,
+    source: &ExecutionContext,
+) -> Result<ExecutionContext, RepositoryError> {
+    let Some(transform) = selected_upgrade_transform(
+        upgrade,
+        source_node,
+        if state_id.is_some() {
+            DefinitionStateKind::Repeat
+        } else {
+            DefinitionStateKind::ExecutionContext
+        },
+        state_id,
+    )?
+    else {
+        return Ok(source.clone());
+    };
+    if source.schema_id() != transform.source_schema()
+        || source.schema_version() != transform.source_version()
+    {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    let transformer = upgrade
+        .transformer(transform)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = source
+        .payload_json()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let transformed = transformer
+        .apply(&payload)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    ExecutionContext::from_transformed_payload(
+        transform.target_schema().clone(),
+        transform.target_version(),
+        &transformed,
+        component_state_hard_limits(),
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+fn transform_fault_state_for_upgrade(
+    upgrade: &DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    source: &FaultStateEnvelope,
+) -> Result<FaultStateEnvelope, RepositoryError> {
+    let Some(transform) =
+        selected_upgrade_transform(upgrade, source_node, DefinitionStateKind::FaultState, None)?
+    else {
+        return Ok(source.clone());
+    };
+    if transform.source_schema().as_str() != FaultStateEnvelope::FORMAT
+        || transform.source_version().get() != FaultStateEnvelope::SCHEMA_VERSION
+        || transform.target_schema().as_str() != FaultStateEnvelope::FORMAT
+        || transform.target_version().get() != FaultStateEnvelope::SCHEMA_VERSION
+    {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    let transformer = upgrade
+        .transformer(transform)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = source
+        .to_canonical_json()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let transformed = transformer
+        .apply(&payload)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let checksum: [u8; 32] = Sha256::digest(&transformed).into();
+    FaultStateEnvelope::from_canonical_json(
+        FaultStateEnvelope::FORMAT_VERSION,
+        FaultStateEnvelope::FORMAT,
+        FaultStateEnvelope::SCHEMA_VERSION,
+        &transformed,
+        &checksum,
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+fn transformed_component_for_upgrade(
+    upgrade: &DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    source: &ComponentStateEnvelope,
+) -> Result<ComponentStateEnvelope, RepositoryError> {
+    let Some(transform) = selected_upgrade_transform(
+        upgrade,
+        source_node,
+        DefinitionStateKind::ComponentState,
+        Some(source.namespace().as_str()),
+    )?
+    else {
+        return Ok(source.clone());
+    };
+    if source.schema_id() != transform.source_schema()
+        || source.schema_version() != transform.source_version()
+    {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    let payload = match source
+        .payload()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?
+    {
+        ComponentStatePayload::Inline(payload) => payload,
+        ComponentStatePayload::External(_) => {
+            return Err(RepositoryError::DefinitionUpgradeFailed);
+        }
+    };
+    let transformer = upgrade
+        .transformer(transform)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let transformed = transformer
+        .apply(&payload)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    ComponentStateEnvelope::from_transformed_inline(
+        source,
+        transform.target_schema().clone(),
+        transform.target_version(),
+        transformed,
+        component_state_hard_limits(),
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+fn byte_array_json(bytes: &[u8]) -> Value {
+    Value::Array(bytes.iter().copied().map(Value::from).collect())
+}
+
+fn durable_state_seed(
+    format_version: u16,
+    schema: &StateSchemaId,
+    schema_version: StateSchemaVersion,
+    payload: Value,
+) -> Value {
+    json!({
+        "format": format_version,
+        "schema": schema.as_str(),
+        "schema_version": schema_version.get(),
+        "payload": payload,
+    })
+}
+
+fn checkpoint_seed(state: &Checkpoint) -> Result<Value, RepositoryError> {
+    let payload: Value = serde_json::from_slice(
+        &state
+            .payload_json()
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?,
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(durable_state_seed(
+        state.format_version(),
+        state.schema_id(),
+        state.schema_version(),
+        payload,
+    ))
+}
+
+fn context_seed(state: &ExecutionContext) -> Result<Value, RepositoryError> {
+    let payload: Value = serde_json::from_slice(
+        &state
+            .payload_json()
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?,
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(durable_state_seed(
+        state.format_version(),
+        state.schema_id(),
+        state.schema_version(),
+        payload,
+    ))
+}
+
+fn fault_seed(state: &FaultStateEnvelope) -> Result<Value, RepositoryError> {
+    let payload: Value = serde_json::from_slice(
+        &state
+            .to_canonical_json()
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?,
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let checksum = state
+        .checksum()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(json!({
+        "format": FaultStateEnvelope::FORMAT_VERSION,
+        "schema": FaultStateEnvelope::FORMAT,
+        "schema_version": FaultStateEnvelope::SCHEMA_VERSION,
+        "payload": payload,
+        "checksum": byte_array_json(&checksum),
+    }))
+}
+
+fn component_seed(state: &ComponentStateEnvelope) -> Result<Value, RepositoryError> {
+    let payload = state
+        .payload()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = match payload {
+        ComponentStatePayload::Inline(bytes) => json!({
+            "kind": "INLINE",
+            "bytes": byte_array_json(&bytes),
+        }),
+        ComponentStatePayload::External(reference) => json!({
+            "kind": "EXTERNAL",
+            "content_id": byte_array_json(reference.content_id().as_bytes()),
+            "encoded_len": reference.encoded_len(),
+        }),
+    };
+    Ok(json!({
+        "namespace": state.namespace().as_str(),
+        "schema": state.schema_id().as_str(),
+        "schema_version": state.schema_version().get(),
+        "codec": state.codec_id().as_str(),
+        "codec_version": state.codec_version().get(),
+        "checksum_algorithm": state.checksum_algorithm(),
+        "checksum_algorithm_version": state.checksum_algorithm_version(),
+        "checksum": byte_array_json(&state.checksum()),
+        "payload": payload,
+    }))
+}
+
+async fn component_upgrade_seeds(
+    transaction: &mut PgConnection,
+    source_step_id: StepExecutionId,
+    source_node: &NodeId,
+    upgrade: &DefinitionUpgradeExecution,
+) -> Result<Vec<Value>, RepositoryError> {
+    let rows = sqlx::query(
+        "SELECT namespace, schema_id, schema_version, codec_id, codec_version, \
+         checksum_algorithm, checksum_algorithm_version, checksum, payload_kind, \
+         payload, external_content_id, external_encoded_len \
+         FROM oxide_batch.ob_component_state WHERE step_execution_id = $1 \
+         ORDER BY namespace",
+    )
+    .bind(database_id(
+        source_step_id.get(),
+        IdentifierKind::StepExecution,
+    )?)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+    rows.iter()
+        .map(|row| {
+            let source =
+                decode_component_state_row(row).map_err(|()| RepositoryError::DefinitionUpgradeFailed)?;
+            transformed_component_for_upgrade(upgrade, source_node, &source)
+                .and_then(|state| component_seed(&state))
+        })
+        .collect()
+}
+
+async fn repeat_upgrade_seeds(
+    transaction: &mut PgConnection,
+    source_step_id: StepExecutionId,
+    source_node: &NodeId,
+    target_node: &NodeId,
+    upgrade: &DefinitionUpgradeExecution,
+) -> Result<Vec<Value>, RepositoryError> {
+    let rows = sqlx::query(AssertSqlSafe(repeat_execution_select(
+        "WHERE repeat.step_execution_id = $1 ORDER BY repeat.repeat_id",
+    )))
+    .bind(database_id(
+        source_step_id.get(),
+        IdentifierKind::StepExecution,
+    )?)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+    let mut seeds = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let source = decode_repeat_execution(row)?;
+        let state = transform_context_for_upgrade(
+            upgrade,
+            source_node,
+            Some(source.repeat_id().as_str()),
+            source.state(),
+        )?;
+        seeds.push(json!({
+            "repeat_id": source.repeat_id().as_str(),
+            "definition_node_id": target_node.as_str(),
+            "lineage": repeat_lineage_json(source.lineage()),
+            "ordinal": source.ordinal().get(),
+            "state": context_seed(&state)?,
+            "state_checksum": byte_array_json(
+                &<[u8; 32]>::from(Sha256::digest(
+                    state
+                        .to_json()
+                        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?,
+                )),
+            ),
+            "decision": source.decision().as_str(),
+            "plan_fingerprint": byte_array_json(upgrade.upgrade().to().manifest_digest()),
+        }));
+    }
+    Ok(seeds)
+}
+
+async fn build_postgres_upgrade_seed(
+    transaction: &mut PgConnection,
+    job_instance_id: JobInstanceId,
+    upgrade: &DefinitionUpgradeExecution,
+) -> Result<Value, RepositoryError> {
+    let mut nodes = Map::new();
+    for (source_node, target_node) in upgrade.upgrade().node_mapping() {
+        let source_row = sqlx::query(AssertSqlSafe(durable_step_select(
+            "JOIN oxide_batch.ob_job_execution job ON job.id = execution.job_execution_id \
+             WHERE job.job_instance_id = $1 AND execution.step_logical_id = $2 \
+             ORDER BY job.attempt DESC, execution.id DESC LIMIT 1",
+        )))
+        .bind(database_id(
+            job_instance_id.get(),
+            IdentifierKind::JobInstance,
+        )?)
+        .bind(source_node.as_str())
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| RepositoryError::Unavailable)?;
+        let Some(source_row) = source_row else {
+            continue;
+        };
+        let durable = decode_durable_step_state(&source_row)?;
+        let checkpoint =
+            transform_checkpoint_for_upgrade(upgrade, source_node, &durable.checkpoint)?;
+        let context =
+            transform_context_for_upgrade(upgrade, source_node, None, &durable.execution_context)?;
+        let fault =
+            transform_fault_state_for_upgrade(upgrade, source_node, &durable.fault_state)?;
+        let counts = durable.step_execution.metadata().counts();
+        let fault_progress = durable.fault_progress;
+        let retries = fault_progress.retries();
+        let skips = fault_progress.skips();
+        let components =
+            component_upgrade_seeds(transaction, durable.step_execution.id(), source_node, upgrade)
+                .await?;
+        let repeats = repeat_upgrade_seeds(
+            transaction,
+            durable.step_execution.id(),
+            source_node,
+            target_node,
+            upgrade,
+        )
+        .await?;
+        nodes.insert(
+            target_node.as_str().to_owned(),
+            json!({
+                "source_node": source_node.as_str(),
+                "counts": {
+                    "read": counts.read(),
+                    "processed": counts.processed(),
+                    "written": counts.written(),
+                    "filtered": counts.filtered(),
+                    "committed": counts.committed(),
+                    "rolled_back": counts.rolled_back(),
+                    "read_retry": retries.read(),
+                    "process_retry": retries.process(),
+                    "write_retry": retries.write(),
+                    "read_skip": skips.read(),
+                    "process_skip": skips.process(),
+                    "write_skip": skips.write(),
+                    "no_rollback": fault_progress.no_rollbacks(),
+                },
+                "checkpoint": checkpoint_seed(&checkpoint)?,
+                "context": context_seed(&context)?,
+                "fault": fault_seed(&fault)?,
+                "components": components,
+                "repeats": repeats,
+                "scope": [],
+            }),
+        );
+    }
+    Ok(json!({
+        "format": 1,
+        "edge_key": upgrade.upgrade().key().as_str(),
+        "edge_revision": upgrade
+            .upgrade()
+            .revision()
+            .ok_or(RepositoryError::DefinitionUpgradeFailed)?
+            .as_str(),
+        "source_fingerprint": byte_array_json(upgrade.upgrade().from().manifest_digest()),
+        "target_fingerprint": byte_array_json(upgrade.upgrade().to().manifest_digest()),
+        "nodes": Value::Object(nodes),
+        "job_scope": [],
+    }))
 }
 
 /// The bounds `ob_component_state.payload`'s own `CHECK` constraints already
