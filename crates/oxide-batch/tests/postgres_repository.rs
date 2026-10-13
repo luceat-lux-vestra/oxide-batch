@@ -19,8 +19,9 @@ use oxide_batch::{
     ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode,
     ChunkExecutionOutcome, ChunkFaultProgress, ChunkJob, ChunkRestartContract, ChunkSize,
     ChunkStep, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
-    ClassifierRevision, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision,
-    DefinitionUpgrade, DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId,
+    ClassifierRevision, Clock, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
+    DefinitionRegistration, DefinitionRegistry, DefinitionRevision, DefinitionUpgrade,
+    DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId,
     FailureSummary, FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule,
     FaultStateError, FaultStateFormatError, FaultStateStore, ItemProcessor, ItemReader, ItemWriter,
     JobInstanceKey, JobLauncher, JobName, JobParameter, JobParameters, JobRepository,
@@ -210,7 +211,90 @@ fn configuration_bounds_and_diagnostics_are_safe() -> Result<(), Box<dyn Error>>
         CaCertificate::new(Vec::new()).err(),
         Some(PostgresConfigError::EmptyCaCertificate)
     );
-    assert_eq!(PostgresMigrator::supported_schema_version(), 8);
+    assert_eq!(PostgresMigrator::supported_schema_version(), 9);
+    Ok(())
+}
+
+#[test]
+fn definition_registry_is_exact_immutable_and_artifact_aware_on_postgres(
+) -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "definition_registry_contract_job";
+        remove_job_rows(&url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(200))),
+        )
+        .await?;
+        let registry = DefinitionRegistry::new(repository.clone());
+        let job_name = JobName::new(JOB)?;
+        let step_name = StepName::new("only")?;
+        let revision = DefinitionRevision::new("v1")?;
+        let definition = DefinitionIdentity::tasklet(
+            &job_name,
+            &step_name,
+            revision.clone(),
+            &ComponentRevision::new("component-v1")?,
+        )?;
+        let registration = DefinitionRegistration::new(
+            definition,
+            DefinitionArtifactId::new("artifact-v1")?,
+        )?;
+
+        let first = registry.register(&registration).await?;
+        let replay = registry.register(&registration).await?;
+        assert_eq!(first, replay);
+        assert_eq!(
+            registry.resolve(&job_name, &revision).await?,
+            Some(registration.clone())
+        );
+        assert!(
+            registry
+                .resolve(&job_name, &DefinitionRevision::new("missing")?)
+                .await?
+                .is_none()
+        );
+
+        let artifact_drift = DefinitionRegistration::new(
+            registration.definition().clone(),
+            DefinitionArtifactId::new("artifact-v2")?,
+        )?;
+        assert_eq!(
+            registry.register(&artifact_drift).await,
+            Err(RepositoryError::DefinitionArtifactDrift {
+                job_name: job_name.clone(),
+                revision: revision.clone(),
+            })
+        );
+
+        let manifest_drift = DefinitionRegistration::new(
+            DefinitionIdentity::tasklet(
+                &job_name,
+                &step_name,
+                revision.clone(),
+                &ComponentRevision::new("component-v2")?,
+            )?,
+            DefinitionArtifactId::new("artifact-v1")?,
+        )?;
+        assert_eq!(
+            registry.register(&manifest_drift).await,
+            Err(RepositoryError::DefinitionDrift {
+                job_name: job_name.clone(),
+                revision,
+            })
+        );
+
+        repository.close().await?;
+        remove_job_rows(&url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
     Ok(())
 }
 
