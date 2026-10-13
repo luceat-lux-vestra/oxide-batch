@@ -237,8 +237,8 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_staged_registration_cannot_overwrite_the_committed_winner(
-    ) -> Result<(), Box<dyn Error>> {
+    fn concurrent_staged_registration_cannot_overwrite_the_committed_winner()
+    -> Result<(), Box<dyn Error>> {
         block_on(async {
             let repository = registry().repository().clone();
             let winner = registration("component-v1", "artifact-v1")?;

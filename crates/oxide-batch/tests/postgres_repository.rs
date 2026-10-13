@@ -297,8 +297,8 @@ fn definition_registry_is_exact_immutable_and_artifact_aware_on_postgres()
 }
 
 #[test]
-fn definition_registry_concurrent_artifact_binding_has_one_durable_winner(
-) -> Result<(), Box<dyn Error>> {
+fn definition_registry_concurrent_artifact_binding_has_one_durable_winner()
+-> Result<(), Box<dyn Error>> {
     let Some(url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());
@@ -327,17 +327,19 @@ fn definition_registry_concurrent_artifact_binding_has_one_durable_winner(
             definition.clone(),
             DefinitionArtifactId::new("artifact-left")?,
         )?;
-        let right = DefinitionRegistration::new(
-            definition,
-            DefinitionArtifactId::new("artifact-right")?,
-        )?;
+        let right =
+            DefinitionRegistration::new(definition, DefinitionArtifactId::new("artifact-right")?)?;
 
         let (left_result, right_result) =
             tokio::join!(registry.register(&left), registry.register(&right));
         let winner = match (&left_result, &right_result) {
             (Ok(_), Err(RepositoryError::DefinitionArtifactDrift { .. })) => &left,
             (Err(RepositoryError::DefinitionArtifactDrift { .. }), Ok(_)) => &right,
-            _ => return Err("concurrent registry bind did not yield one winner and one drift".into()),
+            _ => {
+                return Err(
+                    "concurrent registry bind did not yield one winner and one drift".into(),
+                );
+            }
         };
         assert_eq!(
             registry.resolve(&job_name, &revision).await?,
