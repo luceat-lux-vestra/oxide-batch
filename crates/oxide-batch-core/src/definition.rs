@@ -7,7 +7,7 @@ use std::fmt;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
-use crate::{ChunkSize, JobName, StateSchemaId, StateSchemaVersion, StepName};
+use crate::{ChunkSize, JobName, NodeId, StateSchemaId, StateSchemaVersion, StepName};
 
 const MAX_TOKEN_BYTES: usize = 128;
 /// The maximum number of nodes one plan may contain.
@@ -28,6 +28,10 @@ pub const MAX_REPEAT_INTERCEPTORS: usize = 32;
 ///
 /// This capacity ceiling is not definition-fingerprint material.
 pub const MAX_REPEAT_NESTING_DEPTH: usize = 8;
+/// Maximum durable source nodes one compatible-upgrade edge may map.
+pub const MAX_DEFINITION_UPGRADE_NODES: usize = MAX_NODES;
+/// Maximum state-transform declarations one compatible-upgrade edge may carry.
+pub const MAX_DEFINITION_UPGRADE_TRANSFORMS: usize = MAX_TRANSITIONS;
 pub(crate) const MAX_MANIFEST_BYTES: usize = 64 * 1024;
 /// The canonical manifest format for a one-step tasklet or chunk definition.
 pub const MANIFEST_FORMAT_ONE_STEP: u16 = 1;
@@ -119,6 +123,16 @@ definition_token!(
     "An application-owned key for one directed definition compatibility edge."
 );
 definition_token!(
+    DefinitionUpgradeRevision,
+    DefinitionTokenKind::Upgrade,
+    "A bounded application-owned revision for one deterministic compatible-upgrade implementation."
+);
+definition_token!(
+    DefinitionStateTransformId,
+    DefinitionTokenKind::Upgrade,
+    "A stable bounded identity for one durable state family member transformed by a compatible upgrade."
+);
+definition_token!(
     RepeatId,
     DefinitionTokenKind::Repeat,
     "A stable logical identifier for one repeat definition."
@@ -151,13 +165,152 @@ impl StepDefinitionUpgrade {
     }
 }
 
+/// Durable state family covered by one compatible-upgrade transform.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum DefinitionStateKind {
+    /// A committed reader/checkpoint position.
+    Checkpoint,
+    /// Job- or step-owned execution context.
+    ExecutionContext,
+    /// Namespaced component-owned durable state.
+    ComponentState,
+    /// Value-free late-binding/source provenance.
+    ScopeResolution,
+    /// Current committed repeat state and decision.
+    Repeat,
+    /// Durable retry/skip/fault bookkeeping.
+    FaultState,
+}
+
+/// One durable source-to-target node mapping for a compatible restart.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DefinitionNodeUpgrade {
+    source: NodeId,
+    target: NodeId,
+}
+
+impl DefinitionNodeUpgrade {
+    /// Constructs one explicit durable-node mapping.
+    #[must_use]
+    pub const fn new(source: NodeId, target: NodeId) -> Self {
+        Self { source, target }
+    }
+
+    /// Borrows the source durable node.
+    #[must_use]
+    pub const fn source(&self) -> &NodeId {
+        &self.source
+    }
+
+    /// Borrows the target durable node.
+    #[must_use]
+    pub const fn target(&self) -> &NodeId {
+        &self.target
+    }
+}
+
+/// Schema contract for one durable state transformation.
+///
+/// The actual pure transformer is runtime-owned and is deliberately absent
+/// from durable metadata.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DefinitionStateTransform {
+    source_node: NodeId,
+    target_node: NodeId,
+    kind: DefinitionStateKind,
+    state_id: DefinitionStateTransformId,
+    source_schema: StateSchemaId,
+    source_version: StateSchemaVersion,
+    target_schema: StateSchemaId,
+    target_version: StateSchemaVersion,
+    revision: DefinitionUpgradeRevision,
+}
+
+impl DefinitionStateTransform {
+    /// Declares one explicit deterministic state transformation.
+    #[allow(clippy::too_many_arguments)]
+    #[must_use]
+    pub const fn new(
+        source_node: NodeId,
+        target_node: NodeId,
+        kind: DefinitionStateKind,
+        state_id: DefinitionStateTransformId,
+        source_schema: StateSchemaId,
+        source_version: StateSchemaVersion,
+        target_schema: StateSchemaId,
+        target_version: StateSchemaVersion,
+        revision: DefinitionUpgradeRevision,
+    ) -> Self {
+        Self {
+            source_node,
+            target_node,
+            kind,
+            state_id,
+            source_schema,
+            source_version,
+            target_schema,
+            target_version,
+            revision,
+        }
+    }
+
+    #[must_use]
+    pub const fn source_node(&self) -> &NodeId {
+        &self.source_node
+    }
+
+    #[must_use]
+    pub const fn target_node(&self) -> &NodeId {
+        &self.target_node
+    }
+
+    #[must_use]
+    pub const fn kind(&self) -> DefinitionStateKind {
+        self.kind
+    }
+
+    #[must_use]
+    pub const fn state_id(&self) -> &DefinitionStateTransformId {
+        &self.state_id
+    }
+
+    #[must_use]
+    pub const fn source_schema(&self) -> &StateSchemaId {
+        &self.source_schema
+    }
+
+    #[must_use]
+    pub const fn source_version(&self) -> StateSchemaVersion {
+        self.source_version
+    }
+
+    #[must_use]
+    pub const fn target_schema(&self) -> &StateSchemaId {
+        &self.target_schema
+    }
+
+    #[must_use]
+    pub const fn target_version(&self) -> StateSchemaVersion {
+        self.target_version
+    }
+
+    #[must_use]
+    pub const fn revision(&self) -> &DefinitionUpgradeRevision {
+        &self.revision
+    }
+}
+
 /// One explicit, directed definition compatibility edge.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DefinitionUpgrade {
     key: DefinitionUpgradeKey,
+    revision: Option<DefinitionUpgradeRevision>,
     from: DefinitionIdentity,
     to: DefinitionIdentity,
     step_mapping: BTreeMap<StepName, StepName>,
+    node_mapping: BTreeMap<NodeId, NodeId>,
+    transforms: Vec<DefinitionStateTransform>,
 }
 
 impl DefinitionUpgrade {
@@ -197,9 +350,82 @@ impl DefinitionUpgrade {
         }
         Ok(Self {
             key,
+            revision: None,
             from,
             to,
             step_mapping,
+            node_mapping: BTreeMap::new(),
+            transforms: Vec::new(),
+        })
+    }
+
+    /// Validates the full transformed compatible-upgrade descriptor.
+    ///
+    /// Completeness against the source definition and committed durable state
+    /// is checked by the restart path before lifecycle writes.
+    pub fn transformed(
+        key: DefinitionUpgradeKey,
+        revision: DefinitionUpgradeRevision,
+        from: DefinitionIdentity,
+        to: DefinitionIdentity,
+        nodes: impl IntoIterator<Item = DefinitionNodeUpgrade>,
+        transforms: impl IntoIterator<Item = DefinitionStateTransform>,
+    ) -> Result<Self, DefinitionError> {
+        if from.manifest_digest() == to.manifest_digest() {
+            return Err(DefinitionError::UpgradeSelfEdge);
+        }
+
+        let mut node_mapping = BTreeMap::new();
+        let mut targets = BTreeSet::new();
+        for node in nodes {
+            if node_mapping.len() >= MAX_DEFINITION_UPGRADE_NODES {
+                return Err(DefinitionError::TooManyUpgradeNodes {
+                    max: MAX_DEFINITION_UPGRADE_NODES,
+                });
+            }
+            if node_mapping
+                .insert(node.source().clone(), node.target().clone())
+                .is_some()
+            {
+                return Err(DefinitionError::DuplicateSourceNode);
+            }
+            if !targets.insert(node.target().clone()) {
+                return Err(DefinitionError::DuplicateTargetNode);
+            }
+        }
+        if node_mapping.is_empty() {
+            return Err(DefinitionError::EmptyStepMapping);
+        }
+
+        let transforms = transforms.into_iter().collect::<Vec<_>>();
+        if transforms.len() > MAX_DEFINITION_UPGRADE_TRANSFORMS {
+            return Err(DefinitionError::TooManyUpgradeTransforms {
+                max: MAX_DEFINITION_UPGRADE_TRANSFORMS,
+            });
+        }
+
+        let mut transform_keys = BTreeSet::new();
+        for transform in &transforms {
+            if node_mapping.get(transform.source_node()) != Some(transform.target_node()) {
+                return Err(DefinitionError::StateTransformOutsideNodeMapping);
+            }
+            if !transform_keys.insert((
+                transform.source_node().clone(),
+                transform.kind(),
+                transform.state_id().clone(),
+            )) {
+                return Err(DefinitionError::DuplicateStateTransform);
+            }
+        }
+
+        Ok(Self {
+            key,
+            revision: Some(revision),
+            from,
+            to,
+            step_mapping: BTreeMap::new(),
+            node_mapping,
+            transforms,
         })
     }
 
@@ -207,6 +433,14 @@ impl DefinitionUpgrade {
     #[must_use]
     pub const fn key(&self) -> &DefinitionUpgradeKey {
         &self.key
+    }
+
+    /// Borrows the deterministic transformed-edge revision.
+    ///
+    /// None identifies the legacy M2 identity-only edge shape.
+    #[must_use]
+    pub const fn revision(&self) -> Option<&DefinitionUpgradeRevision> {
+        self.revision.as_ref()
     }
 
     /// Borrows the checkpoint-producing definition.
@@ -228,6 +462,24 @@ impl DefinitionUpgrade {
     #[must_use]
     pub fn step_mapping(&self) -> &BTreeMap<StepName, StepName> {
         &self.step_mapping
+    }
+
+    /// Borrows the durable source-to-target node mapping.
+    #[must_use]
+    pub fn node_mapping(&self) -> &BTreeMap<NodeId, NodeId> {
+        &self.node_mapping
+    }
+
+    /// Borrows deterministic state-transform declarations.
+    #[must_use]
+    pub fn transforms(&self) -> &[DefinitionStateTransform] {
+        &self.transforms
+    }
+
+    /// Reports whether the edge carries the M7 transformed descriptor shape.
+    #[must_use]
+    pub const fn is_transformed(&self) -> bool {
+        self.revision.is_some()
     }
 }
 definition_token!(
@@ -1446,6 +1698,24 @@ pub enum DefinitionError {
     DuplicateSourceStep,
     /// Two source steps mapped to the same target step.
     DuplicateTargetStep,
+    /// A transformed edge exceeded its durable source-node bound.
+    TooManyUpgradeNodes {
+        /// Maximum accepted mapped source nodes.
+        max: usize,
+    },
+    /// A transformed edge exceeded its state-transform declaration bound.
+    TooManyUpgradeTransforms {
+        /// Maximum accepted state-transform declarations.
+        max: usize,
+    },
+    /// A durable source node appeared more than once.
+    DuplicateSourceNode,
+    /// Two durable source nodes mapped to the same target node.
+    DuplicateTargetNode,
+    /// The same state-family member was declared more than once.
+    DuplicateStateTransform,
+    /// A state transform named a source/target pair outside the node mapping.
+    StateTransformOutsideNodeMapping,
     /// A step's fault runtime declared a different delivery mode than its
     /// restart contract.
     DeliveryModeMismatch,
@@ -1534,6 +1804,24 @@ impl fmt::Display for DefinitionError {
             }
             Self::DuplicateTargetStep => {
                 formatter.write_str("definition upgrade reuses a target step")
+            }
+            Self::TooManyUpgradeNodes { max } => {
+                write!(formatter, "definition upgrade exceeds {max} mapped source nodes")
+            }
+            Self::TooManyUpgradeTransforms { max } => {
+                write!(formatter, "definition upgrade exceeds {max} state transforms")
+            }
+            Self::DuplicateSourceNode => {
+                formatter.write_str("definition upgrade repeats a durable source node")
+            }
+            Self::DuplicateTargetNode => {
+                formatter.write_str("definition upgrade reuses a durable target node")
+            }
+            Self::DuplicateStateTransform => {
+                formatter.write_str("definition upgrade repeats a state transform")
+            }
+            Self::StateTransformOutsideNodeMapping => {
+                formatter.write_str("definition state transform is outside the node mapping")
             }
             Self::DeliveryModeMismatch => formatter
                 .write_str("fault runtime and restart contract declare different delivery modes"),
