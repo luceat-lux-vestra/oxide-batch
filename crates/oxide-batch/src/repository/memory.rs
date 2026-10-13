@@ -310,10 +310,19 @@ fn updated_at(execution: &JobExecution) -> SystemTime {
 }
 
 #[derive(Clone, Debug)]
+struct MemoryScopeSeed {
+    scope: ScopeKind,
+    component: ScopedComponentId,
+    input: ParameterName,
+    source: ScopeResolutionSource,
+}
+
+#[derive(Clone, Debug)]
 struct MemoryUpgradeNodeSeed {
     counts: ExecutionCounts,
     context: Option<ExecutionContext>,
     repeats: Vec<RepeatExecution>,
+    scope: Vec<MemoryScopeSeed>,
 }
 
 struct InMemoryUnitOfWork<'repository> {
@@ -396,6 +405,212 @@ impl InMemoryUnitOfWork<'_> {
             .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
     }
 
+    fn build_scope_seeds(
+        &self,
+        owner_job_execution_id: JobExecutionId,
+        owner_step_execution_id: Option<StepExecutionId>,
+        upgrade: &DefinitionUpgradeExecution,
+    ) -> Result<Vec<MemoryScopeSeed>, RepositoryError> {
+        self.staged
+            .scope_resolution_provenance
+            .values()
+            .filter(|entry| {
+                entry.owner_job_execution_id() == owner_job_execution_id
+                    && entry.owner_step_execution_id() == owner_step_execution_id
+            })
+            .map(|entry| {
+                let source = match entry.source() {
+                    ScopeResolutionSource::JobParameter {
+                        job_execution_id,
+                        parameter,
+                    } => ScopeResolutionSource::JobParameter {
+                        job_execution_id: *job_execution_id,
+                        parameter: parameter.clone(),
+                    },
+                    ScopeResolutionSource::JobContext {
+                        job_execution_id,
+                        execution_version,
+                        schema,
+                        schema_version,
+                        path,
+                    } => ScopeResolutionSource::JobContext {
+                        job_execution_id: *job_execution_id,
+                        execution_version: *execution_version,
+                        schema: schema.clone(),
+                        schema_version: *schema_version,
+                        path: path.clone(),
+                    },
+                    ScopeResolutionSource::StepContext {
+                        node,
+                        step_execution_id,
+                        execution_version,
+                        schema,
+                        schema_version,
+                        path,
+                    } => {
+                        if owner_step_execution_id.is_none() && step_execution_id.is_some() {
+                            return Err(RepositoryError::DefinitionUpgradeFailed);
+                        }
+                        let target_node = upgrade
+                            .upgrade()
+                            .node_mapping()
+                            .get(node)
+                            .ok_or(RepositoryError::DefinitionUpgradeFailed)?
+                            .clone();
+                        let (schema, schema_version) = match Self::upgrade_transform(
+                            upgrade,
+                            node,
+                            DefinitionStateKind::ExecutionContext,
+                            None,
+                        )? {
+                            Some(transform) => {
+                                (transform.target_schema().clone(), transform.target_version())
+                            }
+                            None => (schema.clone(), *schema_version),
+                        };
+                        ScopeResolutionSource::StepContext {
+                            node: target_node,
+                            step_execution_id: *step_execution_id,
+                            execution_version: *execution_version,
+                            schema,
+                            schema_version,
+                            path: path.clone(),
+                        }
+                    }
+                    ScopeResolutionSource::Framework {
+                        source,
+                        job_execution_id,
+                        step_execution_id,
+                    } => ScopeResolutionSource::Framework {
+                        source: *source,
+                        job_execution_id: *job_execution_id,
+                        step_execution_id: *step_execution_id,
+                    },
+                    _ => return Err(RepositoryError::DefinitionUpgradeFailed),
+                };
+                Ok(MemoryScopeSeed {
+                    scope: entry.scope(),
+                    component: entry.component().clone(),
+                    input: entry.input().clone(),
+                    source,
+                })
+            })
+            .collect()
+    }
+
+    fn resolve_scope_seed_source(
+        &self,
+        job_execution_id: JobExecutionId,
+        owner_step_execution_id: Option<StepExecutionId>,
+        source: &ScopeResolutionSource,
+    ) -> Result<ScopeResolutionSource, RepositoryError> {
+        match source {
+            ScopeResolutionSource::JobParameter {
+                job_execution_id,
+                parameter,
+            } => Ok(ScopeResolutionSource::JobParameter {
+                job_execution_id: *job_execution_id,
+                parameter: parameter.clone(),
+            }),
+            ScopeResolutionSource::JobContext {
+                job_execution_id,
+                execution_version,
+                schema,
+                schema_version,
+                path,
+            } => Ok(ScopeResolutionSource::JobContext {
+                job_execution_id: *job_execution_id,
+                execution_version: *execution_version,
+                schema: schema.clone(),
+                schema_version: *schema_version,
+                path: path.clone(),
+            }),
+            ScopeResolutionSource::StepContext {
+                node,
+                step_execution_id,
+                schema,
+                schema_version,
+                path,
+                ..
+            } => {
+                let (step_execution_id, execution_version) = if step_execution_id.is_some() {
+                    let source_id = self
+                        .staged
+                        .step_executions_by_job
+                        .get(&job_execution_id)
+                        .into_iter()
+                        .flatten()
+                        .rev()
+                        .find(|id| self.staged.step_logical_ids.get(id) == Some(node))
+                        .copied()
+                        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+                    let source = self
+                        .staged
+                        .step_executions
+                        .get(&source_id)
+                        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+                    (Some(source_id), Some(source.version()))
+                } else {
+                    (None, None)
+                };
+                Ok(ScopeResolutionSource::StepContext {
+                    node: node.clone(),
+                    step_execution_id,
+                    execution_version,
+                    schema: schema.clone(),
+                    schema_version: *schema_version,
+                    path: path.clone(),
+                })
+            }
+            ScopeResolutionSource::Framework { source, .. } => {
+                Ok(ScopeResolutionSource::Framework {
+                    source: *source,
+                    job_execution_id,
+                    step_execution_id: owner_step_execution_id,
+                })
+            }
+            _ => Err(RepositoryError::DefinitionUpgradeFailed),
+        }
+    }
+
+    fn materialize_scope_seeds(
+        &mut self,
+        job_execution_id: JobExecutionId,
+        owner_step_execution_id: Option<StepExecutionId>,
+        seeds: &[MemoryScopeSeed],
+    ) -> Result<(), RepositoryError> {
+        let mut entries = Vec::with_capacity(seeds.len());
+        for seed in seeds {
+            let source = self.resolve_scope_seed_source(
+                job_execution_id,
+                owner_step_execution_id,
+                &seed.source,
+            )?;
+            entries.push(
+                ScopeResolutionProvenance::new(
+                    seed.scope,
+                    seed.component.clone(),
+                    seed.input.clone(),
+                    job_execution_id,
+                    owner_step_execution_id,
+                    source,
+                )
+                .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?,
+            );
+        }
+        for entry in entries {
+            let key = (
+                entry.scope(),
+                entry.component().clone(),
+                entry.input().clone(),
+                entry.owner_job_execution_id(),
+                entry.owner_step_execution_id(),
+            );
+            self.staged.scope_resolution_provenance.insert(key, entry);
+        }
+        Ok(())
+    }
+
     fn build_upgrade_seeds(
         &self,
         instance_id: JobInstanceId,
@@ -406,14 +621,6 @@ impl InMemoryUnitOfWork<'_> {
             let Some(prior) = self.latest_flow_step_snapshot(instance_id, source_node)? else {
                 continue;
             };
-            if self
-                .staged
-                .scope_resolution_provenance
-                .values()
-                .any(|entry| entry.owner_step_execution_id() == Some(prior.execution().id()))
-            {
-                return Err(RepositoryError::DefinitionUpgradeFailed);
-            }
             let context = match prior.context() {
                 Some(source) => match Self::upgrade_transform(
                     upgrade,
@@ -453,12 +660,18 @@ impl InMemoryUnitOfWork<'_> {
                     *upgrade.upgrade().to().manifest_digest(),
                 ));
             }
+            let scope = self.build_scope_seeds(
+                prior.execution().job_execution_id(),
+                Some(prior.execution().id()),
+                upgrade,
+            )?;
             seeds.insert(
                 target_node.clone(),
                 MemoryUpgradeNodeSeed {
                     counts: prior.execution().metadata().counts(),
                     context,
                     repeats,
+                    scope,
                 },
             );
         }
@@ -1297,17 +1510,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                             instance_id: job_instance_id,
                         });
                     }
-                    if self
-                        .staged
-                        .scope_resolution_provenance
-                        .values()
-                        .any(|entry| {
-                            entry.owner_job_execution_id() == latest.id()
-                                && entry.owner_step_execution_id().is_none()
-                        })
-                    {
-                        return Err(RepositoryError::DefinitionUpgradeFailed);
-                    }
                 } else if selected_upgrade.is_some() {
                     return Err(RepositoryError::IncompatibleDefinition {
                         instance_id: job_instance_id,
@@ -1319,6 +1521,12 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 self.build_upgrade_seeds(job_instance_id, upgrade)?
             } else {
                 BTreeMap::new()
+            };
+            let upgrade_job_scope = match (selected_upgrade.as_ref(), restart_source) {
+                (Some(upgrade), Some(source_id)) => {
+                    self.build_scope_seeds(source_id, None, upgrade)?
+                }
+                _ => Vec::new(),
             };
 
             let id = self.repository.ids.next_job_execution_id()?;
@@ -1350,6 +1558,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .insert(job_instance_id, attempt.get());
             self.staged.execution_definitions.insert(id, definition);
             if selected_upgrade.is_some() {
+                self.materialize_scope_seeds(id, None, &upgrade_job_scope)?;
                 if let Some(source_id) = restart_source {
                     self.staged.upgrade_sources.insert(id, source_id);
                 }
@@ -1616,6 +1825,16 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     limit: start_limit,
                 });
             }
+            let upgrade_seed = self
+                .staged
+                .upgrade_seeds
+                .get(&(job_execution_id, node_id.clone()))
+                .cloned();
+            if let Some(seed) = upgrade_seed.as_ref() {
+                for scope in &seed.scope {
+                    self.resolve_scope_seed_source(job_execution_id, None, &scope.source)?;
+                }
+            }
             let id = self.repository.ids.next_step_execution_id()?;
             if self.staged.step_executions.contains_key(&id) {
                 return Err(RepositoryError::DuplicateIdentifier {
@@ -1623,11 +1842,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     value: id.get(),
                 });
             }
-            let upgrade_seed = self
-                .staged
-                .upgrade_seeds
-                .get(&(job_execution_id, node_id.clone()))
-                .cloned();
             let upgraded = self.staged.upgrade_sources.contains_key(&job_execution_id);
             let prior = if upgraded {
                 None
@@ -1666,7 +1880,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 self.staged.step_contexts.insert(id, context);
             }
             if let Some(seed) = upgrade_seed {
-                for repeat in seed.repeats {
+                for repeat in seed.repeats.iter().cloned() {
                     let materialized = RepeatExecution::new(
                         instance_id,
                         node_id.clone(),
@@ -1688,6 +1902,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                         .repeat_executions
                         .insert((id, materialized.repeat_id().clone()), materialized);
                 }
+                self.materialize_scope_seeds(job_execution_id, Some(id), &seed.scope)?;
             }
             if let Some((source_job, source_step)) = source_owner {
                 self.copy_forward_scope_resolution_provenance(
