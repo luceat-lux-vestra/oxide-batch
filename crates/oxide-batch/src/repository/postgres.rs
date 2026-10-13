@@ -1676,7 +1676,7 @@ fn durable_state_seed(
     format_version: u16,
     schema: &StateSchemaId,
     schema_version: StateSchemaVersion,
-    payload: Value,
+    payload: &Value,
 ) -> Value {
     json!({
         "format": format_version,
@@ -1697,7 +1697,7 @@ fn checkpoint_seed(state: &Checkpoint) -> Result<Value, RepositoryError> {
         state.format_version(),
         state.schema_id(),
         state.schema_version(),
-        payload,
+        &payload,
     ))
 }
 
@@ -1712,7 +1712,7 @@ fn context_seed(state: &ExecutionContext) -> Result<Value, RepositoryError> {
         state.format_version(),
         state.schema_id(),
         state.schema_version(),
-        payload,
+        &payload,
     ))
 }
 
