@@ -19,7 +19,7 @@ use oxide_batch_core::{
 };
 
 use crate::{
-    ActorRef, FlowDecision, FlowDecisionRequest, FlowStepState, FlowTransitionKind, NestedJobLink,
+    ActorRef, DefinitionRegistration, FlowDecision, FlowDecisionRequest, FlowStepState, FlowTransitionKind, NestedJobLink,
     NestedJobLinkRequest, OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft,
     OwnerToken, PartitionAggregate, PartitionAggregationError, PartitionPlanEntry, PurgeCounts,
     PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode, RepeatCommitRequest, RepeatExecution,
@@ -770,6 +770,34 @@ impl ExecutionControl {
 /// `PostgreSQL` adapter to keep its concrete transaction private. A successful
 /// operation is still provisional until [`commit`](Self::commit) succeeds.
 pub trait RepositoryUnitOfWork: Send {
+    /// Registers one immutable exact definition/artifact binding.
+    ///
+    /// Exact replay is idempotent. Reusing a revision with another manifest or
+    /// artifact identity must fail closed rather than mutate the durable record.
+    fn register_definition<'a>(
+        &'a mut self,
+        _registration: &'a DefinitionRegistration,
+    ) -> BoxFuture<'a, Result<DefinitionRegistration, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
+    }
+
+    /// Resolves one exact definition revision without scanning or revision inference.
+    fn definition<'a>(
+        &'a mut self,
+        _job_name: &'a JobName,
+        _revision: &'a DefinitionRevision,
+    ) -> BoxFuture<'a, Result<Option<DefinitionRegistration>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
+    }
+
     /// Registers one explicit directed definition compatibility edge.
     fn register_definition_upgrade<'a>(
         &'a mut self,
@@ -1525,6 +1553,8 @@ pub trait RepositoryUnitOfWork: Send {
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 #[non_exhaustive]
 pub enum RepositoryCapability {
+    /// Immutable exact definition registration and bounded revision lookup.
+    DefinitionRegistry,
     /// Append-only operator audit and idempotency rows.
     OperatorRequests,
     /// Durable compare-and-swap stop requests.
@@ -1552,6 +1582,7 @@ impl RepositoryCapability {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::DefinitionRegistry => "definition registry",
             Self::OperatorRequests => "operator requests",
             Self::StopRequests => "durable stop requests",
             Self::ExecutionOwnership => "execution ownership evidence",
@@ -1793,6 +1824,13 @@ pub enum RepositoryError {
         /// Reused application-owned revision.
         revision: DefinitionRevision,
     },
+    /// One immutable definition revision was rebound to another executable artifact.
+    DefinitionArtifactDrift {
+        /// Definition whose artifact identity drifted.
+        job_name: JobName,
+        /// Reused application-owned revision.
+        revision: DefinitionRevision,
+    },
     /// A manifest was registered or launched under a different job name.
     DefinitionJobMismatch {
         /// Job name selected by the instance or registration call.
@@ -2021,6 +2059,11 @@ impl fmt::Display for RepositoryError {
             Self::DefinitionDrift { job_name, revision } => write!(
                 formatter,
                 "job {job_name} definition revision {} has drifted",
+                revision.as_str()
+            ),
+            Self::DefinitionArtifactDrift { job_name, revision } => write!(
+                formatter,
+                "job {job_name} definition revision {} is already bound to another artifact",
                 revision.as_str()
             ),
             Self::DefinitionJobMismatch { expected, actual } => write!(

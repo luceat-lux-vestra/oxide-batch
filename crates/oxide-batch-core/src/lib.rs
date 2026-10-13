@@ -40,8 +40,9 @@ pub use component_state::{
 };
 pub use definition::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ClassifierRevision,
-    ComponentRevision, ComponentStreamIdentity, DefinitionError, DefinitionIdentity,
-    DefinitionManifest, DefinitionRevision, DefinitionTokenKind, DefinitionUpgrade,
+    ComponentRevision, ComponentStreamIdentity, DefinitionArtifactId, DefinitionError,
+    DefinitionIdentity, DefinitionManifest, DefinitionRevision, DefinitionTokenKind,
+    DefinitionUpgrade,
     DefinitionUpgradeKey, InFlightPolicy, ManifestError, RepeatId, StepDefinitionUpgrade,
 };
 pub use definition::{

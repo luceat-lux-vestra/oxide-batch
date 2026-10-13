@@ -494,8 +494,8 @@ pub use oxide_batch_core::{
     ChunkRestartContract, ChunkSize, ClassifierRevision, CodecId, CodecVersion,
     CodecVersionUpgrade, ComponentRevision, ComponentStateCodec, ComponentStateEnvelope,
     ComponentStateError, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
-    DefaultComponentCodec, DefinitionError, DefinitionIdentity, DefinitionManifest,
-    DefinitionRevision, DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, DomainError,
+    DefaultComponentCodec, DefinitionArtifactId, DefinitionError, DefinitionIdentity,
+    DefinitionManifest, DefinitionRevision, DefinitionTokenKind, DefinitionUpgrade, DefinitionUpgradeKey, DomainError,
     DurableStateKind, ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
     ExecutionVersion, ExitCode, ExitStatus, ExternalStateError, ExternalStateReference,
     ExternalStateStore, FailureCategory, FailureId, FailureSummary, FaultAction, FaultClassifier,
@@ -530,7 +530,8 @@ pub use oxide_batch_plan::{
 pub use oxide_batch_repository::{
     ActorRef, AuthorizationClass, BoxFuture, Clock, Cursor, CursorError, CursorKey,
     DEFAULT_MAX_CLOCK_SKEW, DEFAULT_PAGE_SIZE, DEFAULT_PURGE_AGE, DEFAULT_STALE_THRESHOLD,
-    DefinitionDescriptor, ExecutionControl, ExplorerError, ExplorerQuery, ExplorerRepository,
+    DefinitionDescriptor, DefinitionRegistration, DefinitionRegistrationError, ExecutionControl,
+    ExplorerError, ExplorerQuery, ExplorerRepository,
     FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
     FlowTransitionKind, IdGenerationError, IdGenerator, JobExecutionProjection,
     JobInstanceProjection, JobInstanceSelection, JobRepository, MAX_ACTOR_REF_BYTES,
@@ -579,7 +580,8 @@ pub use scope_live::{
 };
 pub use scope_runtime::ScopeResolutionFailure;
 pub use service::{
-    JobExplorer, JobOperator, OperatorError, OperatorOutcome, RecoveryProposer, RetentionReport,
+    DefinitionRegistry, JobExplorer, JobOperator, OperatorError, OperatorOutcome, RecoveryProposer,
+    RetentionReport,
     RetentionService,
 };
 pub use shutdown::{

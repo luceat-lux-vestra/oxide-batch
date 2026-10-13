@@ -35,6 +35,7 @@
 
 #![forbid(unsafe_code)]
 
+mod definition;
 mod explorer;
 mod flow;
 mod nested_job;
@@ -47,6 +48,7 @@ mod request;
 mod retention;
 mod scope;
 
+pub use definition::{DefinitionRegistration, DefinitionRegistrationError};
 pub use explorer::{
     Cursor, CursorError, CursorKey, DEFAULT_PAGE_SIZE, DefinitionDescriptor, ExplorerError,
     ExplorerQuery, ExplorerRepository, JobExecutionProjection, JobInstanceProjection,

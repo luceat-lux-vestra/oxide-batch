@@ -109,6 +109,11 @@ definition_token!(
     "An application-owned audit label for one restart-relevant definition."
 );
 definition_token!(
+    DefinitionArtifactId,
+    DefinitionTokenKind::Artifact,
+    "A bounded application-owned identity for the executable artifact that assembles one definition."
+);
+definition_token!(
     DefinitionUpgradeKey,
     DefinitionTokenKind::Upgrade,
     "An application-owned key for one directed definition compatibility edge."
@@ -1380,6 +1385,8 @@ pub enum DefinitionTokenKind {
     Revision,
     /// Opaque component revision.
     Component,
+    /// Executable artifact identity.
+    Artifact,
     /// Directed compatibility edge key.
     Upgrade,
     /// Bounded fault-classifier revision.
