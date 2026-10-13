@@ -139,6 +139,12 @@ pub const SCHEMA8_COLUMNS: &[(&str, &str)] = &[
     ("ob_repeat_execution", "lineage"),
 ];
 
+/// Schema 9 adds no table; it binds definitions to application-owned artifact identity.
+pub const SCHEMA9_TABLES: &[&str] = &[];
+
+/// Columns schema 9 adds to tables schema 8 already declared.
+pub const SCHEMA9_COLUMNS: &[(&str, &str)] = &[("ob_job_definition", "artifact_identity")];
+
 /// Columns schema 2 added to tables schema 1 already declared.
 pub const SCHEMA2_COLUMNS: &[(&str, &str)] = &[
     ("ob_step_execution", "step_logical_id"),
@@ -321,6 +327,7 @@ pub async fn assert_historical_shape(url: &str, version: u32) -> Result<(), Box<
         (version >= 6, SCHEMA6_TABLES, SCHEMA6_COLUMNS),
         (version >= 7, SCHEMA7_TABLES, SCHEMA7_COLUMNS),
         (version >= 8, SCHEMA8_TABLES, SCHEMA8_COLUMNS),
+        (version >= 9, SCHEMA9_TABLES, SCHEMA9_COLUMNS),
     ] {
         for table in tables {
             if table_exists(url, table).await? != present {

@@ -77,9 +77,66 @@ use upgrade::{
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade must reach: the current installed schema
-/// (8, since M7 `#401`'s repeat-lineage migration), not the schema-3 target
+/// (9, since M7 `#550`'s definition-registry migration), not the schema-3 target
 /// the M5 preview named when it was current.
-const TARGET_VERSION: u32 = 8;
+const TARGET_VERSION: u32 = 9;
+
+#[test]
+fn schema8_definition_registry_migration_preserves_existing_rows() -> Result<(), Box<dyn Error>> {
+    let Some(migrator) = migrator_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(admin) = admin_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_BACKUP_TEST_URL is not set");
+        return Ok(());
+    };
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            const DATABASE: &str = "oxide_batch_m7_registry_upgrade_from_8";
+            let url = with_database(&migrator, DATABASE)?;
+            recreate_database(&admin, DATABASE).await?;
+            install_historical_schema(&url, 8).await?;
+            assert_historical_shape(&url, 8).await?;
+
+            let pool = PgPoolOptions::new().max_connections(1).connect(&url).await?;
+            sqlx::query(
+                "INSERT INTO oxide_batch.ob_job_definition                  (job_name, definition_revision, manifest_format, manifest_digest, manifest, registered_at)                  VALUES ('registry-seed', 'v8', 1, decode(repeat('11', 32), 'hex'),                          '{\"source\":\"schema8\"}'::jsonb, to_timestamp(1))",
+            )
+            .execute(&pool)
+            .await?;
+            let before: (String, String, i16, Vec<u8>, Value) = sqlx::query_as(
+                "SELECT job_name, definition_revision, manifest_format, manifest_digest, manifest                  FROM oxide_batch.ob_job_definition WHERE job_name = 'registry-seed'",
+            )
+            .fetch_one(&pool)
+            .await?;
+            pool.close().await;
+
+            PostgresMigrator::migrate(&config(url.clone())?).await?;
+            assert_eq!(schema_version(&url).await?, Some(TARGET_VERSION));
+            assert_historical_shape(&url, TARGET_VERSION).await?;
+
+            let pool = PgPoolOptions::new().max_connections(1).connect(&url).await?;
+            let after: (String, String, i16, Vec<u8>, Value, Option<String>) = sqlx::query_as(
+                "SELECT job_name, definition_revision, manifest_format, manifest_digest, manifest,                         artifact_identity                  FROM oxide_batch.ob_job_definition WHERE job_name = 'registry-seed'",
+            )
+            .fetch_one(&pool)
+            .await?;
+            pool.close().await;
+            assert_eq!(
+                (&after.0, &after.1, after.2, &after.3, &after.4),
+                (&before.0, &before.1, before.2, &before.3, &before.4)
+            );
+            assert!(
+                after.5.is_none(),
+                "schema 9 must not invent an artifact identity for a pre-registry definition"
+            );
+            Ok::<(), Box<dyn Error>>(())
+        })
+}
 
 #[test]
 fn schema1_and_schema2_upgrade_directly_to_schema3() -> Result<(), Box<dyn Error>> {
