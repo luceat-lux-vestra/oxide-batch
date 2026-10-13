@@ -325,6 +325,138 @@ impl DefinitionStateTransform {
     }
 }
 
+/// Process-local implementation of one declared state-transform revision.
+///
+/// The function is deliberately not serializable or durable. Registration
+/// persists only the bounded revision/schema descriptor, while a compatible
+/// restart must supply the exact live implementation again.
+#[derive(Clone, Copy)]
+pub struct DefinitionStateTransformer {
+    revision: DefinitionUpgradeRevision,
+    apply: fn(&[u8]) -> Result<Vec<u8>, DefinitionStateTransformError>,
+}
+
+impl DefinitionStateTransformer {
+    /// Binds one deterministic payload transformer to its application revision.
+    #[must_use]
+    pub const fn new(
+        revision: DefinitionUpgradeRevision,
+        apply: fn(&[u8]) -> Result<Vec<u8>, DefinitionStateTransformError>,
+    ) -> Self {
+        Self { revision, apply }
+    }
+
+    /// Borrows the revision this implementation satisfies.
+    #[must_use]
+    pub const fn revision(&self) -> &DefinitionUpgradeRevision {
+        &self.revision
+    }
+
+    /// Applies the process-local pure transform.
+    ///
+    /// # Errors
+    ///
+    /// Returns the application-provided redacted transform failure.
+    pub fn apply(&self, payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
+        (self.apply)(payload)
+    }
+}
+
+impl fmt::Debug for DefinitionStateTransformer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DefinitionStateTransformer")
+            .field("revision", &self.revision)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Stable value-redacted failure from a compatible-upgrade transformer.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DefinitionStateTransformError {
+    /// Source bytes do not satisfy the transformer's declared contract.
+    InvalidSource,
+    /// The transformer could not produce the declared target state.
+    TransformFailed,
+}
+
+impl fmt::Display for DefinitionStateTransformError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::InvalidSource => "definition-upgrade source state is invalid",
+            Self::TransformFailed => "definition-upgrade state transform failed",
+        })
+    }
+}
+
+impl Error for DefinitionStateTransformError {}
+
+/// One explicitly selected compatible-upgrade edge plus its live pure code.
+///
+/// Construction proves that every transform revision declared by the durable
+/// edge has exactly one process-local implementation and that no undeclared
+/// implementation is smuggled into the restart.
+#[derive(Clone, Debug)]
+pub struct DefinitionUpgradeExecution {
+    upgrade: DefinitionUpgrade,
+    transformers: BTreeMap<DefinitionUpgradeRevision, DefinitionStateTransformer>,
+}
+
+impl DefinitionUpgradeExecution {
+    /// Validates one executable transformed edge.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a legacy identity-only edge, duplicate implementations, a
+    /// missing declared transform implementation, or an unused implementation.
+    pub fn new(
+        upgrade: DefinitionUpgrade,
+        transformers: impl IntoIterator<Item = DefinitionStateTransformer>,
+    ) -> Result<Self, DefinitionError> {
+        if !upgrade.is_transformed() {
+            return Err(DefinitionError::LegacyUpgradeExecution);
+        }
+        let mut implementations = BTreeMap::new();
+        for transformer in transformers {
+            if implementations
+                .insert(transformer.revision().clone(), transformer)
+                .is_some()
+            {
+                return Err(DefinitionError::DuplicateStateTransformer);
+            }
+        }
+        let required = upgrade
+            .transforms()
+            .iter()
+            .map(|transform| transform.revision().clone())
+            .collect::<BTreeSet<_>>();
+        let supplied = implementations.keys().cloned().collect::<BTreeSet<_>>();
+        if required != supplied {
+            return Err(DefinitionError::StateTransformerSetMismatch);
+        }
+        Ok(Self {
+            upgrade,
+            transformers: implementations,
+        })
+    }
+
+    /// Borrows the exact durable edge selected by this execution.
+    #[must_use]
+    pub const fn upgrade(&self) -> &DefinitionUpgrade {
+        &self.upgrade
+    }
+
+    /// Resolves the exact implementation declared by one transform descriptor.
+    #[must_use]
+    pub fn transformer(
+        &self,
+        transform: &DefinitionStateTransform,
+    ) -> Option<&DefinitionStateTransformer> {
+        self.transformers.get(transform.revision())
+    }
+}
+
 /// One explicit, directed definition compatibility edge.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DefinitionUpgrade {
@@ -1746,6 +1878,12 @@ pub enum DefinitionError {
     DuplicateStateTransform,
     /// A state transform named a source/target pair outside the node mapping.
     StateTransformOutsideNodeMapping,
+    /// A legacy M2 identity-only edge cannot execute an M7 compatible restart.
+    LegacyUpgradeExecution,
+    /// Two live state transformer implementations reused one revision.
+    DuplicateStateTransformer,
+    /// Live transformer revisions did not exactly match the durable descriptor.
+    StateTransformerSetMismatch,
     /// A step's fault runtime declared a different delivery mode than its
     /// restart contract.
     DeliveryModeMismatch,
@@ -1858,6 +1996,15 @@ impl fmt::Display for DefinitionError {
             }
             Self::StateTransformOutsideNodeMapping => {
                 formatter.write_str("definition state transform is outside the node mapping")
+            }
+            Self::LegacyUpgradeExecution => {
+                formatter.write_str("legacy definition upgrade has no transformed execution contract")
+            }
+            Self::DuplicateStateTransformer => {
+                formatter.write_str("definition upgrade repeats a live state transformer revision")
+            }
+            Self::StateTransformerSetMismatch => {
+                formatter.write_str("definition upgrade live transformer set does not match metadata")
             }
             Self::DeliveryModeMismatch => formatter
                 .write_str("fault runtime and restart contract declare different delivery modes"),
