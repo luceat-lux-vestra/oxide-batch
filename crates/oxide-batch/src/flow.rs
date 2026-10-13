@@ -1799,6 +1799,34 @@ impl<'a> FlowLauncher<'a> {
         self
     }
 
+    /// Executes one registry-proven durable flow attempt.
+    ///
+    /// The exact live definition fingerprint and application-owned executable artifact
+    /// identity are verified against the immutable registry before any lifecycle state
+    /// is created.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlowRuntimeError`] before lifecycle creation when the exact definition
+    /// is unregistered, drifted, or bound to another artifact; otherwise returns the same
+    /// failures as [`Self::launch`].
+    pub async fn launch_registered(
+        &self,
+        job: &FlowJob,
+        artifact: &crate::DefinitionArtifactId,
+        parameters: &JobParameters,
+        stop_token: &StopToken,
+    ) -> Result<FlowLaunchReport, FlowRuntimeError> {
+        self.ensure_accepting()?;
+        crate::service::verify_registered_definition(
+            self.repository,
+            job.compiled_plan().definition_identity(),
+            artifact,
+        )
+        .await?;
+        self.launch(job, parameters, stop_token).await
+    }
+
     /// Executes one durable sequential, conditional, or bounded split attempt.
     ///
     /// The source step result is committed before its transition, and the
