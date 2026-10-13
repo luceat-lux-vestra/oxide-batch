@@ -1664,7 +1664,12 @@ fn transformed_component_for_upgrade(
 }
 
 fn byte_array_json(bytes: &[u8]) -> Value {
-    Value::Array(bytes.iter().copied().map(Value::from).collect())
+    use fmt::Write as _;
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    Value::String(encoded)
 }
 
 fn durable_state_seed(
