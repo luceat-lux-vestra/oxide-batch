@@ -884,6 +884,7 @@ impl JobRepository for PostgresJobRepository {
                 repository: self,
                 connection: Some(connection),
                 definition_override: None,
+                upgrade_override: None,
                 created_partition_plans: BTreeSet::new(),
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
         })
@@ -1833,6 +1834,69 @@ async fn repeat_upgrade_seeds(
     Ok(seeds)
 }
 
+fn upgrade_node_mapping_json(upgrade: &DefinitionUpgrade) -> Value {
+    Value::Object(
+        upgrade
+            .node_mapping()
+            .iter()
+            .map(|(source, target)| {
+                (
+                    source.as_str().to_owned(),
+                    Value::String(target.as_str().to_owned()),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn upgrade_transforms_json(upgrade: &DefinitionUpgrade) -> Value {
+    Value::Array(
+        upgrade
+            .transforms()
+            .iter()
+            .map(|transform| {
+                json!({
+                    "source_node": transform.source_node().as_str(),
+                    "target_node": transform.target_node().as_str(),
+                    "kind": transform.kind().as_str(),
+                    "state_id": transform.state_id().as_str(),
+                    "source_schema": transform.source_schema().as_str(),
+                    "source_version": transform.source_version().get(),
+                    "target_schema": transform.target_schema().as_str(),
+                    "target_version": transform.target_version().get(),
+                    "revision": transform.revision().as_str(),
+                })
+            })
+            .collect(),
+    )
+}
+
+async fn registered_upgrade_matches(
+    transaction: &mut PgConnection,
+    from_definition_id: i64,
+    to_definition_id: i64,
+    upgrade: &DefinitionUpgrade,
+) -> Result<bool, RepositoryError> {
+    let Some(revision) = upgrade.revision() else {
+        return Ok(false);
+    };
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_definition_upgrade \
+         WHERE from_definition_id = $1 AND to_definition_id = $2 \
+           AND upgrade_key = $3 AND upgrade_revision = $4 \
+           AND node_mapping = $5 AND state_transforms = $6)",
+    )
+    .bind(from_definition_id)
+    .bind(to_definition_id)
+    .bind(upgrade.key().as_str())
+    .bind(revision.as_str())
+    .bind(Json(upgrade_node_mapping_json(upgrade)))
+    .bind(Json(upgrade_transforms_json(upgrade)))
+    .fetch_one(transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)
+}
+
 async fn build_postgres_upgrade_seed(
     transaction: &mut PgConnection,
     job_instance_id: JobInstanceId,
@@ -1934,6 +1998,7 @@ struct PostgresUnitOfWork<'repository> {
     repository: &'repository PostgresJobRepository,
     connection: Option<PoolConnection<Postgres>>,
     definition_override: Option<DefinitionIdentity>,
+    upgrade_override: Option<DefinitionUpgradeExecution>,
     created_partition_plans: BTreeSet<StepExecutionId>,
 }
 
@@ -2339,6 +2404,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .definition_override
                 .take()
                 .unwrap_or_else(DefinitionIdentity::legacy);
+            let selected_upgrade = self.upgrade_override.take();
             let instance_database_id =
                 database_id(job_instance_id.get(), IdentifierKind::JobInstance)?;
             let instance = sqlx::query(
@@ -2414,6 +2480,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             )
             .await?;
             let mut upgrade_from = None;
+            let mut upgrade_seed = None;
             if let Some(previous) = &latest {
                 let previous_definition_id: i64 = sqlx::query_scalar(
                     "SELECT definition_id FROM oxide_batch.ob_job_execution WHERE id = $1",
@@ -2426,31 +2493,52 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?;
                 if previous_definition_id != definition_id {
-                    let compatible: bool = sqlx::query_scalar(
-                        "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_definition_upgrade \
-                         WHERE from_definition_id = $1 AND to_definition_id = $2)",
-                    )
-                    .bind(previous_definition_id)
-                    .bind(definition_id)
-                    .fetch_one(&mut **self.transaction()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?;
-                    if !compatible {
+                    let selected = selected_upgrade
+                        .as_ref()
+                        .ok_or(RepositoryError::IncompatibleDefinition {
+                            instance_id: job_instance_id,
+                        })?;
+                    let previous_definition =
+                        load_execution_definition(&mut **self.transaction()?, previous.id())
+                            .await
+                            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+                    if selected.upgrade().from() != &previous_definition
+                        || selected.upgrade().to() != &definition
+                        || !registered_upgrade_matches(
+                            &mut **self.transaction()?,
+                            previous_definition_id,
+                            definition_id,
+                            selected.upgrade(),
+                        )
+                        .await?
+                    {
                         return Err(RepositoryError::IncompatibleDefinition {
                             instance_id: job_instance_id,
                         });
                     }
+                    if super::scope_postgres::has_scope_resolution_provenance(
+                        &mut **self.transaction()?,
+                        previous.id(),
+                    )
+                    .await?
+                    {
+                        return Err(RepositoryError::DefinitionUpgradeFailed);
+                    }
+                    upgrade_seed = Some(
+                        build_postgres_upgrade_seed(
+                            &mut **self.transaction()?,
+                            job_instance_id,
+                            selected,
+                        )
+                        .await?,
+                    );
                     upgrade_from = Some(previous_definition_id);
+                } else if selected_upgrade.is_some() {
+                    return Err(RepositoryError::IncompatibleDefinition {
+                        instance_id: job_instance_id,
+                    });
                 }
-            }
-            if upgrade_from.is_some()
-                && let Some(previous) = &latest
-                && super::scope_postgres::has_scope_resolution_provenance(
-                    &mut **self.transaction()?,
-                    previous.id(),
-                )
-                .await?
-            {
+            } else if selected_upgrade.is_some() {
                 return Err(RepositoryError::IncompatibleDefinition {
                     instance_id: job_instance_id,
                 });
@@ -2473,12 +2561,12 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let id: i64 = sqlx::query_scalar(
                 "INSERT INTO oxide_batch.ob_job_execution \
                  (job_instance_id, definition_id, upgrade_from_definition_id, \
-                  restart_of_execution_id, attempt, \
+                  restart_of_execution_id, attempt, upgrade_seed, \
                   status, exit_code, parameters, context_format, context_schema, \
                   context_schema_version, context_payload, created_at, updated_at, version) \
-                 VALUES ($1, $2, $3, $4, $5, 'STARTING', 'UNKNOWN', $6, 1, $7, 1, $8, \
-                  to_timestamp($9::double precision / 1000.0), \
-                  to_timestamp($9::double precision / 1000.0), 0) \
+                 VALUES ($1, $2, $3, $4, $5, $6, 'STARTING', 'UNKNOWN', $7, 1, $8, 1, $9, \
+                  to_timestamp($10::double precision / 1000.0), \
+                  to_timestamp($10::double precision / 1000.0), 0) \
                  RETURNING id",
             )
             .bind(instance_database_id)
@@ -2486,6 +2574,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .bind(upgrade_from)
             .bind(restart_of)
             .bind(attempt)
+            .bind(upgrade_seed.map(Json))
             .bind(parameters)
             .bind(DEFAULT_CONTEXT_SCHEMA)
             .bind(context)
@@ -2521,6 +2610,40 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         Box::pin(async move {
             self.definition_override = Some(definition.clone());
             self.create_job_execution(job_instance_id).await
+        })
+    }
+
+    fn create_job_execution_with_upgrade<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        upgrade: &'a DefinitionUpgradeExecution,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(upgrade.upgrade().to().clone());
+            self.upgrade_override = Some(upgrade.clone());
+            self.create_job_execution(job_instance_id).await
+        })
+    }
+
+    fn create_job_execution_with_upgrade_and_parameters<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        upgrade: &'a DefinitionUpgradeExecution,
+        parameters: &'a JobParameters,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(upgrade.upgrade().to().clone());
+            self.upgrade_override = Some(upgrade.clone());
+            let execution = self.create_job_execution(job_instance_id).await?;
+            store_execution_parameters(&mut **self.transaction()?, execution.id(), parameters)
+                .await
+                .map_err(|error| match error {
+                    RepositoryError::NestedJobStateCorrupt => {
+                        RepositoryError::ScopeResolutionStateCorrupt
+                    }
+                    other => other,
+                })?;
+            Ok(execution)
         })
     }
 
