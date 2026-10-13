@@ -150,6 +150,7 @@ pub const SCHEMA10_TABLES: &[&str] = &[];
 
 /// Columns schema 10 adds to the existing definition-upgrade edge.
 pub const SCHEMA10_COLUMNS: &[(&str, &str)] = &[
+    ("ob_job_execution", "upgrade_seed"),
     ("ob_definition_upgrade", "upgrade_revision"),
     ("ob_definition_upgrade", "node_mapping"),
     ("ob_definition_upgrade", "state_transforms"),

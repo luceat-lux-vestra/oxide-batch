@@ -8,6 +8,16 @@ BEGIN
 END
 $$;
 
+ALTER TABLE ob_job_execution
+    ADD COLUMN upgrade_seed jsonb
+        CHECK (
+            upgrade_seed IS NULL
+            OR (
+                jsonb_typeof(upgrade_seed) = 'object'
+                AND pg_column_size(upgrade_seed) <= 8388608
+            )
+        );
+
 ALTER TABLE ob_definition_upgrade
     ADD COLUMN upgrade_revision varchar(128) COLLATE "C"
         CHECK (

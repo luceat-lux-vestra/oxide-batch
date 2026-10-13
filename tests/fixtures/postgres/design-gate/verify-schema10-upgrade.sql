@@ -6,6 +6,11 @@ BEGIN
     IF (SELECT version FROM ob_schema_version WHERE singleton) <> 10 THEN
         RAISE EXCEPTION 'schema10 upgrade did not publish version 10';
     END IF;
+    IF EXISTS (
+        SELECT 1 FROM ob_job_execution WHERE upgrade_seed IS NOT NULL
+    ) THEN
+        RAISE EXCEPTION 'schema10 invented transformed restart seed state';
+    END IF;
     IF NOT EXISTS (
         SELECT 1
         FROM ob_definition_upgrade
