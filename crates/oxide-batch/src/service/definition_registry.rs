@@ -168,6 +168,12 @@ mod tests {
             let first = registry.register(&registration).await?;
             let replay = registry.register(&registration).await?;
             assert_eq!(first, replay);
+            assert_eq!(
+                registry
+                    .verify(registration.definition(), registration.artifact())
+                    .await?,
+                registration
+            );
 
             let resolved = registry
                 .resolve(registration.job_name(), registration.revision())
