@@ -52,7 +52,7 @@ use crate::{
     StepPartitionProjection, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 9;
+const SUPPORTED_SCHEMA_VERSION: u32 = 10;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
@@ -1762,17 +1762,59 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     )
                 })
                 .collect::<Map<String, Value>>();
+            let node_mapping = upgrade.revision().map(|_| {
+                Value::Object(
+                    upgrade
+                        .node_mapping()
+                        .iter()
+                        .map(|(source, target)| {
+                            (
+                                source.as_str().to_owned(),
+                                Value::String(target.as_str().to_owned()),
+                            )
+                        })
+                        .collect(),
+                )
+            });
+            let state_transforms = upgrade.revision().map(|_| {
+                Value::Array(
+                    upgrade
+                        .transforms()
+                        .iter()
+                        .map(|transform| {
+                            json!({
+                                "source_node": transform.source_node().as_str(),
+                                "target_node": transform.target_node().as_str(),
+                                "kind": transform.kind().as_str(),
+                                "state_id": transform.state_id().as_str(),
+                                "source_schema": transform.source_schema().as_str(),
+                                "source_version": transform.source_version().get(),
+                                "target_schema": transform.target_schema().as_str(),
+                                "target_version": transform.target_version().get(),
+                                "revision": transform.revision().as_str(),
+                            })
+                        })
+                        .collect(),
+                )
+            });
+            let node_mapping_json = node_mapping.as_ref().map(Value::to_string);
+            let state_transforms_json = state_transforms.as_ref().map(Value::to_string);
             let registered_ms = system_time_millis(registered_at)?;
             sqlx::query(
                 "INSERT INTO oxide_batch.ob_definition_upgrade \
-                 (from_definition_id, to_definition_id, upgrade_key, step_mapping, registered_at) \
-                 VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0)) \
+                 (from_definition_id, to_definition_id, upgrade_key, step_mapping, \
+                  upgrade_revision, node_mapping, state_transforms, registered_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, \
+                         to_timestamp($8::double precision / 1000.0)) \
                  ON CONFLICT (from_definition_id, to_definition_id) DO NOTHING",
             )
             .bind(from_id)
             .bind(to_id)
             .bind(upgrade.key().as_str())
             .bind(Json(Value::Object(mapping.clone())))
+            .bind(upgrade.revision().map(|revision| revision.as_str()))
+            .bind(node_mapping_json.as_deref())
+            .bind(state_transforms_json.as_deref())
             .bind(registered_ms)
             .execute(&mut **self.transaction()?)
             .await
@@ -1780,12 +1822,18 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let matches: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_definition_upgrade \
                  WHERE from_definition_id = $1 AND to_definition_id = $2 \
-                 AND upgrade_key = $3 AND step_mapping = $4)",
+                 AND upgrade_key = $3 AND step_mapping = $4 \
+                 AND upgrade_revision IS NOT DISTINCT FROM $5 \
+                 AND node_mapping IS NOT DISTINCT FROM $6::jsonb \
+                 AND state_transforms IS NOT DISTINCT FROM $7::jsonb)",
             )
             .bind(from_id)
             .bind(to_id)
             .bind(upgrade.key().as_str())
             .bind(Json(Value::Object(mapping)))
+            .bind(upgrade.revision().map(|revision| revision.as_str()))
+            .bind(node_mapping_json.as_deref())
+            .bind(state_transforms_json.as_deref())
             .fetch_one(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
