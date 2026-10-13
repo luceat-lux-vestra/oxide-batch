@@ -12,8 +12,9 @@ use oxide_batch_repository::{
 
 use crate::{
     ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity,
-    DefinitionRegistration, DefinitionRevision, DefinitionUpgrade, DurableStateKind,
-    ExecutionAttempt, ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
+    DefinitionRegistration, DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionAttempt,
+    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
     ExecutionVersion, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision,
     FlowDecisionId, FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind,
     JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
@@ -26,8 +27,8 @@ use crate::{
     RecoverySnapshot, RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution,
     RepeatId, RepeatLineage, RepeatOrdinal, RetentionAction, RetentionActionId, RetentionHold,
     RetentionRecord, RetentionRecordDraft, ScopeKind, ScopedComponentId, StartLimit,
-    StateEnvelopeDescriptor, StepExecution, StepExecutionId, StepExecutionProjection, StepName,
-    StepPartition, StepPartitionId, StepPartitionProjection,
+    StateEnvelopeDescriptor, StateLimits, StepExecution, StepExecutionId, StepExecutionProjection,
+    StepName, StepPartition, StepPartitionId, StepPartitionProjection,
 };
 use crate::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
@@ -137,6 +138,7 @@ impl JobRepository for InMemoryJobRepository {
                 base_revision,
                 staged: snapshot,
                 definition_override: None,
+                upgrade_override: None,
                 created_partition_plans: BTreeSet::new(),
                 aggregated_partition_parent: false,
                 committed_repeat_iteration: false,
@@ -181,6 +183,8 @@ struct MemoryState {
     definition_registry: BTreeMap<(JobName, DefinitionRevision), DefinitionRegistration>,
     execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
     definition_upgrades: BTreeMap<(JobName, [u8; 32], [u8; 32]), DefinitionUpgrade>,
+    upgrade_sources: BTreeMap<JobExecutionId, JobExecutionId>,
+    upgrade_seeds: BTreeMap<(JobExecutionId, NodeId), MemoryUpgradeNodeSeed>,
     job_name_order: BTreeMap<JobName, u64>,
     instance_created_at: BTreeMap<JobInstanceId, SystemTime>,
     execution_updated_at: BTreeMap<JobExecutionId, SystemTime>,
@@ -305,11 +309,19 @@ fn updated_at(execution: &JobExecution) -> SystemTime {
         .unwrap_or_else(|| timestamps.created_at())
 }
 
+#[derive(Clone, Debug)]
+struct MemoryUpgradeNodeSeed {
+    counts: ExecutionCounts,
+    context: Option<ExecutionContext>,
+    repeats: Vec<RepeatExecution>,
+}
+
 struct InMemoryUnitOfWork<'repository> {
     repository: &'repository InMemoryJobRepository,
     base_revision: u64,
     staged: MemoryState,
     definition_override: Option<DefinitionIdentity>,
+    upgrade_override: Option<DefinitionUpgradeExecution>,
     created_partition_plans: BTreeSet<StepExecutionId>,
     aggregated_partition_parent: bool,
     committed_repeat_iteration: bool,
@@ -327,6 +339,134 @@ impl InMemoryUnitOfWork<'_> {
             None,
         )
         .map_err(RepositoryError::from)
+    }
+
+    fn upgrade_transform<'a>(
+        upgrade: &'a DefinitionUpgradeExecution,
+        source_node: &NodeId,
+        kind: DefinitionStateKind,
+        state_id: Option<&str>,
+    ) -> Result<Option<&'a DefinitionStateTransform>, RepositoryError> {
+        let mut matches = upgrade
+            .upgrade()
+            .transforms()
+            .iter()
+            .filter(|transform| {
+                transform.source_node() == source_node
+                    && transform.kind() == kind
+                    && state_id.is_none_or(|id| transform.state_id().as_str() == id)
+            });
+        let selected = matches.next();
+        if matches.next().is_some() {
+            return Err(RepositoryError::DefinitionUpgradeFailed);
+        }
+        Ok(selected)
+    }
+
+    fn transform_context(
+        upgrade: &DefinitionUpgradeExecution,
+        transform: &DefinitionStateTransform,
+        source: &ExecutionContext,
+    ) -> Result<ExecutionContext, RepositoryError> {
+        if source.schema_id() != transform.source_schema()
+            || source.schema_version() != transform.source_version()
+        {
+            return Err(RepositoryError::DefinitionUpgradeFailed);
+        }
+        let transformer = upgrade
+            .transformer(transform)
+            .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+        let source_payload = source
+            .payload_json()
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+        let transformed = transformer
+            .apply(&source_payload)
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+        let payload: serde_json::Value = serde_json::from_slice(&transformed)
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+        if !payload.is_object() {
+            return Err(RepositoryError::DefinitionUpgradeFailed);
+        }
+        let envelope = serde_json::json!({
+            "format": "oxide-batch.execution-context",
+            "format_version": 1,
+            "schema": transform.target_schema().as_str(),
+            "schema_version": transform.target_version().get(),
+            "payload": payload,
+        });
+        let bytes = serde_json::to_vec(&envelope)
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+        ExecutionContext::from_json(&bytes, StateLimits::new(1_048_576, 64).unwrap_or_default())
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+    }
+
+    fn build_upgrade_seeds(
+        &self,
+        instance_id: JobInstanceId,
+        upgrade: &DefinitionUpgradeExecution,
+    ) -> Result<BTreeMap<NodeId, MemoryUpgradeNodeSeed>, RepositoryError> {
+        let mut seeds = BTreeMap::new();
+        for (source_node, target_node) in upgrade.upgrade().node_mapping() {
+            let Some(prior) = self.latest_flow_step_snapshot(instance_id, source_node)? else {
+                continue;
+            };
+            if self
+                .staged
+                .scope_resolution_provenance
+                .values()
+                .any(|entry| entry.owner_step_execution_id() == Some(prior.execution().id()))
+            {
+                return Err(RepositoryError::DefinitionUpgradeFailed);
+            }
+            let context = match prior.context() {
+                Some(source) => match Self::upgrade_transform(
+                    upgrade,
+                    source_node,
+                    DefinitionStateKind::ExecutionContext,
+                    None,
+                )? {
+                    Some(transform) => Some(Self::transform_context(upgrade, transform, source)?),
+                    None => Some(source.clone()),
+                },
+                None => None,
+            };
+            let mut repeats = Vec::new();
+            for ((step_id, _), repeat) in &self.staged.repeat_executions {
+                if *step_id != prior.execution().id() {
+                    continue;
+                }
+                let state = match Self::upgrade_transform(
+                    upgrade,
+                    source_node,
+                    DefinitionStateKind::Repeat,
+                    Some(repeat.repeat_id().as_str()),
+                )? {
+                    Some(transform) => Self::transform_context(upgrade, transform, repeat.state())?,
+                    None => repeat.state().clone(),
+                };
+                repeats.push(RepeatExecution::new(
+                    repeat.job_instance_id(),
+                    target_node.clone(),
+                    target_node.clone(),
+                    repeat.step_execution_id(),
+                    repeat.repeat_id().clone(),
+                    repeat.lineage().clone(),
+                    repeat.ordinal(),
+                    state,
+                    repeat.decision(),
+                    *upgrade.upgrade().to().manifest_digest(),
+                ));
+            }
+            seeds.insert(
+                target_node.clone(),
+                MemoryUpgradeNodeSeed {
+                    counts: prior.execution().metadata().counts(),
+                    context,
+                    repeats,
+                },
+            );
+        }
+        Ok(seeds)
     }
 
     fn latest_job_execution(
@@ -1096,6 +1236,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .definition_override
                 .take()
                 .unwrap_or_else(DefinitionIdentity::legacy);
+            let selected_upgrade = self.upgrade_override.take();
             let job_name = self
                 .staged
                 .instances_by_id
@@ -1140,29 +1281,49 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     )?;
                 let definition_changed =
                     previous_definition.manifest_digest() != definition.manifest_digest();
-                if definition_changed
-                    && !self.staged.definition_upgrades.contains_key(&(
+                if definition_changed {
+                    let upgrade = selected_upgrade
+                        .as_ref()
+                        .ok_or(RepositoryError::IncompatibleDefinition {
+                            instance_id: job_instance_id,
+                        })?;
+                    let edge = upgrade.upgrade();
+                    let registered = self.staged.definition_upgrades.get(&(
                         job_name.clone(),
                         *previous_definition.manifest_digest(),
                         *definition.manifest_digest(),
-                    ))
-                {
-                    return Err(RepositoryError::IncompatibleDefinition {
-                        instance_id: job_instance_id,
-                    });
-                }
-                if definition_changed
-                    && self
+                    ));
+                    if edge.from() != previous_definition
+                        || edge.to() != &definition
+                        || registered != Some(edge)
+                    {
+                        return Err(RepositoryError::IncompatibleDefinition {
+                            instance_id: job_instance_id,
+                        });
+                    }
+                    if self
                         .staged
                         .scope_resolution_provenance
                         .values()
-                        .any(|entry| entry.owner_job_execution_id() == latest.id())
-                {
+                        .any(|entry| {
+                            entry.owner_job_execution_id() == latest.id()
+                                && entry.owner_step_execution_id().is_none()
+                        })
+                    {
+                        return Err(RepositoryError::DefinitionUpgradeFailed);
+                    }
+                } else if selected_upgrade.is_some() {
                     return Err(RepositoryError::IncompatibleDefinition {
                         instance_id: job_instance_id,
                     });
                 }
             }
+
+            let upgrade_seeds = if let Some(upgrade) = selected_upgrade.as_ref() {
+                self.build_upgrade_seeds(job_instance_id, upgrade)?
+            } else {
+                BTreeMap::new()
+            };
 
             let id = self.repository.ids.next_job_execution_id()?;
             if self.staged.job_executions.contains_key(&id) {
@@ -1192,10 +1353,20 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .next_execution_attempt_by_instance
                 .insert(job_instance_id, attempt.get());
             self.staged.execution_definitions.insert(id, definition);
+            if selected_upgrade.is_some() {
+                if let Some(source_id) = restart_source {
+                    self.staged.upgrade_sources.insert(id, source_id);
+                }
+                for (target_node, seed) in upgrade_seeds {
+                    self.staged.upgrade_seeds.insert((id, target_node), seed);
+                }
+            }
             if let Some(parameters) = restart_parameters {
                 self.staged.job_parameters.insert(id, parameters);
             }
-            if let Some(source_id) = restart_source {
+            if selected_upgrade.is_none()
+                && let Some(source_id) = restart_source
+            {
                 self.copy_forward_scope_resolution_provenance(source_id, None, id, None)?;
             }
             self.staged
@@ -1217,6 +1388,35 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move {
             self.definition_override = Some(definition.clone());
             self.create_job_execution(job_instance_id).await
+        })
+    }
+
+    fn create_job_execution_with_upgrade<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        upgrade: &'a DefinitionUpgradeExecution,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(upgrade.upgrade().to().clone());
+            self.upgrade_override = Some(upgrade.clone());
+            self.create_job_execution(job_instance_id).await
+        })
+    }
+
+    fn create_job_execution_with_upgrade_and_parameters<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        upgrade: &'a DefinitionUpgradeExecution,
+        parameters: &'a JobParameters,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(upgrade.upgrade().to().clone());
+            self.upgrade_override = Some(upgrade.clone());
+            let execution = self.create_job_execution(job_instance_id).await?;
+            self.staged
+                .job_parameters
+                .insert(execution.id(), parameters.clone());
+            Ok(execution)
         })
     }
 
@@ -1427,16 +1627,32 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     value: id.get(),
                 });
             }
-            let prior = self.latest_flow_step_snapshot(instance_id, node_id)?;
+            let upgrade_seed = self
+                .staged
+                .upgrade_seeds
+                .get(&(job_execution_id, node_id.clone()))
+                .cloned();
+            let upgraded = self.staged.upgrade_sources.contains_key(&job_execution_id);
+            let prior = if upgraded {
+                None
+            } else {
+                self.latest_flow_step_snapshot(instance_id, node_id)?
+            };
             let source_owner = prior
                 .as_ref()
                 .map(|state| (state.execution().job_execution_id(), state.execution().id()));
-            let counts = prior
+            let counts = upgrade_seed.as_ref().map_or_else(
+                || {
+                    prior.as_ref().map_or_else(ExecutionCounts::default, |state| {
+                        state.execution().metadata().counts()
+                    })
+                },
+                |seed| seed.counts,
+            );
+            let inherited_context = upgrade_seed
                 .as_ref()
-                .map_or_else(ExecutionCounts::default, |state| {
-                    state.execution().metadata().counts()
-                });
-            let inherited_context = prior.as_ref().and_then(|state| state.context().cloned());
+                .and_then(|seed| seed.context.clone())
+                .or_else(|| prior.as_ref().and_then(|state| state.context().cloned()));
             let created_at = self.repository.clock.now();
             let metadata = ExecutionMetadata::new(
                 BatchStatus::Starting,
@@ -1450,6 +1666,30 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             self.staged.step_logical_ids.insert(id, node_id.clone());
             if let Some(context) = inherited_context {
                 self.staged.step_contexts.insert(id, context);
+            }
+            if let Some(seed) = upgrade_seed {
+                for repeat in seed.repeats {
+                    let materialized = RepeatExecution::new(
+                        instance_id,
+                        node_id.clone(),
+                        node_id.clone(),
+                        id,
+                        repeat.repeat_id().clone(),
+                        repeat.lineage().clone(),
+                        repeat.ordinal(),
+                        repeat.state().clone(),
+                        repeat.decision(),
+                        *self
+                            .staged
+                            .execution_definitions
+                            .get(&job_execution_id)
+                            .ok_or(RepositoryError::RepeatStateCorrupt)?
+                            .manifest_digest(),
+                    );
+                    self.staged
+                        .repeat_executions
+                        .insert((id, materialized.repeat_id().clone()), materialized);
+                }
             }
             if let Some((source_job, source_step)) = source_owner {
                 self.copy_forward_scope_resolution_provenance(
