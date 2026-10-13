@@ -183,6 +183,21 @@ pub enum DefinitionStateKind {
     FaultState,
 }
 
+impl DefinitionStateKind {
+    /// Returns the stable durable encoding for this state family.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Checkpoint => "checkpoint",
+            Self::ExecutionContext => "execution-context",
+            Self::ComponentState => "component-state",
+            Self::ScopeResolution => "scope-resolution",
+            Self::Repeat => "repeat",
+            Self::FaultState => "fault-state",
+        }
+    }
+}
+
 /// One durable source-to-target node mapping for a compatible restart.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DefinitionNodeUpgrade {
