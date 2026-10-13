@@ -558,6 +558,13 @@ impl DefinitionUpgrade {
         if node_mapping.is_empty() {
             return Err(DefinitionError::EmptyStepMapping);
         }
+        let source_nodes = definition_upgrade_source_nodes(&from)?;
+        if node_mapping.keys().any(|node| !source_nodes.contains(node)) {
+            return Err(DefinitionError::UnknownUpgradeSourceNode);
+        }
+        if source_nodes.iter().any(|node| !node_mapping.contains_key(node)) {
+            return Err(DefinitionError::MissingUpgradeSourceNode);
+        }
 
         let transforms = transforms.into_iter().collect::<Vec<_>>();
         if transforms.len() > MAX_DEFINITION_UPGRADE_TRANSFORMS {
@@ -644,6 +651,68 @@ impl DefinitionUpgrade {
         self.revision.is_some()
     }
 }
+fn definition_upgrade_source_nodes(
+    definition: &DefinitionIdentity,
+) -> Result<BTreeSet<NodeId>, DefinitionError> {
+    let document: serde_json::Value = serde_json::from_slice(definition.canonical_manifest())
+        .map_err(|_| DefinitionError::ManifestEncoding)?;
+    let object = document
+        .as_object()
+        .ok_or(DefinitionError::ManifestEncoding)?;
+    if definition.manifest_format() == MANIFEST_FORMAT_ONE_STEP {
+        let step = object
+            .get("step")
+            .and_then(serde_json::Value::as_str)
+            .ok_or(DefinitionError::ManifestEncoding)?;
+        return Ok(BTreeSet::from([NodeId::new(step)?]));
+    }
+
+    let nodes = object
+        .get("nodes")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(DefinitionError::ManifestEncoding)?;
+    let mut result = BTreeSet::new();
+    collect_upgrade_node_ids(nodes, &mut result)?;
+    Ok(result)
+}
+
+fn collect_upgrade_node_ids(
+    nodes: &[serde_json::Value],
+    result: &mut BTreeSet<NodeId>,
+) -> Result<(), DefinitionError> {
+    for node in nodes {
+        let object = node
+            .as_object()
+            .ok_or(DefinitionError::ManifestEncoding)?;
+        if let Some(id) = object.get("id").and_then(serde_json::Value::as_str) {
+            result.insert(NodeId::new(id)?);
+        }
+        for key in ["members", "steps", "nodes"] {
+            if let Some(children) = object.get(key).and_then(serde_json::Value::as_array) {
+                collect_upgrade_node_ids(children, result)?;
+            }
+        }
+        if let Some(branches) = object
+            .get("branches")
+            .and_then(serde_json::Value::as_array)
+        {
+            for branch in branches {
+                let branch = branch
+                    .as_object()
+                    .ok_or(DefinitionError::ManifestEncoding)?;
+                for key in ["members", "steps", "nodes"] {
+                    if let Some(children) =
+                        branch.get(key).and_then(serde_json::Value::as_array)
+                    {
+                        collect_upgrade_node_ids(children, result)?;
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
 definition_token!(
     ComponentRevision,
     DefinitionTokenKind::Component,
@@ -1878,6 +1947,10 @@ pub enum DefinitionError {
     DuplicateStateTransform,
     /// A state transform named a source/target pair outside the node mapping.
     StateTransformOutsideNodeMapping,
+    /// A mapping named a source node absent from the source definition.
+    UnknownUpgradeSourceNode,
+    /// A durable source definition node had no explicit target mapping.
+    MissingUpgradeSourceNode,
     /// A legacy M2 identity-only edge cannot execute an M7 compatible restart.
     LegacyUpgradeExecution,
     /// Two live state transformer implementations reused one revision.
@@ -1996,6 +2069,12 @@ impl fmt::Display for DefinitionError {
             }
             Self::StateTransformOutsideNodeMapping => {
                 formatter.write_str("definition state transform is outside the node mapping")
+            }
+            Self::UnknownUpgradeSourceNode => {
+                formatter.write_str("definition upgrade maps an unknown source node")
+            }
+            Self::MissingUpgradeSourceNode => {
+                formatter.write_str("definition upgrade omits a durable source node")
             }
             Self::LegacyUpgradeExecution => {
                 formatter.write_str("legacy definition upgrade has no transformed execution contract")
