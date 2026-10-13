@@ -1812,7 +1812,11 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .bind(to_id)
             .bind(upgrade.key().as_str())
             .bind(Json(Value::Object(mapping.clone())))
-            .bind(upgrade.revision().map(crate::DefinitionUpgradeRevision::as_str))
+            .bind(
+                upgrade
+                    .revision()
+                    .map(crate::DefinitionUpgradeRevision::as_str),
+            )
             .bind(node_mapping_json.as_deref())
             .bind(state_transforms_json.as_deref())
             .bind(registered_ms)
@@ -1831,7 +1835,11 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .bind(to_id)
             .bind(upgrade.key().as_str())
             .bind(Json(Value::Object(mapping)))
-            .bind(upgrade.revision().map(crate::DefinitionUpgradeRevision::as_str))
+            .bind(
+                upgrade
+                    .revision()
+                    .map(crate::DefinitionUpgradeRevision::as_str),
+            )
             .bind(node_mapping_json.as_deref())
             .bind(state_transforms_json.as_deref())
             .fetch_one(&mut **self.transaction()?)
