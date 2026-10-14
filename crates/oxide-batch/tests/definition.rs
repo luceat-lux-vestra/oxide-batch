@@ -315,6 +315,108 @@ fn transformed_upgrade_is_injective_and_schema_explicit() -> Result<(), Box<dyn 
     Ok(())
 }
 
+fn custom_leaf_identity(
+    job: &JobName,
+    revision: &str,
+    schema_version: u32,
+) -> Result<DefinitionIdentity, Box<dyn Error>> {
+    let manifest = serde_json::json!({
+        "entry": "custom",
+        "format": 4,
+        "job": job.as_str(),
+        "nodes": [{
+            "handler_revision": revision,
+            "id": "custom",
+            "kind": "custom_leaf",
+            "leaf_kind": "example.handler",
+            "listeners": [],
+            "policy": null,
+            "start": {
+                "allow_start_if_complete": false,
+                "start_limit": u32::MAX,
+            },
+            "state_schema": {
+                "id": "example.state",
+                "version": schema_version,
+            },
+            "step_name": "custom-step",
+        }],
+        "transitions": [],
+    });
+    let bytes = serde_json::to_vec(&manifest)?;
+    Ok(DefinitionIdentity::from_flow_manifest(
+        job,
+        DefinitionRevision::new(revision)?,
+        &bytes,
+    )?)
+}
+
+#[test]
+fn transformed_upgrade_requires_changed_manifest_state_schema_transform()
+-> Result<(), Box<dyn Error>> {
+    let job = JobName::new("state-schema-upgrade")?;
+    let from = custom_leaf_identity(&job, "v1", 1)?;
+    let to = custom_leaf_identity(&job, "v2", 2)?;
+    let node = NodeId::new("custom")?;
+
+    assert_eq!(
+        DefinitionUpgrade::transformed(
+            DefinitionUpgradeKey::new("v1-to-v2")?,
+            DefinitionUpgradeRevision::new("edge-v1")?,
+            from.clone(),
+            to.clone(),
+            [DefinitionNodeUpgrade::new(node.clone(), node.clone())],
+            [],
+        ),
+        Err(DefinitionError::MissingRequiredStateTransform)
+    );
+
+    let wrong = DefinitionStateTransform::new(
+        node.clone(),
+        node.clone(),
+        DefinitionStateKind::ExecutionContext,
+        DefinitionStateTransformId::new("custom-state")?,
+        StateSchemaId::new("example.state")?,
+        StateSchemaVersion::new(1)?,
+        StateSchemaId::new("example.state")?,
+        StateSchemaVersion::new(3)?,
+        DefinitionUpgradeRevision::new("state-v1-to-v2")?,
+    );
+    assert_eq!(
+        DefinitionUpgrade::transformed(
+            DefinitionUpgradeKey::new("v1-to-v2-wrong")?,
+            DefinitionUpgradeRevision::new("edge-v1")?,
+            from.clone(),
+            to.clone(),
+            [DefinitionNodeUpgrade::new(node.clone(), node.clone())],
+            [wrong],
+        ),
+        Err(DefinitionError::StateTransformSchemaMismatch)
+    );
+
+    let exact = DefinitionStateTransform::new(
+        node.clone(),
+        node.clone(),
+        DefinitionStateKind::ExecutionContext,
+        DefinitionStateTransformId::new("custom-state")?,
+        StateSchemaId::new("example.state")?,
+        StateSchemaVersion::new(1)?,
+        StateSchemaId::new("example.state")?,
+        StateSchemaVersion::new(2)?,
+        DefinitionUpgradeRevision::new("state-v1-to-v2")?,
+    );
+    let edge = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2-exact")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from,
+        to,
+        [DefinitionNodeUpgrade::new(node.clone(), node)],
+        [exact],
+    )?;
+    assert_eq!(edge.transforms().len(), 1);
+    Ok(())
+}
+
 fn identity_upgrade_payload(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
     Ok(payload.to_vec())
 }
