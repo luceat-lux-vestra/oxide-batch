@@ -567,6 +567,40 @@ jobs:
                           == normalize_blob_sets(base_document, True)
                       )
 
+                  def post_cutover_cleanup_transition(base_document, head_document):
+                      if (
+                          base_document.get("schema_version") != 8
+                          or head_document.get("schema_version") != 8
+                          or base_document.get("pr_proof") != head_document.get("pr_proof")
+                      ):
+                          return False
+                      base_topology = base_document.get("pr_topology")
+                      head_topology = head_document.get("pr_topology")
+                      if not isinstance(base_topology, dict) or not isinstance(head_topology, dict):
+                          return False
+                      if base_topology.get("migration_marker") != ".github/ci-topology-v7-migration":
+                          return False
+                      reusable = base_topology.get("reusable_authorities")
+                      if (
+                          not isinstance(reusable, list)
+                          or reusable.count(".github/workflows/campaign-orchestrator.yml") != 1
+                      ):
+                          return False
+                      expected_topology = json.loads(json.dumps(base_topology))
+                      expected_topology.pop("migration_marker", None)
+                      expected_topology["reusable_authorities"] = [
+                          workflow for workflow in reusable
+                          if workflow != ".github/workflows/campaign-orchestrator.yml"
+                      ]
+                      if head_topology != expected_topology:
+                          return False
+                      normalized = json.loads(json.dumps(head_document))
+                      normalized["pr_topology"] = json.loads(json.dumps(base_topology))
+                      return (
+                          normalize_blob_sets(normalized, True)
+                          == normalize_blob_sets(base_document, True)
+                      )
+
                   def canonical_pr_proof_bootstrap(base_document, head_document):
                       if "pr_proof" in base_document:
                           return False
@@ -656,11 +690,15 @@ jobs:
                           and not scheduled_only_codeql_transition(
                               policy, head_policy, codeql_head_blob
                           )
+                          and not post_cutover_cleanup_transition(
+                              policy, head_policy
+                          )
                       ):
                           raise GateError(
                               "PR-head merge-gate policy changes schema-v8 trust "
-                              "semantics outside staged blob admission or the exact "
-                              "scheduled-only CodeQL transition"
+                              "semantics outside staged blob admission, the exact "
+                              "scheduled-only CodeQL transition, or the bounded "
+                              "post-cutover cleanup transition"
                           )
                       base_files = blob_inventory(
                           policy,
