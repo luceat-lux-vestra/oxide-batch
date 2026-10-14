@@ -66,7 +66,12 @@ def ruleset(active=True, tag=False):
             },
             {
                 "type": "required_status_checks",
-                "parameters": {"strict_required_status_checks_policy": True},
+                "parameters": {
+                    "strict_required_status_checks_policy": True,
+                    "required_status_checks": [
+                        {"context": "Direct Merge Gate", "integration_id": 15368}
+                    ],
+                },
             },
         ],
         "bypass_actors": [],
@@ -124,17 +129,34 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual("cargo-tooling", infra[0]["control"])
         self.assertEqual("infrastructure-failure", RUNNER.classify(findings, infra))
 
-    def test_merge_gate_failure_is_policy_drift(self):
-        policy = {"main_ruleset_id": 19905142}
-        client = FakeReadClient({"/rulesets/19905142": ruleset()})
-
-        def fake_run(argv):
-            self.assertIn("verify-merge-gates.rb", argv[1])
-            return Completed(1, "required context mismatch")
-
-        findings, infra = RUNNER.run_merge_gate_check(client, policy, fake_run)
+    def test_required_status_context_drift_is_detected(self):
+        policy = {
+            "main_ruleset_id": 19905142,
+            "release_tag_ruleset_id": 19905157,
+            "controls": [
+                {
+                    "id": "main-ruleset.required_status_contexts",
+                    "classification": "required",
+                    "readback": "main-ruleset-api",
+                    "expected": ["Direct Merge Gate"],
+                }
+            ],
+        }
+        drifted = ruleset()
+        status = next(
+            rule for rule in drifted["rules"]
+            if rule["type"] == "required_status_checks"
+        )
+        status["parameters"]["required_status_checks"] = [
+            {"context": "merge-gate", "integration_id": 15368}
+        ]
+        client = FakeReadClient({"/rulesets/19905142": drifted})
+        findings, infra = RUNNER.run_live_policy_checks(client, policy)
         self.assertEqual([], infra)
-        self.assertEqual("merge-gate", findings[0]["control"])
+        self.assertEqual(
+            "main-ruleset.required_status_contexts",
+            findings[0]["control"],
+        )
 
     def test_live_repository_setting_drift_is_detected(self):
         policy = {
