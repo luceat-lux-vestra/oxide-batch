@@ -74,7 +74,7 @@ fn contract_upgrade_definition(
     node: &NodeId,
     step_name: &StepName,
     schema_version: u32,
-) -> Result<DefinitionIdentity, DomainError> {
+) -> Result<DefinitionIdentity, Box<dyn Error>> {
     let manifest = serde_json::json!({
         "entry": node.as_str(),
         "format": 4,
@@ -98,32 +98,29 @@ fn contract_upgrade_definition(
         }],
         "transitions": [],
     });
-    let bytes = serde_json::to_vec(&manifest).map_err(|_| DomainError::InvalidToken {
-        kind: oxide_batch::DefinitionTokenKind::Revision,
-    })?;
-    DefinitionIdentity::from_flow_manifest(
+    let bytes = serde_json::to_vec(&manifest)?;
+    Ok(DefinitionIdentity::from_flow_manifest(
         job_name,
         DefinitionRevision::new(revision)?,
         &bytes,
-    )
-    .map_err(|_| DomainError::InvalidToken {
-        kind: oxide_batch::DefinitionTokenKind::Revision,
-    })
+    )?)
 }
 
 fn contract_upgrade_context(
     value: u64,
     version: u32,
-) -> Result<ExecutionContext, oxide_batch::StateError> {
+) -> Result<ExecutionContext, Box<dyn Error>> {
     let bytes = serde_json::to_vec(&serde_json::json!({
         "format": "oxide-batch.execution-context",
         "format_version": 1,
         "schema": "contract.context",
         "schema_version": version,
         "payload": { "value": value },
-    }))
-    .map_err(|_| oxide_batch::StateError::Malformed)?;
-    ExecutionContext::from_json(&bytes, StateLimits::default())
+    }))?;
+    Ok(ExecutionContext::from_json(
+        &bytes,
+        StateLimits::default(),
+    )?)
 }
 
 fn compatible_upgrade_transforms_context_before_target_step<R, F>(
