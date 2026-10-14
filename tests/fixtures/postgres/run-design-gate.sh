@@ -368,7 +368,7 @@ if [[ ${newer_schema_status} -eq 0 ]]; then
   echo "newer metadata schema was not rejected" >&2
   exit 1
 fi
-if [[ "${newer_schema_output}" != *"newer than supported version 10"* ]]; then
+if [[ "${newer_schema_output}" != *"newer than supported version 11"* ]]; then
   echo "${newer_schema_output}" >&2
   echo "newer-schema rejection returned an unexpected diagnostic" >&2
   exit 1
