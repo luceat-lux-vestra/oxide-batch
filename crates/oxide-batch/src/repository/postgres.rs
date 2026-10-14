@@ -33,10 +33,10 @@ use crate::{
     FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
     FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
     FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
-    FlowTarget, FlowTransitionKind, ForkLineage, IdentifierKind, InheritedStepProgress, JobExecution,
-    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
-    JobInstanceProjection, JobInstanceSelection, JobName, JobParameter, JobParameters,
-    JobRepository, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
+    FlowTarget, FlowTransitionKind, ForkLineage, IdentifierKind, InheritedStepProgress,
+    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
+    JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName, JobParameter,
+    JobParameters, JobRepository, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
     MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation, NodeId,
     OperationId, OperatorAction, OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft,
     OperatorRejection, OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole,
@@ -2610,18 +2610,26 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .fetch_optional(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            let Some(row) = row else { return Ok(None); };
+            let Some(row) = row else {
+                return Ok(None);
+            };
             let target = decode_definition_registration(&row)
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?;
-            let source_definition_digest = row.try_get::<Vec<u8>, _>("source_definition_digest")
+            let source_definition_digest = row
+                .try_get::<Vec<u8>, _>("source_definition_digest")
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?
-                .try_into().map_err(|_| RepositoryError::ForkStateCorrupt)?;
-            let source_state_digest = row.try_get::<Vec<u8>, _>("source_state_digest")
+                .try_into()
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let source_state_digest = row
+                .try_get::<Vec<u8>, _>("source_state_digest")
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?
-                .try_into().map_err(|_| RepositoryError::ForkStateCorrupt)?;
-            let target_parameters_digest = row.try_get::<Vec<u8>, _>("target_parameters_digest")
+                .try_into()
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let target_parameters_digest = row
+                .try_get::<Vec<u8>, _>("target_parameters_digest")
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?
-                .try_into().map_err(|_| RepositoryError::ForkStateCorrupt)?;
+                .try_into()
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
             let lineage = ForkLineage::from_durable(
                 OperationId::new(read_text(&row, "operation_id")?)
                     .map_err(|_| RepositoryError::ForkStateCorrupt)?,
@@ -2647,15 +2655,26 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                    AND source_definition.manifest_digest = $4 \
                    AND target_definition.manifest_digest = $5)",
             )
-            .bind(database_id(lineage.source_execution_id().get(), IdentifierKind::JobExecution)?)
-            .bind(database_id(lineage.target_execution_id().get(), IdentifierKind::JobExecution)?)
-            .bind(database_id(lineage.target_instance_id().get(), IdentifierKind::JobInstance)?)
+            .bind(database_id(
+                lineage.source_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .bind(database_id(
+                lineage.target_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .bind(database_id(
+                lineage.target_instance_id().get(),
+                IdentifierKind::JobInstance,
+            )?)
             .bind(&lineage.source_definition_digest()[..])
             .bind(&lineage.target().definition().manifest_digest()[..])
             .fetch_one(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            if !consistent { return Err(RepositoryError::ForkStateCorrupt); }
+            if !consistent {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
             Ok(Some(lineage))
         })
     }
@@ -2665,14 +2684,18 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         source_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
         Box::pin(async move {
-            let exists = sqlx::query(
-                "SELECT id FROM oxide_batch.ob_job_execution WHERE id = $1 FOR UPDATE",
-            )
-            .bind(database_id(source_execution_id.get(), IdentifierKind::JobExecution)?)
-            .fetch_optional(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            if exists.is_none() { return Ok(None); }
+            let exists =
+                sqlx::query("SELECT id FROM oxide_batch.ob_job_execution WHERE id = $1 FOR UPDATE")
+                    .bind(database_id(
+                        source_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .fetch_optional(&mut **self.transaction()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+            if exists.is_none() {
+                return Ok(None);
+            }
             self.job_execution(source_execution_id).await
         })
     }
@@ -2682,12 +2705,18 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         lineage: &'a ForkLineage,
     ) -> BoxFuture<'a, Result<(), RepositoryError>> {
         Box::pin(async move {
-            let target_execution_id =
-                database_id(lineage.target_execution_id().get(), IdentifierKind::JobExecution)?;
-            let target_instance_id =
-                database_id(lineage.target_instance_id().get(), IdentifierKind::JobInstance)?;
-            let source_execution_id =
-                database_id(lineage.source_execution_id().get(), IdentifierKind::JobExecution)?;
+            let target_execution_id = database_id(
+                lineage.target_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?;
+            let target_instance_id = database_id(
+                lineage.target_instance_id().get(),
+                IdentifierKind::JobInstance,
+            )?;
+            let source_execution_id = database_id(
+                lineage.source_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?;
             let state = sqlx::query(
                 "SELECT job_instance_id, definition_id, attempt, restart_of_execution_id, \
                  upgrade_from_definition_id FROM oxide_batch.ob_job_execution \
@@ -2698,25 +2727,36 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .await
             .map_err(|_| RepositoryError::Unavailable)?
             .ok_or(RepositoryError::ForkStateCorrupt)?;
-            let attempt = state.try_get::<i32, _>("attempt")
+            let attempt = state
+                .try_get::<i32, _>("attempt")
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?;
             if attempt != 1
-                || state.try_get::<i64, _>("job_instance_id")
-                    .map_err(|_| RepositoryError::ForkStateCorrupt)? != target_instance_id
-                || state.try_get::<Option<i64>, _>("restart_of_execution_id")
-                    .map_err(|_| RepositoryError::ForkStateCorrupt)?.is_some()
-                || state.try_get::<Option<i64>, _>("upgrade_from_definition_id")
-                    .map_err(|_| RepositoryError::ForkStateCorrupt)?.is_some()
+                || state
+                    .try_get::<i64, _>("job_instance_id")
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                    != target_instance_id
+                || state
+                    .try_get::<Option<i64>, _>("restart_of_execution_id")
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                    .is_some()
+                || state
+                    .try_get::<Option<i64>, _>("upgrade_from_definition_id")
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                    .is_some()
             {
                 return Err(RepositoryError::ForkStateCorrupt);
             }
             let target_parameters = load_execution_parameters(
-                &mut **self.transaction()?, lineage.target_execution_id(),
-            ).await.map_err(|_| RepositoryError::ForkStateCorrupt)?;
+                &mut **self.transaction()?,
+                lineage.target_execution_id(),
+            )
+            .await
+            .map_err(|_| RepositoryError::ForkStateCorrupt)?;
             if &target_parameters.flow_input_digest() != lineage.target_parameters_digest() {
                 return Err(RepositoryError::ForkStateCorrupt);
             }
-            let definition_id: i64 = state.try_get("definition_id")
+            let definition_id: i64 = state
+                .try_get("definition_id")
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?;
             let target = sqlx::query(
                 "SELECT job_name, definition_revision, manifest_format, manifest_digest, \
@@ -2754,7 +2794,10 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             )
             .bind(lineage.operation_id().as_str())
             .bind(source_execution_id)
-            .bind(database_id(lineage.source_version().get(), IdentifierKind::JobExecution)?)
+            .bind(database_id(
+                lineage.source_version().get(),
+                IdentifierKind::JobExecution,
+            )?)
             .bind(&lineage.source_definition_digest()[..])
             .bind(&lineage.source_state_digest()[..])
             .bind(definition_id)

@@ -16,16 +16,16 @@ use crate::{
     DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionAttempt,
     ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
     ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowStepState, FlowTransitionKind, ForkLineage, IdentifierKind, JobExecution,
-    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
-    JobInstanceProjection, JobName, JobParameters, LifecycleError, LifecycleTransition,
-    MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation, NodeId,
-    OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft, OperatorRequestId,
-    OwnerObservation, OwnerToken, ParameterDescriptor, ParameterName, PartitionPlanEntry,
-    PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
-    QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
-    RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId,
-    RepeatLineage, RepeatOrdinal, RetentionAction, RetentionActionId, RetentionHold,
+    FlowDecisionRequest, FlowStepState, FlowTransitionKind, ForkLineage, IdentifierKind,
+    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
+    JobInstanceKey, JobInstanceProjection, JobName, JobParameters, LifecycleError,
+    LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
+    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorRecord,
+    OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
+    ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan,
+    PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository,
+    RecoverySnapshot, RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution,
+    RepeatId, RepeatLineage, RepeatOrdinal, RetentionAction, RetentionActionId, RetentionHold,
     RetentionRecord, RetentionRecordDraft, ScopeKind, ScopedComponentId, StartLimit,
     StateEnvelopeDescriptor, StateLimits, StepExecution, StepExecutionId, StepExecutionProjection,
     StepName, StepPartition, StepPartitionId, StepPartitionProjection,
@@ -1401,7 +1401,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
     ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
         // The memory UoW stages a whole-state snapshot and uses commit CAS.
         Box::pin(async move {
-            Ok(self.staged.job_executions.get(&source_execution_id).cloned())
+            Ok(self
+                .staged
+                .job_executions
+                .get(&source_execution_id)
+                .cloned())
         })
     }
 
@@ -1410,7 +1414,10 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         lineage: &'a ForkLineage,
     ) -> BoxFuture<'a, Result<(), RepositoryError>> {
         Box::pin(async move {
-            if self.staged.fork_lineages.contains_key(lineage.operation_id())
+            if self
+                .staged
+                .fork_lineages
+                .contains_key(lineage.operation_id())
                 || self.staged.fork_lineages.values().any(|existing| {
                     existing.target_instance_id() == lineage.target_instance_id()
                         || existing.target_execution_id() == lineage.target_execution_id()
@@ -1418,26 +1425,46 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             {
                 return Err(RepositoryError::ForkOperationConflict);
             }
-            let target = self.staged.job_executions.get(&lineage.target_execution_id())
+            let target = self
+                .staged
+                .job_executions
+                .get(&lineage.target_execution_id())
                 .ok_or(RepositoryError::ForkStateCorrupt)?;
             if target.job_instance_id() != lineage.target_instance_id()
-                || self.staged.job_executions_by_instance
+                || self
+                    .staged
+                    .job_executions_by_instance
                     .get(&lineage.target_instance_id())
                     .is_none_or(|ids| ids.as_slice() != [lineage.target_execution_id()])
-                || !self.staged.job_executions.contains_key(&lineage.source_execution_id())
-                || self.staged.execution_definitions
+                || !self
+                    .staged
+                    .job_executions
+                    .contains_key(&lineage.source_execution_id())
+                || self
+                    .staged
+                    .execution_definitions
                     .get(&lineage.source_execution_id())
-                    .is_none_or(|identity| identity.manifest_digest() != lineage.source_definition_digest())
-                || self.staged.execution_definitions
+                    .is_none_or(|identity| {
+                        identity.manifest_digest() != lineage.source_definition_digest()
+                    })
+                || self
+                    .staged
+                    .execution_definitions
                     .get(&lineage.target_execution_id())
                     != Some(lineage.target().definition())
-                || self.staged.job_parameters
+                || self
+                    .staged
+                    .job_parameters
                     .get(&lineage.target_execution_id())
-                    .is_none_or(|params| params.flow_input_digest() != *lineage.target_parameters_digest())
+                    .is_none_or(|params| {
+                        params.flow_input_digest() != *lineage.target_parameters_digest()
+                    })
             {
                 return Err(RepositoryError::ForkStateCorrupt);
             }
-            self.staged.fork_lineages.insert(lineage.operation_id().clone(), lineage.clone());
+            self.staged
+                .fork_lineages
+                .insert(lineage.operation_id().clone(), lineage.clone());
             Ok(())
         })
     }

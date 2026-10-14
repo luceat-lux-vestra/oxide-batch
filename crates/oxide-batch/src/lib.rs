@@ -535,10 +535,9 @@ pub use oxide_batch_repository::{
     ActorRef, AuthorizationClass, BoxFuture, Clock, Cursor, CursorError, CursorKey,
     DEFAULT_MAX_CLOCK_SKEW, DEFAULT_PAGE_SIZE, DEFAULT_PURGE_AGE, DEFAULT_STALE_THRESHOLD,
     DefinitionDescriptor, DefinitionRegistration, DefinitionRegistrationError, ExecutionControl,
-    ForkLineage, ForkRequest,
     ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTransitionKind,
-    IdGenerationError, IdGenerator, JobExecutionProjection, JobInstanceProjection,
+    FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTransitionKind, ForkLineage,
+    ForkRequest, IdGenerationError, IdGenerator, JobExecutionProjection, JobInstanceProjection,
     JobInstanceSelection, JobRepository, MAX_ACTOR_REF_BYTES, MAX_CLOCK_SKEW, MAX_CURSOR_BYTES,
     MAX_OPERATION_ID_BYTES, MAX_PAGE_SIZE, MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITION_KEY_BYTES,
     MAX_PURGE_BATCH, MAX_REASON_CODE_BYTES, MAX_RESPONSE_BYTES, MAX_STALE_THRESHOLD,
@@ -585,8 +584,8 @@ pub use scope_live::{
 };
 pub use scope_runtime::ScopeResolutionFailure;
 pub use service::{
-    DefinitionRegistry, JobExplorer, JobFork, JobOperator, OperatorError, OperatorOutcome, RecoveryProposer,
-    RetentionReport, RetentionService,
+    DefinitionRegistry, JobExplorer, JobFork, JobOperator, OperatorError, OperatorOutcome,
+    RecoveryProposer, RetentionReport, RetentionService,
 };
 pub use shutdown::{
     DEFAULT_SHUTDOWN_DEADLINE, DEFAULT_TELEMETRY_FLUSH_DEADLINE, DrainResult,

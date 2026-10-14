@@ -2,29 +2,36 @@
 //!
 //! Transformed fork is deliberately not inferred from compatible restart.
 
-use sha2::{Digest, Sha256};
 use crate::{
-    ForkLineage, ForkRequest, JobInstanceSelection,
-    JobRepository, RepositoryCapability, RepositoryError,
+    ForkLineage, ForkRequest, JobInstanceSelection, JobRepository, RepositoryCapability,
+    RepositoryError,
 };
+use sha2::{Digest, Sha256};
 
 /// Starts an explicit new instance and publishes its immutable lineage.
 #[derive(Clone, Debug)]
-pub struct JobFork<R> { repository: R }
+pub struct JobFork<R> {
+    repository: R,
+}
 
 impl<R: JobRepository> JobFork<R> {
     /// Binds a repository implementing atomic fork primitives.
     #[must_use]
-    pub const fn new(repository: R) -> Self { Self { repository } }
+    pub const fn new(repository: R) -> Self {
+        Self { repository }
+    }
 
     /// Looks up one exact idempotency key without mutating source or target.
     ///
     /// # Errors
     /// Rejects missing capability, corrupt lineage or repository errors.
     pub async fn lineage(
-        &self, operation_id: &crate::OperationId,
+        &self,
+        operation_id: &crate::OperationId,
     ) -> Result<Option<ForkLineage>, RepositoryError> {
-        self.repository.descriptor().require(RepositoryCapability::DefinitionRegistry)?;
+        self.repository
+            .descriptor()
+            .require(RepositoryCapability::DefinitionRegistry)?;
         let mut unit = self.repository.begin().await?;
         let found = unit.fork_lineage(operation_id).await?;
         unit.rollback().await?;
@@ -37,8 +44,12 @@ impl<R: JobRepository> JobFork<R> {
     /// Rejects stale/nonterminal sources, missing registrations, target key
     /// collisions, divergent replays, and incomplete transaction commits.
     pub async fn fork(&self, request: &ForkRequest) -> Result<ForkLineage, RepositoryError> {
-        self.repository.descriptor().require(RepositoryCapability::DefinitionRegistry)?;
-        self.repository.descriptor().require(RepositoryCapability::ScopeResolution)?;
+        self.repository
+            .descriptor()
+            .require(RepositoryCapability::DefinitionRegistry)?;
+        self.repository
+            .descriptor()
+            .require(RepositoryCapability::ScopeResolution)?;
         let mut unit = self.repository.begin().await?;
 
         if let Some(existing) = unit.fork_lineage(request.operation_id()).await? {
@@ -50,7 +61,9 @@ impl<R: JobRepository> JobFork<R> {
             };
         }
 
-        let source = unit.lock_fork_source(request.source_execution_id()).await?
+        let source = unit
+            .lock_fork_source(request.source_execution_id())
+            .await?
             .ok_or(RepositoryError::ForkSourceStale)?;
         if source.version() != request.source_version() {
             return Err(RepositoryError::ForkSourceStale);
@@ -62,11 +75,16 @@ impl<R: JobRepository> JobFork<R> {
         if attempts.last().map(crate::JobExecution::id) != Some(source.id()) {
             return Err(RepositoryError::ForkSourceStale);
         }
-        let source_definition = unit.scope_execution_definition(source.id()).await
+        let source_definition = unit
+            .scope_execution_definition(source.id())
+            .await
             .map_err(|_| RepositoryError::ForkStateCorrupt)?;
-        let source_name = source_definition.job_name()
+        let source_name = source_definition
+            .job_name()
             .ok_or(RepositoryError::ForkStateCorrupt)?;
-        let registered_source = unit.definition(source_name, source_definition.revision()).await?
+        let registered_source = unit
+            .definition(source_name, source_definition.revision())
+            .await?
             .ok_or_else(|| RepositoryError::DefinitionNotRegistered {
                 job_name: source_name.clone(),
                 revision: source_definition.revision().clone(),
@@ -76,19 +94,23 @@ impl<R: JobRepository> JobFork<R> {
         }
 
         let target = request.target();
-        let registered_target = unit.definition(target.job_name(), target.revision()).await?
+        let registered_target = unit
+            .definition(target.job_name(), target.revision())
+            .await?
             .ok_or_else(|| RepositoryError::DefinitionNotRegistered {
                 job_name: target.job_name().clone(),
                 revision: target.revision().clone(),
             })?;
         if registered_target.definition() != target.definition() {
             return Err(RepositoryError::DefinitionDrift {
-                job_name: target.job_name().clone(), revision: target.revision().clone(),
+                job_name: target.job_name().clone(),
+                revision: target.revision().clone(),
             });
         }
         if registered_target.artifact() != target.artifact() {
             return Err(RepositoryError::DefinitionArtifactDrift {
-                job_name: target.job_name().clone(), revision: target.revision().clone(),
+                job_name: target.job_name().clone(),
+                revision: target.revision().clone(),
             });
         }
 
@@ -122,16 +144,26 @@ impl<R: JobRepository> JobFork<R> {
             }
             _ => return Err(RepositoryError::ForkStateCorrupt),
         };
-        let execution = unit.create_job_execution_with_definition_and_parameters(
-            instance.id(), target.definition(), request.parameters(),
-        ).await?;
+        let execution = unit
+            .create_job_execution_with_definition_and_parameters(
+                instance.id(),
+                target.definition(),
+                request.parameters(),
+            )
+            .await?;
         let lineage = ForkLineage::new(
-            request, &source_definition, source_state_digest, instance.id(), execution.id(),
+            request,
+            &source_definition,
+            source_state_digest,
+            instance.id(),
+            execution.id(),
         );
         unit.append_fork_lineage(&lineage).await?;
         match unit.commit().await {
             Ok(()) => Ok(lineage),
-            Err(RepositoryError::CommitOutcomeUnknown | RepositoryError::ConcurrentModification) => {
+            Err(
+                RepositoryError::CommitOutcomeUnknown | RepositoryError::ConcurrentModification,
+            ) => {
                 // A new transaction, never a blind retry of instance creation.
                 match self.lineage(request.operation_id()).await? {
                     Some(stored) if stored.matches_request(request) => Ok(stored),
