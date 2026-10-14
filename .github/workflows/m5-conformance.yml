@@ -64,7 +64,7 @@ jobs:
           classification="$(
             python3 .trusted-base/.github/scripts/pr-scope.py \
               --repo-root .trusted-base \
-              --policy .github/merge-gate-policy.json \
+              --policy .github/pr-scope-policy.json \
               --expected-count "$expected_count" \
               --trusted-base-sha "$BASE_SHA" \
               <"$changed_file_records"
