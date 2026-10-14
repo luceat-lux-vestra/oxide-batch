@@ -569,7 +569,13 @@ observed = MODULE.check_issue_labeler_contract_text(missing_default_branch_ref)
 assert any("issue reconciliation safety contract missing" in item for item in observed), observed
 
 
-# Current CodeQL security contract remains schedule/manual only. Historical M6\n# caller-provenance/orphan-cancellation fixtures were retired with the old PR\n# authority control plane.\nACTIVE_CODEQL = ROOT / ".github/workflows/codeql.yml"\nactivated_codeql = ACTIVE_CODEQL.read_text(encoding="utf-8")\n\n# Exercise the ACTUAL scheduled/manual CodeQL contract and prove the old
+# Current CodeQL security contract remains schedule/manual only. Historical M6
+# caller-provenance/orphan-cancellation fixtures were retired with the old PR
+# authority control plane.
+ACTIVE_CODEQL = ROOT / ".github/workflows/codeql.yml"
+activated_codeql = ACTIVE_CODEQL.read_text(encoding="utf-8")
+
+# Exercise the ACTUAL scheduled/manual CodeQL contract and prove the old
 # PR-derived execution surface cannot be reintroduced silently.
 assert MODULE.check_codeql_weekly_manual_contract_text(activated_codeql) == []
 
