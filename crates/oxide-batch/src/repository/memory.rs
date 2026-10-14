@@ -16,7 +16,7 @@ use crate::{
     DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionAttempt,
     ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
     ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind, JobExecution,
+    FlowDecisionRequest, FlowStepState, FlowTransitionKind, ForkLineage, IdentifierKind, JobExecution,
     JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
     JobInstanceProjection, JobName, JobParameters, LifecycleError, LifecycleTransition,
     MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation, NodeId,
@@ -183,6 +183,7 @@ struct MemoryState {
     definition_registry: BTreeMap<(JobName, DefinitionRevision), DefinitionRegistration>,
     execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
     definition_upgrades: BTreeMap<(JobName, [u8; 32], [u8; 32]), DefinitionUpgrade>,
+    fork_lineages: BTreeMap<OperationId, ForkLineage>,
     upgrade_sources: BTreeMap<JobExecutionId, JobExecutionId>,
     upgrade_seeds: BTreeMap<(JobExecutionId, NodeId), MemoryUpgradeNodeSeed>,
     job_name_order: BTreeMap<JobName, u64>,
@@ -1387,6 +1388,60 @@ impl InMemoryUnitOfWork<'_> {
 }
 
 impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
+    fn fork_lineage<'a>(
+        &'a mut self,
+        operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<ForkLineage>, RepositoryError>> {
+        Box::pin(async move { Ok(self.staged.fork_lineages.get(operation_id).cloned()) })
+    }
+
+    fn lock_fork_source(
+        &mut self,
+        source_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
+        // The memory UoW stages a whole-state snapshot and uses commit CAS.
+        Box::pin(async move {
+            Ok(self.staged.job_executions.get(&source_execution_id).cloned())
+        })
+    }
+
+    fn append_fork_lineage<'a>(
+        &'a mut self,
+        lineage: &'a ForkLineage,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async move {
+            if self.staged.fork_lineages.contains_key(lineage.operation_id())
+                || self.staged.fork_lineages.values().any(|existing| {
+                    existing.target_instance_id() == lineage.target_instance_id()
+                        || existing.target_execution_id() == lineage.target_execution_id()
+                })
+            {
+                return Err(RepositoryError::ForkOperationConflict);
+            }
+            let target = self.staged.job_executions.get(&lineage.target_execution_id())
+                .ok_or(RepositoryError::ForkStateCorrupt)?;
+            if target.job_instance_id() != lineage.target_instance_id()
+                || self.staged.job_executions_by_instance
+                    .get(&lineage.target_instance_id())
+                    .is_none_or(|ids| ids.as_slice() != [lineage.target_execution_id()])
+                || !self.staged.job_executions.contains_key(&lineage.source_execution_id())
+                || self.staged.execution_definitions
+                    .get(&lineage.source_execution_id())
+                    .is_none_or(|identity| identity.manifest_digest() != lineage.source_definition_digest())
+                || self.staged.execution_definitions
+                    .get(&lineage.target_execution_id())
+                    != Some(lineage.target().definition())
+                || self.staged.job_parameters
+                    .get(&lineage.target_execution_id())
+                    .is_none_or(|params| params.flow_input_digest() != *lineage.target_parameters_digest())
+            {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            self.staged.fork_lineages.insert(lineage.operation_id().clone(), lineage.clone());
+            Ok(())
+        })
+    }
+
     fn register_definition<'a>(
         &'a mut self,
         registration: &'a DefinitionRegistration,
@@ -3570,6 +3625,16 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 if !siblings_resolved {
                     return Err(RepositoryError::RetentionPlanStale);
                 }
+            }
+            // Fork identity is immutable; never silently orphan source or target.
+            if plan.candidates().iter().any(|candidate| {
+                self.staged.fork_lineages.values().any(|lineage| {
+                    lineage.source_execution_id() == candidate.job_execution_id()
+                        || lineage.target_execution_id() == candidate.job_execution_id()
+                        || lineage.target_instance_id() == candidate.job_instance_id()
+                })
+            }) {
+                return Err(RepositoryError::RetentionPlanStale);
             }
             let counts = self.purge_counts(plan.candidates());
             for candidate in plan.candidates() {

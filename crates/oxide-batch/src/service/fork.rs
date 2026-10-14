@@ -113,6 +113,7 @@ impl<R: JobRepository> JobFork<R> {
             JobInstanceSelection::Existing(existing) => {
                 return Err(RepositoryError::ForkInstanceCollision { id: existing.id() });
             }
+            _ => return Err(RepositoryError::ForkStateCorrupt),
         };
         let execution = unit.create_job_execution_with_definition_and_parameters(
             instance.id(), target.definition(), request.parameters(),
