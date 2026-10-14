@@ -17,11 +17,12 @@ use clock::ManualClock;
 use ids::DeterministicIds;
 use oxide_batch::{
     BoxFuture, ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ChunkSize,
-    ComponentRevision, DefinitionIdentity, DefinitionManifest, DefinitionRevision,
-    DefinitionUpgrade, DefinitionUpgradeKey, FlowGraph, FlowNode, FlowTarget,
-    InMemoryJobRepository, JobLauncher, JobName, JobParameters, JobRepository, ManifestError,
-    RepositoryError, StateSchemaId, StateSchemaVersion, StepComponents, StepDefinitionUpgrade,
-    StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletJob,
+    ComponentRevision, DefinitionIdentity, DefinitionManifest, DefinitionNodeUpgrade,
+    DefinitionRevision, DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey,
+    DefinitionUpgradeRevision, FlowGraph, FlowNode, FlowTarget, InMemoryJobRepository,
+    JobLauncher, JobName, JobParameters, JobRepository, ManifestError, RepositoryError,
+    StateSchemaId, StateSchemaVersion, StepComponents, StepName, StepNode, StopSource, Tasklet,
+    TaskletContext, TaskletError, TaskletJob,
     TaskletOutcome, TaskletStep, TerminalKind,
 };
 
@@ -345,20 +346,36 @@ async fn moving_a_definition_to_format2_requires_a_direct_upgrade_edge()
     ));
     unit.rollback().await?;
 
-    let upgrade = DefinitionUpgrade::new(
+    let upgrade = DefinitionUpgrade::transformed(
         DefinitionUpgradeKey::new("format1-to-format2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
         format1,
         format2.definition_identity().clone(),
-        [StepDefinitionUpgrade::new(
-            StepName::new("import")?,
-            StepName::new("import")?,
+        [DefinitionNodeUpgrade::new(
+            oxide_batch::NodeId::new("import")?,
+            oxide_batch::NodeId::new("import")?,
         )],
+        [],
     )?;
+    let selected = DefinitionUpgradeExecution::new(upgrade.clone(), [])?;
     let mut unit = repository.begin().await?;
     unit.register_definition_upgrade(&JobName::new("daily_import")?, &upgrade)
         .await?;
-    unit.create_job_execution_with_definition(instance.id(), format2.definition_identity())
-        .await?;
     unit.commit().await?;
+
+    let mut strict = repository.begin().await?;
+    assert!(matches!(
+        strict
+            .create_job_execution_with_definition(instance.id(), format2.definition_identity())
+            .await,
+        Err(RepositoryError::IncompatibleDefinition { .. })
+    ));
+    strict.rollback().await?;
+
+    let mut compatible = repository.begin().await?;
+    compatible
+        .create_job_execution_with_upgrade(instance.id(), &selected)
+        .await?;
+    compatible.commit().await?;
     Ok(())
 }
