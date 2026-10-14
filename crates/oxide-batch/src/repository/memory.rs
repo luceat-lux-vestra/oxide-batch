@@ -1475,6 +1475,15 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .job_executions
                 .get(&lineage.target_execution_id())
                 .ok_or(RepositoryError::ForkStateCorrupt)?;
+            let staged_context = self.staged.fork_job_contexts.get(&lineage.target_execution_id());
+            if lineage.context_transform().is_some() != staged_context.is_some()
+                || lineage.context_transform().zip(staged_context).is_some_and(|(descriptor, context)| {
+                    context.schema_id() != descriptor.descriptor().target_schema()
+                        || context.schema_version() != descriptor.descriptor().target_version()
+                })
+            {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
             if target.job_instance_id() != lineage.target_instance_id()
                 || self
                     .staged
