@@ -16,8 +16,8 @@ use oxide_batch::{
     PartitionedStepNode, RepeatCommitRequest, RepeatDecision, RepeatDefinition, RepeatId,
     RepeatLineage, RepeatOrdinal, RepeatPolicyConfiguration, RepeatPolicyDefinition,
     RepeatPolicyKind, RepeatStateSchema, RepositoryError, SequentialIdGenerator, StartLimit,
-    StateLimits, StateSchemaId, StateSchemaVersion, StepComponents, StepName, StepNode, SystemClock,
-    TerminalKind,
+    StateLimits, StateSchemaId, StateSchemaVersion, StepComponents, StepName, StepNode,
+    SystemClock, TerminalKind,
 };
 
 fn plan() -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
@@ -348,8 +348,8 @@ async fn repeat_ordinal_rejects_skips_before_any_state_is_written() -> Result<()
 }
 
 #[tokio::test]
-async fn explicit_upgrade_rebinds_repeat_lineage_to_target_definition()
--> Result<(), Box<dyn Error>> {
+async fn explicit_upgrade_rebinds_repeat_lineage_to_target_definition() -> Result<(), Box<dyn Error>>
+{
     let repository = repository();
     let v1 = plan()?;
     let v2 = upgraded_plan()?;
