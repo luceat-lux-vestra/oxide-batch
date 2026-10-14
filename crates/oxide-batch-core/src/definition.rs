@@ -860,7 +860,7 @@ fn schema_contract(
         .get("version")
         .and_then(serde_json::Value::as_u64)
         .and_then(|value| u32::try_from(value).ok())
-        .and_then(StateSchemaVersion::new)
+        .and_then(|value| StateSchemaVersion::new(value).ok())
         .ok_or(DefinitionError::ManifestEncoding)?;
     Ok(DefinitionDurableStateContract {
         kind,
