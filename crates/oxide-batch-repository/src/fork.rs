@@ -2,9 +2,42 @@
 
 use crate::{DefinitionRegistration, OperationId};
 use oxide_batch_core::{
-    DefinitionIdentity, ExecutionVersion, JobExecutionId, JobInstanceId, JobInstanceKey,
-    JobParameters,
+    DefinitionIdentity, DefinitionStateTransform, ExecutionVersion, JobExecutionId, JobInstanceId,
+    JobInstanceKey, JobParameters, StepExecutionId,
 };
+
+/// Explicit context transformation selected by one fork request.
+///
+/// This is neither a definition-compatible restart nor permission to copy
+/// arbitrary application context: the source step, its optimistic version and
+/// the complete state schema/revision contract must match the durable source.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForkContextTransform {
+    source_step_execution_id: StepExecutionId,
+    source_step_version: ExecutionVersion,
+    descriptor: DefinitionStateTransform,
+}
+
+impl ForkContextTransform {
+    /// Binds one reviewed descriptor to a committed source step.
+    #[must_use]
+    pub const fn new(
+        source_step_execution_id: StepExecutionId,
+        source_step_version: ExecutionVersion,
+        descriptor: DefinitionStateTransform,
+    ) -> Self {
+        Self { source_step_execution_id, source_step_version, descriptor }
+    }
+    /// Returns the selected source step.
+    #[must_use]
+    pub const fn source_step_execution_id(&self) -> StepExecutionId { self.source_step_execution_id }
+    /// Returns the exact committed source-step version.
+    #[must_use]
+    pub const fn source_step_version(&self) -> ExecutionVersion { self.source_step_version }
+    /// Borrows the exact source/target node, schema and transformer revision contract.
+    #[must_use]
+    pub const fn descriptor(&self) -> &DefinitionStateTransform { &self.descriptor }
+}
 
 /// A caller-supplied idempotent fork command, distinct from restart and upgrade.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -14,6 +47,7 @@ pub struct ForkRequest {
     source_version: ExecutionVersion,
     target: DefinitionRegistration,
     parameters: JobParameters,
+    context_transform: Option<ForkContextTransform>,
 }
 impl ForkRequest {
     /// Creates a fork from one exact committed execution.
@@ -31,7 +65,19 @@ impl ForkRequest {
             source_version,
             target,
             parameters,
+            context_transform: None,
         }
+    }
+    /// Attaches one reviewed context transform; no inferred state mapping.
+    #[must_use]
+    pub fn with_context_transform(mut self, selected: ForkContextTransform) -> Self {
+        self.context_transform = Some(selected);
+        self
+    }
+    /// Borrows the exact requested context transform, when present.
+    #[must_use]
+    pub const fn context_transform(&self) -> Option<&ForkContextTransform> {
+        self.context_transform.as_ref()
     }
     /// Borrows the idempotency key.
     #[must_use]
@@ -77,6 +123,7 @@ pub struct ForkLineage {
     target_instance_id: JobInstanceId,
     target_execution_id: JobExecutionId,
     target_parameters_digest: [u8; 32],
+    context_transform: Option<ForkContextTransform>,
 }
 impl ForkLineage {
     /// Creates a committed candidate from validated source and new target.
@@ -98,7 +145,21 @@ impl ForkLineage {
             target_instance_id,
             target_execution_id,
             request.parameters().flow_input_digest(),
-        )
+        ).with_context_transform(request.context_transform().cloned())
+    }
+
+    /// Associates the exact durable transform metadata with the lineage.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_context_transform(mut self, value: Option<ForkContextTransform>) -> Self {
+        self.context_transform = value;
+        self
+    }
+
+    /// Returns the explicit transformed-fork descriptor, if any.
+    #[must_use]
+    pub const fn context_transform(&self) -> Option<&ForkContextTransform> {
+        self.context_transform.as_ref()
     }
     /// Reconstitutes the bounded, payload-free database projection.
     #[doc(hidden)]
@@ -125,6 +186,7 @@ impl ForkLineage {
             target_instance_id,
             target_execution_id,
             target_parameters_digest,
+            context_transform: None,
         }
     }
     /// Returns true only for the original, immutable command payload.
@@ -135,6 +197,7 @@ impl ForkLineage {
             && self.source_version == request.source_version()
             && self.target == *request.target()
             && self.target_parameters_digest == request.parameters().flow_input_digest()
+            && self.context_transform.as_ref() == request.context_transform()
     }
     /// Returns the operation key.
     #[must_use]
