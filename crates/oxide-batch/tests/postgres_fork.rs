@@ -222,7 +222,10 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
                 serde_json::from_slice::<serde_json::Value>(&actual.payload_json()?)?,
                 serde_json::json!({"value":12}),
             );
-            assert_eq!(check.get_job_execution(stopped.id()).await?, Some(stopped.clone()));
+            assert_eq!(
+                check.get_job_execution(stopped.id()).await?,
+                Some(stopped.clone())
+            );
             check.rollback().await?;
 
             // Two truly concurrent requests for an unused identifying key
