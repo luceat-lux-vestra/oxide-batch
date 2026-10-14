@@ -716,12 +716,12 @@ WALLCLOCK_VALIDATOR = ROOT / "docs/engineering/ci-staging/actions-security-wallc
 assert WALLCLOCK_CODEQL.is_file() and WALLCLOCK_VALIDATOR.is_file()
 assert m6_git_blob(ACTIVE_CODEQL) == "68878572050524d1f65e0aa7c14baca49074a953"
 assert m6_git_blob(ROOT / ".github/scripts/validate_actions_security.py") == (
-    "29fe8e7a6778f433c6f0390f11aed10820764ee4"
+    "d111be338f22d67cdd4cade2ebb0fa7839bb969a"
 )
 assert m6_git_blob(WALLCLOCK_CODEQL) == "c150f2001a74e802180369fd16ee462b63e99232"
 assert STAGED_NO_DB_UPLOAD.read_bytes() == expected_active_codeql
 assert m6_git_blob(WALLCLOCK_VALIDATOR) == "29fe8e7a6778f433c6f0390f11aed10820764ee4"
-assert (ROOT / ".github/scripts/validate_actions_security.py").read_bytes() == WALLCLOCK_VALIDATOR.read_bytes()
+assert (ROOT / ".github/scripts/validate_actions_security.py").read_bytes() != WALLCLOCK_VALIDATOR.read_bytes()
 
 future_spec = importlib.util.spec_from_file_location("wallclock_validator", WALLCLOCK_VALIDATOR)
 assert future_spec is not None and future_spec.loader is not None

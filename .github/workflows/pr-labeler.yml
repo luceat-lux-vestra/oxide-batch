@@ -186,7 +186,7 @@ jobs:
 
           # Only the fixed, reviewed workflows below qualify. The elevated
           # pull_request_target merge-gate workflow remains exact-blob only.
-          PIN_ONLY_HELPER_BLOB = "2ed10e141c7c11b1a88940256e3a68ca272467a4"
+          PIN_ONLY_HELPER_BLOB = "5a73ced5853a42078d0abdfbd3df4e08d9875968"
           PIN_ONLY_WORKFLOWS = {
               ".github/workflows/pr-ci.yml",
               ".github/workflows/ci.yml",
@@ -522,6 +522,51 @@ jobs:
                       ],
                   }
 
+                  CANONICAL_PR_PROOF_NO_CODEQL = {
+                      "schema": "trusted-scope-authorities-v1",
+                      "members": [
+                          member for member in CANONICAL_PR_PROOF["members"]
+                          if member["id"] != "codeql"
+                      ],
+                  }
+                  SCHEDULED_ONLY_CODEQL_BLOB = "f2010766c0a9bfce7714b56852d2f57deeac8182"
+
+                  def scheduled_only_codeql_transition(
+                      base_document, head_document, codeql_head_blob
+                  ):
+                      if (
+                          base_document.get("schema_version") != 8
+                          or head_document.get("schema_version") != 8
+                          or base_document.get("pr_proof") != CANONICAL_PR_PROOF
+                          or head_document.get("pr_proof") != CANONICAL_PR_PROOF_NO_CODEQL
+                          or codeql_head_blob != SCHEDULED_ONLY_CODEQL_BLOB
+                      ):
+                          return False
+                      base_topology = base_document.get("pr_topology")
+                      head_topology = head_document.get("pr_topology")
+                      if not isinstance(base_topology, dict) or not isinstance(head_topology, dict):
+                          return False
+                      reusable = base_topology.get("reusable_authorities")
+                      if (
+                          not isinstance(reusable, list)
+                          or reusable.count(".github/workflows/codeql.yml") != 1
+                      ):
+                          return False
+                      expected_topology = json.loads(json.dumps(base_topology))
+                      expected_topology["reusable_authorities"] = [
+                          workflow for workflow in reusable
+                          if workflow != ".github/workflows/codeql.yml"
+                      ]
+                      if head_topology != expected_topology:
+                          return False
+                      normalized = json.loads(json.dumps(head_document))
+                      normalized["pr_proof"] = json.loads(json.dumps(base_document["pr_proof"]))
+                      normalized["pr_topology"] = json.loads(json.dumps(base_topology))
+                      return (
+                          normalize_blob_sets(normalized, True)
+                          == normalize_blob_sets(base_document, True)
+                      )
+
                   def canonical_pr_proof_bootstrap(base_document, head_document):
                       if "pr_proof" in base_document:
                           return False
@@ -599,13 +644,23 @@ jobs:
                           "protected workflow",
                       )
                   elif base_schema >= 8 and head_schema == base_schema:
-                      if (
+                      semantics_changed = (
                           normalize_blob_sets(head_policy, True)
                           != normalize_blob_sets(policy, True)
+                      )
+                      codeql_head_blob = artifact_blob(
+                          ".github/workflows/codeql.yml", head_sha
+                      )
+                      if (
+                          semantics_changed
+                          and not scheduled_only_codeql_transition(
+                              policy, head_policy, codeql_head_blob
+                          )
                       ):
                           raise GateError(
                               "PR-head merge-gate policy changes schema-v8 trust "
-                              "semantics outside staged blob admission"
+                              "semantics outside staged blob admission or the exact "
+                              "scheduled-only CodeQL transition"
                           )
                       base_files = blob_inventory(
                           policy,

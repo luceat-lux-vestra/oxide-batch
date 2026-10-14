@@ -41,14 +41,17 @@ def inline_functions():
     end = next(i for i in range(begin + 1, len(lines)) if lines[i].strip() == "PY")
     code = "\n".join(row[10:] for row in lines[begin + 1:end])
     tree = ast.parse(code)
-    names = {"trusted_content", "trusted_pin_only"}
-    constants = {"PIN_ONLY_HELPER_BLOB", "PIN_ONLY_WORKFLOWS", "pin_only_cache"}
+    names = {"trusted_content", "trusted_pin_only", "normalize_blob_sets", "scheduled_only_codeql_transition"}
+    constants = {"PIN_ONLY_HELPER_BLOB", "PIN_ONLY_WORKFLOWS", "pin_only_cache", "CANONICAL_PR_PROOF", "CANONICAL_PR_PROOF_NO_CODEQL", "SCHEDULED_ONLY_CODEQL_BLOB"}
     nodes = [
-        node for node in tree.body
-        if isinstance(node, ast.FunctionDef) and node.name in names
-        or isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id in constants for target in node.targets)
+        node for node in ast.walk(tree)
+        if (
+            isinstance(node, ast.FunctionDef) and node.name in names
+            or isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id in constants for target in node.targets)
+        )
     ]
+    nodes.sort(key=lambda node: node.lineno)
     if {node.name for node in nodes if isinstance(node, ast.FunctionDef)} != names:
         raise AssertionError("protected gate functions are missing")
     return compile(ast.Module(body=nodes, type_ignores=[]), str(SCRIPT), "exec")
@@ -114,6 +117,62 @@ class InlineGateTests(unittest.TestCase):
         self.files[(CODEQL, HEAD_SHA)] = self.workflow.replace(
             needle, (NEW_SHA + " # v4.38.4").encode()
         )
+
+    def test_scheduled_only_policy_transition_is_exact_and_fail_closed(self):
+        import copy
+        canonical = copy.deepcopy(self.env["CANONICAL_PR_PROOF"])
+        no_codeql = copy.deepcopy(self.env["CANONICAL_PR_PROOF_NO_CODEQL"])
+        base = {
+            "schema_version": 8,
+            "repository_merge_gate": {
+                "protected_workflows": [
+                    {"workflow": ".github/workflows/codeql.yml", "accepted_blobs": ["a" * 40]}
+                ],
+                "protected_files": [
+                    {"path": ".github/scripts/pr-scope.py", "accepted_blobs": ["b" * 40]}
+                ],
+            },
+            "pr_proof": canonical,
+            "pr_topology": {
+                "schema": "single-pr-entrypoint-v1",
+                "entrypoint": ".github/workflows/pr-ci.yml",
+                "migration_marker": ".github/ci-topology-v7-migration",
+                "reusable_authorities": [
+                    ".github/workflows/ci.yml",
+                    ".github/workflows/dependency-review.yml",
+                    ".github/workflows/codeql.yml",
+                    ".github/workflows/evidence.yml",
+                    ".github/workflows/supply-chain.yml",
+                    ".github/workflows/campaign-orchestrator.yml",
+                ],
+                "independent_pr_authorities": [],
+            },
+            "unrelated": {"must": "stay identical"},
+        }
+        head = copy.deepcopy(base)
+        head["pr_proof"] = no_codeql
+        head["pr_topology"]["reusable_authorities"].remove(".github/workflows/codeql.yml")
+        # Blob-list growth is independently staged and intentionally normalized.
+        head["repository_merge_gate"]["protected_workflows"][0]["accepted_blobs"].append("c" * 40)
+        transition = self.env["scheduled_only_codeql_transition"]
+        exact = self.env["SCHEDULED_ONLY_CODEQL_BLOB"]
+        self.assertTrue(transition(base, head, exact))
+        self.assertFalse(transition(base, head, "f" * 40))
+
+        wrong_member = copy.deepcopy(head)
+        wrong_member["pr_proof"]["members"] = [
+            member for member in wrong_member["pr_proof"]["members"]
+            if member["id"] != "rust"
+        ]
+        self.assertFalse(transition(base, wrong_member, exact))
+
+        wrong_topology = copy.deepcopy(head)
+        wrong_topology["pr_topology"]["reusable_authorities"].append(".github/workflows/codeql.yml")
+        self.assertFalse(transition(base, wrong_topology, exact))
+
+        unrelated = copy.deepcopy(head)
+        unrelated["unrelated"]["must"] = "changed"
+        self.assertFalse(transition(base, unrelated, exact))
 
     def test_real_inline_gate_accepts_verified_patch_evidence(self):
         self.changed_workflow()
