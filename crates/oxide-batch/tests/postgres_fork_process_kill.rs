@@ -19,8 +19,8 @@ use oxide_batch::{
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, DefinitionStateKind,
     DefinitionStateTransform, DefinitionStateTransformError, DefinitionStateTransformId,
     DefinitionStateTransformer, DefinitionUpgradeRevision, ExecutionContext, ForkContextTransform,
-    ForkRequest, JobExecution, JobInstanceId, JobInstanceKey, JobName, JobParameters,
-    JobRepository, JobFork, LifecycleTransition, NodeId, OperationId, PostgresJobRepository,
+    ForkRequest, JobExecution, JobFork, JobInstanceId, JobInstanceKey, JobName, JobParameters,
+    JobRepository, LifecycleTransition, NodeId, OperationId, PostgresJobRepository,
     PostgresMigrator, StateLimits, StateSchemaId, StateSchemaVersion, StepName,
 };
 use sqlx::{Connection as _, PgConnection};
@@ -56,7 +56,9 @@ impl Phase {
     }
 
     fn parse(value: &str) -> Result<Self, Box<dyn Error>> {
-        Self::ALL.into_iter().find(|phase| phase.id() == value)
+        Self::ALL
+            .into_iter()
+            .find(|phase| phase.id() == value)
             .ok_or_else(|| format!("unrecognized fork kill phase {value}").into())
     }
 }
@@ -70,7 +72,9 @@ fn registration(name: &str) -> Result<DefinitionRegistration, Box<dyn Error>> {
     let job = JobName::new(name)?;
     Ok(DefinitionRegistration::new(
         DefinitionIdentity::tasklet(
-            &job, &StepName::new("only")?, DefinitionRevision::new("v1")?,
+            &job,
+            &StepName::new("only")?,
+            DefinitionRevision::new("v1")?,
             &ComponentRevision::new("component-v1")?,
         )?,
         DefinitionArtifactId::new("fork-kill-artifact-v1")?,
@@ -86,7 +90,9 @@ fn transform(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
     }
     let mut value: serde_json::Value = serde_json::from_slice(payload)
         .map_err(|_| DefinitionStateTransformError::InvalidSource)?;
-    let before = value.get("value").and_then(serde_json::Value::as_u64)
+    let before = value
+        .get("value")
+        .and_then(serde_json::Value::as_u64)
         .ok_or(DefinitionStateTransformError::InvalidSource)?;
     value["value"] = serde_json::json!(before + 1);
     serde_json::to_vec(&value).map_err(|_| DefinitionStateTransformError::TransformFailed)
@@ -94,8 +100,10 @@ fn transform(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
 
 async fn prepare_source(url: &str, job: &str) -> Result<SourceFixture, Box<dyn Error>> {
     let repository = PostgresJobRepository::connect(
-        config(url.to_owned())?, Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90))),
-    ).await?;
+        config(url.to_owned())?,
+        Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90))),
+    )
+    .await?;
     let source_name = format!("{job}_src");
     let target_name = format!("{job}_dst");
     let source_registration = registration(&source_name)?;
@@ -106,39 +114,69 @@ async fn prepare_source(url: &str, job: &str) -> Result<SourceFixture, Box<dyn E
 
     let params = JobParameters::new();
     let mut unit = repository.begin().await?;
-    let instance = unit.select_or_create_job_instance(
-        &JobInstanceKey::new(source_registration.job_name().clone(), &params)
-    ).await?.instance().clone();
-    let job_starting = unit.create_job_execution_with_definition_and_parameters(
-        instance.id(), source_registration.definition(), &params
-    ).await?;
-    let job_started = unit.transition_job_execution(
-        job_starting.id(), job_starting.version(),
-        LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(100)),
-    ).await?;
-    let step = unit.create_step_execution(job_started.id(), &StepName::new("only")?).await?;
-    let step_started = unit.transition_step_execution(
-        step.id(), step.version(),
-        LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(101)),
-    ).await?;
+    let instance = unit
+        .select_or_create_job_instance(&JobInstanceKey::new(
+            source_registration.job_name().clone(),
+            &params,
+        ))
+        .await?
+        .instance()
+        .clone();
+    let job_starting = unit
+        .create_job_execution_with_definition_and_parameters(
+            instance.id(),
+            source_registration.definition(),
+            &params,
+        )
+        .await?;
+    let job_started = unit
+        .transition_job_execution(
+            job_starting.id(),
+            job_starting.version(),
+            LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(100)),
+        )
+        .await?;
+    let step = unit
+        .create_step_execution(job_started.id(), &StepName::new("only")?)
+        .await?;
+    let step_started = unit
+        .transition_step_execution(
+            step.id(),
+            step.version(),
+            LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(101)),
+        )
+        .await?;
     let context = ExecutionContext::from_transformed_payload(
-        StateSchemaId::new("fork-kill-v1")?, StateSchemaVersion::new(1)?,
-        br#"{"value":7}"#, StateLimits::default(),
+        StateSchemaId::new("fork-kill-v1")?,
+        StateSchemaVersion::new(1)?,
+        br#"{"value":7}"#,
+        StateLimits::default(),
     )?;
-    let step_committed = unit.commit_step_execution_context(
-        step_started.id(), step_started.version(), &context
-    ).await?;
+    let step_committed = unit
+        .commit_step_execution_context(step_started.id(), step_started.version(), &context)
+        .await?;
     unit.transition_step_execution(
-        step_committed.id(), step_committed.version(),
-        LifecycleTransition::new(BatchStatus::Completed, UNIX_EPOCH + Duration::from_secs(102)),
-    ).await?;
-    let terminal = unit.transition_job_execution(
-        job_started.id(), job_started.version(),
-        LifecycleTransition::new(BatchStatus::Stopped, UNIX_EPOCH + Duration::from_secs(103)),
-    ).await?;
+        step_committed.id(),
+        step_committed.version(),
+        LifecycleTransition::new(
+            BatchStatus::Completed,
+            UNIX_EPOCH + Duration::from_secs(102),
+        ),
+    )
+    .await?;
+    let terminal = unit
+        .transition_job_execution(
+            job_started.id(),
+            job_started.version(),
+            LifecycleTransition::new(BatchStatus::Stopped, UNIX_EPOCH + Duration::from_secs(103)),
+        )
+        .await?;
     unit.commit().await?;
     repository.close().await?;
-    Ok(SourceFixture { job: job.to_owned(), source: terminal })
+    Ok(SourceFixture {
+        job: job.to_owned(),
+        source: terminal,
+    })
 }
 
 async fn request_for(
@@ -148,29 +186,47 @@ async fn request_for(
     let mut read = repository.begin().await?;
     let source_name = format!("{job}_src");
     let target_name = format!("{job}_dst");
-    let source = read.find_job_instance(
-        &JobInstanceKey::new(JobName::new(&source_name)?, &JobParameters::new())
-    ).await?.ok_or("missing prepared source")?;
-    let source_execution = read.job_executions(source.id()).await?
-        .pop().ok_or("missing prepared source execution")?;
-    let step = read.step_executions(source_execution.id()).await?
-        .pop().ok_or("missing prepared source step")?;
+    let source = read
+        .find_job_instance(&JobInstanceKey::new(
+            JobName::new(&source_name)?,
+            &JobParameters::new(),
+        ))
+        .await?
+        .ok_or("missing prepared source")?;
+    let source_execution = read
+        .job_executions(source.id())
+        .await?
+        .pop()
+        .ok_or("missing prepared source execution")?;
+    let step = read
+        .step_executions(source_execution.id())
+        .await?
+        .pop()
+        .ok_or("missing prepared source step")?;
     read.rollback().await?;
 
     let descriptor = DefinitionStateTransform::new(
-        NodeId::new("only")?, NodeId::new("only")?,
+        NodeId::new("only")?,
+        NodeId::new("only")?,
         DefinitionStateKind::ExecutionContext,
         DefinitionStateTransformId::new("fork-kill-transform")?,
-        StateSchemaId::new("fork-kill-v1")?, StateSchemaVersion::new(1)?,
-        StateSchemaId::new("fork-kill-v2")?, StateSchemaVersion::new(2)?,
+        StateSchemaId::new("fork-kill-v1")?,
+        StateSchemaVersion::new(1)?,
+        StateSchemaId::new("fork-kill-v2")?,
+        StateSchemaVersion::new(2)?,
         DefinitionUpgradeRevision::new("fork-kill-transform-v1")?,
     );
     Ok(ForkRequest::new(
         OperationId::new(format!("{job}-op"))?,
-        source_execution.id(), source_execution.version(),
-        registration(&target_name)?, JobParameters::new(),
-    ).with_context_transform(ForkContextTransform::new(
-        step.id(), step.version(), descriptor,
+        source_execution.id(),
+        source_execution.version(),
+        registration(&target_name)?,
+        JobParameters::new(),
+    )
+    .with_context_transform(ForkContextTransform::new(
+        step.id(),
+        step.version(),
+        descriptor,
     )))
 }
 
@@ -185,25 +241,32 @@ fn fork_process_kill_preserves_transactional_source_and_target() -> Result<(), B
         return Ok(());
     };
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(async {
-        PostgresMigrator::migrate(&config(admin.clone())?).await?;
-        for phase in Phase::ALL {
-            let job = format!("fork_kill_{}_{}", phase.id().replace('-', "_"), stamp);
-            run_phase(phase, &job, &runtime, &admin).await?;
-        }
-        Ok::<(), Box<dyn Error>>(())
-    })
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            PostgresMigrator::migrate(&config(admin.clone())?).await?;
+            for phase in Phase::ALL {
+                let job = format!("fork_kill_{}_{}", phase.id().replace('-', "_"), stamp);
+                run_phase(phase, &job, &runtime, &admin).await?;
+            }
+            Ok::<(), Box<dyn Error>>(())
+        })
 }
 
 async fn run_phase(
-    phase: Phase, job: &str, runtime: &str, admin: &str,
+    phase: Phase,
+    job: &str,
+    runtime: &str,
+    admin: &str,
 ) -> Result<(), Box<dyn Error>> {
     drop_commit_gate(admin).await?;
     let fixture = prepare_source(runtime, job).await?;
     let mut blocker = Blocker::arrange(phase, admin, fixture.source.job_instance_id()).await?;
     let handshake = handshake_directory(&format!("fork-{}-{job}", phase.id()))?;
     let mut child = Command::new(std::env::current_exe()?)
-        .arg("--exact").arg("fork_kill_worker")
+        .arg("--exact")
+        .arg("fork_kill_worker")
         .arg("--nocapture")
         .env(PHASE_ENV, phase.id())
         .env(JOB_ENV, &fixture.job)
@@ -218,7 +281,8 @@ async fn run_phase(
                     admin,
                     "SELECT id FROM oxide_batch.ob_job_instance WHERE id = $1 FOR UPDATE",
                     BOUND,
-                ).await?;
+                )
+                .await?;
             }
             Phase::Transform => {
                 wait_for_file(&handshake.join("reached"), BOUND).await?;
@@ -233,7 +297,8 @@ async fn run_phase(
         assert_eq!(status.code(), None);
         blocker.release().await?;
         verify_no_partial_fork(runtime, &fixture).await
-    }.await;
+    }
+    .await;
     if observed.is_err() {
         let _ = child.kill();
         let _ = child.wait();
@@ -248,14 +313,23 @@ async fn verify_no_partial_fork(
     fixture: &SourceFixture,
 ) -> Result<(), Box<dyn Error>> {
     let repository = PostgresJobRepository::connect(
-        config(runtime.to_owned())?, Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90))),
-    ).await?;
+        config(runtime.to_owned())?,
+        Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90))),
+    )
+    .await?;
     let request = request_for(&repository, &fixture.job).await?;
     let service = JobFork::new(repository.clone());
     assert!(service.lineage(request.operation_id()).await?.is_none());
     let mut read = repository.begin().await?;
-    assert!(read.find_job_instance(&request.target_key()).await?.is_none());
-    assert_eq!(read.get_job_execution(fixture.source.id()).await?, Some(fixture.source.clone()));
+    assert!(
+        read.find_job_instance(&request.target_key())
+            .await?
+            .is_none()
+    );
+    assert_eq!(
+        read.get_job_execution(fixture.source.id()).await?,
+        Some(fixture.source.clone())
+    );
     read.rollback().await?;
     repository.close().await?;
     Ok(())
@@ -270,20 +344,28 @@ fn fork_kill_worker() -> Result<(), Box<dyn Error>> {
     let job = std::env::var(JOB_ENV)?;
     let handshake = PathBuf::from(std::env::var(HANDSHAKE_ENV)?);
     let url = runtime_url().ok_or("fork worker missing runtime URL")?;
-    tokio::runtime::Builder::new_multi_thread().enable_all().build()?.block_on(async {
-        let repository = PostgresJobRepository::connect(
-            config(url)?, Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90))),
-        ).await?;
-        let request = request_for(&repository, &job).await?;
-        let transformer = DefinitionStateTransformer::new(
-            DefinitionUpgradeRevision::new("fork-kill-transform-v1")?, transform,
-        );
-        announce(&handshake.join("ready"));
-        wait_for_file(&handshake.join("go"), BOUND).await?;
-        JobFork::new(repository.clone()).fork_transformed(&request, &transformer).await?;
-        announce(&handshake.join("unexpected-return"));
-        park_until_killed();
-    })
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            let repository = PostgresJobRepository::connect(
+                config(url)?,
+                Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90))),
+            )
+            .await?;
+            let request = request_for(&repository, &job).await?;
+            let transformer = DefinitionStateTransformer::new(
+                DefinitionUpgradeRevision::new("fork-kill-transform-v1")?,
+                transform,
+            );
+            announce(&handshake.join("ready"));
+            wait_for_file(&handshake.join("go"), BOUND).await?;
+            JobFork::new(repository.clone())
+                .fork_transformed(&request, &transformer)
+                .await?;
+            announce(&handshake.join("unexpected-return"));
+            park_until_killed();
+        })
 }
 
 enum Blocker {
@@ -294,7 +376,9 @@ enum Blocker {
 
 impl Blocker {
     async fn arrange(
-        phase: Phase, admin: &str, source_instance: JobInstanceId,
+        phase: Phase,
+        admin: &str,
+        source_instance: JobInstanceId,
     ) -> Result<Self, Box<dyn Error>> {
         match phase {
             Phase::SourceLock => {
@@ -302,7 +386,8 @@ impl Blocker {
                 sqlx::query("BEGIN").execute(&mut connection).await?;
                 sqlx::query("SELECT id FROM oxide_batch.ob_job_instance WHERE id = $1 FOR UPDATE")
                     .bind(i64::try_from(source_instance.get())?)
-                    .fetch_one(&mut connection).await?;
+                    .fetch_one(&mut connection)
+                    .await?;
                 Ok(Self::Instance(connection))
             }
             Phase::Transform => Ok(Self::None),
@@ -312,15 +397,21 @@ impl Blocker {
                     "CREATE OR REPLACE FUNCTION oxide_batch.m7_fork_commit_gate() \
                      RETURNS trigger LANGUAGE plpgsql AS $gate$ BEGIN \
                      PERFORM pg_advisory_xact_lock(55200151); RETURN NULL; END; $gate$",
-                ).execute(&mut connection).await?;
+                )
+                .execute(&mut connection)
+                .await?;
                 sqlx::query(
                     "CREATE CONSTRAINT TRIGGER m7_fork_commit_gate \
                      AFTER INSERT ON oxide_batch.ob_job_fork_lineage \
                      DEFERRABLE INITIALLY DEFERRED FOR EACH ROW \
                      EXECUTE FUNCTION oxide_batch.m7_fork_commit_gate()",
-                ).execute(&mut connection).await?;
-                sqlx::query("SELECT pg_advisory_lock($1)").bind(ADVISORY_KEY)
-                    .execute(&mut connection).await?;
+                )
+                .execute(&mut connection)
+                .await?;
+                sqlx::query("SELECT pg_advisory_lock($1)")
+                    .bind(ADVISORY_KEY)
+                    .execute(&mut connection)
+                    .await?;
                 Ok(Self::CommitGate(connection))
             }
         }
@@ -335,7 +426,9 @@ impl Blocker {
             }
             Self::CommitGate(connection) => {
                 sqlx::query("SELECT pg_advisory_unlock($1)")
-                    .bind(ADVISORY_KEY).execute(&mut *connection).await?;
+                    .bind(ADVISORY_KEY)
+                    .execute(&mut *connection)
+                    .await?;
                 Ok(())
             }
         }
@@ -344,10 +437,11 @@ impl Blocker {
 
 async fn drop_commit_gate(admin: &str) -> Result<(), Box<dyn Error>> {
     let mut connection = PgConnection::connect(admin).await?;
-    sqlx::query(
-        "DROP TRIGGER IF EXISTS m7_fork_commit_gate ON oxide_batch.ob_job_fork_lineage"
-    ).execute(&mut connection).await?;
+    sqlx::query("DROP TRIGGER IF EXISTS m7_fork_commit_gate ON oxide_batch.ob_job_fork_lineage")
+        .execute(&mut connection)
+        .await?;
     sqlx::query("DROP FUNCTION IF EXISTS oxide_batch.m7_fork_commit_gate()")
-        .execute(&mut connection).await?;
+        .execute(&mut connection)
+        .await?;
     Ok(())
 }
