@@ -144,6 +144,13 @@ jobs:
     permissions:
       contents: read
 
+  conformance:
+    needs: scope
+    uses: ./.github/workflows/m5-conformance.yml
+    permissions:
+      contents: read
+      pull-requests: read
+
   pr-proof:
     name: pr-proof
     needs: [scope, rust, dependency, evidence, supply]
@@ -228,3 +235,29 @@ jobs:
           else
             require_success supply "$SUPPLY_RESULT"
           fi
+  direct-merge-gate:
+    name: Direct Merge Gate
+    needs: [pr-proof, conformance]
+    if: ${{ always() }}
+    runs-on: ubuntu-slim
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Require complete PR DAG
+        env:
+          PR_PROOF_RESULT: ${{ needs.pr-proof.result }}
+          CONFORMANCE_RESULT: ${{ needs.conformance.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$PR_PROOF_RESULT" = "success" || {
+            echo "::error::direct PR authorities failed: $PR_PROOF_RESULT" >&2
+            exit 1
+          }
+          test "$CONFORMANCE_RESULT" = "success" || {
+            echo "::error::M5 conformance failed: $CONFORMANCE_RESULT" >&2
+            exit 1
+          }
+          echo "Direct PR DAG complete."
+
