@@ -27,13 +27,15 @@ use crate::{
     ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
     CursorError, CursorKey, DefinitionArtifactId, DefinitionDescriptor, DefinitionIdentity,
     DefinitionRegistration, DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
+    DefinitionStateTransformId, DefinitionUpgradeRevision,
     DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionContext,
     ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode,
     ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, ExternalStateReference,
     FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
     FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
     FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
-    FlowTarget, FlowTransitionKind, ForkLineage, IdentifierKind, InheritedStepProgress,
+    FlowTarget, FlowTransitionKind, ForkContextTransform, ForkLineage, IdentifierKind,
+    InheritedStepProgress,
     JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
     JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName, JobParameter,
     JobParameters, JobRepository, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
@@ -52,6 +54,65 @@ use crate::{
     StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
     StepPartitionProjection, TerminalKind,
 };
+
+
+fn encode_fork_context_transform(value: &ForkContextTransform) -> Value {
+    let descriptor = value.descriptor();
+    json!({
+        "source_step_execution_id": value.source_step_execution_id().get(),
+        "source_step_version": value.source_step_version().get(),
+        "source_node": descriptor.source_node().as_str(),
+        "target_node": descriptor.target_node().as_str(),
+        "kind": descriptor.kind().as_str(),
+        "state_id": descriptor.state_id().as_str(),
+        "source_schema": descriptor.source_schema().as_str(),
+        "source_version": descriptor.source_version().get(),
+        "target_schema": descriptor.target_schema().as_str(),
+        "target_version": descriptor.target_version().get(),
+        "revision": descriptor.revision().as_str(),
+    })
+}
+
+fn decode_fork_context_transform(value: &Value) -> Result<ForkContextTransform, RepositoryError> {
+    let get = |key: &str| -> Result<&str, RepositoryError> {
+        value.get(key).and_then(Value::as_str).ok_or(RepositoryError::ForkStateCorrupt)
+    };
+    let integer = |key: &str| -> Result<u64, RepositoryError> {
+        value.get(key).and_then(Value::as_u64).ok_or(RepositoryError::ForkStateCorrupt)
+    };
+    if !value.as_object().is_some_and(|items| items.len() == 11)
+        || get("kind")? != DefinitionStateKind::ExecutionContext.as_str()
+    {
+        return Err(RepositoryError::ForkStateCorrupt);
+    }
+    let source_step_execution_id = StepExecutionId::new(integer("source_step_execution_id")?)
+        .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+    let source_version = ExecutionVersion::new(integer("source_step_version")?);
+    let descriptor = DefinitionStateTransform::new(
+        NodeId::new(get("source_node")?).map_err(|_| RepositoryError::ForkStateCorrupt)?,
+        NodeId::new(get("target_node")?).map_err(|_| RepositoryError::ForkStateCorrupt)?,
+        DefinitionStateKind::ExecutionContext,
+        DefinitionStateTransformId::new(get("state_id")?)
+            .map_err(|_| RepositoryError::ForkStateCorrupt)?,
+        StateSchemaId::new(get("source_schema")?)
+            .map_err(|_| RepositoryError::ForkStateCorrupt)?,
+        StateSchemaVersion::new(
+            u32::try_from(integer("source_version")?)
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?,
+        ).map_err(|_| RepositoryError::ForkStateCorrupt)?,
+        StateSchemaId::new(get("target_schema")?)
+            .map_err(|_| RepositoryError::ForkStateCorrupt)?,
+        StateSchemaVersion::new(
+            u32::try_from(integer("target_version")?)
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?,
+        ).map_err(|_| RepositoryError::ForkStateCorrupt)?,
+        DefinitionUpgradeRevision::new(get("revision")?)
+            .map_err(|_| RepositoryError::ForkStateCorrupt)?,
+    );
+    Ok(ForkContextTransform::new(
+        source_step_execution_id, source_version, descriptor,
+    ))
+}
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 11;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
@@ -2599,6 +2660,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                  lineage.source_execution_version, lineage.source_definition_digest, \
                  lineage.source_state_digest, lineage.target_job_instance_id, \
                  lineage.target_job_execution_id, lineage.target_parameters_digest, \
+                 lineage.fork_transform, \
                  definition.job_name, definition.definition_revision, definition.manifest_format, \
                  definition.manifest_digest, definition.manifest, definition.artifact_identity \
                  FROM oxide_batch.ob_job_fork_lineage lineage \
@@ -2630,6 +2692,10 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?
                 .try_into()
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let transform = row.try_get::<Option<Json<Value>>, _>("fork_transform")
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                .map(|json| decode_fork_context_transform(&json.0))
+                .transpose()?;
             let lineage = ForkLineage::from_durable(
                 OperationId::new(read_text(&row, "operation_id")?)
                     .map_err(|_| RepositoryError::ForkStateCorrupt)?,
@@ -2641,7 +2707,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 JobInstanceId::new(read_u64(&row, "target_job_instance_id")?)?,
                 JobExecutionId::new(read_u64(&row, "target_job_execution_id")?)?,
                 target_parameters_digest,
-            );
+            ).with_context_transform(transform);
             let consistent: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM oxide_batch.ob_job_execution target \
                  JOIN oxide_batch.ob_job_execution source ON source.id = $1 \
@@ -2861,8 +2927,9 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 "INSERT INTO oxide_batch.ob_job_fork_lineage \
                  (operation_id, source_job_execution_id, source_execution_version, \
                   source_definition_digest, source_state_digest, target_definition_id, \
-                  target_job_instance_id, target_job_execution_id, target_parameters_digest) \
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+                  target_job_instance_id, target_job_execution_id, target_parameters_digest, \
+                  fork_transform) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
             )
             .bind(lineage.operation_id().as_str())
             .bind(source_execution_id)
@@ -2876,6 +2943,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .bind(target_instance_id)
             .bind(target_execution_id)
             .bind(&lineage.target_parameters_digest()[..])
+            .bind(lineage.context_transform().map(|transform| Json(encode_fork_context_transform(transform))))
             .execute(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::ForkOperationConflict)?;
