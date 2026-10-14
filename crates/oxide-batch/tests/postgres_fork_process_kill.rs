@@ -1,6 +1,6 @@
 //! M7/#552 fork process-kill evidence: lock, transformer, and commit boundaries.
 //!
-//! Each child is SIGKILLed at an observed phase. The parent then opens a new
+//! Each child receives `SIGKILL` at an observed phase. The parent then opens a new
 //! connection and checks source preservation and the absence of partial forks.
 #![cfg(all(feature = "postgres", unix))]
 #![allow(clippy::expect_used, clippy::panic)]
@@ -10,7 +10,7 @@ mod crash_restore;
 use std::error::Error;
 use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
-use std::process::{Child, Command};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
