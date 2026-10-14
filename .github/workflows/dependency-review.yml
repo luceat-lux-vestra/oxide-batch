@@ -1,40 +1,12 @@
 name: Dependency review
-run-name: pr-authority/dependency/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}
-
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    branches:
-      - main
-    paths:
-      - .github/ci-topology-v7-migration
   workflow_call:
-  workflow_dispatch:
-    inputs:
-      base_sha:
-        required: true
-        type: string
-      head_sha:
-        required: true
-        type: string
-      head_repo:
-        required: true
-        type: string
-      pr_number:
-        required: true
-        type: string
-      caller_run_id:
-        required: true
-        type: string
-      caller_run_attempt:
-        required: true
-        type: string
 
 permissions:
   contents: read
 
 concurrency:
-  group: dependency-review-${{ github.event_name }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.caller_run_id || github.ref }}
+  group: dependency-review-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -47,8 +19,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
         with:
-          base-ref: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
-          head-ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha }}
+          base-ref: ${{ github.event.pull_request.base.sha }}
+          head-ref: ${{ github.event.pull_request.head.sha }}
           fail-on-severity: moderate
           license-check: true
           allow-licenses: Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, MIT, Unicode-3.0, Zlib
@@ -70,8 +42,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Test deterministic Actions security policy
