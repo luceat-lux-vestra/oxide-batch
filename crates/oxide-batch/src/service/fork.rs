@@ -3,9 +3,8 @@
 //! Transformed fork is deliberately not inferred from compatible restart.
 
 use crate::{
-    DefinitionStateKind, DefinitionStateTransformer, ExecutionContext, ForkLineage,
-    ForkRequest, JobInstanceSelection, JobRepository, RepositoryCapability, RepositoryError,
-    StateLimits,
+    DefinitionStateKind, DefinitionStateTransformer, ExecutionContext, ForkLineage, ForkRequest,
+    JobInstanceSelection, JobRepository, RepositoryCapability, RepositoryError, StateLimits,
 };
 use sha2::{Digest, Sha256};
 
@@ -180,46 +179,51 @@ impl<R: JobRepository> JobFork<R> {
         }
         let source_state_digest: [u8; 32] = hash.finalize().into();
 
-        let transformed_context: Option<ExecutionContext> = if let Some(selected) =
-            request.context_transform()
-        {
-            let descriptor = selected.descriptor();
-            let live = transformer.ok_or(RepositoryError::ForkTransformRejected)?;
-            if descriptor.kind() != DefinitionStateKind::ExecutionContext
-                || descriptor.revision() != live.revision()
-            {
-                return Err(RepositoryError::ForkTransformRejected);
-            }
-            let source_step = unit.scope_step_state(selected.source_step_execution_id())
-                .await?
-                .ok_or(RepositoryError::ForkTransformRejected)?;
-            if source_step.execution().job_execution_id() != source.id()
-                || source_step.execution().version() != selected.source_step_version()
-                || source_step.node_id() != descriptor.source_node()
-            {
-                return Err(RepositoryError::ForkTransformRejected);
-            }
-            let context = source_step.context().ok_or(RepositoryError::ForkTransformRejected)?;
-            if context.schema_id() != descriptor.source_schema()
-                || context.schema_version() != descriptor.source_version()
-            {
-                return Err(RepositoryError::ForkTransformRejected);
-            }
-            let source_bytes = context.payload_json()
-                .map_err(|_| RepositoryError::ForkTransformRejected)?;
-            let output = live.apply(&source_bytes)
-                .map_err(|_| RepositoryError::ForkTransformRejected)?;
-            Some(
-                ExecutionContext::from_transformed_payload(
-                    descriptor.target_schema().clone(),
-                    descriptor.target_version(),
-                    &output,
-                    StateLimits::default(),
-                ).map_err(|_| RepositoryError::ForkTransformRejected)?,
-            )
-        } else {
-            None
-        };
+        let transformed_context: Option<ExecutionContext> =
+            if let Some(selected) = request.context_transform() {
+                let descriptor = selected.descriptor();
+                let live = transformer.ok_or(RepositoryError::ForkTransformRejected)?;
+                if descriptor.kind() != DefinitionStateKind::ExecutionContext
+                    || descriptor.revision() != live.revision()
+                {
+                    return Err(RepositoryError::ForkTransformRejected);
+                }
+                let source_step = unit
+                    .scope_step_state(selected.source_step_execution_id())
+                    .await?
+                    .ok_or(RepositoryError::ForkTransformRejected)?;
+                if source_step.execution().job_execution_id() != source.id()
+                    || source_step.execution().version() != selected.source_step_version()
+                    || source_step.node_id() != descriptor.source_node()
+                {
+                    return Err(RepositoryError::ForkTransformRejected);
+                }
+                let context = source_step
+                    .context()
+                    .ok_or(RepositoryError::ForkTransformRejected)?;
+                if context.schema_id() != descriptor.source_schema()
+                    || context.schema_version() != descriptor.source_version()
+                {
+                    return Err(RepositoryError::ForkTransformRejected);
+                }
+                let source_bytes = context
+                    .payload_json()
+                    .map_err(|_| RepositoryError::ForkTransformRejected)?;
+                let output = live
+                    .apply(&source_bytes)
+                    .map_err(|_| RepositoryError::ForkTransformRejected)?;
+                Some(
+                    ExecutionContext::from_transformed_payload(
+                        descriptor.target_schema().clone(),
+                        descriptor.target_version(),
+                        &output,
+                        StateLimits::default(),
+                    )
+                    .map_err(|_| RepositoryError::ForkTransformRejected)?,
+                )
+            } else {
+                None
+            };
 
         let key = request.target_key();
         let instance = match unit.select_or_create_job_instance(&key).await? {
