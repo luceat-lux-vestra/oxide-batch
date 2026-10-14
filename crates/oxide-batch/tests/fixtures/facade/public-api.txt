@@ -192,6 +192,9 @@ oxide_batch::FlowStepState
 oxide_batch::FlowTarget
 oxide_batch::FlowTransition
 oxide_batch::FlowTransitionKind
+oxide_batch::ForkContextTransform
+oxide_batch::ForkLineage
+oxide_batch::ForkRequest
 oxide_batch::FrameworkParameterSource
 oxide_batch::IdGenerationError
 oxide_batch::IdGenerator
@@ -219,6 +222,7 @@ oxide_batch::JobExecutionId
 oxide_batch::JobExecutionListener
 oxide_batch::JobExecutionProjection
 oxide_batch::JobExplorer
+oxide_batch::JobFork
 oxide_batch::JobInstance
 oxide_batch::JobInstanceId
 oxide_batch::JobInstanceKey

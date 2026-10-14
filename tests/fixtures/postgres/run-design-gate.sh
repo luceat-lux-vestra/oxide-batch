@@ -254,6 +254,14 @@ bash "${fixture_root}/design-gate/run-schema10-upgrade-gate.sh" \
   "${fixture_root}" \
   "${temporary_root}"
 
+# Schema-10 to schema-11 adds explicit immutable fork lineage without
+# changing any restart or compatible-upgrade rows.
+bash "${fixture_root}/design-gate/run-schema11-upgrade-gate.sh" \
+  "${container_name}" \
+  "${repository_root}" \
+  "${fixture_root}" \
+  "${temporary_root}"
+
 (
   cd "${repository_root}"
   OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
@@ -303,6 +311,22 @@ docker exec -i \
       -- \
       --nocapture \
       --test-threads=1
+
+  # M7 Gate-D tests run under the existing PostgreSQL authority envelope.
+  # Migrator and runtime credentials remain distinct; the process-kill
+  # harness additionally uses the disposable admin URL only for lock probes.
+  for fork_test in postgres_fork postgres_fork_process_kill; do
+    OXIDEBATCH_POSTGRES_ADMIN_TEST_URL="postgres://postgres:postgres@localhost:${database_port}/oxide_batch_design" \
+    OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
+    OXIDEBATCH_POSTGRES_TEST_URL="${OXIDEBATCH_DESIGN_GATE_RUNTIME_URL}" \
+      cargo test \
+        -p oxide-batch \
+        --features postgres \
+        --test "${fork_test}" \
+        -- \
+        --nocapture \
+        --test-threads=1
+  done
 )
 
 docker exec \
@@ -335,13 +359,13 @@ docker exec \
   --command \
   "SELECT version FROM oxide_batch.ob_schema_version WHERE singleton = true" \
   | tr -d '[:space:]' \
-  | grep -qx '10'
+  | grep -qx '11'
 docker exec \
   --env PGPASSWORD=fixture-migrator-only \
   "${container_name}" \
   psql \
   "host=localhost dbname=oxide_batch_restore user=oxide_batch_migrator sslmode=verify-full sslrootcert=/tls/ca.crt" \
-  --command "UPDATE oxide_batch.ob_schema_version SET version = 11" \
+  --command "UPDATE oxide_batch.ob_schema_version SET version = 12" \
   >/dev/null
 
 set +e
@@ -360,7 +384,7 @@ if [[ ${newer_schema_status} -eq 0 ]]; then
   echo "newer metadata schema was not rejected" >&2
   exit 1
 fi
-if [[ "${newer_schema_output}" != *"newer than supported version 10"* ]]; then
+if [[ "${newer_schema_output}" != *"newer than supported version 11"* ]]; then
   echo "${newer_schema_output}" >&2
   echo "newer-schema rejection returned an unexpected diagnostic" >&2
   exit 1

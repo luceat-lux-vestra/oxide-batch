@@ -484,3 +484,7 @@ sensitive-payload sweep are feature-gated and were run locally under
   inspects the surface and changes nothing about it.
 - The accepted-exception list is empty. No API-policy exception exists that an
   allowlist entry alone would be permitting.
+
+## M7 #552 fork public facade review (2026-10-14)
+
+The explicit fork boundary contributes four reviewed facade names: `ForkRequest`, `ForkLineage`, and `ForkContextTransform` from the repository re-export group (+3), and `JobFork` from the service group (+1). The reviewed export count is now 564; the additional types preserve new-instance identity and do not expose raw application context or hidden mutable repository handles. Optional feature-gated adapter counts remain unchanged. This review is conditional on Gate-D integration and durability evidence and does not approve release or merging PR #555.

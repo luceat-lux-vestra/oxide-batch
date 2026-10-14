@@ -156,6 +156,12 @@ pub const SCHEMA10_COLUMNS: &[(&str, &str)] = &[
     ("ob_definition_upgrade", "state_transforms"),
 ];
 
+/// Schema 11 adds one append-only explicit fork lineage table.
+pub const SCHEMA11_TABLES: &[&str] = &["ob_job_fork_lineage"];
+
+/// Schema 11 does not alter historical durable record columns.
+pub const SCHEMA11_COLUMNS: &[(&str, &str)] = &[];
+
 /// Columns schema 2 added to tables schema 1 already declared.
 pub const SCHEMA2_COLUMNS: &[(&str, &str)] = &[
     ("ob_step_execution", "step_logical_id"),
@@ -340,6 +346,7 @@ pub async fn assert_historical_shape(url: &str, version: u32) -> Result<(), Box<
         (version >= 8, SCHEMA8_TABLES, SCHEMA8_COLUMNS),
         (version >= 9, SCHEMA9_TABLES, SCHEMA9_COLUMNS),
         (version >= 10, SCHEMA10_TABLES, SCHEMA10_COLUMNS),
+        (version >= 11, SCHEMA11_TABLES, SCHEMA11_COLUMNS),
     ] {
         for table in tables {
             if table_exists(url, table).await? != present {
@@ -796,6 +803,18 @@ pub fn durable_tables(version: u32) -> Vec<&'static str> {
     }
     if version >= 4 {
         tables.extend_from_slice(SCHEMA4_TABLES);
+    }
+    if version >= 5 {
+        tables.extend_from_slice(SCHEMA5_TABLES);
+    }
+    if version >= 6 {
+        tables.extend_from_slice(SCHEMA6_TABLES);
+    }
+    if version >= 7 {
+        tables.extend_from_slice(SCHEMA7_TABLES);
+    }
+    if version >= 11 {
+        tables.extend_from_slice(SCHEMA11_TABLES);
     }
     tables
 }

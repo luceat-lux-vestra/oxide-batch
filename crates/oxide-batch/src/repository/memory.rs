@@ -16,16 +16,16 @@ use crate::{
     DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionAttempt,
     ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
     ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowStepState, FlowTransitionKind, IdentifierKind, JobExecution,
-    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
-    JobInstanceProjection, JobName, JobParameters, LifecycleError, LifecycleTransition,
-    MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation, NodeId,
-    OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft, OperatorRequestId,
-    OwnerObservation, OwnerToken, ParameterDescriptor, ParameterName, PartitionPlanEntry,
-    PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
-    QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository, RecoverySnapshot,
-    RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId,
-    RepeatLineage, RepeatOrdinal, RetentionAction, RetentionActionId, RetentionHold,
+    FlowDecisionRequest, FlowStepState, FlowTransitionKind, ForkLineage, IdentifierKind,
+    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
+    JobInstanceKey, JobInstanceProjection, JobName, JobParameters, LifecycleError,
+    LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
+    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorRecord,
+    OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
+    ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan,
+    PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository,
+    RecoverySnapshot, RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution,
+    RepeatId, RepeatLineage, RepeatOrdinal, RetentionAction, RetentionActionId, RetentionHold,
     RetentionRecord, RetentionRecordDraft, ScopeKind, ScopedComponentId, StartLimit,
     StateEnvelopeDescriptor, StateLimits, StepExecution, StepExecutionId, StepExecutionProjection,
     StepName, StepPartition, StepPartitionId, StepPartitionProjection,
@@ -49,6 +49,7 @@ pub struct InMemoryJobRepository {
     ids: Arc<dyn IdGenerator>,
     fail_next_partition_aggregate_commit: Arc<AtomicBool>,
     fail_next_repeat_commit: Arc<AtomicBool>,
+    fail_next_fork_commit: Arc<AtomicBool>,
 }
 
 impl InMemoryJobRepository {
@@ -61,6 +62,7 @@ impl InMemoryJobRepository {
             ids,
             fail_next_partition_aggregate_commit: Arc::new(AtomicBool::new(false)),
             fail_next_repeat_commit: Arc::new(AtomicBool::new(false)),
+            fail_next_fork_commit: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -78,6 +80,14 @@ impl InMemoryJobRepository {
     /// A fresh unit of work must inspect durable repeat state before retrying.
     pub fn inject_next_repeat_commit_unknown(&self) {
         self.fail_next_repeat_commit.store(true, Ordering::Release);
+    }
+
+    /// Simulates a fork commit whose durable outcome is unknown to the caller.
+    ///
+    /// The staged target and lineage become visible, but the commit reports
+    /// `CommitOutcomeUnknown` so the service must read back the exact key.
+    pub fn inject_next_fork_commit_unknown(&self) {
+        self.fail_next_fork_commit.store(true, Ordering::Release);
     }
 }
 
@@ -142,6 +152,7 @@ impl JobRepository for InMemoryJobRepository {
                 created_partition_plans: BTreeSet::new(),
                 aggregated_partition_parent: false,
                 committed_repeat_iteration: false,
+                created_fork_lineage: false,
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
         })
     }
@@ -183,6 +194,8 @@ struct MemoryState {
     definition_registry: BTreeMap<(JobName, DefinitionRevision), DefinitionRegistration>,
     execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
     definition_upgrades: BTreeMap<(JobName, [u8; 32], [u8; 32]), DefinitionUpgrade>,
+    fork_lineages: BTreeMap<OperationId, ForkLineage>,
+    fork_job_contexts: BTreeMap<JobExecutionId, ExecutionContext>,
     upgrade_sources: BTreeMap<JobExecutionId, JobExecutionId>,
     upgrade_seeds: BTreeMap<(JobExecutionId, NodeId), MemoryUpgradeNodeSeed>,
     job_name_order: BTreeMap<JobName, u64>,
@@ -335,6 +348,7 @@ struct InMemoryUnitOfWork<'repository> {
     created_partition_plans: BTreeSet<StepExecutionId>,
     aggregated_partition_parent: bool,
     committed_repeat_iteration: bool,
+    created_fork_lineage: bool,
 }
 
 impl InMemoryUnitOfWork<'_> {
@@ -1387,6 +1401,134 @@ impl InMemoryUnitOfWork<'_> {
 }
 
 impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
+    fn fork_lineage<'a>(
+        &'a mut self,
+        operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<ForkLineage>, RepositoryError>> {
+        Box::pin(async move { Ok(self.staged.fork_lineages.get(operation_id).cloned()) })
+    }
+
+    fn stage_fork_job_context<'a>(
+        &'a mut self,
+        target_execution_id: JobExecutionId,
+        context: &'a ExecutionContext,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async move {
+            let target = self
+                .staged
+                .job_executions
+                .get(&target_execution_id)
+                .ok_or(RepositoryError::ForkStateCorrupt)?;
+            if target.metadata().status() != BatchStatus::Starting
+                || target.version() != ExecutionVersion::INITIAL
+                || self
+                    .staged
+                    .fork_job_contexts
+                    .contains_key(&target_execution_id)
+                || self
+                    .staged
+                    .execution_attempts
+                    .get(&target_execution_id)
+                    .is_none_or(|attempt| attempt.get() != 1)
+            {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            self.staged
+                .fork_job_contexts
+                .insert(target_execution_id, context.clone());
+            Ok(())
+        })
+    }
+
+    fn lock_fork_source(
+        &mut self,
+        source_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
+        // The memory UoW stages a whole-state snapshot and uses commit CAS.
+        Box::pin(async move {
+            Ok(self
+                .staged
+                .job_executions
+                .get(&source_execution_id)
+                .cloned())
+        })
+    }
+
+    fn append_fork_lineage<'a>(
+        &'a mut self,
+        lineage: &'a ForkLineage,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async move {
+            if self
+                .staged
+                .fork_lineages
+                .contains_key(lineage.operation_id())
+                || self.staged.fork_lineages.values().any(|existing| {
+                    existing.target_instance_id() == lineage.target_instance_id()
+                        || existing.target_execution_id() == lineage.target_execution_id()
+                })
+            {
+                return Err(RepositoryError::ForkOperationConflict);
+            }
+            let target = self
+                .staged
+                .job_executions
+                .get(&lineage.target_execution_id())
+                .ok_or(RepositoryError::ForkStateCorrupt)?;
+            let staged_context = self
+                .staged
+                .fork_job_contexts
+                .get(&lineage.target_execution_id());
+            if lineage.context_transform().is_some() != staged_context.is_some()
+                || lineage.context_transform().zip(staged_context).is_some_and(
+                    |(descriptor, context)| {
+                        context.schema_id() != descriptor.descriptor().target_schema()
+                            || context.schema_version() != descriptor.descriptor().target_version()
+                    },
+                )
+            {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            if target.job_instance_id() != lineage.target_instance_id()
+                || self
+                    .staged
+                    .job_executions_by_instance
+                    .get(&lineage.target_instance_id())
+                    .is_none_or(|ids| ids.as_slice() != [lineage.target_execution_id()])
+                || !self
+                    .staged
+                    .job_executions
+                    .contains_key(&lineage.source_execution_id())
+                || self
+                    .staged
+                    .execution_definitions
+                    .get(&lineage.source_execution_id())
+                    .is_none_or(|identity| {
+                        identity.manifest_digest() != lineage.source_definition_digest()
+                    })
+                || self
+                    .staged
+                    .execution_definitions
+                    .get(&lineage.target_execution_id())
+                    != Some(lineage.target().definition())
+                || self
+                    .staged
+                    .job_parameters
+                    .get(&lineage.target_execution_id())
+                    .is_none_or(|params| {
+                        params.flow_input_digest() != *lineage.target_parameters_digest()
+                    })
+            {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            self.staged
+                .fork_lineages
+                .insert(lineage.operation_id().clone(), lineage.clone());
+            self.created_fork_lineage = true;
+            Ok(())
+        })
+    }
+
     fn register_definition<'a>(
         &'a mut self,
         registration: &'a DefinitionRegistration,
@@ -2779,7 +2921,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
     ) -> BoxFuture<'_, Result<Option<crate::ExecutionContext>, RepositoryError>> {
         Box::pin(async move {
             self.instance_for_execution(job_execution_id)?;
-            Ok(None)
+            Ok(self
+                .staged
+                .fork_job_contexts
+                .get(&job_execution_id)
+                .cloned())
         })
     }
 
@@ -2789,7 +2935,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
     ) -> BoxFuture<'_, Result<Option<crate::ExecutionContext>, RepositoryError>> {
         Box::pin(async move {
             self.instance_for_execution(job_execution_id)?;
-            Ok(None)
+            Ok(self
+                .staged
+                .fork_job_contexts
+                .get(&job_execution_id)
+                .cloned())
         })
     }
 
@@ -3571,6 +3721,16 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     return Err(RepositoryError::RetentionPlanStale);
                 }
             }
+            // Fork identity is immutable; never silently orphan source or target.
+            if plan.candidates().iter().any(|candidate| {
+                self.staged.fork_lineages.values().any(|lineage| {
+                    lineage.source_execution_id() == candidate.job_execution_id()
+                        || lineage.target_execution_id() == candidate.job_execution_id()
+                        || lineage.target_instance_id() == candidate.job_instance_id()
+                })
+            }) {
+                return Err(RepositoryError::RetentionPlanStale);
+            }
             let counts = self.purge_counts(plan.candidates());
             for candidate in plan.candidates() {
                 let execution_id = candidate.job_execution_id();
@@ -3609,6 +3769,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 self.staged.job_executions.remove(&execution_id);
                 self.staged.execution_attempts.remove(&execution_id);
                 self.staged.job_parameters.remove(&execution_id);
+                self.staged.fork_job_contexts.remove(&execution_id);
                 self.staged
                     .scope_resolution_provenance
                     .retain(|(_, _, _, owner_job, _), _| *owner_job != execution_id);
@@ -3683,7 +3844,12 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     .repository
                     .fail_next_repeat_commit
                     .swap(false, Ordering::AcqRel);
-            if partition_unknown || repeat_unknown {
+            let fork_unknown = self.created_fork_lineage
+                && self
+                    .repository
+                    .fail_next_fork_commit
+                    .swap(false, Ordering::AcqRel);
+            if partition_unknown || repeat_unknown || fork_unknown {
                 return Err(RepositoryError::CommitOutcomeUnknown);
             }
             Ok(())
