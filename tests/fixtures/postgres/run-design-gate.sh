@@ -343,13 +343,13 @@ docker exec \
   --command \
   "SELECT version FROM oxide_batch.ob_schema_version WHERE singleton = true" \
   | tr -d '[:space:]' \
-  | grep -qx '10'
+  | grep -qx '11'
 docker exec \
   --env PGPASSWORD=fixture-migrator-only \
   "${container_name}" \
   psql \
   "host=localhost dbname=oxide_batch_restore user=oxide_batch_migrator sslmode=verify-full sslrootcert=/tls/ca.crt" \
-  --command "UPDATE oxide_batch.ob_schema_version SET version = 11" \
+  --command "UPDATE oxide_batch.ob_schema_version SET version = 12" \
   >/dev/null
 
 set +e
