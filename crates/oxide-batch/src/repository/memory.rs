@@ -1890,11 +1890,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .upgrade_seeds
                 .get(&(job_execution_id, node_id.clone()))
                 .cloned();
-            if let Some(seed) = upgrade_seed.as_ref() {
-                for scope in &seed.scope {
-                    self.resolve_scope_seed_source(job_execution_id, None, &scope.source)?;
-                }
-            }
             let id = self.repository.ids.next_step_execution_id()?;
             if self.staged.step_executions.contains_key(&id) {
                 return Err(RepositoryError::DuplicateIdentifier {

@@ -3429,8 +3429,13 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let (id, strict_source) = if upgraded {
                 let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, node_id).await?;
                 if let Some(seed) = seed.as_ref() {
-                    validate_upgrade_seed_scope_sources(&mut **self.transaction()?, job_id, seed)
-                        .await?;
+                    validate_upgrade_seed_scope_sources(
+                        &mut **self.transaction()?,
+                        job_id,
+                        node_id,
+                        seed,
+                    )
+                    .await?;
                 }
                 let id = match seed.as_ref() {
                     Some(seed) => {
