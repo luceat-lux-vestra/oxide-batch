@@ -802,7 +802,7 @@ impl JobLauncher<'_> {
     ///
     /// # Errors
     ///
-    /// Returns LaunchError when the selected edge is incompatible, state
+    /// Returns `LaunchError` when the selected edge is incompatible, state
     /// transformation fails, or repository metadata cannot reach a trustworthy
     /// state.
     pub async fn launch_chunk_compatible<I, O, R, P, W>(
