@@ -1,7 +1,7 @@
 # M7 Gate-D — Explicit fork lineage contract (#552)
 
-**Status:** implementation contract / evidence checklist; this document is not a claim that Gate-D has passed.
-**Authoritative base:** `main@a6f98a3b8ae3d5a57c97170ce4fb770afa9b38af` (`#550` and `#551` are merged).
+**Status:** historical implementation contract; the accepted, merged Gate-D evidence is recorded in [m7-gate-d-acceptance-evidence.md](m7-gate-d-acceptance-evidence.md).
+**Implementation base at planning time:** `main@a6f98a3b8ae3d5a57c97170ce4fb770afa9b38af`; merged fork result: `main@4702fbcb5546316e285ea36f0b47531ace7099f9`.
 **Parent:** #198; **scope:** #552 only.
 
 ## Distinct operations
@@ -22,7 +22,7 @@ Source historical definition identity and durable state are read-only.
 - `ForkRequest`: caller-owned idempotency key (`OperationId`), exact source
   `JobExecutionId` and expected `ExecutionVersion`, exact target
   `DefinitionRegistration`, target `JobParameters`, and optional explicit
-  `ForkTransformationExecution`.
+  `ForkContextTransform`.
 - The target `JobInstanceKey` is derived using existing
   `JobInstanceKey::new(target_job_name, target_parameters)` semantics.
   Neither a synthetic timestamp nor a random suffix bypasses identity collisions.
@@ -119,5 +119,4 @@ do not cascade-delete history invisibly.
 | PostgreSQL | PostgreSQL 15 + 18, least privilege, populated upgrade, dump/restore, migration reapply, schema-11 older-runtime rejection, bounds/redaction |
 | Final Gate-D | Exact restart, explicit compatible upgrade, incompatible rejection, explicit new-lineage fork in one matrix |
 
-#198 and #552 remain OPEN until both adapter parity and the process-kill/
-migration/security/rollback matrix pass on an exact candidate HEAD.
+**Historical exit condition, satisfied by PR #555:** both adapter parity and the process-kill/migration/security/rollback matrix passed on exact source HEAD `8ab7899b321cb2137b50fcb8fd58508eeafe71bb`. See the accepted Gate-D evidence document above; #552 is closed and #198 is the remaining parent acceptance record.
