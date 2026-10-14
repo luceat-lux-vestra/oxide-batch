@@ -20,12 +20,13 @@ use oxide_batch::{
     ChunkExecutionOutcome, ChunkFaultProgress, ChunkJob, ChunkRestartContract, ChunkSize,
     ChunkStep, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
     ClassifierRevision, Clock, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
-    DefinitionRegistration, DefinitionRegistry, DefinitionRevision, DefinitionUpgrade,
-    DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId, FailureSummary,
+    DefinitionNodeUpgrade, DefinitionRegistration, DefinitionRegistry, DefinitionRevision,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
+    ExecutionContext, FailureCategory, FailureId, FailureSummary,
     FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule, FaultStateError,
     FaultStateFormatError, FaultStateStore, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey,
     JobLauncher, JobName, JobParameter, JobParameters, JobRepository, LifecycleTransition,
-    ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
+    NodeId, ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
     PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
     PostgresConfigError, PostgresExplorer, PostgresFaultState, PostgresJobRepository,
     PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, PurgeBatchBound,
@@ -986,15 +987,18 @@ fn durable_restart_requires_compatible_definition_and_inherits_checkpoint()
         );
         incompatible.rollback().await?;
 
-        let upgrade = DefinitionUpgrade::new(
+        let upgrade = DefinitionUpgrade::transformed(
             DefinitionUpgradeKey::new("v1-to-v2")?,
+            DefinitionUpgradeRevision::new("edge-v1")?,
             v1,
             v2.clone(),
-            [StepDefinitionUpgrade::new(
-                source_step.clone(),
-                target_step.clone(),
+            [DefinitionNodeUpgrade::new(
+                NodeId::new(source_step.as_str())?,
+                NodeId::new(target_step.as_str())?,
             )],
+            [],
         )?;
+        let selected = DefinitionUpgradeExecution::new(upgrade.clone(), [])?;
         let mut register = repository.begin().await?;
         register
             .register_definition_upgrade(&job_name, &upgrade)
@@ -1003,7 +1007,7 @@ fn durable_restart_requires_compatible_definition_and_inherits_checkpoint()
 
         let mut restart = repository.begin().await?;
         let second = restart
-            .create_job_execution_with_definition(instance.id(), &v2)
+            .create_job_execution_with_upgrade(instance.id(), &selected)
             .await?;
         let second_step = restart
             .create_step_execution(second.id(), &target_step)
@@ -1252,24 +1256,27 @@ fn compatible_restart_with_scope_resolution_provenance_fails_closed() -> Result<
         .await?;
         stop.commit().await?;
 
-        let upgrade = DefinitionUpgrade::new(
+        let upgrade = DefinitionUpgrade::transformed(
             DefinitionUpgradeKey::new("scope-v1-to-v2")?,
+            DefinitionUpgradeRevision::new("scope-edge-v1")?,
             v1,
             v2.clone(),
-            [StepDefinitionUpgrade::new(
-                step_name.clone(),
-                step_name.clone(),
+            [DefinitionNodeUpgrade::new(
+                NodeId::new(step_name.as_str())?,
+                NodeId::new(step_name.as_str())?,
             )],
+            [],
         )?;
+        let selected = DefinitionUpgradeExecution::new(upgrade.clone(), [])?;
         let mut register = repository.begin().await?;
         register
             .register_definition_upgrade(&job_name, &upgrade)
             .await?;
         register.commit().await?;
 
-        let mut restart = repository.begin().await?;
+        let mut strict = repository.begin().await?;
         assert_eq!(
-            restart
+            strict
                 .create_job_execution_with_definition_and_parameters(
                     instance.id(),
                     &v2,
@@ -1279,9 +1286,29 @@ fn compatible_restart_with_scope_resolution_provenance_fails_closed() -> Result<
             Err(RepositoryError::IncompatibleDefinition {
                 instance_id: instance.id(),
             }),
-            "scope provenance has no accepted transform across a changed definition",
+            "a registered compatible edge never weakens the strict restart path",
         );
-        restart.rollback().await?;
+        strict.rollback().await?;
+
+        let mut restart = repository.begin().await?;
+        let second = restart
+            .create_job_execution_with_upgrade_and_parameters(
+                instance.id(),
+                &selected,
+                &parameters,
+            )
+            .await?;
+        let remapped = restart
+            .scope_resolution_provenance(
+                ScopeKind::Job,
+                &ScopedComponentId::new("client")?,
+                second.id(),
+                None,
+            )
+            .await?;
+        assert_eq!(remapped.len(), 1);
+        assert_eq!(remapped[0].owner_job_execution_id(), second.id());
+        restart.commit().await?;
 
         repository.close().await?;
         remove_job_rows(&runtime_url, JOB).await?;
