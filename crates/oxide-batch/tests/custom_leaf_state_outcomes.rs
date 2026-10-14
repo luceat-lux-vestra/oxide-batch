@@ -145,7 +145,6 @@ async fn assert_checkpoint(
     Ok(())
 }
 
-
 fn state_with_version(value: u64, version: u32) -> Result<ExecutionContext, Box<dyn Error>> {
     let bytes = format!(
         r#"{{"format":"oxide-batch.execution-context","format_version":1,"schema":"example.state","schema_version":{version},"payload":{{"value":{value}}}}}"#
