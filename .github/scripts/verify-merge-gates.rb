@@ -1679,8 +1679,8 @@ module MergeGateVerifier
       return ["campaign orchestrator #{CAMPAIGN_ORCHESTRATOR_WORKFLOW} is missing"]
     end
 
-    unless pr_trigger?(orchestrator)
-      violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must be pull_request-triggered"
+    unless workflow_event?(orchestrator, 'workflow_call')
+      violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must expose workflow_call"
     end
     if pull_request_target_trigger?(orchestrator)
       violations << "#{CAMPAIGN_ORCHESTRATOR_WORKFLOW} must not use pull_request_target"
