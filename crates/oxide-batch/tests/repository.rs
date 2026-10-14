@@ -17,13 +17,13 @@ use clock::ManualClock;
 use futures_executor::block_on;
 use ids::{DeterministicIds, IdSequenceError};
 use oxide_batch::{
-    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade,
-    DefinitionRevision, DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey,
-    DefinitionUpgradeRevision, ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId,
-    FailureSummary, IdGenerationError, IdGenerator, IdentifierKind, InMemoryJobRepository,
-    JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, LifecycleError,
-    LifecycleTransition, NestedJobLinkRequest, NodeId, OwnerToken, ParameterName, ParameterRole,
-    ParameterValue, RecoveryRequest, RepositoryError, SequentialIdGenerator, StepName,
+    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade, DefinitionRevision,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
+    ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary,
+    IdGenerationError, IdGenerator, IdentifierKind, InMemoryJobRepository, JobInstanceKey, JobName,
+    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
+    NestedJobLinkRequest, NodeId, OwnerToken, ParameterName, ParameterRole, ParameterValue,
+    RecoveryRequest, RepositoryError, SequentialIdGenerator, StepName,
 };
 
 fn time(second: u64) -> SystemTime {
