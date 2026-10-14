@@ -120,7 +120,7 @@ jobs:
     if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
     uses: ./.github/workflows/ci.yml
     permissions:
-      actions: read
+      actions: read # Reuse canonical exact-SHA Fast evidence in the called Rust authority.
       contents: read
 
   dependency:
