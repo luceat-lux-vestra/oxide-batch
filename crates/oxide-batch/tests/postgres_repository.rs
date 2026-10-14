@@ -22,19 +22,18 @@ use oxide_batch::{
     ClassifierRevision, Clock, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
     DefinitionNodeUpgrade, DefinitionRegistration, DefinitionRegistry, DefinitionRevision,
     DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
-    ExecutionContext, FailureCategory, FailureId, FailureSummary,
-    FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule, FaultStateError,
-    FaultStateFormatError, FaultStateStore, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey,
-    JobLauncher, JobName, JobParameter, JobParameters, JobRepository, LifecycleTransition,
-    NodeId, ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
-    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
-    PostgresConfigError, PostgresExplorer, PostgresFaultState, PostgresJobRepository,
-    PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, PurgeBatchBound,
-    PurgePlanRequest, ReadContext, ReadOutcome, ReaderError, RecoveryRequest, RepositoryError,
-    RetryKey, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind,
-    ScopedComponentId, SequentialIdGenerator, SkipCounts, SkipLimit, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepDefinitionUpgrade, StepExecutionId, StepName, StopSource,
-    TerminalStatusSet, TlsMode, WriteContext, WriteOutcome, WriterError,
+    ExecutionContext, FailureCategory, FailureId, FailureSummary, FaultAction, FaultClassifier,
+    FaultPhase, FaultPolicy, FaultRule, FaultStateError, FaultStateFormatError, FaultStateStore,
+    ItemProcessor, ItemReader, ItemWriter, JobInstanceKey, JobLauncher, JobName, JobParameter,
+    JobParameters, JobRepository, LifecycleTransition, NodeId, ParameterName, ParameterRole,
+    ParameterValue, PostgresChunkStateError, PostgresChunkStateProvider,
+    PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresExplorer,
+    PostgresFaultState, PostgresJobRepository, PostgresMigrator, ProcessContext, ProcessOutcome,
+    ProcessorError, PurgeBatchBound, PurgePlanRequest, ReadContext, ReadOutcome, ReaderError,
+    RecoveryRequest, RepositoryError, RetryKey, RetryLimit, RetryOrdinal, RetryReservation,
+    RetryStateLimit, ScopeKind, ScopedComponentId, SequentialIdGenerator, SkipCounts, SkipLimit,
+    StateLimits, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepExecutionId,
+    StepName, StopSource, TerminalStatusSet, TlsMode, WriteContext, WriteOutcome, WriterError,
 };
 use oxide_batch_repository::{ScopeResolutionProvenance, ScopeResolutionSource};
 use sqlx::postgres::PgPoolOptions;
@@ -1292,11 +1291,7 @@ fn compatible_restart_with_scope_resolution_provenance_fails_closed() -> Result<
 
         let mut restart = repository.begin().await?;
         let second = restart
-            .create_job_execution_with_upgrade_and_parameters(
-                instance.id(),
-                &selected,
-                &parameters,
-            )
+            .create_job_execution_with_upgrade_and_parameters(instance.id(), &selected, &parameters)
             .await?;
         let remapped = restart
             .scope_resolution_provenance(
