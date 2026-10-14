@@ -55,8 +55,8 @@ jobs:
           set -euo pipefail
           test "$TRUSTED_CHECKOUT" = "success"
 
-          schema_version="$(jq -er '.schema_version | select(type == "number")' .trusted-base/.github/merge-gate-policy.json)"
-          test "$schema_version" = "8" || {
+          schema_version="$(jq -er '.schema_version | select(type == "number")' .trusted-base/.github/pr-scope-policy.json)"
+          test "$schema_version" = "1" || {
             echo "::error::unsupported trusted-base policy schema: $schema_version" >&2
             exit 1
           }
@@ -79,7 +79,7 @@ jobs:
           classification="$(
             python3 .trusted-base/.github/scripts/pr-scope.py \
               --repo-root .trusted-base \
-              --policy .github/merge-gate-policy.json \
+              --policy .github/pr-scope-policy.json \
               --expected-count "$expected_count" \
               --trusted-base-sha "$BASE_SHA" \
               <"$changed_file_records"
