@@ -568,6 +568,13 @@ impl DefinitionUpgrade {
         {
             return Err(DefinitionError::MissingUpgradeSourceNode);
         }
+        let target_nodes = definition_upgrade_source_nodes(&to)?;
+        if node_mapping
+            .values()
+            .any(|node| !target_nodes.contains(node))
+        {
+            return Err(DefinitionError::UnknownUpgradeTargetNode);
+        }
 
         let transforms = transforms.into_iter().collect::<Vec<_>>();
         if transforms.len() > MAX_DEFINITION_UPGRADE_TRANSFORMS {
@@ -1947,6 +1954,8 @@ pub enum DefinitionError {
     UnknownUpgradeSourceNode,
     /// A durable source definition node had no explicit target mapping.
     MissingUpgradeSourceNode,
+    /// A mapping named a target node absent from the target definition.
+    UnknownUpgradeTargetNode,
     /// A legacy M2 identity-only edge cannot execute an M7 compatible restart.
     LegacyUpgradeExecution,
     /// Two live state transformer implementations reused one revision.
@@ -2071,6 +2080,9 @@ impl fmt::Display for DefinitionError {
             }
             Self::MissingUpgradeSourceNode => {
                 formatter.write_str("definition upgrade omits a durable source node")
+            }
+            Self::UnknownUpgradeTargetNode => {
+                formatter.write_str("definition upgrade maps to an unknown target node")
             }
             Self::LegacyUpgradeExecution => formatter
                 .write_str("legacy definition upgrade has no transformed execution contract"),
