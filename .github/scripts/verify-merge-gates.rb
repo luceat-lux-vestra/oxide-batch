@@ -378,18 +378,6 @@ module MergeGateVerifier
     'evidence' => {'contents' => 'read'},
     'supply' => {'contents' => 'read'}
   }.freeze
-  PR_PROOF_DISPATCH_JOB = 'dispatch-authorities'
-  PR_PROOF_RUNTIME_SCRIPT = '.github/scripts/pr-authority-runtime.py'
-  PR_PROOF_DISPATCH_PERMISSIONS = {'actions' => 'write', 'contents' => 'read'}.freeze
-  PR_PROOF_VERIFY_PERMISSIONS = {'actions' => 'read', 'contents' => 'read'}.freeze
-  PR_PROOF_DISPATCH_INPUTS = %w[
-    base_sha
-    head_sha
-    head_repo
-    pr_number
-    caller_run_id
-    caller_run_attempt
-  ].freeze
   PR_TOPOLOGY_SCHEMA = 'single-pr-entrypoint-v1'
   PR_TOPOLOGY_MIGRATION_MARKER = '.github/ci-topology-v7-migration'
   PR_TOPOLOGY_INDEPENDENT_M5 = '.github/workflows/m5-conformance.yml'
@@ -969,199 +957,9 @@ module MergeGateVerifier
     required
   end
 
-  def pr_proof_dispatch_runtime_contract(jobs:, docs:, policy:)
-    violations = []
-    policy_violations = pr_proof_policy_contract(policy: policy)
-    policy_violations.each do |violation|
-      violations << "dispatched pr-proof runtime requires canonical policy: #{violation}"
-    end
-
-    authority_ids = PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }
-    materialized = authority_ids.select { |job_id| jobs.key?(job_id) }
-    unless materialized.empty?
-      violations << "#{PR_CI_WORKFLOW} dispatched runtime must not materialize static optional-authority jobs: #{materialized.join(', ')}"
-    end
-
-    expected_jobs = [PR_CI_SCOPE_JOB, PR_PROOF_DISPATCH_JOB, PR_CI_PROOF_JOB]
-    missing_jobs = expected_jobs.reject { |job_id| jobs[job_id].is_a?(Hash) }
-    unless missing_jobs.empty?
-      violations << "#{PR_CI_WORKFLOW} dispatched runtime is missing canonical jobs: #{missing_jobs.join(', ')}"
-      return violations
-    end
-
-    dispatch = jobs.fetch(PR_PROOF_DISPATCH_JOB)
-    unless dispatch['name'] == 'dispatch-required-authorities'
-      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must emit dispatch-required-authorities"
-    end
-    unless normalize_needs(dispatch) == [PR_CI_SCOPE_JOB]
-      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must depend only on trusted scope"
-    end
-    dispatch_if = normalized_shell(dispatch['if'])
-    unless dispatch_if.include?('always()') && dispatch_if.include?('github.event.pull_request.draft == false')
-      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must run fail-closed after scope for ready PRs"
-    end
-    unless dispatch['runs-on'] == 'ubuntu-slim' && dispatch['timeout-minutes'] == 5
-      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must use the bounded ubuntu-slim dispatcher"
-    end
-    unless dispatch['permissions'] == PR_PROOF_DISPATCH_PERMISSIONS
-      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must keep exact Actions-write dispatch permissions"
-    end
-
-    dispatch_steps = Array(dispatch['steps']).select { |step| step.is_a?(Hash) }
-    trusted_checkout = dispatch_steps.find { |step| step['id'] == 'dispatch-trusted-base' }
-    unless trusted_checkout.is_a?(Hash) &&
-           trusted_checkout['uses'].to_s.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/) &&
-           trusted_checkout.dig('with', 'ref') == '${{ github.event.pull_request.base.sha }}' &&
-           trusted_checkout.dig('with', 'path') == '.dispatch-trusted-base' &&
-           trusted_checkout.dig('with', 'fetch-depth') == 1 &&
-           trusted_checkout.dig('with', 'persist-credentials') == false
-      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must check out the exact trusted base for dispatch planning"
-    end
-
-    dispatch_command = dispatch_steps.filter_map { |step| step['run'] }.join("\n")
-    dispatch_tokens = [
-      "#{PR_PROOF_RUNTIME_SCRIPT} plan",
-      '--policy .dispatch-trusted-base/.github/merge-gate-policy.json',
-      '--scope-result "$SCOPE_RESULT"',
-      '--classification-outcome "$CLASSIFICATION_OUTCOME"',
-      '--legacy-base "$LEGACY_BASE"',
-      '--docs-only "$DOCS_ONLY"',
-      '--evidence-impact "$EVIDENCE_IMPACT"',
-      '--supply-chain-impact "$SUPPLY_IMPACT"',
-      'actions/workflows/${workflow}/dispatches',
-      '-f ref="$DEFAULT_BRANCH"',
-      '-f inputs[base_sha]="$BASE_SHA"',
-      '-f inputs[head_sha]="$HEAD_SHA"',
-      '-f inputs[head_repo]="$HEAD_REPO"',
-      '-f inputs[pr_number]="$PR_NUMBER"',
-      '-f inputs[caller_run_id]="$CALLER_RUN_ID"',
-      '-f inputs[caller_run_attempt]="$CALLER_RUN_ATTEMPT"'
-    ]
-    missing_dispatch_tokens = dispatch_tokens.reject { |token| dispatch_command.include?(token) }
-    unless missing_dispatch_tokens.empty?
-      violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} is missing trusted dispatch tokens: #{missing_dispatch_tokens.join(', ')}"
-    end
-
-    dispatch_env = dispatch_steps.filter_map { |step| step['env'] if step['run'] }.reduce({}) { |memo, env| memo.merge(env || {}) }
-    expected_dispatch_env = {
-      'GH_TOKEN' => '${{ github.token }}',
-      'BASE_SHA' => '${{ github.event.pull_request.base.sha }}',
-      'HEAD_SHA' => '${{ github.event.pull_request.head.sha }}',
-      'HEAD_REPO' => '${{ github.event.pull_request.head.repo.full_name }}',
-      'PR_NUMBER' => '${{ github.event.pull_request.number }}',
-      'DEFAULT_BRANCH' => '${{ github.event.repository.default_branch }}',
-      'CALLER_RUN_ID' => '${{ github.run_id }}',
-      'CALLER_RUN_ATTEMPT' => '${{ github.run_attempt }}',
-      'SCOPE_RESULT' => '${{ needs.scope.result }}',
-      'CLASSIFICATION_OUTCOME' => '${{ needs.scope.outputs.classification_outcome }}',
-      'LEGACY_BASE' => '${{ needs.scope.outputs.legacy_base }}',
-      'DOCS_ONLY' => '${{ needs.scope.outputs.docs_only }}',
-      'EVIDENCE_IMPACT' => '${{ needs.scope.outputs.evidence_impact }}',
-      'SUPPLY_IMPACT' => '${{ needs.scope.outputs.supply_chain_impact }}'
-    }
-    expected_dispatch_env.each do |key, value|
-      unless dispatch_env[key] == value
-        violations << "#{PR_CI_WORKFLOW}##{PR_PROOF_DISPATCH_JOB} must bind #{key} to #{value}"
-      end
-    end
-
-    proof = jobs.fetch(PR_CI_PROOF_JOB)
-    violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must emit context pr-proof" unless proof['name'] == 'pr-proof'
-    expected_needs = [PR_CI_SCOPE_JOB, PR_PROOF_DISPATCH_JOB].sort
-    actual_needs = normalize_needs(proof).sort
-    unless actual_needs == expected_needs
-      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} dispatched needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
-    end
-    violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must use always()" unless always_condition?(proof['if'])
-    # GitHub enforces a 15-minute ceiling on ubuntu-slim jobs.
-    unless proof['runs-on'] == 'ubuntu-slim' && [10, 15].include?(proof['timeout-minutes'])
-      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must keep the bounded ubuntu-slim proof job"
-    end
-    unless proof['permissions'] == PR_PROOF_VERIFY_PERMISSIONS
-      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must keep exact Actions-read proof permissions"
-    end
-
-    proof_steps = Array(proof['steps']).select { |step| step.is_a?(Hash) }
-    proof_checkout = proof_steps.find { |step| step['id'] == 'proof-trusted-base' }
-    unless proof_checkout.is_a?(Hash) &&
-           proof_checkout['uses'].to_s.match?(/\Aactions\/checkout@[0-9a-f]{40}\z/) &&
-           proof_checkout.dig('with', 'ref') == '${{ github.event.pull_request.base.sha }}' &&
-           proof_checkout.dig('with', 'path') == '.proof-trusted-base' &&
-           proof_checkout.dig('with', 'fetch-depth') == 1 &&
-           proof_checkout.dig('with', 'persist-credentials') == false
-      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must check out the exact trusted base for proof verification"
-    end
-
-    proof_command = proof_steps.filter_map { |step| step['run'] }.join("\n")
-    expected_wait = {10 => '540', 15 => '780'}[proof['timeout-minutes']]
-    actual_waits = proof_command.scan(/--timeout-seconds\s+(\d+)(?=\s|\z)/).flatten
-    unless expected_wait && actual_waits == [expected_wait]
-      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} has an invalid or inconsistent poll/job timeout budget"
-    end
-    proof_tokens = [
-      "#{PR_PROOF_RUNTIME_SCRIPT} verify",
-      '--policy .proof-trusted-base/.github/merge-gate-policy.json',
-      '--scope-result "$SCOPE_RESULT"',
-      '--classification-outcome "$CLASSIFICATION_OUTCOME"',
-      '--legacy-base "$LEGACY_BASE"',
-      '--docs-only "$DOCS_ONLY"',
-      '--evidence-impact "$EVIDENCE_IMPACT"',
-      '--supply-chain-impact "$SUPPLY_IMPACT"',
-      '--dispatch-result "$DISPATCH_RESULT"',
-      '--base-sha "$BASE_SHA"',
-      '--head-sha "$HEAD_SHA"',
-      '--head-repo "$HEAD_REPO"',
-      '--pr-number "$PR_NUMBER"',
-      '--caller-run-id "$CALLER_RUN_ID"',
-      '--caller-run-attempt "$CALLER_RUN_ATTEMPT"'
-    ]
-    missing_proof_tokens = proof_tokens.reject { |token| proof_command.include?(token) }
-    unless missing_proof_tokens.empty?
-      violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} is missing dispatched proof tokens: #{missing_proof_tokens.join(', ')}"
-    end
-
-    proof_env = proof_steps.filter_map { |step| step['env'] if step['run'] }.reduce({}) { |memo, env| memo.merge(env || {}) }
-    expected_proof_env = expected_dispatch_env.merge(
-      'DISPATCH_RESULT' => '${{ needs.dispatch-authorities.result }}'
-    ).reject { |key, _| key == 'DEFAULT_BRANCH' }
-    expected_proof_env.each do |key, value|
-      unless proof_env[key] == value
-        violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must bind #{key} to #{value}"
-      end
-    end
-
-    pr_proof_authorities_for(policy: policy).each do |member|
-      workflow = member.fetch('workflow')
-      authority_id = member.fetch('id')
-      doc = docs[workflow]
-      unless doc.is_a?(Hash)
-        violations << "dispatched authority #{workflow} is missing"
-        next
-      end
-      present, config = event_config(doc, 'workflow_dispatch')
-      inputs = config.is_a?(Hash) ? config['inputs'] : nil
-      unless present && inputs.is_a?(Hash) && inputs.keys.map(&:to_s).sort == PR_PROOF_DISPATCH_INPUTS.sort
-        violations << "#{workflow} must expose only canonical dispatched PR inputs"
-      else
-        PR_PROOF_DISPATCH_INPUTS.each do |input|
-          definition = inputs[input]
-          unless definition.is_a?(Hash) && definition['required'] == true && definition['type'] == 'string'
-            violations << "#{workflow} workflow_dispatch input #{input} must be required string"
-          end
-        end
-      end
-      expected_run_name = "pr-authority/#{authority_id}/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}"
-      unless doc['run-name'] == expected_run_name
-        violations << "#{workflow} must expose canonical dispatched run-name correlation"
-      end
-    end
-
-    violations
-  end
-
   # Immutable trusted-base classifier, not the PR-head copy. Pin the Git blob
   # here so editing the helper itself cannot silently alter gate semantics.
-  ACTION_PIN_ONLY_HELPER_BLOB = '1bb07fe830e818f8d0eb24902ad4a89c02584dbe'
+  ACTION_PIN_ONLY_HELPER_BLOB = 'f348624f0f113d371170863cdfe13dd5f355ff71'
   ACTION_PIN_ONLY_WORKFLOWS = %w[
     .github/workflows/pr-ci.yml
     .github/workflows/ci.yml
@@ -1265,15 +1063,9 @@ module MergeGateVerifier
     unless jobs.is_a?(Hash)
       return violations + ["#{PR_CI_WORKFLOW} must declare jobs"]
     end
-    if jobs.key?(PR_PROOF_DISPATCH_JOB)
-      violations.concat(
-        pr_proof_dispatch_runtime_contract(
-          jobs: jobs,
-          docs: docs,
-          policy: policy
-        )
-      )
-    else
+    if jobs.key?('dispatch-authorities')
+      violations << "${PR_CI_WORKFLOW} must not restore the retired dispatch-authorities control plane"
+    end
       proof_authority_ids = pr_proof_authorities_for(policy: policy).map { |member| member.fetch('id') }
       expected_jobs = ([PR_CI_SCOPE_JOB] + proof_authority_ids + [PR_CI_PROOF_JOB])
       missing_jobs = expected_jobs - jobs.keys.map(&:to_s)
@@ -1411,8 +1203,6 @@ module MergeGateVerifier
         end
       end
 
-    end
-
     pr_topology_reusable_authorities_for(policy: policy).each do |workflow|
       doc = docs[workflow]
       unless doc.is_a?(Hash)
@@ -1420,11 +1210,11 @@ module MergeGateVerifier
         next
       end
       violations << "#{workflow} must expose workflow_call" unless workflow_event?(doc, 'workflow_call')
-      pr_present, pr_config = event_config(doc, 'pull_request')
-      unless pr_present && pr_config.is_a?(Hash) &&
-             pr_config['paths'] == [PR_TOPOLOGY_MIGRATION_MARKER] &&
-             !pr_config.key?('paths-ignore')
-        violations << "#{workflow} direct pull_request trigger must be marker-only during v7 migration"
+      if workflow_event?(doc, 'pull_request')
+        violations << "#{workflow} must not trigger directly on pull_request after the direct-DAG cutover"
+      end
+      if workflow_event?(doc, 'workflow_dispatch')
+        violations << "#{workflow} must not expose the retired PR-authority workflow_dispatch surface"
       end
     end
 

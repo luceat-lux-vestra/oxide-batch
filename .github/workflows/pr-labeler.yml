@@ -186,7 +186,7 @@ jobs:
 
           # Only the fixed, reviewed workflows below qualify. The elevated
           # pull_request_target merge-gate workflow remains exact-blob only.
-          PIN_ONLY_HELPER_BLOB = "1bb07fe830e818f8d0eb24902ad4a89c02584dbe"
+          PIN_ONLY_HELPER_BLOB = "f348624f0f113d371170863cdfe13dd5f355ff71"
           PIN_ONLY_WORKFLOWS = {
               ".github/workflows/pr-ci.yml",
               ".github/workflows/ci.yml",
