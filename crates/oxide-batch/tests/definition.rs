@@ -458,10 +458,10 @@ fn transformed_upgrade_execution_requires_exact_live_revision_set() -> Result<()
         )],
     )?;
 
-    assert_eq!(
+    assert!(matches!(
         DefinitionUpgradeExecution::new(upgrade.clone(), []),
         Err(DefinitionError::StateTransformerSetMismatch)
-    );
+    ));
     let execution = DefinitionUpgradeExecution::new(
         upgrade,
         [DefinitionStateTransformer::new(
