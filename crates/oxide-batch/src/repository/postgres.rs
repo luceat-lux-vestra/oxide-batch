@@ -84,7 +84,7 @@ fn decode_fork_context_transform(value: &Value) -> Result<ForkContextTransform, 
             .and_then(Value::as_u64)
             .ok_or(RepositoryError::ForkStateCorrupt)
     };
-    if !value.as_object().is_some_and(|items| items.len() == 11)
+    if value.as_object().is_none_or(|items| items.len() != 11)
         || get("kind")? != DefinitionStateKind::ExecutionContext.as_str()
     {
         return Err(RepositoryError::ForkStateCorrupt);
