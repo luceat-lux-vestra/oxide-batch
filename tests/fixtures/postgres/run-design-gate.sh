@@ -254,6 +254,14 @@ bash "${fixture_root}/design-gate/run-schema10-upgrade-gate.sh" \
   "${fixture_root}" \
   "${temporary_root}"
 
+# Schema-10 to schema-11 adds explicit immutable fork lineage without
+# changing any restart or compatible-upgrade rows.
+bash "${fixture_root}/design-gate/run-schema11-upgrade-gate.sh" \
+  "${container_name}" \
+  "${repository_root}" \
+  "${fixture_root}" \
+  "${temporary_root}"
+
 (
   cd "${repository_root}"
   OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
