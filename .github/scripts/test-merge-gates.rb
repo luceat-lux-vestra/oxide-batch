@@ -1951,126 +1951,6 @@ class MergeGateVerifierTest < Minitest::Test
     assert_equal ['evidence'], actual
   end
 
-  def test_v7_dispatched_runtime_accepts_canonical_contract
-    jobs = canonical_dispatched_runtime_jobs
-    docs = canonical_dispatched_authority_docs
-    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
-    assert_empty MergeGateVerifier.pr_proof_dispatch_runtime_contract(
-      jobs: jobs,
-      docs: docs,
-      policy: policy
-    )
-  end
-
-  def test_v7_dispatched_runtime_accepts_bounded_15_minute_proof
-    jobs = canonical_dispatched_runtime_jobs
-    jobs['pr-proof']['timeout-minutes'] = 15
-    proof_step = jobs['pr-proof']['steps'].find { |step| step['name'] == 'Verify dispatched authorities' }
-    proof_step['run'] = proof_step['run'].sub('--timeout-seconds 540', '--timeout-seconds 780')
-    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
-    assert_empty MergeGateVerifier.pr_proof_dispatch_runtime_contract(
-      jobs: jobs, docs: canonical_dispatched_authority_docs, policy: policy
-    )
-  end
-
-  def test_v7_dispatched_runtime_rejects_mismatched_wait_budget
-    jobs = canonical_dispatched_runtime_jobs
-    jobs['pr-proof']['timeout-minutes'] = 15
-    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
-    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
-      jobs: jobs, docs: canonical_dispatched_authority_docs, policy: policy
-    )
-    assert_includes violations.join("\n"), 'invalid or inconsistent poll/job timeout budget'
-  end
-
-  def test_v7_dispatched_runtime_rejects_over_slim_runner_limit
-    jobs = canonical_dispatched_runtime_jobs
-    jobs['pr-proof']['timeout-minutes'] = 16
-    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
-    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
-      jobs: jobs, docs: canonical_dispatched_authority_docs, policy: policy
-    )
-    assert_includes violations.join("\n"), 'must keep the bounded ubuntu-slim proof job'
-  end
-
-  def test_v7_dispatched_runtime_rejects_static_optional_authority_job
-    jobs = canonical_dispatched_runtime_jobs
-    jobs['rust'] = {'uses' => './.github/workflows/ci.yml'}
-    docs = canonical_dispatched_authority_docs
-    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
-    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
-      jobs: jobs,
-      docs: docs,
-      policy: policy
-    )
-    assert_includes violations.join("\n"), 'must not materialize static optional-authority jobs: rust'
-  end
-
-  def test_v7_dispatched_runtime_rejects_actions_write_weakening
-    jobs = canonical_dispatched_runtime_jobs
-    jobs['dispatch-authorities']['permissions']['actions'] = 'read'
-    docs = canonical_dispatched_authority_docs
-    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
-    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
-      jobs: jobs,
-      docs: docs,
-      policy: policy
-    )
-    assert_includes violations.join("\n"), 'must keep exact Actions-write dispatch permissions'
-  end
-
-  def test_v7_dispatched_runtime_rejects_missing_caller_attempt_proof
-    jobs = canonical_dispatched_runtime_jobs
-    proof_step = jobs['pr-proof']['steps'].find { |step| step['name'] == 'Verify dispatched authorities' }
-    proof_step['run'] = proof_step['run'].sub(
-      '--caller-run-attempt "$CALLER_RUN_ATTEMPT"',
-      '--caller-run-attempt omitted'
-    )
-    docs = canonical_dispatched_authority_docs
-    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
-    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
-      jobs: jobs,
-      docs: docs,
-      policy: policy
-    )
-    assert_includes violations.join("\n"), 'is missing dispatched proof tokens'
-  end
-
-  def test_v7_dispatched_runtime_rejects_optional_authority_input_weakening
-    jobs = canonical_dispatched_runtime_jobs
-    docs = canonical_dispatched_authority_docs
-    docs['.github/workflows/evidence.yml']['on']['workflow_dispatch']['inputs']['caller_run_attempt']['required'] = false
-    policy = {'schema_version' => 7, 'pr_proof' => canonical_pr_proof_policy}
-    violations = MergeGateVerifier.pr_proof_dispatch_runtime_contract(
-      jobs: jobs,
-      docs: docs,
-      policy: policy
-    )
-    assert_includes violations.join("\n"), 'workflow_dispatch input caller_run_attempt must be required string'
-  end
-
-  def test_v7_topology_dispatch_marker_selects_dispatched_contract
-    with_v7_topology_contract do |root, policy|
-      policy['pr_proof'] = canonical_pr_proof_policy
-      path = File.join(root, '.github/workflows/pr-ci.yml')
-      original = File.read(path)
-      body = original.sub(
-        "  pr-proof:\n",
-        "  dispatch-authorities:\n    name: dispatch-required-authorities\n  pr-proof:\n"
-      )
-      refute_equal original, body
-      write(root, '.github/workflows/pr-ci.yml', body)
-      policy.dig('repository_merge_gate', 'protected_workflows')
-            .find { |entry| entry['workflow'] == '.github/workflows/pr-ci.yml' }['accepted_blobs'] << MergeGateVerifier.git_blob_sha(body)
-      violations = MergeGateVerifier.pr_topology_v7_contract(
-        root: root,
-        policy: policy,
-        producer_summary: v7_producer_summary(root)
-      )
-      assert_includes violations.join("\n"), 'must not materialize static optional-authority jobs'
-    end
-  end
-
   def with_v8_protected_inventory
     Dir.mktmpdir do |root|
       entries = MergeGateVerifier::V8_PROTECTED_CONTROL_FILES.each_with_index.map do |path, index|
@@ -2253,6 +2133,34 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v7_topology_rejects_direct_pr_trigger_on_reusable_authority
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      body = File.read(path).sub("  workflow_call:\n", "  pull_request:\n  workflow_call:\n")
+      write(root, '.github/workflows/evidence.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'must not trigger directly on pull_request after the direct-DAG cutover'
+    end
+  end
+
+  def test_v7_topology_rejects_workflow_dispatch_on_reusable_authority
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      body = File.read(path).sub("  workflow_call:\n", "  workflow_call:\n  workflow_dispatch:\n")
+      write(root, '.github/workflows/evidence.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'must not expose the retired PR-authority workflow_dispatch surface'
+    end
+  end
+
   def test_v7_topology_rejects_legacy_true_as_unknown_default
     with_v7_topology_contract do |root, policy|
       path = File.join(root, '.github/workflows/pr-ci.yml')
@@ -2372,141 +2280,6 @@ class MergeGateVerifierTest < Minitest::Test
       workflow_docs[relative] = MergeGateVerifier.load_yaml(absolute)
     end
     {'workflow_docs' => workflow_docs}
-  end
-
-  def canonical_dispatched_runtime_jobs
-    dispatch_env = {
-      'GH_TOKEN' => '${{ github.token }}',
-      'BASE_SHA' => '${{ github.event.pull_request.base.sha }}',
-      'HEAD_SHA' => '${{ github.event.pull_request.head.sha }}',
-      'HEAD_REPO' => '${{ github.event.pull_request.head.repo.full_name }}',
-      'PR_NUMBER' => '${{ github.event.pull_request.number }}',
-      'DEFAULT_BRANCH' => '${{ github.event.repository.default_branch }}',
-      'CALLER_RUN_ID' => '${{ github.run_id }}',
-      'CALLER_RUN_ATTEMPT' => '${{ github.run_attempt }}',
-      'SCOPE_RESULT' => '${{ needs.scope.result }}',
-      'CLASSIFICATION_OUTCOME' => '${{ needs.scope.outputs.classification_outcome }}',
-      'LEGACY_BASE' => '${{ needs.scope.outputs.legacy_base }}',
-      'DOCS_ONLY' => '${{ needs.scope.outputs.docs_only }}',
-      'EVIDENCE_IMPACT' => '${{ needs.scope.outputs.evidence_impact }}',
-      'SUPPLY_IMPACT' => '${{ needs.scope.outputs.supply_chain_impact }}'
-    }
-    dispatch_run = [
-      'python3 .dispatch-trusted-base/.github/scripts/pr-authority-runtime.py plan',
-      '--policy .dispatch-trusted-base/.github/merge-gate-policy.json',
-      '--scope-result "$SCOPE_RESULT"',
-      '--classification-outcome "$CLASSIFICATION_OUTCOME"',
-      '--legacy-base "$LEGACY_BASE"',
-      '--docs-only "$DOCS_ONLY"',
-      '--evidence-impact "$EVIDENCE_IMPACT"',
-      '--supply-chain-impact "$SUPPLY_IMPACT"',
-      'gh api actions/workflows/${workflow}/dispatches',
-      '-f ref="$DEFAULT_BRANCH"',
-      '-f inputs[base_sha]="$BASE_SHA"',
-      '-f inputs[head_sha]="$HEAD_SHA"',
-      '-f inputs[head_repo]="$HEAD_REPO"',
-      '-f inputs[pr_number]="$PR_NUMBER"',
-      '-f inputs[caller_run_id]="$CALLER_RUN_ID"',
-      '-f inputs[caller_run_attempt]="$CALLER_RUN_ATTEMPT"'
-    ].join("\n")
-    proof_env = dispatch_env.reject { |key, _| key == 'DEFAULT_BRANCH' }.merge(
-      'DISPATCH_RESULT' => '${{ needs.dispatch-authorities.result }}'
-    )
-    proof_run = [
-      'python3 .proof-trusted-base/.github/scripts/pr-authority-runtime.py verify',
-      '--policy .proof-trusted-base/.github/merge-gate-policy.json',
-      '--scope-result "$SCOPE_RESULT"',
-      '--classification-outcome "$CLASSIFICATION_OUTCOME"',
-      '--legacy-base "$LEGACY_BASE"',
-      '--docs-only "$DOCS_ONLY"',
-      '--evidence-impact "$EVIDENCE_IMPACT"',
-      '--supply-chain-impact "$SUPPLY_IMPACT"',
-      '--dispatch-result "$DISPATCH_RESULT"',
-      '--base-sha "$BASE_SHA"',
-      '--head-sha "$HEAD_SHA"',
-      '--head-repo "$HEAD_REPO"',
-      '--pr-number "$PR_NUMBER"',
-      '--caller-run-id "$CALLER_RUN_ID"',
-      '--caller-run-attempt "$CALLER_RUN_ATTEMPT"',
-      '--timeout-seconds 540',
-      '--poll-interval-seconds 5'
-    ].join("\n")
-
-    {
-      'scope' => {},
-      'dispatch-authorities' => {
-        'name' => 'dispatch-required-authorities',
-        'needs' => 'scope',
-        'if' => '${{ always() && github.event.pull_request.draft == false }}',
-        'runs-on' => 'ubuntu-slim',
-        'timeout-minutes' => 5,
-        'permissions' => {'actions' => 'write', 'contents' => 'read'},
-        'steps' => [
-          {
-            'id' => 'dispatch-trusted-base',
-            'uses' => 'actions/checkout@0000000000000000000000000000000000000001',
-            'with' => {
-              'ref' => '${{ github.event.pull_request.base.sha }}',
-              'path' => '.dispatch-trusted-base',
-              'fetch-depth' => 1,
-              'persist-credentials' => false
-            }
-          },
-          {
-            'name' => 'Dispatch required authorities',
-            'env' => dispatch_env,
-            'run' => dispatch_run
-          }
-        ]
-      },
-      'pr-proof' => {
-        'name' => 'pr-proof',
-        'needs' => ['scope', 'dispatch-authorities'],
-        'if' => '${{ always() }}',
-        'runs-on' => 'ubuntu-slim',
-        'timeout-minutes' => 10,
-        'permissions' => {'actions' => 'read', 'contents' => 'read'},
-        'steps' => [
-          {
-            'id' => 'proof-trusted-base',
-            'uses' => 'actions/checkout@0000000000000000000000000000000000000001',
-            'with' => {
-              'ref' => '${{ github.event.pull_request.base.sha }}',
-              'path' => '.proof-trusted-base',
-              'fetch-depth' => 1,
-              'persist-credentials' => false
-            }
-          },
-          {
-            'name' => 'Verify dispatched authorities',
-            'env' => proof_env,
-            'run' => proof_run
-          }
-        ]
-      }
-    }
-  end
-
-  def canonical_dispatched_authority_docs
-    inputs = %w[base_sha head_sha head_repo pr_number caller_run_id caller_run_attempt].to_h do |name|
-      [name, {'required' => true, 'type' => 'string'}]
-    end
-    canonical_pr_proof_policy.fetch('members').to_h do |member|
-      authority_id = member.fetch('id')
-      workflow = member.fetch('workflow')
-      run_name = "pr-authority/#{authority_id}/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}"
-      [
-        workflow,
-        {
-          'run-name' => run_name,
-          'on' => {
-            'workflow_dispatch' => {
-              'inputs' => Marshal.load(Marshal.dump(inputs))
-            }
-          }
-        }
-      ]
-    end
   end
 
   def with_v7_topology_contract
@@ -2631,9 +2404,6 @@ class MergeGateVerifierTest < Minitest::Test
         write(root, ".github/workflows/#{name}", <<~YAML)
           name: #{name}
           on:
-            pull_request:
-              paths:
-                - .github/ci-topology-v7-migration
             workflow_call:
           jobs:
             noop:
