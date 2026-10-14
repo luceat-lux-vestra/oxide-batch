@@ -2189,9 +2189,7 @@ impl fmt::Display for RepositoryError {
             Self::ForkStateCorrupt => {
                 formatter.write_str("fork source state is corrupt or unbounded")
             }
-            Self::ForkTransformRejected => {
-                formatter.write_str("fork context transform rejected")
-            }
+            Self::ForkTransformRejected => formatter.write_str("fork context transform rejected"),
             Self::DefinitionJobMismatch { expected, actual } => write!(
                 formatter,
                 "definition for job {actual} cannot be used for job {expected}"

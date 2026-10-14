@@ -26,17 +26,27 @@ impl ForkContextTransform {
         source_step_version: ExecutionVersion,
         descriptor: DefinitionStateTransform,
     ) -> Self {
-        Self { source_step_execution_id, source_step_version, descriptor }
+        Self {
+            source_step_execution_id,
+            source_step_version,
+            descriptor,
+        }
     }
     /// Returns the selected source step.
     #[must_use]
-    pub const fn source_step_execution_id(&self) -> StepExecutionId { self.source_step_execution_id }
+    pub const fn source_step_execution_id(&self) -> StepExecutionId {
+        self.source_step_execution_id
+    }
     /// Returns the exact committed source-step version.
     #[must_use]
-    pub const fn source_step_version(&self) -> ExecutionVersion { self.source_step_version }
+    pub const fn source_step_version(&self) -> ExecutionVersion {
+        self.source_step_version
+    }
     /// Borrows the exact source/target node, schema and transformer revision contract.
     #[must_use]
-    pub const fn descriptor(&self) -> &DefinitionStateTransform { &self.descriptor }
+    pub const fn descriptor(&self) -> &DefinitionStateTransform {
+        &self.descriptor
+    }
 }
 
 /// A caller-supplied idempotent fork command, distinct from restart and upgrade.
@@ -145,7 +155,8 @@ impl ForkLineage {
             target_instance_id,
             target_execution_id,
             request.parameters().flow_input_digest(),
-        ).with_context_transform(request.context_transform().cloned())
+        )
+        .with_context_transform(request.context_transform().cloned())
     }
 
     /// Associates the exact durable transform metadata with the lineage.
