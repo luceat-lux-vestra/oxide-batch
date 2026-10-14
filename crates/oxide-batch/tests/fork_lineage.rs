@@ -3,16 +3,25 @@
 use std::error::Error;
 use std::num::NonZeroU64;
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_executor::block_on;
 use oxide_batch::{
-    BatchStatus, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
+    BatchStatus, Clock, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, ExecutionVersion, ForkRequest,
     InMemoryJobRepository, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
     LifecycleTransition, OperationId, RepositoryError, SequentialIdGenerator, StepName,
-    SystemClock,
+    
 };
+
+#[derive(Clone, Copy)]
+struct ForkFixtureClock;
+
+impl Clock for ForkFixtureClock {
+    fn now(&self) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(90)
+    }
+}
 
 fn registration(job_name: &str) -> Result<DefinitionRegistration, Box<dyn Error>> {
     let job = JobName::new(job_name)?;
@@ -37,7 +46,7 @@ fn setup() -> Result<
 > {
     block_on(async {
         let repository = InMemoryJobRepository::new(
-            Arc::new(SystemClock),
+            Arc::new(ForkFixtureClock),
             Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN)),
         );
         let source = registration("fork-source")?;

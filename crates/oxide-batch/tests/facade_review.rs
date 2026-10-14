@@ -104,7 +104,7 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // RepeatLineage so nested cycles and dynamic execution owners retain an
     // explicit facade-owned restart identity.
     // #550 adds immutable registry binding construction/error values.
-    ("oxide_batch_repository", 120),
+    ("oxide_batch_repository", 123),
     // #301 exposes the process-local repeat runtime contract: callback/policy/
     // interceptor traits and registrations, redacted failure/context values,
     // policy outcome, and the bounded secondary-failure ceiling.
@@ -120,7 +120,7 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // resolution execution remains internal and feeds #277's live-scope runtime.
     ("scope_runtime", 1),
     // #550 adds the public exact-revision DefinitionRegistry facade.
-    ("service", 8),
+    ("service", 9),
     ("shutdown", 20),
     ("telemetry", 38),
 ];

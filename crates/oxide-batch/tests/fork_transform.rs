@@ -3,18 +3,27 @@
 use std::error::Error;
 use std::num::NonZeroU64;
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use futures_executor::block_on;
 use oxide_batch::{
-    BatchStatus, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
+    BatchStatus, Clock, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, DefinitionStateKind,
     DefinitionStateTransform, DefinitionStateTransformError, DefinitionStateTransformId,
     DefinitionStateTransformer, DefinitionUpgradeRevision, ExecutionContext, ForkContextTransform,
     ForkRequest, InMemoryJobRepository, JobFork, JobInstanceKey, JobName, JobParameters,
     JobRepository, LifecycleTransition, NodeId, OperationId, RepositoryError,
-    SequentialIdGenerator, StateLimits, StateSchemaId, StateSchemaVersion, StepName, SystemClock,
+    SequentialIdGenerator, StateLimits, StateSchemaId, StateSchemaVersion, StepName, 
 };
+
+#[derive(Clone, Copy)]
+struct ForkFixtureClock;
+
+impl Clock for ForkFixtureClock {
+    fn now(&self) -> SystemTime {
+        UNIX_EPOCH + Duration::from_secs(90)
+    }
+}
 
 fn registration(name: &str) -> Result<DefinitionRegistration, Box<dyn Error>> {
     let job = JobName::new(name)?;
@@ -44,7 +53,7 @@ fn increment(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
 fn explicitly_transformed_fork_creates_fresh_target_and_context() -> Result<(), Box<dyn Error>> {
     block_on(async {
         let repository = InMemoryJobRepository::new(
-            Arc::new(SystemClock),
+            Arc::new(ForkFixtureClock),
             Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN)),
         );
         let source = registration("fork-transform-source")?;
