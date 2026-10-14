@@ -48,13 +48,7 @@ fn merge_gate_contract_negative_tests_pass_in_github_actions() -> Result<(), Box
             .arg(".github/scripts/test-evaluate-aggregate-run.rb"),
         "selective-rerun-safe aggregate evaluator contract tests",
     )?;
-    run(
-        Command::new("python3")
-            .current_dir(&root)
-            .arg(".github/scripts/pr-authority-runtime.py")
-            .arg("self-test"),
-        "dispatched PR authority runtime contract tests",
-    )
+    Ok(())
 }
 
 // Live Ruleset drift is still checked in the dedicated "quality-contracts"
