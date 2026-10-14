@@ -10,7 +10,7 @@ use oxide_batch::{
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, DefinitionStateKind,
     DefinitionStateTransform, DefinitionStateTransformError, DefinitionStateTransformId,
     DefinitionStateTransformer, DefinitionUpgradeRevision, ExecutionContext, ForkContextTransform,
-    ForkRequest, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
+    ForkLineage, ForkRequest, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
     LifecycleTransition, NodeId, OperationId, PostgresConfig, PostgresJobRepository,
     PostgresMigrator, RepositoryError, StateLimits, StateSchemaId, StateSchemaVersion, StepName,
     TlsMode,
@@ -224,6 +224,70 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
             );
             assert_eq!(check.get_job_execution(stopped.id()).await?, Some(stopped));
             check.rollback().await?;
+
+            // Two truly concurrent requests for an unused identifying key
+            // must converge on one durable operation and one new execution.
+            let concurrent_target = registration(&format!("fork_pg_parallel_{stamp}"))?;
+            DefinitionRegistry::new(reopened.clone())
+                .register(&concurrent_target).await?;
+            let concurrent = ForkRequest::new(
+                OperationId::new(format!("fork-pg-parallel-{stamp}"))?,
+                stopped.id(), stopped.version(), concurrent_target, JobParameters::new(),
+            )
+            .with_context_transform(
+                request.context_transform().cloned().ok_or(RepositoryError::ForkTransformRejected)?,
+            );
+            let fork_a = JobFork::new(reopened.clone());
+            let fork_b = JobFork::new(reopened.clone());
+            let (first, second) = tokio::join!(
+                fork_a.fork_transformed(&concurrent, &transformer),
+                fork_b.fork_transformed(&concurrent, &transformer),
+            );
+            let first = first?;
+            assert_eq!(first, second?);
+            assert_eq!(
+                fork_a.lineage(concurrent.operation_id()).await?,
+                Some(first.clone()),
+            );
+            let mut count = reopened.begin().await?;
+            assert_eq!(count.job_executions(first.target_instance_id()).await?.len(), 1);
+            count.rollback().await?;
+
+            // Post-lineage rollback must erase instance, execution, and
+            // lineage together while retaining the historical source.
+            let rollback_target = registration(&format!("fork_pg_rollback_{stamp}"))?;
+            DefinitionRegistry::new(reopened.clone())
+                .register(&rollback_target).await?;
+            let rollback_request = ForkRequest::new(
+                OperationId::new(format!("fork-pg-rollback-{stamp}"))?,
+                stopped.id(), stopped.version(), rollback_target, JobParameters::new(),
+            );
+            let mut uncommitted = reopened.begin().await?;
+            let selected = uncommitted
+                .select_or_create_job_instance(&rollback_request.target_key())
+                .await?.instance().clone();
+            let execution = uncommitted.create_job_execution_with_definition_and_parameters(
+                selected.id(), rollback_request.target().definition(), rollback_request.parameters(),
+            ).await?;
+            let source_definition =
+                uncommitted.scope_execution_definition(stopped.id()).await?;
+            let draft = ForkLineage::new(
+                &rollback_request, &source_definition, [42_u8; 32],
+                selected.id(), execution.id(),
+            );
+            uncommitted.append_fork_lineage(&draft).await?;
+            uncommitted.rollback().await?;
+
+            let mut rolled_back = reopened.begin().await?;
+            assert!(
+                rolled_back.find_job_instance(&rollback_request.target_key()).await?.is_none()
+            );
+            assert_eq!(rolled_back.get_job_execution(stopped.id()).await?, Some(stopped));
+            rolled_back.rollback().await?;
+            assert!(
+                JobFork::new(reopened.clone())
+                    .lineage(rollback_request.operation_id()).await?.is_none()
+            );
             Ok::<(), Box<dyn Error>>(())
         })
 }
