@@ -18,11 +18,11 @@ use oxide_batch::{
     DefinitionUpgradeRevision, ExitCode, ExitPattern, ExitStatus, FlowExecutionOutcome, FlowGraph,
     FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
     FlowTransitionKind, InMemoryExplorer, InMemoryJobRepository, JobExecutionDecider, JobExplorer,
-    JobName, JobParameters, JobRepository, JoinNode, RepositoryError,
-    MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES, MAX_OUTGOING_TRANSITIONS, MAX_SPLIT_BRANCHES,
-    MAX_TRANSITIONS, ManifestError, NestedFlow, NodeId, PageRequest, PageSize, PlanError,
-    SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode, StepComponents, StepName, StepNode,
-    StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    JobName, JobParameters, JobRepository, JoinNode, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES,
+    MAX_OUTGOING_TRANSITIONS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, ManifestError, NestedFlow,
+    NodeId, PageRequest, PageSize, PlanError, RepositoryError, SequentialIdGenerator, SplitBranch,
+    SplitBudget, SplitNode, StepComponents, StepName, StepNode, StopSource, Tasklet,
+    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 #[derive(Debug)]
@@ -579,7 +579,8 @@ async fn nested_flow_executes_through_the_root_runtime_once() -> Result<(), Box<
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn compatible_flow_restart_requires_the_explicit_selected_edge() -> Result<(), Box<dyn Error>> {
+async fn compatible_flow_restart_requires_the_explicit_selected_edge() -> Result<(), Box<dyn Error>>
+{
     let name = JobName::new("compatible-flow-restart")?;
     let source_node = NodeId::new("source")?;
     let target_node = NodeId::new("target")?;
@@ -631,7 +632,9 @@ async fn compatible_flow_restart_requires_the_explicit_selected_edge() -> Result
     )?;
     let selected = DefinitionUpgradeExecution::new(edge.clone(), [])?;
     let mut registration = repository.begin().await?;
-    registration.register_definition_upgrade(&name, &edge).await?;
+    registration
+        .register_definition_upgrade(&name, &edge)
+        .await?;
     registration.commit().await?;
 
     let (_, strict_stop) = StopSource::new();

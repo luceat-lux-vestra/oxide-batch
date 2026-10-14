@@ -1844,7 +1844,8 @@ impl<'a> FlowLauncher<'a> {
         parameters: &JobParameters,
         stop_token: &StopToken,
     ) -> Result<FlowLaunchReport, FlowRuntimeError> {
-        self.launch_selected(job, parameters, stop_token, None).await
+        self.launch_selected(job, parameters, stop_token, None)
+            .await
     }
 
     /// Executes one explicitly selected compatible flow restart.
