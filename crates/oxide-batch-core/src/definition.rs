@@ -596,12 +596,7 @@ impl DefinitionUpgrade {
                 return Err(DefinitionError::DuplicateStateTransform);
             }
         }
-        validate_required_definition_state_transforms(
-            &from,
-            &to,
-            &node_mapping,
-            &transforms,
-        )?;
+        validate_required_definition_state_transforms(&from, &to, &node_mapping, &transforms)?;
 
         Ok(Self {
             key,
@@ -698,9 +693,10 @@ fn validate_required_definition_state_transforms(
                     transform.source_node() == source_node
                         && transform.target_node() == target_node
                         && transform.kind() == source.kind
-                        && source.state_id.as_deref().is_none_or(|state_id| {
-                            transform.state_id().as_str() == state_id
-                        })
+                        && source
+                            .state_id
+                            .as_deref()
+                            .is_none_or(|state_id| transform.state_id().as_str() == state_id)
                 })
                 .collect::<Vec<_>>();
             if matching.len() > 1 {
@@ -744,8 +740,7 @@ fn definition_durable_state_contracts(
         }
         return one_step_durable_state_contracts(object);
     }
-    let node = find_definition_node(&document, node_id)
-        .ok_or(DefinitionError::ManifestEncoding)?;
+    let node = find_definition_node(&document, node_id).ok_or(DefinitionError::ManifestEncoding)?;
     graph_node_durable_state_contracts(node)
 }
 
@@ -856,9 +851,7 @@ fn schema_contract(
     value: &serde_json::Value,
     schema_key: &str,
 ) -> Result<DefinitionDurableStateContract, DefinitionError> {
-    let object = value
-        .as_object()
-        .ok_or(DefinitionError::ManifestEncoding)?;
+    let object = value.as_object().ok_or(DefinitionError::ManifestEncoding)?;
     let schema = object
         .get(schema_key)
         .and_then(serde_json::Value::as_str)
@@ -897,8 +890,7 @@ fn find_definition_node<'a>(
                 )
             );
             if is_graph_node
-                && object.get("id").and_then(serde_json::Value::as_str)
-                    == Some(node_id.as_str())
+                && object.get("id").and_then(serde_json::Value::as_str) == Some(node_id.as_str())
             {
                 return Some(object);
             }
