@@ -791,7 +791,8 @@ impl JobLauncher<'_> {
         P: ItemProcessor<I, O> + Send + 'static,
         W: ItemWriter<O> + Send + 'static,
     {
-        self.launch_chunk_selected(job, None, parameters, stop).await
+        self.launch_chunk_selected(job, None, parameters, stop)
+            .await
     }
 
     /// Launches one explicitly selected compatible restart of a stateful chunk job.

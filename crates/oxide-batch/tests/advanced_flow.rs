@@ -681,7 +681,10 @@ async fn compatible_flow_reuses_completed_renamed_node_without_user_reexecution(
     let source_plan = FlowGraph::new(source_prepare.clone())
         .with_node(step_node(source_prepare.as_str())?)
         .with_node(step_node(source_work.as_str())?)
-        .with_sequence(source_prepare.clone(), FlowTarget::Node(source_work.clone()))?
+        .with_sequence(
+            source_prepare.clone(),
+            FlowTarget::Node(source_work.clone()),
+        )?
         .with_sequence(
             source_work.clone(),
             FlowTarget::Terminal(TerminalKind::Complete),
@@ -690,7 +693,10 @@ async fn compatible_flow_reuses_completed_renamed_node_without_user_reexecution(
     let target_plan = FlowGraph::new(target_prepare.clone())
         .with_node(step_node(target_prepare.as_str())?)
         .with_node(step_node(target_work.as_str())?)
-        .with_sequence(target_prepare.clone(), FlowTarget::Node(target_work.clone()))?
+        .with_sequence(
+            target_prepare.clone(),
+            FlowTarget::Node(target_work.clone()),
+        )?
         .with_sequence(
             target_work.clone(),
             FlowTarget::Terminal(TerminalKind::Complete),
@@ -765,12 +771,7 @@ async fn compatible_flow_reuses_completed_renamed_node_without_user_reexecution(
 
     let (_, restart_stop) = StopSource::new();
     let restarted = launcher
-        .launch_compatible(
-            &target,
-            &selected,
-            &JobParameters::new(),
-            &restart_stop,
-        )
+        .launch_compatible(&target, &selected, &JobParameters::new(), &restart_stop)
         .await?;
     assert_eq!(restarted.outcome(), &FlowExecutionOutcome::Completed);
     assert_eq!(

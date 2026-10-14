@@ -8,11 +8,11 @@ use std::time::{Duration, SystemTime};
 
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, CustomLeafContext, CustomLeafHandler,
-    CustomLeafKind, CustomLeafNode, CustomLeafRegistration, CustomLeafResult, DefinitionNodeUpgrade,
-    DefinitionRevision, DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
-    DefinitionStateTransformId, DefinitionStateTransformer, DefinitionUpgrade,
-    DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, ExecutionContext,
-    FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
+    CustomLeafKind, CustomLeafNode, CustomLeafRegistration, CustomLeafResult,
+    DefinitionNodeUpgrade, DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
+    DefinitionStateTransformError, DefinitionStateTransformId, DefinitionStateTransformer,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
+    ExecutionContext, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
     InMemoryJobRepository, JobName, JobParameters, JobRepository, SequentialIdGenerator,
     StateLimits, StateSchemaId, StateSchemaVersion, StepName, StopSource, TaskletError,
     TaskletOutcome, TerminalKind,
@@ -146,10 +146,7 @@ async fn assert_checkpoint(
 }
 
 
-fn state_with_version(
-    value: u64,
-    version: u32,
-) -> Result<ExecutionContext, Box<dyn Error>> {
+fn state_with_version(value: u64, version: u32) -> Result<ExecutionContext, Box<dyn Error>> {
     let bytes = format!(
         r#"{{"format":"oxide-batch.execution-context","format_version":1,"schema":"example.state","schema_version":{version},"payload":{{"value":{value}}}}}"#
     );
@@ -159,11 +156,9 @@ fn state_with_version(
     )?)
 }
 
-fn increment_state_payload(
-    payload: &[u8],
-) -> Result<Vec<u8>, DefinitionStateTransformError> {
-    let mut value: serde_json::Value =
-        serde_json::from_slice(payload).map_err(|_| DefinitionStateTransformError::InvalidSource)?;
+fn increment_state_payload(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
+    let mut value: serde_json::Value = serde_json::from_slice(payload)
+        .map_err(|_| DefinitionStateTransformError::InvalidSource)?;
     let current = value
         .get("value")
         .and_then(serde_json::Value::as_u64)
@@ -188,8 +183,8 @@ impl CustomLeafHandler for VersionedStateHandler {
                 Mode::Stopped => TaskletOutcome::Stopped,
                 Mode::Unknown => TaskletOutcome::CommitOutcomeUnknown,
             };
-            let state = state_with_version(self.value, self.version)
-                .map_err(|_| TaskletError::new())?;
+            let state =
+                state_with_version(self.value, self.version).map_err(|_| TaskletError::new())?;
             Ok(CustomLeafResult::new(outcome).with_state(state))
         })
     }
@@ -323,12 +318,7 @@ async fn compatible_flow_transforms_custom_leaf_state_before_user_work()
 
     let (_, second_stop) = StopSource::new();
     let second = launcher
-        .launch_compatible(
-            &target,
-            &selected,
-            &JobParameters::new(),
-            &second_stop,
-        )
+        .launch_compatible(&target, &selected, &JobParameters::new(), &second_stop)
         .await?;
     assert_eq!(second.outcome(), &FlowExecutionOutcome::Completed);
     assert_eq!(observed.load(Ordering::SeqCst), 8);

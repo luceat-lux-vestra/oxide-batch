@@ -1376,16 +1376,12 @@ impl InMemoryUnitOfWork<'_> {
             self.staged
                 .execution_definitions
                 .get(execution_id)
-                .is_some_and(|definition| {
-                    definition.manifest_digest() == target.manifest_digest()
-                })
+                .is_some_and(|definition| definition.manifest_digest() == target.manifest_digest())
                 && self
                     .staged
                     .upgrade_seeds
                     .get(&(*execution_id, target_node.clone()))
-                    .is_some_and(|seed| {
-                        seed.source_step_execution_id == source_step_execution_id
-                    })
+                    .is_some_and(|seed| seed.source_step_execution_id == source_step_execution_id)
         }))
     }
 }
