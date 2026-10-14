@@ -906,7 +906,41 @@ impl<'a> JobLauncher<'a> {
         self.ensure_accepting()?;
         let key = JobInstanceKey::new(job.name.clone(), parameters);
         let graph = self
-            .create_execution_graph(&key, job.step.name(), job.definition_identity())
+            .create_execution_graph(&key, job.step.name(), job.definition_identity(), None)
+            .await?;
+        self.launch_created(job, parameters, stop, graph).await
+    }
+
+    /// Creates and executes one explicitly selected compatible restart.
+    ///
+    /// This path never infers a transitive or unnamed edge. The supplied live
+    /// execution contract must target the exact definition being launched and
+    /// the repository must already contain the byte-exact durable edge.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`LaunchError`] before lifecycle commit when the selected edge
+    /// does not target the job, is not the registered direct edge, or any
+    /// restart-state transformation fails.
+    pub async fn launch_compatible(
+        &self,
+        job: &TaskletJob,
+        upgrade: &crate::DefinitionUpgradeExecution,
+        parameters: &JobParameters,
+        stop: &StopToken,
+    ) -> Result<LaunchReport, LaunchError> {
+        self.ensure_accepting()?;
+        if upgrade.upgrade().to() != job.definition_identity() {
+            return Err(RepositoryError::DefinitionUpgradeFailed.into());
+        }
+        let key = JobInstanceKey::new(job.name.clone(), parameters);
+        let graph = self
+            .create_execution_graph(
+                &key,
+                job.step.name(),
+                job.definition_identity(),
+                Some(upgrade),
+            )
             .await?;
         self.launch_created(job, parameters, stop, graph).await
     }
@@ -1351,6 +1385,7 @@ impl<'a> JobLauncher<'a> {
         key: &JobInstanceKey,
         step_name: &StepName,
         definition: &DefinitionIdentity,
+        upgrade: Option<&crate::DefinitionUpgradeExecution>,
     ) -> Result<CreatedExecutionGraph, LaunchError> {
         let mut unit = self.repository.begin().await?;
         let instance = unit
@@ -1358,9 +1393,16 @@ impl<'a> JobLauncher<'a> {
             .await?
             .instance()
             .clone();
-        let job_execution = unit
-            .create_job_execution_with_definition(instance.id(), definition)
-            .await?;
+        let job_execution = match upgrade {
+            Some(upgrade) => {
+                unit.create_job_execution_with_upgrade(instance.id(), upgrade)
+                    .await?
+            }
+            None => {
+                unit.create_job_execution_with_definition(instance.id(), definition)
+                    .await?
+            }
+        };
         let job_execution = if let Some((owner, _)) = self.execution_control {
             unit.claim_execution_owner(
                 job_execution.id(),
@@ -1381,7 +1423,23 @@ impl<'a> JobLauncher<'a> {
             .and_then(NonZeroU64::new)
             .map(ExecutionAttempt::new)
             .ok_or(RepositoryError::Unavailable)?;
-        unit.commit().await?;
+        match unit.commit().await {
+            Ok(()) => {}
+            Err(RepositoryError::CommitOutcomeUnknown) if upgrade.is_some() => {
+                let mut recovery = self.repository.begin().await?;
+                let durable_job = recovery.get_job_execution(job_execution.id()).await?;
+                let durable_step = recovery.get_step_execution(step_execution.id()).await?;
+                let durable_attempts = recovery.job_executions(instance.id()).await?;
+                recovery.rollback().await?;
+                let exact = durable_job.as_ref() == Some(&job_execution)
+                    && durable_step.as_ref() == Some(&step_execution)
+                    && durable_attempts.last().map(JobExecution::id) == Some(job_execution.id());
+                if !exact {
+                    return Err(RepositoryError::CommitOutcomeUnknown.into());
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
         let correlation = ExecutionCorrelation::new(
             key.job_name().clone(),
             instance.id(),

@@ -13,14 +13,16 @@ use tokio::sync::Notify;
 
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DeciderError, DeciderRevision, DecisionInput,
-    DecisionInputVersion, DecisionNode, DefinitionManifest, DefinitionRevision, ExitCode,
-    ExitPattern, ExitStatus, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode,
-    FlowTarget, FlowTransition, FlowTransitionKind, InMemoryExplorer, InMemoryJobRepository,
-    JobExecutionDecider, JobExplorer, JobName, JobParameters, JobRepository, JoinNode,
-    MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES, MAX_OUTGOING_TRANSITIONS, MAX_SPLIT_BRANCHES,
-    MAX_TRANSITIONS, ManifestError, NestedFlow, NodeId, PageRequest, PageSize, PlanError,
-    SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode, StepComponents, StepName, StepNode,
-    StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    DecisionInputVersion, DecisionNode, DefinitionManifest, DefinitionNodeUpgrade,
+    DefinitionRevision, DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey,
+    DefinitionUpgradeRevision, ExitCode, ExitPattern, ExitStatus, FlowExecutionOutcome, FlowGraph,
+    FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
+    FlowTransitionKind, InMemoryExplorer, InMemoryJobRepository, JobExecutionDecider, JobExplorer,
+    JobName, JobParameters, JobRepository, JoinNode, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES,
+    MAX_OUTGOING_TRANSITIONS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, ManifestError, NestedFlow,
+    NodeId, PageRequest, PageSize, PlanError, RepositoryError, SequentialIdGenerator, SplitBranch,
+    SplitBudget, SplitNode, StepComponents, StepName, StepNode, StopSource, Tasklet,
+    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 #[derive(Debug)]
@@ -573,6 +575,211 @@ async fn nested_flow_executes_through_the_root_runtime_once() -> Result<(), Box<
     assert_eq!(inner.load(Ordering::SeqCst), 1);
     assert_eq!(after.load(Ordering::SeqCst), 1);
     assert_eq!(report.step_executions().len(), 3);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn compatible_flow_restart_requires_the_explicit_selected_edge() -> Result<(), Box<dyn Error>>
+{
+    let name = JobName::new("compatible-flow-restart")?;
+    let source_node = NodeId::new("source")?;
+    let target_node = NodeId::new("target")?;
+    let source_plan = FlowGraph::new(source_node.clone())
+        .with_node(step_node(source_node.as_str())?)
+        .with_sequence(
+            source_node.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+    let target_plan = FlowGraph::new(target_node.clone())
+        .with_node(step_node(target_node.as_str())?)
+        .with_sequence(
+            target_node.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
+        .compile(&name, DefinitionRevision::new("v2")?)?;
+
+    let source_calls = Arc::new(AtomicUsize::new(0));
+    let target_calls = Arc::new(AtomicUsize::new(0));
+    let source_job = FlowJob::new(name.clone(), source_plan.clone())?.with_tasklet_step(
+        source_node.clone(),
+        tasklet("source", Arc::clone(&source_calls), Outcome::FailOnce)?,
+    )?;
+    let target_job = FlowJob::new(name.clone(), target_plan.clone())?.with_tasklet_step(
+        target_node.clone(),
+        tasklet("target", Arc::clone(&target_calls), Outcome::Complete)?,
+    )?;
+
+    let (clock, ids, repository) = infrastructure();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let (_, source_stop) = StopSource::new();
+    let first = launcher
+        .launch(&source_job, &JobParameters::new(), &source_stop)
+        .await?;
+    assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert_eq!(source_calls.load(Ordering::SeqCst), 1);
+
+    let edge = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        source_plan.definition_identity().clone(),
+        target_plan.definition_identity().clone(),
+        [DefinitionNodeUpgrade::new(
+            source_node.clone(),
+            target_node.clone(),
+        )],
+        [],
+    )?;
+    let selected = DefinitionUpgradeExecution::new(edge.clone(), [])?;
+    let mut registration = repository.begin().await?;
+    registration
+        .register_definition_upgrade(&name, &edge)
+        .await?;
+    registration.commit().await?;
+
+    let (_, strict_stop) = StopSource::new();
+    let strict = launcher
+        .launch(&target_job, &JobParameters::new(), &strict_stop)
+        .await;
+    assert!(matches!(
+        strict,
+        Err(FlowRuntimeError::Repository(
+            RepositoryError::IncompatibleDefinition { .. }
+        ))
+    ));
+    assert_eq!(target_calls.load(Ordering::SeqCst), 0);
+
+    let (_, compatible_stop) = StopSource::new();
+    let second = launcher
+        .launch_compatible(
+            &target_job,
+            &selected,
+            &JobParameters::new(),
+            &compatible_stop,
+        )
+        .await?;
+    assert_eq!(second.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(source_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(target_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(second.step_executions().len(), 1);
+    assert_eq!(
+        second.step_executions()[0].step_name().as_str(),
+        target_node.as_str()
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn compatible_flow_reuses_completed_renamed_node_without_user_reexecution()
+-> Result<(), Box<dyn Error>> {
+    let name = JobName::new("compatible-renamed-completed")?;
+    let source_prepare = NodeId::new("prepare")?;
+    let source_work = NodeId::new("work")?;
+    let target_prepare = NodeId::new("prepare-v2")?;
+    let target_work = NodeId::new("work-v2")?;
+
+    let source_plan = FlowGraph::new(source_prepare.clone())
+        .with_node(step_node(source_prepare.as_str())?)
+        .with_node(step_node(source_work.as_str())?)
+        .with_sequence(
+            source_prepare.clone(),
+            FlowTarget::Node(source_work.clone()),
+        )?
+        .with_sequence(
+            source_work.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+    let target_plan = FlowGraph::new(target_prepare.clone())
+        .with_node(step_node(target_prepare.as_str())?)
+        .with_node(step_node(target_work.as_str())?)
+        .with_sequence(
+            target_prepare.clone(),
+            FlowTarget::Node(target_work.clone()),
+        )?
+        .with_sequence(
+            target_work.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
+        .compile(&name, DefinitionRevision::new("v2")?)?;
+
+    let source_prepare_calls = Arc::new(AtomicUsize::new(0));
+    let source_work_calls = Arc::new(AtomicUsize::new(0));
+    let target_prepare_calls = Arc::new(AtomicUsize::new(0));
+    let target_work_calls = Arc::new(AtomicUsize::new(0));
+
+    let source = FlowJob::new(name.clone(), source_plan.clone())?
+        .with_tasklet_step(
+            source_prepare.clone(),
+            tasklet(
+                source_prepare.as_str(),
+                Arc::clone(&source_prepare_calls),
+                Outcome::Complete,
+            )?,
+        )?
+        .with_tasklet_step(
+            source_work.clone(),
+            tasklet(
+                source_work.as_str(),
+                Arc::clone(&source_work_calls),
+                Outcome::FailOnce,
+            )?,
+        )?;
+    let target = FlowJob::new(name.clone(), target_plan.clone())?
+        .with_tasklet_step(
+            target_prepare.clone(),
+            tasklet(
+                target_prepare.as_str(),
+                Arc::clone(&target_prepare_calls),
+                Outcome::Complete,
+            )?,
+        )?
+        .with_tasklet_step(
+            target_work.clone(),
+            tasklet(
+                target_work.as_str(),
+                Arc::clone(&target_work_calls),
+                Outcome::Complete,
+            )?,
+        )?;
+
+    let (clock, ids, repository) = infrastructure();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let (_, first_stop) = StopSource::new();
+    let first = launcher
+        .launch(&source, &JobParameters::new(), &first_stop)
+        .await?;
+    assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert_eq!(source_prepare_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(source_work_calls.load(Ordering::SeqCst), 1);
+
+    let edge = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("rename-v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        source_plan.definition_identity().clone(),
+        target_plan.definition_identity().clone(),
+        [
+            DefinitionNodeUpgrade::new(source_prepare, target_prepare),
+            DefinitionNodeUpgrade::new(source_work, target_work),
+        ],
+        [],
+    )?;
+    let selected = DefinitionUpgradeExecution::new(edge.clone(), [])?;
+    let mut register = repository.begin().await?;
+    register.register_definition_upgrade(&name, &edge).await?;
+    register.commit().await?;
+
+    let (_, restart_stop) = StopSource::new();
+    let restarted = launcher
+        .launch_compatible(&target, &selected, &JobParameters::new(), &restart_stop)
+        .await?;
+    assert_eq!(restarted.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(
+        target_prepare_calls.load(Ordering::SeqCst),
+        0,
+        "a transformed historical COMPLETED node must not run user work again",
+    );
+    assert_eq!(target_work_calls.load(Ordering::SeqCst), 1);
     Ok(())
 }
 

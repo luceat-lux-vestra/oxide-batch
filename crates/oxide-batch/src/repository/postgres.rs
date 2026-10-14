@@ -26,9 +26,10 @@ use crate::{
     ChunkTransactionError, ChunkTransactionManager, ClassifierRevision, Clock,
     ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
     CursorError, CursorKey, DefinitionArtifactId, DefinitionDescriptor, DefinitionIdentity,
-    DefinitionRegistration, DefinitionRevision, DefinitionUpgrade, DurableStateKind,
-    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
-    ExitCode, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, ExternalStateReference,
+    DefinitionRegistration, DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionContext,
+    ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode,
+    ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, ExternalStateReference,
     FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
     FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
     FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
@@ -52,7 +53,7 @@ use crate::{
     StepPartitionProjection, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 9;
+const SUPPORTED_SCHEMA_VERSION: u32 = 10;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
@@ -884,6 +885,7 @@ impl JobRepository for PostgresJobRepository {
                 repository: self,
                 connection: Some(connection),
                 definition_override: None,
+                upgrade_override: None,
                 created_partition_plans: BTreeSet::new(),
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
         })
@@ -1487,6 +1489,919 @@ fn decode_component_state_row(row: &PgRow) -> Result<ComponentStateEnvelope, ()>
     .map_err(|_| ())
 }
 
+fn selected_upgrade_transform<'a>(
+    upgrade: &'a DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    kind: DefinitionStateKind,
+    state_id: Option<&str>,
+) -> Result<Option<&'a DefinitionStateTransform>, RepositoryError> {
+    let mut matches = upgrade.upgrade().transforms().iter().filter(|transform| {
+        transform.source_node() == source_node
+            && transform.kind() == kind
+            && state_id.is_none_or(|id| transform.state_id().as_str() == id)
+    });
+    let selected = matches.next();
+    if matches.next().is_some() {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    Ok(selected)
+}
+
+fn transform_checkpoint_for_upgrade(
+    upgrade: &DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    source: &Checkpoint,
+) -> Result<Checkpoint, RepositoryError> {
+    let Some(transform) =
+        selected_upgrade_transform(upgrade, source_node, DefinitionStateKind::Checkpoint, None)?
+    else {
+        return Ok(source.clone());
+    };
+    if source.schema_id() != transform.source_schema()
+        || source.schema_version() != transform.source_version()
+    {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    let implementation = upgrade
+        .transformer(transform)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = source
+        .payload_json()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let target_payload = implementation
+        .apply(&payload)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Checkpoint::from_transformed_payload(
+        transform.target_schema().clone(),
+        transform.target_version(),
+        &target_payload,
+        component_state_hard_limits(),
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+fn transform_context_for_upgrade(
+    upgrade: &DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    state_id: Option<&str>,
+    source: &ExecutionContext,
+) -> Result<ExecutionContext, RepositoryError> {
+    let Some(transform) = selected_upgrade_transform(
+        upgrade,
+        source_node,
+        if state_id.is_some() {
+            DefinitionStateKind::Repeat
+        } else {
+            DefinitionStateKind::ExecutionContext
+        },
+        state_id,
+    )?
+    else {
+        return Ok(source.clone());
+    };
+    if source.schema_id() != transform.source_schema()
+        || source.schema_version() != transform.source_version()
+    {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    let implementation = upgrade
+        .transformer(transform)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = source
+        .payload_json()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let target_payload = implementation
+        .apply(&payload)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    ExecutionContext::from_transformed_payload(
+        transform.target_schema().clone(),
+        transform.target_version(),
+        &target_payload,
+        component_state_hard_limits(),
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+fn transform_fault_state_for_upgrade(
+    upgrade: &DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    source: &FaultStateEnvelope,
+) -> Result<FaultStateEnvelope, RepositoryError> {
+    let Some(transform) =
+        selected_upgrade_transform(upgrade, source_node, DefinitionStateKind::FaultState, None)?
+    else {
+        return Ok(source.clone());
+    };
+    if transform.source_schema().as_str() != FaultStateEnvelope::FORMAT
+        || transform.source_version().get() != FaultStateEnvelope::SCHEMA_VERSION
+        || transform.target_schema().as_str() != FaultStateEnvelope::FORMAT
+        || transform.target_version().get() != FaultStateEnvelope::SCHEMA_VERSION
+    {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    let implementation = upgrade
+        .transformer(transform)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = source
+        .to_canonical_json()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let target_payload = implementation
+        .apply(&payload)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let checksum: [u8; 32] = Sha256::digest(&target_payload).into();
+    FaultStateEnvelope::from_canonical_json(
+        FaultStateEnvelope::FORMAT_VERSION,
+        FaultStateEnvelope::FORMAT,
+        FaultStateEnvelope::SCHEMA_VERSION,
+        &target_payload,
+        &checksum,
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+fn transformed_component_for_upgrade(
+    upgrade: &DefinitionUpgradeExecution,
+    source_node: &NodeId,
+    source: &ComponentStateEnvelope,
+) -> Result<ComponentStateEnvelope, RepositoryError> {
+    let transform = selected_upgrade_transform(
+        upgrade,
+        source_node,
+        DefinitionStateKind::ComponentState,
+        Some(source.namespace().as_str()),
+    )?
+    .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    if source.schema_id() != transform.source_schema()
+        || source.schema_version() != transform.source_version()
+    {
+        return Err(RepositoryError::DefinitionUpgradeFailed);
+    }
+    let payload = match source
+        .payload()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?
+    {
+        ComponentStatePayload::Inline(payload) => payload,
+        ComponentStatePayload::External(_) => {
+            return Err(RepositoryError::DefinitionUpgradeFailed);
+        }
+    };
+    let implementation = upgrade
+        .transformer(transform)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let target_payload = implementation
+        .apply(&payload)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    ComponentStateEnvelope::from_transformed_inline(
+        source,
+        transform.target_schema().clone(),
+        transform.target_version(),
+        target_payload,
+        component_state_hard_limits(),
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+fn byte_array_json(bytes: &[u8]) -> Value {
+    use fmt::Write as _;
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        let _ = write!(encoded, "{byte:02x}");
+    }
+    Value::String(encoded)
+}
+
+fn durable_state_seed(
+    format_version: u16,
+    schema: &StateSchemaId,
+    schema_version: StateSchemaVersion,
+    payload: &Value,
+) -> Value {
+    json!({
+        "format": format_version,
+        "schema": schema.as_str(),
+        "schema_version": schema_version.get(),
+        "payload": payload,
+    })
+}
+
+fn checkpoint_seed(state: &Checkpoint) -> Result<Value, RepositoryError> {
+    let payload: Value = serde_json::from_slice(
+        &state
+            .payload_json()
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?,
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(durable_state_seed(
+        state.format_version(),
+        state.schema_id(),
+        state.schema_version(),
+        &payload,
+    ))
+}
+
+fn context_seed(state: &ExecutionContext) -> Result<Value, RepositoryError> {
+    let payload: Value = serde_json::from_slice(
+        &state
+            .payload_json()
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?,
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(durable_state_seed(
+        state.format_version(),
+        state.schema_id(),
+        state.schema_version(),
+        &payload,
+    ))
+}
+
+fn fault_seed(state: &FaultStateEnvelope) -> Result<Value, RepositoryError> {
+    let payload: Value = serde_json::from_slice(
+        &state
+            .to_canonical_json()
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?,
+    )
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let checksum = state
+        .checksum()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(json!({
+        "format": FaultStateEnvelope::FORMAT_VERSION,
+        "schema": FaultStateEnvelope::FORMAT,
+        "schema_version": FaultStateEnvelope::SCHEMA_VERSION,
+        "payload": payload,
+        "checksum": byte_array_json(&checksum),
+    }))
+}
+
+fn component_seed(state: &ComponentStateEnvelope) -> Result<Value, RepositoryError> {
+    let payload = state
+        .payload()
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = match payload {
+        ComponentStatePayload::Inline(bytes) => json!({
+            "kind": "INLINE",
+            "bytes": byte_array_json(&bytes),
+        }),
+        ComponentStatePayload::External(reference) => json!({
+            "kind": "EXTERNAL",
+            "content_id": byte_array_json(reference.content_id().as_bytes()),
+            "encoded_len": reference.encoded_len(),
+        }),
+    };
+    Ok(json!({
+        "namespace": state.namespace().as_str(),
+        "schema": state.schema_id().as_str(),
+        "schema_version": state.schema_version().get(),
+        "codec": state.codec_id().as_str(),
+        "codec_version": state.codec_version().get(),
+        "checksum_algorithm": state.checksum_algorithm(),
+        "checksum_algorithm_version": state.checksum_algorithm_version(),
+        "checksum": byte_array_json(&state.checksum()),
+        "payload": payload,
+    }))
+}
+
+async fn component_upgrade_seeds(
+    transaction: &mut PgConnection,
+    source_step_id: StepExecutionId,
+    source_node: &NodeId,
+    upgrade: &DefinitionUpgradeExecution,
+) -> Result<Vec<Value>, RepositoryError> {
+    let rows = sqlx::query(
+        "SELECT namespace, schema_id, schema_version, codec_id, codec_version, \
+         checksum_algorithm, checksum_algorithm_version, checksum, payload_kind, \
+         payload, external_content_id, external_encoded_len \
+         FROM oxide_batch.ob_component_state WHERE step_execution_id = $1 \
+         ORDER BY namespace",
+    )
+    .bind(database_id(
+        source_step_id.get(),
+        IdentifierKind::StepExecution,
+    )?)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+    rows.iter()
+        .map(|row| {
+            let source = decode_component_state_row(row)
+                .map_err(|()| RepositoryError::DefinitionUpgradeFailed)?;
+            transformed_component_for_upgrade(upgrade, source_node, &source)
+                .and_then(|state| component_seed(&state))
+        })
+        .collect()
+}
+
+async fn repeat_upgrade_seeds(
+    transaction: &mut PgConnection,
+    source_step_id: StepExecutionId,
+    source_node: &NodeId,
+    target_node: &NodeId,
+    upgrade: &DefinitionUpgradeExecution,
+) -> Result<Vec<Value>, RepositoryError> {
+    let rows = sqlx::query(AssertSqlSafe(repeat_execution_select(
+        "WHERE repeat.step_execution_id = $1 ORDER BY repeat.repeat_id",
+    )))
+    .bind(database_id(
+        source_step_id.get(),
+        IdentifierKind::StepExecution,
+    )?)
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+    let mut seeds = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let source = decode_repeat_execution(row)?;
+        let state = transform_context_for_upgrade(
+            upgrade,
+            source_node,
+            Some(source.repeat_id().as_str()),
+            source.state(),
+        )?;
+        seeds.push(json!({
+            "repeat_id": source.repeat_id().as_str(),
+            "definition_node_id": target_node.as_str(),
+            "lineage": repeat_lineage_json(source.lineage()),
+            "ordinal": source.ordinal().get(),
+            "state": context_seed(&state)?,
+            "state_checksum": byte_array_json(
+                &<[u8; 32]>::from(Sha256::digest(
+                    state
+                        .to_json()
+                        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?,
+                )),
+            ),
+            "decision": source.decision().as_str(),
+            "plan_fingerprint": byte_array_json(upgrade.upgrade().to().manifest_digest()),
+        }));
+    }
+    Ok(seeds)
+}
+
+fn upgrade_node_mapping_json(upgrade: &DefinitionUpgrade) -> Value {
+    Value::Object(
+        upgrade
+            .node_mapping()
+            .iter()
+            .map(|(source, target)| {
+                (
+                    source.as_str().to_owned(),
+                    Value::String(target.as_str().to_owned()),
+                )
+            })
+            .collect(),
+    )
+}
+
+fn upgrade_transforms_json(upgrade: &DefinitionUpgrade) -> Value {
+    Value::Array(
+        upgrade
+            .transforms()
+            .iter()
+            .map(|transform| {
+                json!({
+                    "source_node": transform.source_node().as_str(),
+                    "target_node": transform.target_node().as_str(),
+                    "kind": transform.kind().as_str(),
+                    "state_id": transform.state_id().as_str(),
+                    "source_schema": transform.source_schema().as_str(),
+                    "source_version": transform.source_version().get(),
+                    "target_schema": transform.target_schema().as_str(),
+                    "target_version": transform.target_version().get(),
+                    "revision": transform.revision().as_str(),
+                })
+            })
+            .collect(),
+    )
+}
+
+async fn registered_upgrade_matches(
+    transaction: &mut PgConnection,
+    from_definition_id: i64,
+    to_definition_id: i64,
+    upgrade: &DefinitionUpgrade,
+) -> Result<bool, RepositoryError> {
+    let Some(revision) = upgrade.revision() else {
+        return Ok(false);
+    };
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_definition_upgrade \
+         WHERE from_definition_id = $1 AND to_definition_id = $2 \
+           AND upgrade_key = $3 AND upgrade_revision = $4 \
+           AND node_mapping = $5 AND state_transforms = $6)",
+    )
+    .bind(from_definition_id)
+    .bind(to_definition_id)
+    .bind(upgrade.key().as_str())
+    .bind(revision.as_str())
+    .bind(Json(upgrade_node_mapping_json(upgrade)))
+    .bind(Json(upgrade_transforms_json(upgrade)))
+    .fetch_one(transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)
+}
+
+async fn scope_upgrade_seeds(
+    transaction: &mut PgConnection,
+    owner_job_execution_id: JobExecutionId,
+    owner_step_execution_id: Option<StepExecutionId>,
+    upgrade: &DefinitionUpgradeExecution,
+) -> Result<Vec<Value>, RepositoryError> {
+    let rows = sqlx::query(
+        "SELECT jsonb_build_object( \
+           'scope_kind', scope_kind, 'component_id', component_id, 'input_name', input_name, \
+           'source_kind', source_kind, 'source_parameter_name', source_parameter_name, \
+           'source_node_id', source_node_id, 'source_framework_field', source_framework_field, \
+           'source_job_execution_id', source_job_execution_id, \
+           'source_step_execution_id', source_step_execution_id, \
+           'source_execution_version', source_execution_version, \
+           'source_schema', source_schema, 'source_schema_version', source_schema_version, \
+           'source_path', source_path) AS entry \
+         FROM oxide_batch.ob_scope_resolution_provenance \
+         WHERE owner_job_execution_id = $1 \
+           AND owner_step_execution_id IS NOT DISTINCT FROM $2 \
+         ORDER BY component_id, input_name",
+    )
+    .bind(database_id(
+        owner_job_execution_id.get(),
+        IdentifierKind::JobExecution,
+    )?)
+    .bind(
+        owner_step_execution_id
+            .map(|id| database_id(id.get(), IdentifierKind::StepExecution))
+            .transpose()?,
+    )
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+
+    let mut seeds = Vec::with_capacity(rows.len());
+    for row in rows {
+        let Json(mut entry) = row
+            .try_get::<Json<Value>, _>("entry")
+            .map_err(|_| RepositoryError::ScopeResolutionStateCorrupt)?;
+        let object = entry
+            .as_object_mut()
+            .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?;
+        let source_kind = object
+            .get("source_kind")
+            .and_then(Value::as_str)
+            .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?
+            .to_owned();
+
+        if source_kind == "framework" {
+            object.insert(
+                String::from("source_job_mode"),
+                Value::String(String::from("owner")),
+            );
+            if owner_step_execution_id.is_some() {
+                object.insert(
+                    String::from("source_step_mode"),
+                    Value::String(String::from("owner")),
+                );
+            }
+            object.insert(String::from("source_job_execution_id"), Value::Null);
+            object.insert(String::from("source_step_execution_id"), Value::Null);
+        } else if source_kind == "step_context" {
+            let source_node = object
+                .get("source_node_id")
+                .and_then(Value::as_str)
+                .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?;
+            let source_node = NodeId::new(source_node)
+                .map_err(|_| RepositoryError::ScopeResolutionStateCorrupt)?;
+            let target_node = upgrade
+                .upgrade()
+                .node_mapping()
+                .get(&source_node)
+                .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+            object.insert(
+                String::from("source_node_id"),
+                Value::String(target_node.as_str().to_owned()),
+            );
+            if let Some(transform) = selected_upgrade_transform(
+                upgrade,
+                &source_node,
+                DefinitionStateKind::ExecutionContext,
+                None,
+            )? {
+                object.insert(
+                    String::from("source_schema"),
+                    Value::String(transform.target_schema().as_str().to_owned()),
+                );
+                object.insert(
+                    String::from("source_schema_version"),
+                    Value::from(transform.target_version().get()),
+                );
+            }
+            let had_source = object
+                .get("source_step_execution_id")
+                .is_some_and(|value| !value.is_null());
+            if owner_step_execution_id.is_none() && had_source {
+                return Err(RepositoryError::DefinitionUpgradeFailed);
+            }
+            object.insert(
+                String::from("source_step_mode"),
+                Value::String(String::from(if had_source {
+                    "mapped_current"
+                } else {
+                    "absent"
+                })),
+            );
+            object.insert(String::from("source_step_execution_id"), Value::Null);
+            object.insert(String::from("source_execution_version"), Value::Null);
+        }
+        seeds.push(entry);
+    }
+    Ok(seeds)
+}
+
+async fn materialize_upgrade_job_scope(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    entries: &[Value],
+) -> Result<(), RepositoryError> {
+    if entries.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO oxide_batch.ob_scope_resolution_provenance ( \
+           owner_job_execution_id, owner_step_execution_id, scope_kind, component_id, input_name, \
+           source_kind, source_parameter_name, source_node_id, source_framework_field, \
+           source_job_execution_id, source_step_execution_id, source_execution_version, \
+           source_schema, source_schema_version, source_path) \
+         SELECT $1, NULL, entry #>> '{scope_kind}', entry #>> '{component_id}', \
+           entry #>> '{input_name}', entry #>> '{source_kind}', \
+           entry #>> '{source_parameter_name}', entry #>> '{source_node_id}', \
+           entry #>> '{source_framework_field}', \
+           CASE WHEN entry #>> '{source_job_mode}' = 'owner' THEN $1 \
+                ELSE (entry #>> '{source_job_execution_id}')::bigint END, \
+           CASE WHEN entry #>> '{source_step_mode}' = 'mapped_current' THEN ( \
+                SELECT step.id FROM oxide_batch.ob_step_execution step \
+                WHERE step.job_execution_id = $1 \
+                  AND step.step_logical_id = entry #>> '{source_node_id}' \
+                ORDER BY step.id DESC LIMIT 1) \
+                ELSE NULL END, \
+           CASE WHEN entry #>> '{source_step_mode}' = 'mapped_current' THEN ( \
+                SELECT step.version FROM oxide_batch.ob_step_execution step \
+                WHERE step.job_execution_id = $1 \
+                  AND step.step_logical_id = entry #>> '{source_node_id}' \
+                ORDER BY step.id DESC LIMIT 1) \
+                ELSE (entry #>> '{source_execution_version}')::bigint END, \
+           entry #>> '{source_schema}', (entry #>> '{source_schema_version}')::integer, \
+           NULLIF(entry -> 'source_path', 'null'::jsonb) \
+         FROM jsonb_array_elements($2::jsonb) entry",
+    )
+    .bind(job_execution_id)
+    .bind(Json(Value::Array(entries.to_vec())))
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(())
+}
+
+async fn build_postgres_upgrade_seed(
+    transaction: &mut PgConnection,
+    job_instance_id: JobInstanceId,
+    source_job_execution_id: JobExecutionId,
+    upgrade: &DefinitionUpgradeExecution,
+) -> Result<Value, RepositoryError> {
+    let job_scope =
+        scope_upgrade_seeds(transaction, source_job_execution_id, None, upgrade).await?;
+    let mut nodes = Map::new();
+    for (source_node, target_node) in upgrade.upgrade().node_mapping() {
+        let source_row = sqlx::query(AssertSqlSafe(durable_step_select(
+            "JOIN oxide_batch.ob_job_execution job ON job.id = execution.job_execution_id \
+             WHERE job.job_instance_id = $1 AND execution.step_logical_id = $2 \
+             ORDER BY job.attempt DESC, execution.id DESC LIMIT 1",
+        )))
+        .bind(database_id(
+            job_instance_id.get(),
+            IdentifierKind::JobInstance,
+        )?)
+        .bind(source_node.as_str())
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(|_| RepositoryError::Unavailable)?;
+        let Some(source_row) = source_row else {
+            continue;
+        };
+        let durable = decode_durable_step_state(&source_row)?;
+        let checkpoint =
+            transform_checkpoint_for_upgrade(upgrade, source_node, &durable.checkpoint)?;
+        let context =
+            transform_context_for_upgrade(upgrade, source_node, None, &durable.execution_context)?;
+        let fault = transform_fault_state_for_upgrade(upgrade, source_node, &durable.fault_state)?;
+        let counts = durable.step_execution.metadata().counts();
+        let fault_progress = durable.fault_progress;
+        let retries = fault_progress.retries();
+        let skips = fault_progress.skips();
+        let components = component_upgrade_seeds(
+            transaction,
+            durable.step_execution.id(),
+            source_node,
+            upgrade,
+        )
+        .await?;
+        let repeats = repeat_upgrade_seeds(
+            transaction,
+            durable.step_execution.id(),
+            source_node,
+            target_node,
+            upgrade,
+        )
+        .await?;
+        let scope = scope_upgrade_seeds(
+            transaction,
+            durable.step_execution.job_execution_id(),
+            Some(durable.step_execution.id()),
+            upgrade,
+        )
+        .await?;
+        nodes.insert(
+            target_node.as_str().to_owned(),
+            json!({
+                "source_node": source_node.as_str(),
+                "source_step_execution_id": durable.step_execution.id().get(),
+                "counts": {
+                    "read": counts.read(),
+                    "processed": counts.processed(),
+                    "written": counts.written(),
+                    "filtered": counts.filtered(),
+                    "committed": counts.committed(),
+                    "rolled_back": counts.rolled_back(),
+                    "read_retry": retries.read(),
+                    "process_retry": retries.process(),
+                    "write_retry": retries.write(),
+                    "read_skip": skips.read(),
+                    "process_skip": skips.process(),
+                    "write_skip": skips.write(),
+                    "no_rollback": fault_progress.no_rollbacks(),
+                },
+                "checkpoint": checkpoint_seed(&checkpoint)?,
+                "context": context_seed(&context)?,
+                "fault": fault_seed(&fault)?,
+                "components": components,
+                "repeats": repeats,
+                "scope": scope,
+            }),
+        );
+    }
+    Ok(json!({
+        "format": 1,
+        "edge_key": upgrade.upgrade().key().as_str(),
+        "edge_revision": upgrade
+            .upgrade()
+            .revision()
+            .ok_or(RepositoryError::DefinitionUpgradeFailed)?
+            .as_str(),
+        "source_fingerprint": byte_array_json(upgrade.upgrade().from().manifest_digest()),
+        "target_fingerprint": byte_array_json(upgrade.upgrade().to().manifest_digest()),
+        "nodes": Value::Object(nodes),
+        "job_scope": job_scope,
+    }))
+}
+
+async fn upgrade_seed_node(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    node_id: &NodeId,
+) -> Result<Option<Value>, RepositoryError> {
+    let seed: Option<Json<Value>> = sqlx::query_scalar(
+        "SELECT upgrade_seed -> 'nodes' -> $2 \
+         FROM oxide_batch.ob_job_execution \
+         WHERE id = $1 AND upgrade_seed IS NOT NULL",
+    )
+    .bind(job_execution_id)
+    .bind(node_id.as_str())
+    .fetch_optional(transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?
+    .flatten();
+    Ok(seed
+        .map(|Json(value)| value)
+        .filter(|value| !value.is_null()))
+}
+
+fn context_from_upgrade_seed(seed: &Value) -> Result<Option<ExecutionContext>, RepositoryError> {
+    let context = seed
+        .get("context")
+        .and_then(Value::as_object)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let format_version = context
+        .get("format")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let schema = context
+        .get("schema")
+        .and_then(Value::as_str)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    if schema == DEFAULT_CONTEXT_SCHEMA {
+        return Ok(None);
+    }
+    let schema_version = context
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = context
+        .get("payload")
+        .cloned()
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let envelope = json!({
+        "format": "oxide-batch.execution-context",
+        "format_version": format_version,
+        "schema": schema,
+        "schema_version": schema_version,
+        "payload": payload,
+    });
+    let bytes =
+        serde_json::to_vec(&envelope).map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    ExecutionContext::from_json(&bytes, StateLimits::default())
+        .map(Some)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+async fn validate_upgrade_seed_scope_sources(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    materializing_node: &NodeId,
+    seed: &Value,
+) -> Result<(), RepositoryError> {
+    let valid: bool = sqlx::query_scalar(
+        "SELECT NOT EXISTS ( \
+           SELECT 1 FROM jsonb_array_elements($2::jsonb -> 'scope') entry \
+           WHERE entry #>> '{source_step_mode}' = 'mapped_current' \
+             AND entry #>> '{source_node_id}' <> $3 \
+             AND NOT EXISTS ( \
+               SELECT 1 FROM oxide_batch.ob_step_execution source \
+               WHERE source.job_execution_id = $1 \
+                 AND source.step_logical_id = entry #>> '{source_node_id}'))",
+    )
+    .bind(job_execution_id)
+    .bind(Json(seed.clone()))
+    .bind(materializing_node.as_str())
+    .fetch_one(transaction)
+    .await
+    .map_err(|_| RepositoryError::Unavailable)?;
+    if valid {
+        Ok(())
+    } else {
+        Err(RepositoryError::DefinitionUpgradeFailed)
+    }
+}
+
+async fn insert_step_from_upgrade_seed(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    step_name: &StepName,
+    node_id: &NodeId,
+    seed: &Value,
+    created_ms: i64,
+) -> Result<i64, RepositoryError> {
+    sqlx::query_scalar(
+        "WITH seed(node) AS (VALUES ($4::jsonb)) \
+         INSERT INTO oxide_batch.ob_step_execution ( \
+           job_execution_id, step_name, step_logical_id, status, exit_code, \
+           read_count, processed_count, write_count, filter_count, commit_count, rollback_count, \
+           checkpoint_format, checkpoint_schema, checkpoint_schema_version, checkpoint_payload, \
+           context_format, context_schema, context_schema_version, context_payload, \
+           read_retry_count, process_retry_count, write_retry_count, \
+           read_skip_count, process_skip_count, write_skip_count, no_rollback_count, \
+           fault_state_format, fault_state_schema, fault_state_schema_version, \
+           fault_state_payload, fault_state_checksum, created_at, updated_at, version) \
+         SELECT $1, $2, $3, 'STARTING', 'UNKNOWN', \
+           (node #>> '{counts,read}')::bigint, \
+           (node #>> '{counts,processed}')::bigint, \
+           (node #>> '{counts,written}')::bigint, \
+           (node #>> '{counts,filtered}')::bigint, \
+           (node #>> '{counts,committed}')::bigint, \
+           (node #>> '{counts,rolled_back}')::bigint, \
+           (node #>> '{checkpoint,format}')::smallint, \
+           node #>> '{checkpoint,schema}', \
+           (node #>> '{checkpoint,schema_version}')::integer, \
+           node #> '{checkpoint,payload}', \
+           (node #>> '{context,format}')::smallint, \
+           node #>> '{context,schema}', \
+           (node #>> '{context,schema_version}')::integer, \
+           node #> '{context,payload}', \
+           (node #>> '{counts,read_retry}')::bigint, \
+           (node #>> '{counts,process_retry}')::bigint, \
+           (node #>> '{counts,write_retry}')::bigint, \
+           (node #>> '{counts,read_skip}')::bigint, \
+           (node #>> '{counts,process_skip}')::bigint, \
+           (node #>> '{counts,write_skip}')::bigint, \
+           (node #>> '{counts,no_rollback}')::bigint, \
+           (node #>> '{fault,format}')::smallint, \
+           node #>> '{fault,schema}', \
+           (node #>> '{fault,schema_version}')::integer, \
+           node #> '{fault,payload}', \
+           decode(node #>> '{fault,checksum}', 'hex'), \
+           to_timestamp($5::double precision / 1000.0), \
+           to_timestamp($5::double precision / 1000.0), 0 \
+         FROM seed RETURNING id",
+    )
+    .bind(job_execution_id)
+    .bind(step_name.as_str())
+    .bind(node_id.as_str())
+    .bind(Json(seed.clone()))
+    .bind(created_ms)
+    .fetch_one(transaction)
+    .await
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
+}
+
+async fn materialize_upgrade_seed_children(
+    transaction: &mut PgConnection,
+    step_execution_id: i64,
+    seed: &Value,
+    created_ms: i64,
+) -> Result<(), RepositoryError> {
+    sqlx::query(
+        "INSERT INTO oxide_batch.ob_component_state ( \
+           step_execution_id, namespace, schema_id, schema_version, codec_id, codec_version, \
+           checksum_algorithm, checksum_algorithm_version, checksum, payload_kind, payload, \
+           external_content_id, external_encoded_len, version, updated_at) \
+         SELECT $1, component #>> '{namespace}', component #>> '{schema}', \
+           (component #>> '{schema_version}')::integer, component #>> '{codec}', \
+           (component #>> '{codec_version}')::integer, \
+           (component #>> '{checksum_algorithm}')::smallint, \
+           (component #>> '{checksum_algorithm_version}')::smallint, \
+           decode(component #>> '{checksum}', 'hex'), component #>> '{payload,kind}', \
+           CASE WHEN component #>> '{payload,kind}' = 'INLINE' \
+                THEN decode(component #>> '{payload,bytes}', 'hex') ELSE NULL END, \
+           CASE WHEN component #>> '{payload,kind}' = 'EXTERNAL' \
+                THEN decode(component #>> '{payload,content_id}', 'hex') ELSE NULL END, \
+           CASE WHEN component #>> '{payload,kind}' = 'EXTERNAL' \
+                THEN (component #>> '{payload,encoded_len}')::bigint ELSE NULL END, \
+           0, to_timestamp($3::double precision / 1000.0) \
+         FROM jsonb_array_elements($2::jsonb -> 'components') component",
+    )
+    .bind(step_execution_id)
+    .bind(Json(seed.clone()))
+    .bind(created_ms)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+
+    sqlx::query(
+        "INSERT INTO oxide_batch.ob_repeat_execution ( \
+           step_execution_id, repeat_id, ordinal, state_format, state_schema, \
+           state_schema_version, state_payload, state_checksum, decision, plan_fingerprint, \
+           definition_node_id, lineage, updated_at) \
+         SELECT $1, repeat #>> '{repeat_id}', (repeat #>> '{ordinal}')::bigint, \
+           (repeat #>> '{state,format}')::smallint, repeat #>> '{state,schema}', \
+           (repeat #>> '{state,schema_version}')::integer, repeat #> '{state,payload}', \
+           decode(repeat #>> '{state_checksum}', 'hex'), repeat #>> '{decision}', \
+           decode(repeat #>> '{plan_fingerprint}', 'hex'), repeat #>> '{definition_node_id}', \
+           repeat -> 'lineage', to_timestamp($3::double precision / 1000.0) \
+         FROM jsonb_array_elements($2::jsonb -> 'repeats') repeat",
+    )
+    .bind(step_execution_id)
+    .bind(Json(seed.clone()))
+    .bind(created_ms)
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+
+    sqlx::query(
+        "WITH owner AS (            SELECT job_execution_id FROM oxide_batch.ob_step_execution WHERE id = $1)          INSERT INTO oxide_batch.ob_scope_resolution_provenance (            owner_job_execution_id, owner_step_execution_id, scope_kind, component_id, input_name,            source_kind, source_parameter_name, source_node_id, source_framework_field,            source_job_execution_id, source_step_execution_id, source_execution_version,            source_schema, source_schema_version, source_path)          SELECT owner.job_execution_id, $1, entry #>> '{scope_kind}',            entry #>> '{component_id}', entry #>> '{input_name}', entry #>> '{source_kind}',            entry #>> '{source_parameter_name}', entry #>> '{source_node_id}',            entry #>> '{source_framework_field}',            CASE WHEN entry #>> '{source_job_mode}' = 'owner' THEN owner.job_execution_id                 ELSE (entry #>> '{source_job_execution_id}')::bigint END,            CASE WHEN entry #>> '{source_step_mode}' = 'owner' THEN $1                 WHEN entry #>> '{source_step_mode}' = 'mapped_current' THEN (                   SELECT source.id FROM oxide_batch.ob_step_execution source                   WHERE source.job_execution_id = owner.job_execution_id                     AND source.step_logical_id = entry #>> '{source_node_id}'                   ORDER BY source.id DESC LIMIT 1)                 ELSE NULL END,            CASE WHEN entry #>> '{source_step_mode}' = 'mapped_current' THEN (                   SELECT source.version FROM oxide_batch.ob_step_execution source                   WHERE source.job_execution_id = owner.job_execution_id                     AND source.step_logical_id = entry #>> '{source_node_id}'                   ORDER BY source.id DESC LIMIT 1)                 ELSE (entry #>> '{source_execution_version}')::bigint END,            entry #>> '{source_schema}', (entry #>> '{source_schema_version}')::integer,            NULLIF(entry -> 'source_path', 'null'::jsonb)          FROM owner, jsonb_array_elements($2::jsonb -> 'scope') entry",
+    )
+    .bind(step_execution_id)
+    .bind(Json(seed.clone()))
+    .execute(&mut *transaction)
+    .await
+    .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    Ok(())
+}
+
+async fn fresh_step_execution(
+    transaction: &mut PgConnection,
+    job_execution_id: i64,
+    step_name: &StepName,
+    node_id: &NodeId,
+    created_ms: i64,
+) -> Result<i64, RepositoryError> {
+    sqlx::query_scalar(
+        "INSERT INTO oxide_batch.ob_step_execution \
+         (job_execution_id, step_name, step_logical_id, status, exit_code, \
+          checkpoint_format, checkpoint_schema, checkpoint_schema_version, checkpoint_payload, \
+          context_format, context_schema, context_schema_version, context_payload, \
+          created_at, updated_at, version) \
+         VALUES ($1, $2, $3, 'STARTING', 'UNKNOWN', 1, $4, 1, $5, 1, $4, 1, $5, \
+          to_timestamp($6::double precision / 1000.0), \
+          to_timestamp($6::double precision / 1000.0), 0) RETURNING id",
+    )
+    .bind(job_execution_id)
+    .bind(step_name.as_str())
+    .bind(node_id.as_str())
+    .bind(DEFAULT_CONTEXT_SCHEMA)
+    .bind(Json(json!({})))
+    .bind(created_ms)
+    .fetch_one(transaction)
+    .await
+    .map_err(|_| RepositoryError::ConcurrentModification)
+}
+
 /// The bounds `ob_component_state.payload`'s own `CHECK` constraints already
 /// enforce (1 MiB, depth 64) -- read-side reconstruction validates against
 /// exactly this ceiling rather than a smaller configured default, since the
@@ -1500,6 +2415,7 @@ struct PostgresUnitOfWork<'repository> {
     repository: &'repository PostgresJobRepository,
     connection: Option<PoolConnection<Postgres>>,
     definition_override: Option<DefinitionIdentity>,
+    upgrade_override: Option<DefinitionUpgradeExecution>,
     created_partition_plans: BTreeSet<StepExecutionId>,
 }
 
@@ -1762,17 +2678,63 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     )
                 })
                 .collect::<Map<String, Value>>();
+            let node_mapping = upgrade.revision().map(|_| {
+                Value::Object(
+                    upgrade
+                        .node_mapping()
+                        .iter()
+                        .map(|(source, target)| {
+                            (
+                                source.as_str().to_owned(),
+                                Value::String(target.as_str().to_owned()),
+                            )
+                        })
+                        .collect(),
+                )
+            });
+            let state_transforms = upgrade.revision().map(|_| {
+                Value::Array(
+                    upgrade
+                        .transforms()
+                        .iter()
+                        .map(|transform| {
+                            json!({
+                                "source_node": transform.source_node().as_str(),
+                                "target_node": transform.target_node().as_str(),
+                                "kind": transform.kind().as_str(),
+                                "state_id": transform.state_id().as_str(),
+                                "source_schema": transform.source_schema().as_str(),
+                                "source_version": transform.source_version().get(),
+                                "target_schema": transform.target_schema().as_str(),
+                                "target_version": transform.target_version().get(),
+                                "revision": transform.revision().as_str(),
+                            })
+                        })
+                        .collect(),
+                )
+            });
+            let node_mapping_json = node_mapping.as_ref().map(Value::to_string);
+            let state_transforms_json = state_transforms.as_ref().map(Value::to_string);
             let registered_ms = system_time_millis(registered_at)?;
             sqlx::query(
                 "INSERT INTO oxide_batch.ob_definition_upgrade \
-                 (from_definition_id, to_definition_id, upgrade_key, step_mapping, registered_at) \
-                 VALUES ($1, $2, $3, $4, to_timestamp($5::double precision / 1000.0)) \
+                 (from_definition_id, to_definition_id, upgrade_key, step_mapping, \
+                  upgrade_revision, node_mapping, state_transforms, registered_at) \
+                 VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, \
+                         to_timestamp($8::double precision / 1000.0)) \
                  ON CONFLICT (from_definition_id, to_definition_id) DO NOTHING",
             )
             .bind(from_id)
             .bind(to_id)
             .bind(upgrade.key().as_str())
             .bind(Json(Value::Object(mapping.clone())))
+            .bind(
+                upgrade
+                    .revision()
+                    .map(crate::DefinitionUpgradeRevision::as_str),
+            )
+            .bind(node_mapping_json.as_deref())
+            .bind(state_transforms_json.as_deref())
             .bind(registered_ms)
             .execute(&mut **self.transaction()?)
             .await
@@ -1780,12 +2742,22 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let matches: bool = sqlx::query_scalar(
                 "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_definition_upgrade \
                  WHERE from_definition_id = $1 AND to_definition_id = $2 \
-                 AND upgrade_key = $3 AND step_mapping = $4)",
+                 AND upgrade_key = $3 AND step_mapping = $4 \
+                 AND upgrade_revision IS NOT DISTINCT FROM $5 \
+                 AND node_mapping IS NOT DISTINCT FROM $6::jsonb \
+                 AND state_transforms IS NOT DISTINCT FROM $7::jsonb)",
             )
             .bind(from_id)
             .bind(to_id)
             .bind(upgrade.key().as_str())
             .bind(Json(Value::Object(mapping)))
+            .bind(
+                upgrade
+                    .revision()
+                    .map(crate::DefinitionUpgradeRevision::as_str),
+            )
+            .bind(node_mapping_json.as_deref())
+            .bind(state_transforms_json.as_deref())
             .fetch_one(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
@@ -1849,6 +2821,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .definition_override
                 .take()
                 .unwrap_or_else(DefinitionIdentity::legacy);
+            let selected_upgrade = self.upgrade_override.take();
             let instance_database_id =
                 database_id(job_instance_id.get(), IdentifierKind::JobInstance)?;
             let instance = sqlx::query(
@@ -1924,6 +2897,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             )
             .await?;
             let mut upgrade_from = None;
+            let mut upgrade_seed = None;
             if let Some(previous) = &latest {
                 let previous_definition_id: i64 = sqlx::query_scalar(
                     "SELECT definition_id FROM oxide_batch.ob_job_execution WHERE id = $1",
@@ -1936,31 +2910,45 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?;
                 if previous_definition_id != definition_id {
-                    let compatible: bool = sqlx::query_scalar(
-                        "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_definition_upgrade \
-                         WHERE from_definition_id = $1 AND to_definition_id = $2)",
-                    )
-                    .bind(previous_definition_id)
-                    .bind(definition_id)
-                    .fetch_one(&mut **self.transaction()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?;
-                    if !compatible {
+                    let selected = selected_upgrade.as_ref().ok_or(
+                        RepositoryError::IncompatibleDefinition {
+                            instance_id: job_instance_id,
+                        },
+                    )?;
+                    let previous_definition =
+                        load_execution_definition(&mut **self.transaction()?, previous.id())
+                            .await
+                            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+                    if selected.upgrade().from() != &previous_definition
+                        || selected.upgrade().to() != &definition
+                        || !registered_upgrade_matches(
+                            &mut **self.transaction()?,
+                            previous_definition_id,
+                            definition_id,
+                            selected.upgrade(),
+                        )
+                        .await?
+                    {
                         return Err(RepositoryError::IncompatibleDefinition {
                             instance_id: job_instance_id,
                         });
                     }
+                    upgrade_seed = Some(
+                        build_postgres_upgrade_seed(
+                            &mut **self.transaction()?,
+                            job_instance_id,
+                            previous.id(),
+                            selected,
+                        )
+                        .await?,
+                    );
                     upgrade_from = Some(previous_definition_id);
+                } else if selected_upgrade.is_some() {
+                    return Err(RepositoryError::IncompatibleDefinition {
+                        instance_id: job_instance_id,
+                    });
                 }
-            }
-            if upgrade_from.is_some()
-                && let Some(previous) = &latest
-                && super::scope_postgres::has_scope_resolution_provenance(
-                    &mut **self.transaction()?,
-                    previous.id(),
-                )
-                .await?
-            {
+            } else if selected_upgrade.is_some() {
                 return Err(RepositoryError::IncompatibleDefinition {
                     instance_id: job_instance_id,
                 });
@@ -1983,12 +2971,12 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let id: i64 = sqlx::query_scalar(
                 "INSERT INTO oxide_batch.ob_job_execution \
                  (job_instance_id, definition_id, upgrade_from_definition_id, \
-                  restart_of_execution_id, attempt, \
+                  restart_of_execution_id, attempt, upgrade_seed, \
                   status, exit_code, parameters, context_format, context_schema, \
                   context_schema_version, context_payload, created_at, updated_at, version) \
-                 VALUES ($1, $2, $3, $4, $5, 'STARTING', 'UNKNOWN', $6, 1, $7, 1, $8, \
-                  to_timestamp($9::double precision / 1000.0), \
-                  to_timestamp($9::double precision / 1000.0), 0) \
+                 VALUES ($1, $2, $3, $4, $5, $6, 'STARTING', 'UNKNOWN', $7, 1, $8, 1, $9, \
+                  to_timestamp($10::double precision / 1000.0), \
+                  to_timestamp($10::double precision / 1000.0), 0) \
                  RETURNING id",
             )
             .bind(instance_database_id)
@@ -1996,6 +2984,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .bind(upgrade_from)
             .bind(restart_of)
             .bind(attempt)
+            .bind(upgrade_seed.as_ref().map(|seed| Json(seed.clone())))
             .bind(parameters)
             .bind(DEFAULT_CONTEXT_SCHEMA)
             .bind(context)
@@ -2003,6 +2992,13 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .fetch_one(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
+            if let Some(seed) = upgrade_seed.as_ref() {
+                let job_scope = seed
+                    .get("job_scope")
+                    .and_then(Value::as_array)
+                    .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+                materialize_upgrade_job_scope(&mut **self.transaction()?, id, job_scope).await?;
+            }
             let id_value =
                 JobExecutionId::new(u64::try_from(id).map_err(|_| RepositoryError::Unavailable)?)?;
             if upgrade_from.is_none()
@@ -2031,6 +3027,40 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         Box::pin(async move {
             self.definition_override = Some(definition.clone());
             self.create_job_execution(job_instance_id).await
+        })
+    }
+
+    fn create_job_execution_with_upgrade<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        upgrade: &'a DefinitionUpgradeExecution,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(upgrade.upgrade().to().clone());
+            self.upgrade_override = Some(upgrade.clone());
+            self.create_job_execution(job_instance_id).await
+        })
+    }
+
+    fn create_job_execution_with_upgrade_and_parameters<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        upgrade: &'a DefinitionUpgradeExecution,
+        parameters: &'a JobParameters,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async move {
+            self.definition_override = Some(upgrade.upgrade().to().clone());
+            self.upgrade_override = Some(upgrade.clone());
+            let execution = self.create_job_execution(job_instance_id).await?;
+            store_execution_parameters(&mut **self.transaction()?, execution.id(), parameters)
+                .await
+                .map_err(|error| match error {
+                    RepositoryError::NestedJobStateCorrupt => {
+                        RepositoryError::ScopeResolutionStateCorrupt
+                    }
+                    other => other,
+                })?;
+            Ok(execution)
         })
     }
 
@@ -2147,7 +3177,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
 
     #[allow(
         clippy::too_many_lines,
-        reason = "exact and mapped restart-state insertion remain visible in one transaction"
+        reason = "strict restart copy and transformed-seed materialization remain visible in one transaction"
     )]
     fn create_step_execution<'a>(
         &'a mut self,
@@ -2157,7 +3187,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         Box::pin(async move {
             let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
             let execution_row = sqlx::query(
-                "SELECT restart_of_execution_id, upgrade_from_definition_id \
+                "SELECT restart_of_execution_id, upgrade_from_definition_id, upgrade_seed \
                  FROM oxide_batch.ob_job_execution WHERE id = $1",
             )
             .bind(job_id)
@@ -2174,116 +3204,134 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 .try_get::<Option<i64>, _>("upgrade_from_definition_id")
                 .map_err(|_| RepositoryError::Unavailable)?
                 .is_some();
+            let seed_present = execution_row
+                .try_get::<Option<Json<Value>>, _>("upgrade_seed")
+                .map_err(|_| RepositoryError::Unavailable)?
+                .is_some();
+            if upgraded && !seed_present {
+                return Err(RepositoryError::InvalidDefinitionUpgrade {
+                    execution_id: job_execution_id,
+                });
+            }
+
             let created_at = self.repository.clock.now();
             let created_ms = system_time_millis(created_at)?;
-            let (restarted_id, source_step_execution_id) = if let Some(source_job_id) =
-                restart_source
-            {
-                let source_step_name = if upgraded {
-                    sqlx::query_scalar(
-                        "SELECT mapping.key \
-                         FROM oxide_batch.ob_job_execution execution \
-                         JOIN oxide_batch.ob_definition_upgrade upgrade \
-                           ON upgrade.from_definition_id = execution.upgrade_from_definition_id \
-                          AND upgrade.to_definition_id = execution.definition_id \
-                         CROSS JOIN LATERAL jsonb_each_text(upgrade.step_mapping) mapping \
-                         WHERE execution.id = $1 AND mapping.value = $2",
+            let node_id = NodeId::new(step_name.as_str())
+                .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+
+            let (id, strict_source) = if upgraded {
+                let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, &node_id).await?;
+                if let Some(seed) = seed.as_ref() {
+                    validate_upgrade_seed_scope_sources(
+                        &mut **self.transaction()?,
+                        job_id,
+                        &node_id,
+                        seed,
                     )
-                    .bind(job_id)
-                    .bind(step_name.as_str())
-                    .fetch_optional(&mut **self.transaction()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?
-                    .ok_or(RepositoryError::InvalidDefinitionUpgrade {
-                        execution_id: job_execution_id,
-                    })?
-                } else {
-                    step_name.as_str().to_owned()
+                    .await?;
+                }
+                let id = match seed.as_ref() {
+                    Some(seed) => {
+                        insert_step_from_upgrade_seed(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            &node_id,
+                            seed,
+                            created_ms,
+                        )
+                        .await?
+                    }
+                    None => {
+                        fresh_step_execution(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            &node_id,
+                            created_ms,
+                        )
+                        .await?
+                    }
                 };
+                if let Some(seed) = seed.as_ref() {
+                    materialize_upgrade_seed_children(
+                        &mut **self.transaction()?,
+                        id,
+                        seed,
+                        created_ms,
+                    )
+                    .await?;
+                }
+                (id, None)
+            } else if let Some(source_job_id) = restart_source {
                 let source_id: Option<i64> = sqlx::query_scalar(
                     "SELECT source.id FROM oxide_batch.ob_step_execution source \
                      WHERE source.job_execution_id = $1 AND source.step_name = $2 \
                      ORDER BY source.id DESC LIMIT 1",
                 )
                 .bind(source_job_id)
-                .bind(&source_step_name)
+                .bind(step_name.as_str())
                 .fetch_optional(&mut **self.transaction()?)
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?;
-                let restarted_id = match source_id {
-                    Some(source_id) => sqlx::query_scalar(
-                        "INSERT INTO oxide_batch.ob_step_execution \
-                         (job_execution_id, step_name, step_logical_id, status, exit_code, \
-                          read_count, processed_count, write_count, filter_count, commit_count, \
-                          rollback_count, checkpoint_format, checkpoint_schema, \
-                          checkpoint_schema_version, checkpoint_payload, context_format, \
-                          context_schema, context_schema_version, context_payload, \
-                          read_retry_count, process_retry_count, write_retry_count, \
-                          read_skip_count, process_skip_count, write_skip_count, \
-                          no_rollback_count, fault_state_format, fault_state_schema, \
-                          fault_state_schema_version, fault_state_payload, fault_state_checksum, \
-                          created_at, updated_at, version) \
-                         SELECT $1, $2, $2, 'STARTING', 'UNKNOWN', source.read_count, \
-                          source.processed_count, source.write_count, source.filter_count, \
-                          source.commit_count, source.rollback_count, source.checkpoint_format, \
-                          source.checkpoint_schema, source.checkpoint_schema_version, \
-                          source.checkpoint_payload, source.context_format, source.context_schema, \
-                          source.context_schema_version, source.context_payload, \
-                          source.read_retry_count, source.process_retry_count, \
-                          source.write_retry_count, source.read_skip_count, \
-                          source.process_skip_count, source.write_skip_count, \
-                          source.no_rollback_count, source.fault_state_format, \
-                          source.fault_state_schema, source.fault_state_schema_version, \
-                          source.fault_state_payload, source.fault_state_checksum, \
-                          to_timestamp($3::double precision / 1000.0), \
-                          to_timestamp($3::double precision / 1000.0), 0 \
-                         FROM oxide_batch.ob_step_execution source WHERE source.id = $4 \
-                         RETURNING id",
-                    )
-                    .bind(job_id)
-                    .bind(step_name.as_str())
-                    .bind(created_ms)
-                    .bind(source_id)
-                    .fetch_optional(&mut **self.transaction()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?,
-                    None => None,
-                };
-                (restarted_id, source_id)
-            } else {
-                (None, None)
-            };
-            let id: i64 = match (restart_source, restarted_id) {
-                (Some(_), Some(id)) => id,
-                (Some(_), None) => {
-                    return Err(RepositoryError::RestartStateNotFound {
-                        execution_id: job_execution_id,
-                        step_name: step_name.clone(),
-                    });
-                }
-                (None, _) => sqlx::query_scalar(
+                let source_id = source_id.ok_or(RepositoryError::RestartStateNotFound {
+                    execution_id: job_execution_id,
+                    step_name: step_name.clone(),
+                })?;
+                let id: i64 = sqlx::query_scalar(
                     "INSERT INTO oxide_batch.ob_step_execution \
                      (job_execution_id, step_name, step_logical_id, status, exit_code, \
-                      checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
-                      checkpoint_payload, context_format, context_schema, \
-                      context_schema_version, context_payload, created_at, updated_at, version) \
-                     VALUES ($1, $2, $2, 'STARTING', 'UNKNOWN', 1, $3, 1, $4, 1, $3, 1, $4, \
-                      to_timestamp($5::double precision / 1000.0), \
-                      to_timestamp($5::double precision / 1000.0), 0) \
+                      read_count, processed_count, write_count, filter_count, commit_count, \
+                      rollback_count, checkpoint_format, checkpoint_schema, \
+                      checkpoint_schema_version, checkpoint_payload, context_format, \
+                      context_schema, context_schema_version, context_payload, \
+                      read_retry_count, process_retry_count, write_retry_count, \
+                      read_skip_count, process_skip_count, write_skip_count, \
+                      no_rollback_count, fault_state_format, fault_state_schema, \
+                      fault_state_schema_version, fault_state_payload, fault_state_checksum, \
+                      created_at, updated_at, version) \
+                     SELECT $1, $2, $2, 'STARTING', 'UNKNOWN', source.read_count, \
+                      source.processed_count, source.write_count, source.filter_count, \
+                      source.commit_count, source.rollback_count, source.checkpoint_format, \
+                      source.checkpoint_schema, source.checkpoint_schema_version, \
+                      source.checkpoint_payload, source.context_format, source.context_schema, \
+                      source.context_schema_version, source.context_payload, \
+                      source.read_retry_count, source.process_retry_count, \
+                      source.write_retry_count, source.read_skip_count, \
+                      source.process_skip_count, source.write_skip_count, \
+                      source.no_rollback_count, source.fault_state_format, \
+                      source.fault_state_schema, source.fault_state_schema_version, \
+                      source.fault_state_payload, source.fault_state_checksum, \
+                      to_timestamp($3::double precision / 1000.0), \
+                      to_timestamp($3::double precision / 1000.0), 0 \
+                     FROM oxide_batch.ob_step_execution source WHERE source.id = $4 \
                      RETURNING id",
                 )
                 .bind(job_id)
                 .bind(step_name.as_str())
-                .bind(DEFAULT_CONTEXT_SCHEMA)
-                .bind(Json(json!({})))
                 .bind(created_ms)
+                .bind(source_id)
                 .fetch_one(&mut **self.transaction()?)
                 .await
-                .map_err(|_| RepositoryError::Unavailable)?,
+                .map_err(|_| RepositoryError::Unavailable)?;
+                (id, Some(source_id))
+            } else {
+                (
+                    fresh_step_execution(
+                        &mut **self.transaction()?,
+                        job_id,
+                        step_name,
+                        &node_id,
+                        created_ms,
+                    )
+                    .await?,
+                    None,
+                )
             };
+
             let id_value =
                 StepExecutionId::new(u64::try_from(id).map_err(|_| RepositoryError::Unavailable)?)?;
-            if let Some(source_step_execution_id) = source_step_execution_id {
+            if let Some(source_step_execution_id) = strict_source {
                 copy_forward_component_state(
                     &mut **self.transaction()?,
                     source_step_execution_id,
@@ -2302,17 +3350,15 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 )
                 .await?;
             }
-            let execution = self
-                .step_execution(id_value)
+            self.step_execution(id_value)
                 .await?
-                .ok_or(RepositoryError::StepExecutionNotFound { id: id_value })?;
-            Ok(execution)
+                .ok_or(RepositoryError::StepExecutionNotFound { id: id_value })
         })
     }
 
     #[allow(
         clippy::too_many_lines,
-        reason = "the instance lock, start-limit check, and state-copy insert form one visible atomic rule"
+        reason = "the instance lock, start-limit check, and strict-or-upgraded state insert form one visible atomic rule"
     )]
     fn create_flow_step_execution<'a>(
         &'a mut self,
@@ -2323,8 +3369,9 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
     ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
         Box::pin(async move {
             let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
-            let instance_id: i64 = sqlx::query_scalar(
-                "SELECT job_instance_id FROM oxide_batch.ob_job_execution WHERE id = $1",
+            let execution_row = sqlx::query(
+                "SELECT job_instance_id, upgrade_from_definition_id, upgrade_seed \
+                 FROM oxide_batch.ob_job_execution WHERE id = $1",
             )
             .bind(job_id)
             .fetch_optional(&mut **self.transaction()?)
@@ -2333,6 +3380,23 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             .ok_or(RepositoryError::JobExecutionNotFound {
                 id: job_execution_id,
             })?;
+            let instance_id = execution_row
+                .try_get::<i64, _>("job_instance_id")
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let upgraded = execution_row
+                .try_get::<Option<i64>, _>("upgrade_from_definition_id")
+                .map_err(|_| RepositoryError::Unavailable)?
+                .is_some();
+            let seed_present = execution_row
+                .try_get::<Option<Json<Value>>, _>("upgrade_seed")
+                .map_err(|_| RepositoryError::Unavailable)?
+                .is_some();
+            if upgraded && !seed_present {
+                return Err(RepositoryError::InvalidDefinitionUpgrade {
+                    execution_id: job_execution_id,
+                });
+            }
+
             sqlx::query("SELECT id FROM oxide_batch.ob_job_instance WHERE id = $1 FOR UPDATE")
                 .bind(instance_id)
                 .fetch_one(&mut **self.transaction()?)
@@ -2362,81 +3426,120 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             }
 
             let created_ms = system_time_millis(self.repository.clock.now())?;
-            let source_id: Option<i64> = sqlx::query_scalar(
-                "SELECT step.id FROM oxide_batch.ob_step_execution step \
-                 JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id \
-                 WHERE job.job_instance_id = $1 AND step.step_logical_id = $2 \
-                 ORDER BY job.attempt DESC, step.id DESC LIMIT 1",
-            )
-            .bind(instance_id)
-            .bind(node_id.as_str())
-            .fetch_optional(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-
-            let id: i64 = if let Some(source_id) = source_id {
-                sqlx::query_scalar(
-                    "INSERT INTO oxide_batch.ob_step_execution \
-                     (job_execution_id, step_name, step_logical_id, status, exit_code, \
-                      read_count, processed_count, write_count, filter_count, commit_count, \
-                      rollback_count, checkpoint_format, checkpoint_schema, \
-                      checkpoint_schema_version, checkpoint_payload, context_format, \
-                      context_schema, context_schema_version, context_payload, \
-                      read_retry_count, process_retry_count, write_retry_count, \
-                      read_skip_count, process_skip_count, write_skip_count, \
-                      no_rollback_count, fault_state_format, fault_state_schema, \
-                      fault_state_schema_version, fault_state_payload, fault_state_checksum, \
-                      created_at, updated_at, version) \
-                     SELECT $1, $2, $3, 'STARTING', 'UNKNOWN', source.read_count, \
-                      source.processed_count, source.write_count, source.filter_count, \
-                      source.commit_count, source.rollback_count, source.checkpoint_format, \
-                      source.checkpoint_schema, source.checkpoint_schema_version, \
-                      source.checkpoint_payload, source.context_format, source.context_schema, \
-                      source.context_schema_version, source.context_payload, \
-                      source.read_retry_count, source.process_retry_count, \
-                      source.write_retry_count, source.read_skip_count, \
-                      source.process_skip_count, source.write_skip_count, \
-                      source.no_rollback_count, source.fault_state_format, \
-                      source.fault_state_schema, source.fault_state_schema_version, \
-                      source.fault_state_payload, source.fault_state_checksum, \
-                      to_timestamp($4::double precision / 1000.0), \
-                      to_timestamp($4::double precision / 1000.0), 0 \
-                     FROM oxide_batch.ob_step_execution source WHERE source.id = $5 \
-                     RETURNING id",
-                )
-                .bind(job_id)
-                .bind(step_name.as_str())
-                .bind(node_id.as_str())
-                .bind(created_ms)
-                .bind(source_id)
-                .fetch_one(&mut **self.transaction()?)
-                .await
-                .map_err(|_| RepositoryError::ConcurrentModification)?
+            let (id, strict_source) = if upgraded {
+                let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, node_id).await?;
+                if let Some(seed) = seed.as_ref() {
+                    validate_upgrade_seed_scope_sources(
+                        &mut **self.transaction()?,
+                        job_id,
+                        node_id,
+                        seed,
+                    )
+                    .await?;
+                }
+                let id = match seed.as_ref() {
+                    Some(seed) => {
+                        insert_step_from_upgrade_seed(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            node_id,
+                            seed,
+                            created_ms,
+                        )
+                        .await?
+                    }
+                    None => {
+                        fresh_step_execution(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            node_id,
+                            created_ms,
+                        )
+                        .await?
+                    }
+                };
+                if let Some(seed) = seed.as_ref() {
+                    materialize_upgrade_seed_children(
+                        &mut **self.transaction()?,
+                        id,
+                        seed,
+                        created_ms,
+                    )
+                    .await?;
+                }
+                (id, None)
             } else {
-                sqlx::query_scalar(
-                    "INSERT INTO oxide_batch.ob_step_execution \
-                     (job_execution_id, step_name, step_logical_id, status, exit_code, \
-                      checkpoint_format, checkpoint_schema, checkpoint_schema_version, \
-                      checkpoint_payload, context_format, context_schema, \
-                      context_schema_version, context_payload, created_at, updated_at, version) \
-                     VALUES ($1, $2, $3, 'STARTING', 'UNKNOWN', 1, $4, 1, $5, 1, $4, 1, $5, \
-                      to_timestamp($6::double precision / 1000.0), \
-                      to_timestamp($6::double precision / 1000.0), 0) RETURNING id",
+                let source_id: Option<i64> = sqlx::query_scalar(
+                    "SELECT step.id FROM oxide_batch.ob_step_execution step \
+                     JOIN oxide_batch.ob_job_execution job ON job.id = step.job_execution_id \
+                     WHERE job.job_instance_id = $1 AND step.step_logical_id = $2 \
+                     ORDER BY job.attempt DESC, step.id DESC LIMIT 1",
                 )
-                .bind(job_id)
-                .bind(step_name.as_str())
+                .bind(instance_id)
                 .bind(node_id.as_str())
-                .bind(DEFAULT_CONTEXT_SCHEMA)
-                .bind(Json(json!({})))
-                .bind(created_ms)
-                .fetch_one(&mut **self.transaction()?)
+                .fetch_optional(&mut **self.transaction()?)
                 .await
-                .map_err(|_| RepositoryError::ConcurrentModification)?
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if let Some(source_id) = source_id {
+                    let id: i64 = sqlx::query_scalar(
+                        "INSERT INTO oxide_batch.ob_step_execution \
+                         (job_execution_id, step_name, step_logical_id, status, exit_code, \
+                          read_count, processed_count, write_count, filter_count, commit_count, \
+                          rollback_count, checkpoint_format, checkpoint_schema, \
+                          checkpoint_schema_version, checkpoint_payload, context_format, \
+                          context_schema, context_schema_version, context_payload, \
+                          read_retry_count, process_retry_count, write_retry_count, \
+                          read_skip_count, process_skip_count, write_skip_count, \
+                          no_rollback_count, fault_state_format, fault_state_schema, \
+                          fault_state_schema_version, fault_state_payload, fault_state_checksum, \
+                          created_at, updated_at, version) \
+                         SELECT $1, $2, $3, 'STARTING', 'UNKNOWN', source.read_count, \
+                          source.processed_count, source.write_count, source.filter_count, \
+                          source.commit_count, source.rollback_count, source.checkpoint_format, \
+                          source.checkpoint_schema, source.checkpoint_schema_version, \
+                          source.checkpoint_payload, source.context_format, source.context_schema, \
+                          source.context_schema_version, source.context_payload, \
+                          source.read_retry_count, source.process_retry_count, \
+                          source.write_retry_count, source.read_skip_count, \
+                          source.process_skip_count, source.write_skip_count, \
+                          source.no_rollback_count, source.fault_state_format, \
+                          source.fault_state_schema, source.fault_state_schema_version, \
+                          source.fault_state_payload, source.fault_state_checksum, \
+                          to_timestamp($4::double precision / 1000.0), \
+                          to_timestamp($4::double precision / 1000.0), 0 \
+                         FROM oxide_batch.ob_step_execution source WHERE source.id = $5 \
+                         RETURNING id",
+                    )
+                    .bind(job_id)
+                    .bind(step_name.as_str())
+                    .bind(node_id.as_str())
+                    .bind(created_ms)
+                    .bind(source_id)
+                    .fetch_one(&mut **self.transaction()?)
+                    .await
+                    .map_err(|_| RepositoryError::ConcurrentModification)?;
+                    (id, Some(source_id))
+                } else {
+                    (
+                        fresh_step_execution(
+                            &mut **self.transaction()?,
+                            job_id,
+                            step_name,
+                            node_id,
+                            created_ms,
+                        )
+                        .await?,
+                        None,
+                    )
+                }
             };
+
             let id = StepExecutionId::new(
                 u64::try_from(id).map_err(|_| RepositoryError::FlowStateCorrupt)?,
             )?;
-            if let Some(source_id) = source_id {
+            if let Some(source_id) = strict_source {
                 copy_forward_component_state(
                     &mut **self.transaction()?,
                     source_id,
@@ -2755,18 +3858,39 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     id: job_instance_id,
                 });
             }
-            let row = sqlx::query(AssertSqlSafe(durable_step_select(
-                "JOIN oxide_batch.ob_job_execution flow_job \
-                 ON flow_job.id = execution.job_execution_id \
-                 WHERE flow_job.job_instance_id = $1 AND execution.step_logical_id = $2 \
-                 ORDER BY flow_job.attempt DESC, execution.id DESC LIMIT 1",
-            )))
+
+            let boundary = sqlx::query(
+                "SELECT flow_job.id, flow_job.upgrade_seed, \
+                   (SELECT step.id FROM oxide_batch.ob_step_execution step \
+                    WHERE step.job_execution_id = flow_job.id AND step.step_logical_id = $2 \
+                    ORDER BY step.id DESC LIMIT 1) AS target_step_id \
+                 FROM oxide_batch.ob_job_execution flow_job \
+                 WHERE flow_job.job_instance_id = $1 \
+                   AND (flow_job.upgrade_seed IS NOT NULL OR EXISTS( \
+                     SELECT 1 FROM oxide_batch.ob_step_execution step \
+                     WHERE step.job_execution_id = flow_job.id AND step.step_logical_id = $2)) \
+                 ORDER BY flow_job.attempt DESC LIMIT 1",
+            )
             .bind(instance_id)
             .bind(node_id.as_str())
             .fetch_optional(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            row.map(|row| {
+
+            let Some(boundary) = boundary else {
+                return Ok(None);
+            };
+            if let Some(step_id) = boundary
+                .try_get::<Option<i64>, _>("target_step_id")
+                .map_err(|_| RepositoryError::Unavailable)?
+            {
+                let row = sqlx::query(AssertSqlSafe(durable_step_select(
+                    "WHERE execution.id = $1",
+                )))
+                .bind(step_id)
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
                 let durable = decode_durable_step_state(&row)?;
                 let context =
                     if durable.execution_context.schema_id().as_str() == DEFAULT_CONTEXT_SCHEMA {
@@ -2774,13 +3898,44 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     } else {
                         Some(durable.execution_context)
                     };
-                Ok(FlowStepState::new(
+                return Ok(Some(FlowStepState::new(
                     node_id.clone(),
                     durable.step_execution,
                     context,
-                ))
-            })
-            .transpose()
+                )));
+            }
+
+            let Some(Json(seed)) = boundary
+                .try_get::<Option<Json<Value>>, _>("upgrade_seed")
+                .map_err(|_| RepositoryError::Unavailable)?
+            else {
+                return Ok(None);
+            };
+            let Some(node_seed) = seed
+                .get("nodes")
+                .and_then(Value::as_object)
+                .and_then(|nodes| nodes.get(node_id.as_str()))
+            else {
+                return Ok(None);
+            };
+            let source_id = node_seed
+                .get("source_step_execution_id")
+                .and_then(Value::as_u64)
+                .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+            let row = sqlx::query(AssertSqlSafe(durable_step_select(
+                "WHERE execution.id = $1",
+            )))
+            .bind(database_id(source_id, IdentifierKind::StepExecution)?)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+            let source = decode_durable_step_state(&row)?;
+            let context = context_from_upgrade_seed(node_seed)?;
+            Ok(Some(FlowStepState::new(
+                node_id.clone(),
+                source.step_execution,
+                context,
+            )))
         })
     }
 
@@ -2853,7 +4008,12 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                        JOIN oxide_batch.ob_job_execution target_job ON target_job.id = $1 \
                        WHERE source.id = $2 \
                          AND source_job.job_instance_id = target_job.job_instance_id \
-                         AND source.step_logical_id = $3)",
+                         AND (source.step_logical_id = $3 OR EXISTS( \
+                           SELECT 1 FROM oxide_batch.ob_job_execution mapped_job \
+                           WHERE mapped_job.job_instance_id = target_job.job_instance_id \
+                             AND mapped_job.definition_id = target_job.definition_id \
+                             AND mapped_job.upgrade_seed -> 'nodes' -> $3 \
+                                 ->> 'source_step_execution_id' = source.id::text)))",
                 )
                 .bind(job_id)
                 .bind(database_id(step_id.get(), IdentifierKind::StepExecution)?)

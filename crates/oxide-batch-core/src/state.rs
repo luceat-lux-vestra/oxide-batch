@@ -637,6 +637,27 @@ macro_rules! durable_state {
                 VersionedState::from_json($kind, bytes, limits).map(Self)
             }
 
+            /// Constructs a validated state from already-transformed application payload bytes.
+            ///
+            /// This is the repository/compatible-upgrade boundary: the payload
+            /// must still be a bounded JSON object, while schema identity is
+            /// supplied explicitly by the selected upgrade descriptor.
+            #[doc(hidden)]
+            pub fn from_transformed_payload(
+                schema_id: StateSchemaId,
+                schema_version: StateSchemaVersion,
+                payload: &[u8],
+                limits: StateLimits,
+            ) -> Result<Self, StateError> {
+                let payload: Value =
+                    serde_json::from_slice(payload).map_err(|_| StateError::InvalidPayload)?;
+                if !payload.is_object() {
+                    return Err(StateError::PayloadNotObject);
+                }
+                VersionedState::from_parts($kind, schema_id, schema_version, payload, limits)
+                    .map(Self)
+            }
+
             /// Decodes or upgrades the retained payload through `codec`.
             ///
             /// # Errors

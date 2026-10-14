@@ -33,7 +33,8 @@
         "crates/oxide-batch/tests/postgres_local_split_crash_recovery.rs",
         "crates/oxide-batch/tests/postgres_repository.rs",
         "crates/oxide-batch/tests/crash_restore",
-        "crates/oxide-batch/tests/contract"
+        "crates/oxide-batch/tests/contract",
+        "crates/oxide-batch/tests/postgres_compatible_upgrade_process_kill.rs"
       ],
       "pr_proof": "direct"
     },

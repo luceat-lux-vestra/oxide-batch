@@ -72,11 +72,12 @@ const REQUIRED_PATHS: &[&str] = &[
 /// The M5 preview installed schema 3; M6 `#144` added schema 4 component state,
 /// M7 `#265` added schema 5 durable nested-job linkage, M7 `#276` schema 6
 /// scoped-resolution provenance, M7 #300 schema 7 durable repeat state, M7 #401
-/// schema 8 repeat lineage identity, and M7 #550 schema 9 definition artifact identity.
+/// schema 8 repeat lineage identity, M7 #550 schema 9 definition artifact identity,
+/// and M7 #551 schema 10 transformed compatible-upgrade metadata.
 /// The historical source denominator remains 1/2/3; populated 4 -> 5, 5 -> 6,
-/// 6 -> 7, 7 -> 8, and 8 -> 9 preservation are owned by their dedicated
+/// 6 -> 7, 7 -> 8, 8 -> 9, and 9 -> 10 preservation are owned by their dedicated
 /// `PostgreSQL` DB design gates.
-const TARGET_SCHEMA_VERSION: u64 = 9;
+const TARGET_SCHEMA_VERSION: u64 = 10;
 
 /// The regression test the campaign keeps and does not stand in for.
 const KEPT_REGRESSION: &str = "newer_schema_is_rejected_without_guessing_compatibility";
@@ -330,6 +331,9 @@ fn later_columns(version: u64) -> &'static [&'static str] {
             "ob_step_partition",
             "ob_component_state",
             "artifact_identity",
+            "upgrade_revision",
+            "node_mapping",
+            "state_transforms",
         ],
         2 => &[
             "owner_token",
@@ -338,8 +342,17 @@ fn later_columns(version: u64) -> &'static [&'static str] {
             "ob_operator_request",
             "ob_component_state",
             "artifact_identity",
+            "upgrade_revision",
+            "node_mapping",
+            "state_transforms",
         ],
-        3 => &["ob_component_state", "artifact_identity"],
+        3 => &[
+            "ob_component_state",
+            "artifact_identity",
+            "upgrade_revision",
+            "node_mapping",
+            "state_transforms",
+        ],
         _ => &[],
     }
 }

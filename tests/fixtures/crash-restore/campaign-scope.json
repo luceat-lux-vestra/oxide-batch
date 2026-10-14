@@ -169,6 +169,22 @@
       "protocol": "unknown commit outcome",
       "milestone": "M2",
       "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_compatible_upgrade_process_kill",
+      "name": "compatible_upgrade_process_kill_boundaries_are_atomic",
+      "protocol": "compatible definition upgrade",
+      "milestone": "M7",
+      "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_repository",
+      "name": "compatible_restart_transforms_cross_family_state_on_postgres",
+      "protocol": "compatible definition upgrade",
+      "milestone": "M7",
+      "fixture": "postgres"
     }
   ]
 }

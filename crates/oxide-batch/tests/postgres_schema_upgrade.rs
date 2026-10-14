@@ -37,7 +37,7 @@
 //! version becomes the current schema version and every structural checkpoint
 //! from the source's own schema up through the current one appears in order
 //! (so a schema-1 source is still shown passing through schema 3's shape on
-//! its way to schema 9). Every value of every column the source schema
+//! its way to schema 10). Every value of every column the source schema
 //! declared is byte-identical afterwards, compared through the source's own
 //! column list so a column a later schema added cannot mask a loss. The new
 //! `ItemStream` component-state table schema 4 adds carries no row for any of
@@ -80,7 +80,7 @@ const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 /// The schema version the upgrade must reach: the current installed schema
 /// (9, since M7 `#550`'s definition-registry migration), not the schema-3 target
 /// the M5 preview named when it was current.
-const TARGET_VERSION: u32 = 9;
+const TARGET_VERSION: u32 = 10;
 
 #[test]
 fn schema8_definition_registry_migration_preserves_existing_rows() -> Result<(), Box<dyn Error>> {

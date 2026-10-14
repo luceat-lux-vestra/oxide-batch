@@ -1838,12 +1838,49 @@ impl<'a> FlowLauncher<'a> {
     ///
     /// Returns [`FlowRuntimeError`] when the job bindings are invalid or the
     /// repository cannot durably create, update, or read the execution.
-    #[allow(clippy::too_many_lines)]
     pub async fn launch(
         &self,
         job: &FlowJob,
         parameters: &JobParameters,
         stop_token: &StopToken,
+    ) -> Result<FlowLaunchReport, FlowRuntimeError> {
+        self.launch_selected(job, parameters, stop_token, None)
+            .await
+    }
+
+    /// Executes one explicitly selected compatible flow restart.
+    ///
+    /// The edge is never inferred or traversed transitively. It must target
+    /// the exact compiled definition supplied by the job, and the repository
+    /// validates it against the durable direct edge before creating the new
+    /// attempt or materializing transformed state.
+    ///
+    /// # Errors
+    ///
+    /// Returns a runtime error before lifecycle creation when the edge targets
+    /// another definition, is not the registered direct edge, or any required
+    /// restart-state transformation fails.
+    pub async fn launch_compatible(
+        &self,
+        job: &FlowJob,
+        upgrade: &crate::DefinitionUpgradeExecution,
+        parameters: &JobParameters,
+        stop_token: &StopToken,
+    ) -> Result<FlowLaunchReport, FlowRuntimeError> {
+        if upgrade.upgrade().to() != job.compiled_plan().definition_identity() {
+            return Err(RepositoryError::DefinitionUpgradeFailed.into());
+        }
+        self.launch_selected(job, parameters, stop_token, Some(upgrade))
+            .await
+    }
+
+    #[allow(clippy::too_many_lines)]
+    async fn launch_selected(
+        &self,
+        job: &FlowJob,
+        parameters: &JobParameters,
+        stop_token: &StopToken,
+        upgrade: Option<&crate::DefinitionUpgradeExecution>,
     ) -> Result<FlowLaunchReport, FlowRuntimeError> {
         self.ensure_accepting()?;
         job.validate()?;
@@ -1852,7 +1889,7 @@ impl<'a> FlowLauncher<'a> {
         let split_tasklets = job.materialize_split_tasklets()?;
         let key = JobInstanceKey::new(job.name.clone(), parameters);
         let (instance, mut execution, attempt) = self
-            .create_job_execution(&key, &job.plan, parameters)
+            .create_job_execution(&key, &job.plan, parameters, upgrade)
             .await?;
         let mut job_scope = match self
             .build_live_scope(
@@ -3987,6 +4024,7 @@ impl<'a> FlowLauncher<'a> {
         key: &JobInstanceKey,
         plan: &crate::CompiledExecutionPlan,
         parameters: &JobParameters,
+        upgrade: Option<&crate::DefinitionUpgradeExecution>,
     ) -> Result<(JobInstance, JobExecution, ExecutionAttempt), FlowRuntimeError> {
         let definition = plan.definition_identity();
         let mut unit = self.repository.begin().await?;
@@ -3995,16 +4033,31 @@ impl<'a> FlowLauncher<'a> {
             .await?
             .instance()
             .clone();
-        let execution = if plan.scoped_components().len() != 0 {
-            unit.create_job_execution_with_definition_and_parameters(
-                instance.id(),
-                definition,
-                parameters,
-            )
-            .await?
-        } else {
-            unit.create_job_execution_with_definition(instance.id(), definition)
+        let execution = match (upgrade, plan.scoped_components().len() != 0) {
+            (Some(upgrade), true) => {
+                unit.create_job_execution_with_upgrade_and_parameters(
+                    instance.id(),
+                    upgrade,
+                    parameters,
+                )
                 .await?
+            }
+            (Some(upgrade), false) => {
+                unit.create_job_execution_with_upgrade(instance.id(), upgrade)
+                    .await?
+            }
+            (None, true) => {
+                unit.create_job_execution_with_definition_and_parameters(
+                    instance.id(),
+                    definition,
+                    parameters,
+                )
+                .await?
+            }
+            (None, false) => {
+                unit.create_job_execution_with_definition(instance.id(), definition)
+                    .await?
+            }
         };
         let execution = if let Some((owner, _)) = self.execution_control {
             unit.claim_execution_owner(
@@ -4023,7 +4076,21 @@ impl<'a> FlowLauncher<'a> {
         )
         .map(ExecutionAttempt::new)
         .ok_or(FlowRuntimeError::CountExhausted)?;
-        unit.commit().await?;
+        match unit.commit().await {
+            Ok(()) => {}
+            Err(RepositoryError::CommitOutcomeUnknown) if upgrade.is_some() => {
+                let mut recovery = self.repository.begin().await?;
+                let durable = recovery.get_job_execution(execution.id()).await?;
+                let durable_attempts = recovery.job_executions(instance.id()).await?;
+                recovery.rollback().await?;
+                let exact = durable.as_ref() == Some(&execution)
+                    && durable_attempts.last().map(JobExecution::id) == Some(execution.id());
+                if !exact {
+                    return Err(RepositoryError::CommitOutcomeUnknown.into());
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
         Ok((instance, execution, attempt))
     }
 

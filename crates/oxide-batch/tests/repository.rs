@@ -17,13 +17,13 @@ use clock::ManualClock;
 use futures_executor::block_on;
 use ids::{DeterministicIds, IdSequenceError};
 use oxide_batch::{
-    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade,
-    DefinitionUpgradeKey, ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId,
-    FailureSummary, IdGenerationError, IdGenerator, IdentifierKind, InMemoryJobRepository,
-    JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, LifecycleError,
-    LifecycleTransition, NestedJobLinkRequest, NodeId, OwnerToken, ParameterName, ParameterRole,
-    ParameterValue, RecoveryRequest, RepositoryError, SequentialIdGenerator, StepDefinitionUpgrade,
-    StepName,
+    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade, DefinitionRevision,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
+    ExecutionVersion, ExitCode, ExitStatus, FailureCategory, FailureId, FailureSummary,
+    IdGenerationError, IdGenerator, IdentifierKind, InMemoryJobRepository, JobInstanceKey, JobName,
+    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
+    NestedJobLinkRequest, NodeId, OwnerToken, ParameterName, ParameterRole, ParameterValue,
+    RecoveryRequest, RepositoryError, SequentialIdGenerator, StepName,
 };
 
 fn time(second: u64) -> SystemTime {
@@ -377,17 +377,34 @@ fn restart_definition_drift_and_direct_compatibility_are_typed() -> Result<(), B
     );
     block_on(rejected.rollback())?;
 
-    let upgrade = DefinitionUpgrade::new(
+    let upgrade = DefinitionUpgrade::transformed(
         DefinitionUpgradeKey::new("v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
         v1,
         v2.clone(),
-        [StepDefinitionUpgrade::new(step, renamed_step)],
+        [DefinitionNodeUpgrade::new(
+            NodeId::new(step.as_str())?,
+            NodeId::new(renamed_step.as_str())?,
+        )],
+        [],
     )?;
+    let selected = DefinitionUpgradeExecution::new(upgrade.clone(), [])?;
     let mut register = block_on(repository.begin())?;
     block_on(register.register_definition_upgrade(key.job_name(), &upgrade))?;
     block_on(register.commit())?;
+
+    let mut strict = block_on(repository.begin())?;
+    assert_eq!(
+        block_on(strict.create_job_execution_with_definition(instance.id(), &v2)),
+        Err(RepositoryError::IncompatibleDefinition {
+            instance_id: instance.id(),
+        }),
+        "registering a compatible edge must not weaken strict restart",
+    );
+    block_on(strict.rollback())?;
+
     let mut restart = block_on(repository.begin())?;
-    let second = block_on(restart.create_job_execution_with_definition(instance.id(), &v2))?;
+    let second = block_on(restart.create_job_execution_with_upgrade(instance.id(), &selected))?;
     block_on(restart.commit())?;
     assert_ne!(first.id(), second.id());
     Ok(())

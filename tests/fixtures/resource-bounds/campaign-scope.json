@@ -980,6 +980,15 @@
       "covered_by": "crates/oxide-batch/src/item_components/multi_resource.rs::tests::resource_identity_rejects_one_byte_past_its_ceiling, crates/oxide-batch/src/item_components/object_store.rs::tests::object_identity_rejects_one_byte_past_its_ceiling"
     },
     {
+      "resource": "definition-upgrade descriptor shape ceilings",
+      "symbols": [
+        "MAX_DEFINITION_UPGRADE_NODES",
+        "MAX_DEFINITION_UPGRADE_TRANSFORMS"
+      ],
+      "reason": "These M7 Gate-D ceilings bound the static shape of one explicitly declared compatible-upgrade descriptor: mapped durable nodes and declared state transforms. They are validated before restart execution and do not bound a framework-owned runtime resource such as a queue, buffer, connection pool, cache, worker set, or retained result set, so the M5 operational resource campaign excludes them rather than pretending its saturation model applies.",
+      "covered_by": "crates/oxide-batch/tests/definition.rs::transformed_upgrade_enforces_node_and_transform_bounds"
+    },
+    {
       "resource": "distributed and remote execution resources",
       "symbols": [],
       "reason": "No remote worker, broker credit, or assignment queue exists in the accepted M0-M4 scope. A campaign row for one would be a claim about unwritten code.",

@@ -16,11 +16,15 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use futures_executor::block_on;
 use oxide_batch::{
-    BatchStatus, DomainError, ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus,
-    FailureCategory, FailureId, FailureSummary, JobInstanceKey, JobName, JobParameter,
-    JobParameters, JobRepository, LifecycleError, LifecycleTransition, ParameterName,
-    ParameterRole, ParameterValue, PartitionKey, PartitionPlanEntry, RepositoryError, StateLimits,
-    StepName,
+    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade, DefinitionRevision,
+    DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
+    DefinitionStateTransformId, DefinitionStateTransformer, DefinitionUpgrade,
+    DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, DomainError,
+    ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus, FailureCategory, FailureId,
+    FailureSummary, JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository,
+    LifecycleError, LifecycleTransition, NodeId, ParameterName, ParameterRole, ParameterValue,
+    PartitionKey, PartitionPlanEntry, RepositoryError, StartLimit, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepName,
 };
 
 /// Runs the reusable M1 repository instance-identity contract.
@@ -46,9 +50,897 @@ where
     completed_instance_rejects_another_execution(backend, &mut factory)?;
     stale_transition_is_typed_and_atomic(backend, &mut factory)?;
     rollback_discards_staged_metadata(backend, &mut factory)?;
+    compatible_upgrade_transforms_context_before_target_step(backend, &mut factory)?;
+    compatible_upgrade_rejects_conflicting_or_stale_edge(backend, &mut factory)?;
+    compatible_upgrade_is_not_transitive(backend, &mut factory)?;
+    compatible_upgrade_rejects_newer_persisted_state(backend, &mut factory)?;
+    compatible_upgrade_target_only_node_starts_fresh(backend, &mut factory)?;
     partition_plan_commits_before_any_worker_starts(backend, &mut factory)?;
     duplicate_partition_key_is_rejected(backend, &mut factory)?;
     partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory)
+}
+
+fn compatible_upgrade_payload(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
+    let mut value: serde_json::Value = serde_json::from_slice(payload)
+        .map_err(|_| DefinitionStateTransformError::InvalidSource)?;
+    let current = value
+        .get("value")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(DefinitionStateTransformError::InvalidSource)?;
+    value["value"] = serde_json::json!(current.saturating_add(1));
+    serde_json::to_vec(&value).map_err(|_| DefinitionStateTransformError::TransformFailed)
+}
+
+fn contract_upgrade_definition(
+    job_name: &JobName,
+    revision: &str,
+    node: &NodeId,
+    step_name: &StepName,
+    schema_version: u32,
+) -> Result<DefinitionIdentity, Box<dyn Error>> {
+    let manifest = serde_json::json!({
+        "entry": node.as_str(),
+        "format": 4,
+        "job": job_name.as_str(),
+        "nodes": [{
+            "handler_revision": revision,
+            "id": node.as_str(),
+            "kind": "custom_leaf",
+            "leaf_kind": "contract.handler",
+            "listeners": [],
+            "policy": null,
+            "start": {
+                "allow_start_if_complete": false,
+                "start_limit": u32::MAX,
+            },
+            "state_schema": {
+                "id": "contract.context",
+                "version": schema_version,
+            },
+            "step_name": step_name.as_str(),
+        }],
+        "transitions": [],
+    });
+    let bytes = serde_json::to_vec(&manifest)?;
+    Ok(DefinitionIdentity::from_flow_manifest(
+        job_name,
+        DefinitionRevision::new(revision)?,
+        &bytes,
+    )?)
+}
+
+fn contract_upgrade_multi_definition(
+    job_name: &JobName,
+    revision: &str,
+    nodes: &[(&NodeId, &StepName)],
+) -> Result<DefinitionIdentity, Box<dyn Error>> {
+    let entry = nodes.first().ok_or("upgrade contract requires one node")?.0;
+    let nodes = nodes
+        .iter()
+        .map(|(node, step)| {
+            serde_json::json!({
+                "handler_revision": revision,
+                "id": node.as_str(),
+                "kind": "custom_leaf",
+                "leaf_kind": "contract.handler",
+                "listeners": [],
+                "policy": null,
+                "start": {
+                    "allow_start_if_complete": false,
+                    "start_limit": u32::MAX,
+                },
+                "state_schema": {
+                    "id": "contract.context",
+                    "version": 1,
+                },
+                "step_name": step.as_str(),
+            })
+        })
+        .collect::<Vec<_>>();
+    let manifest = serde_json::json!({
+        "entry": entry.as_str(),
+        "format": 4,
+        "job": job_name.as_str(),
+        "nodes": nodes,
+        "transitions": [],
+    });
+    let bytes = serde_json::to_vec(&manifest)?;
+    Ok(DefinitionIdentity::from_flow_manifest(
+        job_name,
+        DefinitionRevision::new(revision)?,
+        &bytes,
+    )?)
+}
+
+fn contract_upgrade_context(value: u64, version: u32) -> Result<ExecutionContext, Box<dyn Error>> {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "format": "oxide-batch.execution-context",
+        "format_version": 1,
+        "schema": "contract.context",
+        "schema_version": version,
+        "payload": { "value": value },
+    }))?;
+    Ok(ExecutionContext::from_json(&bytes, StateLimits::default())?)
+}
+
+fn compatible_upgrade_transforms_context_before_target_step<R, F>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut() -> Result<R, RepositoryError>,
+{
+    const CASE: &str = "compatible_upgrade_transforms_context_before_target_step";
+    let repository = factory()
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let job_name = JobName::new("repository_contract_job")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
+    let source_node = NodeId::new("upgrade-source")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_node = NodeId::new("upgrade-target")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let source_step = StepName::new("upgrade-source-step")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_step = StepName::new("upgrade-target-step")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let source_definition =
+        contract_upgrade_definition(&job_name, "upgrade-v1", &source_node, &source_step, 1)
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_definition =
+        contract_upgrade_definition(&job_name, "upgrade-v2", &target_node, &target_step, 2)
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut setup = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let instance = block_on(setup.select_or_create_job_instance(&key))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+        .instance()
+        .clone();
+    let source_job =
+        block_on(setup.create_job_execution_with_definition(instance.id(), &source_definition))
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let source_execution = block_on(setup.create_flow_step_execution(
+        source_job.id(),
+        &source_step,
+        &source_node,
+        StartLimit::UNRESTRICTED,
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let started = block_on(setup.transition_step_execution(
+        source_execution.id(),
+        source_execution.version(),
+        LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(1)),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let source_context = contract_upgrade_context(7, 1)
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.commit_step_execution_context(started.id(), started.version(), &source_context))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.transition_job_execution(
+        source_job.id(),
+        source_job.version(),
+        LifecycleTransition::failed(
+            UNIX_EPOCH + Duration::from_secs(2),
+            FailureSummary::new(
+                FailureCategory::UserComponent,
+                FailureId::new(9).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
+            ),
+        ),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let transform_revision = DefinitionUpgradeRevision::new("context-v1-to-v2")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let edge = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("upgrade-v1-to-v2")
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+        DefinitionUpgradeRevision::new("edge-v1")
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+        source_definition,
+        target_definition,
+        [DefinitionNodeUpgrade::new(
+            source_node.clone(),
+            target_node.clone(),
+        )],
+        [DefinitionStateTransform::new(
+            source_node,
+            target_node.clone(),
+            DefinitionStateKind::ExecutionContext,
+            DefinitionStateTransformId::new("context").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaId::new("contract.context").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaVersion::new(1).map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaId::new("contract.context").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaVersion::new(2).map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            transform_revision.clone(),
+        )],
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let selected = DefinitionUpgradeExecution::new(
+        edge.clone(),
+        [DefinitionStateTransformer::new(
+            transform_revision,
+            compatible_upgrade_payload,
+        )],
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut registration = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(registration.register_definition_upgrade(&job_name, &edge))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(registration.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut restart = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_job = block_on(restart.create_job_execution_with_upgrade(instance.id(), &selected))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(restart.create_flow_step_execution(
+        target_job.id(),
+        &target_step,
+        &target_node,
+        StartLimit::UNRESTRICTED,
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(restart.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut inspect = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let state = block_on(inspect.latest_flow_step(instance.id(), &target_node))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+        .ok_or_else(|| RepositoryContractFailure::new(backend, CASE, "target state missing"))?;
+    let context = state
+        .context()
+        .ok_or_else(|| RepositoryContractFailure::new(backend, CASE, "target context missing"))?;
+    ensure(
+        context.schema_id().as_str() == "contract.context" && context.schema_version().get() == 2,
+        backend,
+        CASE,
+        "target context schema was not transformed before materialization",
+    )?;
+    let payload: serde_json::Value = serde_json::from_slice(
+        &context
+            .payload_json()
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        payload.get("value").and_then(serde_json::Value::as_u64) == Some(8),
+        backend,
+        CASE,
+        "target context payload did not use the selected live transformer",
+    )?;
+    block_on(inspect.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    Ok(())
+}
+
+fn contract_tasklet_definition(
+    job_name: &JobName,
+    revision: &str,
+    step: &str,
+) -> Result<DefinitionIdentity, Box<dyn Error>> {
+    Ok(DefinitionIdentity::tasklet(
+        job_name,
+        &StepName::new(step)?,
+        DefinitionRevision::new(revision)?,
+        &ComponentRevision::new(format!("tasklet-{revision}"))?,
+    )?)
+}
+
+fn metadata_only_upgrade(
+    key: &str,
+    revision: &str,
+    from: DefinitionIdentity,
+    to: DefinitionIdentity,
+    source: &str,
+    target: &str,
+) -> Result<DefinitionUpgrade, Box<dyn Error>> {
+    Ok(DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new(key)?,
+        DefinitionUpgradeRevision::new(revision)?,
+        from,
+        to,
+        [DefinitionNodeUpgrade::new(
+            NodeId::new(source)?,
+            NodeId::new(target)?,
+        )],
+        [],
+    )?)
+}
+
+fn compatible_upgrade_rejects_conflicting_or_stale_edge<R, F>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut() -> Result<R, RepositoryError>,
+{
+    const CASE: &str = "compatible_upgrade_rejects_conflicting_or_stale_edge";
+    let repository = factory()
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let job_name = JobName::new("repository_contract_upgrade_conflict")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
+    let source = contract_tasklet_definition(&job_name, "v1", "source")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target = contract_tasklet_definition(&job_name, "v2", "target")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut setup = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let instance = block_on(setup.select_or_create_job_instance(&key))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+        .instance()
+        .clone();
+    let source_job =
+        block_on(setup.create_job_execution_with_definition(instance.id(), &source))
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut fail = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(fail.transition_job_execution(
+        source_job.id(),
+        source_job.version(),
+        LifecycleTransition::failed(
+            UNIX_EPOCH + Duration::from_secs(20),
+            FailureSummary::new(
+                FailureCategory::UserComponent,
+                FailureId::new(20).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
+            ),
+        ),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(fail.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let registered = metadata_only_upgrade(
+        "registered-edge",
+        "edge-v1",
+        source.clone(),
+        target.clone(),
+        "source",
+        "target",
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let stale = metadata_only_upgrade("stale-edge", "edge-v2", source, target, "source", "target")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut registration = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(registration.register_definition_upgrade(&job_name, &registered))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(registration.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut conflict = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        matches!(
+            block_on(conflict.register_definition_upgrade(&job_name, &stale)),
+            Err(RepositoryError::DefinitionUpgradeConflict { .. })
+        ),
+        backend,
+        CASE,
+        "a second immutable edge for the same source/target pair was accepted",
+    )?;
+    block_on(conflict.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let selected = DefinitionUpgradeExecution::new(stale, [])
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let mut restart = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        matches!(
+            block_on(restart.create_job_execution_with_upgrade(instance.id(), &selected)),
+            Err(RepositoryError::IncompatibleDefinition { .. })
+        ),
+        backend,
+        CASE,
+        "an unregistered/stale selected edge created a compatible restart",
+    )?;
+    block_on(restart.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut inspect = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        block_on(inspect.job_executions(instance.id()))
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+            .len()
+            == 1,
+        backend,
+        CASE,
+        "rejected edge selection created a partial target attempt",
+    )?;
+    block_on(inspect.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    Ok(())
+}
+
+fn compatible_upgrade_is_not_transitive<R, F>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut() -> Result<R, RepositoryError>,
+{
+    const CASE: &str = "compatible_upgrade_is_not_transitive";
+    let repository = factory()
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let job_name = JobName::new("repository_contract_upgrade_non_transitive")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
+    let v1 = contract_tasklet_definition(&job_name, "v1", "step-v1")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let v2 = contract_tasklet_definition(&job_name, "v2", "step-v2")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let v3 = contract_tasklet_definition(&job_name, "v3", "step-v3")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut setup = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let instance = block_on(setup.select_or_create_job_instance(&key))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+        .instance()
+        .clone();
+    let first = block_on(setup.create_job_execution_with_definition(instance.id(), &v1))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let mut fail = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(fail.transition_job_execution(
+        first.id(),
+        first.version(),
+        LifecycleTransition::failed(
+            UNIX_EPOCH + Duration::from_secs(21),
+            FailureSummary::new(
+                FailureCategory::UserComponent,
+                FailureId::new(21).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
+            ),
+        ),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(fail.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let v1_v2 = metadata_only_upgrade("v1-v2", "edge-12", v1, v2.clone(), "step-v1", "step-v2")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let v2_v3 = metadata_only_upgrade("v2-v3", "edge-23", v2, v3.clone(), "step-v2", "step-v3")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let mut register = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(register.register_definition_upgrade(&job_name, &v1_v2))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(register.register_definition_upgrade(&job_name, &v2_v3))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(register.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let selected = DefinitionUpgradeExecution::new(v2_v3, [])
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let mut compatible = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        matches!(
+            block_on(compatible.create_job_execution_with_upgrade(instance.id(), &selected)),
+            Err(RepositoryError::IncompatibleDefinition { .. })
+        ),
+        backend,
+        CASE,
+        "v1->v2 plus v2->v3 was inferred as authority for v1->v3",
+    )?;
+    block_on(compatible.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut strict = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        matches!(
+            block_on(strict.create_job_execution_with_definition(instance.id(), &v3)),
+            Err(RepositoryError::IncompatibleDefinition { .. })
+        ),
+        backend,
+        CASE,
+        "strict restart inferred transitive definition compatibility",
+    )?;
+    block_on(strict.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    Ok(())
+}
+
+fn compatible_upgrade_rejects_newer_persisted_state<R, F>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut() -> Result<R, RepositoryError>,
+{
+    const CASE: &str = "compatible_upgrade_rejects_newer_persisted_state";
+    let repository = factory()
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let job_name = JobName::new("repository_contract_upgrade_newer_state")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
+    let source_node = NodeId::new("source")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_node = NodeId::new("target")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let source_step = StepName::new("source-step")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_step = StepName::new("target-step")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let source_definition =
+        contract_upgrade_definition(&job_name, "v1", &source_node, &source_step, 1)
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_definition =
+        contract_upgrade_definition(&job_name, "v2", &target_node, &target_step, 2)
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut setup = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let instance = block_on(setup.select_or_create_job_instance(&key))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+        .instance()
+        .clone();
+    let source_job =
+        block_on(setup.create_job_execution_with_definition(instance.id(), &source_definition))
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let source_execution = block_on(setup.create_flow_step_execution(
+        source_job.id(),
+        &source_step,
+        &source_node,
+        StartLimit::UNRESTRICTED,
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let started = block_on(setup.transition_step_execution(
+        source_execution.id(),
+        source_execution.version(),
+        LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(22)),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let newer = contract_upgrade_context(9, 2)
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.commit_step_execution_context(started.id(), started.version(), &newer))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.transition_job_execution(
+        source_job.id(),
+        source_job.version(),
+        LifecycleTransition::failed(
+            UNIX_EPOCH + Duration::from_secs(23),
+            FailureSummary::new(
+                FailureCategory::UserComponent,
+                FailureId::new(23).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
+            ),
+        ),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let transform_revision = DefinitionUpgradeRevision::new("context-v1-to-v2")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let edge = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2")
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+        DefinitionUpgradeRevision::new("edge-v1")
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+        source_definition,
+        target_definition,
+        [DefinitionNodeUpgrade::new(
+            source_node.clone(),
+            target_node.clone(),
+        )],
+        [DefinitionStateTransform::new(
+            source_node,
+            target_node,
+            DefinitionStateKind::ExecutionContext,
+            DefinitionStateTransformId::new("context").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaId::new("contract.context").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaVersion::new(1).map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaId::new("contract.context").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaVersion::new(2).map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            transform_revision.clone(),
+        )],
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let selected = DefinitionUpgradeExecution::new(
+        edge.clone(),
+        [DefinitionStateTransformer::new(
+            transform_revision,
+            compatible_upgrade_payload,
+        )],
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut register = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(register.register_definition_upgrade(&job_name, &edge))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(register.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut restart = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        matches!(
+            block_on(restart.create_job_execution_with_upgrade(instance.id(), &selected)),
+            Err(RepositoryError::DefinitionUpgradeFailed)
+        ),
+        backend,
+        CASE,
+        "state newer than the declared source transform was accepted",
+    )?;
+    block_on(restart.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut inspect = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        block_on(inspect.job_executions(instance.id()))
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+            .len()
+            == 1,
+        backend,
+        CASE,
+        "newer-state rejection created a partial target attempt",
+    )?;
+    block_on(inspect.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    Ok(())
+}
+
+#[allow(
+    clippy::too_many_lines,
+    reason = "the shared proof keeps source mapping, target-only materialization, and both parity observations together"
+)]
+fn compatible_upgrade_target_only_node_starts_fresh<R, F>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut() -> Result<R, RepositoryError>,
+{
+    const CASE: &str = "compatible_upgrade_target_only_node_starts_fresh";
+    let repository = factory()
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let job_name = JobName::new("repository_contract_upgrade_target_only")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
+
+    let source = NodeId::new("source")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let legacy_extra = NodeId::new("legacy-extra")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target = NodeId::new("target")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let renamed_extra = NodeId::new("renamed-extra")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let source_step = StepName::new("source-step")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let legacy_extra_step = StepName::new("legacy-extra-step")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_step = StepName::new("target-step")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let renamed_extra_step = StepName::new("renamed-extra-step")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_only_step = StepName::new("target-only-step")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let source_definition = contract_upgrade_multi_definition(
+        &job_name,
+        "v1",
+        &[(&source, &source_step), (&legacy_extra, &legacy_extra_step)],
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_definition = contract_upgrade_multi_definition(
+        &job_name,
+        "v2",
+        &[
+            (&target, &target_step),
+            (&renamed_extra, &renamed_extra_step),
+            (&legacy_extra, &target_only_step),
+        ],
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut setup = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let instance = block_on(setup.select_or_create_job_instance(&key))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+        .instance()
+        .clone();
+    let source_job =
+        block_on(setup.create_job_execution_with_definition(instance.id(), &source_definition))
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let started_job = block_on(setup.transition_job_execution(
+        source_job.id(),
+        source_job.version(),
+        LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(30)),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    for (node, step, value, failure_id) in [
+        (&source, &source_step, 7_u64, 30_u64),
+        (&legacy_extra, &legacy_extra_step, 41_u64, 31_u64),
+    ] {
+        let execution = block_on(setup.create_flow_step_execution(
+            source_job.id(),
+            step,
+            node,
+            StartLimit::UNRESTRICTED,
+        ))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+        let started = block_on(setup.transition_step_execution(
+            execution.id(),
+            execution.version(),
+            LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(30)),
+        ))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+        let context = contract_upgrade_context(value, 1)
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+        let committed = block_on(setup.commit_step_execution_context(
+            started.id(),
+            started.version(),
+            &context,
+        ))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+        block_on(setup.transition_step_execution(
+            committed.id(),
+            committed.version(),
+            LifecycleTransition::failed(
+                UNIX_EPOCH + Duration::from_secs(31),
+                FailureSummary::new(
+                    FailureCategory::UserComponent,
+                    FailureId::new(failure_id).map_err(|error| {
+                        RepositoryContractFailure::new(backend, CASE, error.to_string())
+                    })?,
+                ),
+            ),
+        ))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    }
+    block_on(setup.transition_job_execution(
+        started_job.id(),
+        started_job.version(),
+        LifecycleTransition::failed(
+            UNIX_EPOCH + Duration::from_secs(31),
+            FailureSummary::new(
+                FailureCategory::UserComponent,
+                FailureId::new(32).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
+            ),
+        ),
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(setup.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let edge = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2-target-only")
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+        DefinitionUpgradeRevision::new("edge-v1")
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+        source_definition,
+        target_definition,
+        [
+            DefinitionNodeUpgrade::new(source, target),
+            DefinitionNodeUpgrade::new(legacy_extra.clone(), renamed_extra.clone()),
+        ],
+        [],
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let selected = DefinitionUpgradeExecution::new(edge.clone(), [])
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let mut register = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(register.register_definition_upgrade(&job_name, &edge))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(register.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut restart = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let target_job = block_on(restart.create_job_execution_with_upgrade(instance.id(), &selected))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(restart.create_flow_step_execution(
+        target_job.id(),
+        &renamed_extra_step,
+        &renamed_extra,
+        StartLimit::UNRESTRICTED,
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(restart.create_flow_step_execution(
+        target_job.id(),
+        &target_only_step,
+        &legacy_extra,
+        StartLimit::UNRESTRICTED,
+    ))
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    block_on(restart.commit())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+
+    let mut inspect = block_on(repository.begin())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let mapped = block_on(inspect.latest_flow_step(instance.id(), &renamed_extra))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+        .ok_or_else(|| RepositoryContractFailure::new(backend, CASE, "mapped target missing"))?;
+    let mapped_context = mapped.context().ok_or_else(|| {
+        RepositoryContractFailure::new(backend, CASE, "mapped source state was dropped")
+    })?;
+    let mapped_payload: serde_json::Value = serde_json::from_slice(
+        &mapped_context
+            .payload_json()
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    ensure(
+        mapped_payload
+            .get("value")
+            .and_then(serde_json::Value::as_u64)
+            == Some(41),
+        backend,
+        CASE,
+        "mapped durable source state was not preserved under its renamed target",
+    )?;
+
+    let fresh = block_on(inspect.latest_flow_step(instance.id(), &legacy_extra))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
+        .ok_or_else(|| RepositoryContractFailure::new(backend, CASE, "target-only node missing"))?;
+    ensure(
+        fresh.execution().job_execution_id() == target_job.id()
+            && fresh.execution().metadata().counts() == ExecutionCounts::default()
+            && fresh.context().is_none(),
+        backend,
+        CASE,
+        "target-only node inherited historical state instead of declared initial state",
+    )?;
+    block_on(inspect.rollback())
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    Ok(())
 }
 
 #[allow(

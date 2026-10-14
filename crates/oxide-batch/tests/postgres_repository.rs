@@ -19,21 +19,28 @@ use oxide_batch::{
     ChunkCompletionOutcome, ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode,
     ChunkExecutionOutcome, ChunkFaultProgress, ChunkJob, ChunkRestartContract, ChunkSize,
     ChunkStep, ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager,
-    ClassifierRevision, Clock, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
-    DefinitionRegistration, DefinitionRegistry, DefinitionRevision, DefinitionUpgrade,
-    DefinitionUpgradeKey, ExecutionContext, FailureCategory, FailureId, FailureSummary,
-    FaultAction, FaultClassifier, FaultPhase, FaultPolicy, FaultRule, FaultStateError,
-    FaultStateFormatError, FaultStateStore, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey,
-    JobLauncher, JobName, JobParameter, JobParameters, JobRepository, LifecycleTransition,
+    ClassifierRevision, Clock, CodecId, CodecVersion, ComponentRevision, ComponentStateEnvelope,
+    ComponentStreamIdentity, DefaultComponentCodec, DefinitionArtifactId, DefinitionIdentity,
+    DefinitionNodeUpgrade, DefinitionRegistration, DefinitionRegistry, DefinitionRevision,
+    DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
+    DefinitionStateTransformId, DefinitionStateTransformer, DefinitionUpgrade,
+    DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, ExecutionContext,
+    FailureCategory, FailureId, FailureSummary, FaultAction, FaultClassifier, FaultPhase,
+    FaultPolicy, FaultRule, FaultStateError, FaultStateFormatError, FaultStateStore, FlowGraph,
+    FlowNode, FlowTarget, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey, JobLauncher,
+    JobName, JobParameter, JobParameters, JobRepository, LifecycleTransition, NodeId,
     ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
     PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
     PostgresConfigError, PostgresExplorer, PostgresFaultState, PostgresJobRepository,
     PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, PurgeBatchBound,
-    PurgePlanRequest, ReadContext, ReadOutcome, ReaderError, RecoveryRequest, RepositoryError,
-    RetryKey, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind,
-    ScopedComponentId, SequentialIdGenerator, SkipCounts, SkipLimit, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepDefinitionUpgrade, StepExecutionId, StepName, StopSource,
-    TerminalStatusSet, TlsMode, WriteContext, WriteOutcome, WriterError,
+    PurgePlanRequest, ReadContext, ReadOutcome, ReaderError, RecoveryRequest, RepeatCommitRequest,
+    RepeatDecision, RepeatDefinition, RepeatId, RepeatOrdinal, RepeatPolicyConfiguration,
+    RepeatPolicyDefinition, RepeatPolicyKind, RepeatStateSchema, RepositoryError,
+    RestartabilityDeclaration, RetryKey, RetryLimit, RetryOrdinal, RetryReservation,
+    RetryStateLimit, ScopeKind, ScopedComponentId, SequentialIdGenerator, SkipCounts, SkipLimit,
+    StartLimit, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepComponents,
+    StepExecutionId, StepName, StepNode, StopSource, TerminalKind, TerminalStatusSet, TlsMode,
+    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 use oxide_batch_repository::{ScopeResolutionProvenance, ScopeResolutionSource};
 use sqlx::postgres::PgPoolOptions;
@@ -112,6 +119,26 @@ async fn remove_job_rows(url: &str, job_name: &str) -> Result<(), sqlx::Error> {
     sqlx::query(
         "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id IN (\
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1)",
+    )
+    .bind(job_name)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "DELETE FROM oxide_batch.ob_component_state WHERE step_execution_id IN (\
+         SELECT step.id FROM oxide_batch.ob_step_execution step \
+         JOIN oxide_batch.ob_job_execution execution ON execution.id = step.job_execution_id \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = $1)",
+    )
+    .bind(job_name)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "DELETE FROM oxide_batch.ob_repeat_execution WHERE step_execution_id IN (\
+         SELECT step.id FROM oxide_batch.ob_step_execution step \
+         JOIN oxide_batch.ob_job_execution execution ON execution.id = step.job_execution_id \
          JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
          WHERE instance.job_name = $1)",
     )
@@ -211,7 +238,7 @@ fn configuration_bounds_and_diagnostics_are_safe() -> Result<(), Box<dyn Error>>
         CaCertificate::new(Vec::new()).err(),
         Some(PostgresConfigError::EmptyCaCertificate)
     );
-    assert_eq!(PostgresMigrator::supported_schema_version(), 9);
+    assert_eq!(PostgresMigrator::supported_schema_version(), 10);
     Ok(())
 }
 
@@ -817,6 +844,492 @@ async fn launch_postgres_chunk(
     Ok((report, transactions))
 }
 
+struct CompatibleComponentCodec {
+    schema: StateSchemaId,
+    version: StateSchemaVersion,
+}
+
+impl VersionedStateCodec<u64> for CompatibleComponentCodec {
+    fn schema_id(&self) -> &StateSchemaId {
+        &self.schema
+    }
+
+    fn current_version(&self) -> StateSchemaVersion {
+        self.version
+    }
+
+    fn encode(&self, value: &u64) -> Result<Vec<u8>, StateCodecError> {
+        serde_json::to_vec(&serde_json::json!({ "value": value }))
+            .map_err(|_| StateCodecError::InvalidPayload)
+    }
+
+    fn decode(&self, payload: &[u8]) -> Result<u64, StateCodecError> {
+        serde_json::from_slice::<serde_json::Value>(payload)
+            .map_err(|_| StateCodecError::InvalidPayload)?
+            .get("value")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or(StateCodecError::InvalidPayload)
+    }
+}
+
+fn compatible_component_codec(
+    version: u32,
+) -> Result<DefaultComponentCodec<CompatibleComponentCodec>, Box<dyn Error>> {
+    Ok(DefaultComponentCodec::new(
+        CompatibleComponentCodec {
+            schema: StateSchemaId::new("postgres.upgrade.component")?,
+            version: StateSchemaVersion::new(version)?,
+        },
+        CodecId::new("postgres.upgrade.component-codec")?,
+        CodecVersion::new(1)?,
+        RestartabilityDeclaration::Restartable,
+    ))
+}
+
+fn compatible_component_state(value: u64) -> Result<ComponentStateEnvelope, Box<dyn Error>> {
+    Ok(ComponentStateEnvelope::encode(
+        ComponentStreamIdentity::new("upgrade.stream")?,
+        &value,
+        &compatible_component_codec(1)?,
+        StateLimits::default(),
+    )?)
+}
+
+fn compatible_repeat_state(version: u32, value: u64) -> Result<ExecutionContext, Box<dyn Error>> {
+    let bytes = serde_json::to_vec(&serde_json::json!({
+        "format": "oxide-batch.execution-context",
+        "format_version": 1,
+        "schema": "postgres.upgrade.repeat",
+        "schema_version": version,
+        "payload": { "value": value },
+    }))?;
+    Ok(ExecutionContext::from_json(&bytes, StateLimits::default())?)
+}
+
+fn compatible_upgrade_failure(_payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
+    Err(DefinitionStateTransformError::TransformFailed)
+}
+
+fn compatible_cross_family_payload(
+    payload: &[u8],
+) -> Result<Vec<u8>, DefinitionStateTransformError> {
+    let mut value: serde_json::Value = serde_json::from_slice(payload)
+        .map_err(|_| DefinitionStateTransformError::InvalidSource)?;
+    let object = value
+        .as_object_mut()
+        .ok_or(DefinitionStateTransformError::InvalidSource)?;
+    if let Some(position) = object.get("position").and_then(serde_json::Value::as_u64) {
+        object.insert("position".to_owned(), serde_json::json!(position + 100));
+    } else if let Some(current) = object.get("value").and_then(serde_json::Value::as_u64) {
+        object.insert("value".to_owned(), serde_json::json!(current + 1));
+    } else if object.contains_key("source") {
+        object.insert("upgraded".to_owned(), serde_json::json!(true));
+    } else {
+        return Err(DefinitionStateTransformError::InvalidSource);
+    }
+    serde_json::to_vec(&value).map_err(|_| DefinitionStateTransformError::TransformFailed)
+}
+
+fn compatible_cross_family_plan(
+    job_name: &JobName,
+    revision: &str,
+    node: &str,
+    step: &str,
+    schema_version: u32,
+) -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
+    let node = NodeId::new(node)?;
+    let revisions = ChunkComponentRevisions::new(
+        ComponentRevision::new(format!("reader-{revision}"))?,
+        ComponentRevision::new(format!("processor-{revision}"))?,
+        ComponentRevision::new(format!("writer-{revision}"))?,
+        ComponentRevision::new(format!("checkpoint-{revision}"))?,
+        ChunkRestartContract::new(
+            StateSchemaId::new("postgres.chunk.position")?,
+            StateSchemaVersion::new(schema_version)?,
+            StateSchemaId::new("postgres.chunk.context")?,
+            StateSchemaVersion::new(schema_version)?,
+            ChunkDeliveryMode::AtomicSameResource,
+        ),
+    );
+    let repeat = RepeatDefinition::new(
+        RepeatId::new("window")?,
+        RepeatPolicyDefinition::new(
+            RepeatPolicyKind::new("bounded-count")?,
+            ComponentRevision::new(format!("repeat-policy-{revision}"))?,
+            RepeatPolicyConfiguration::new("limit-3")?,
+        ),
+        Vec::new(),
+        RepeatStateSchema::new(
+            StateSchemaId::new("postgres.upgrade.repeat")?,
+            StateSchemaVersion::new(schema_version)?,
+        ),
+    )?;
+    let step = StepNode::new(
+        node.clone(),
+        StepName::new(step)?,
+        StepComponents::Chunk {
+            size: ChunkSize::new(2)?,
+            revisions: Box::new(revisions),
+        },
+    )
+    .with_repeat_definition(repeat);
+    Ok(FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(step))
+        .with_sequence(node, FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(job_name, DefinitionRevision::new(revision)?)?)
+}
+
+#[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the cross-family upgrade proof keeps source authority, transform, and target observations contiguous"
+)]
+fn compatible_restart_transforms_cross_family_state_on_postgres() -> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_compatible_cross_family";
+        remove_job_rows(&runtime_url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(680))),
+        )
+        .await?;
+        let job_name = JobName::new(JOB)?;
+        let source_node = NodeId::new("work-v1")?;
+        let target_node = NodeId::new("work-v2")?;
+        let source_step_name = StepName::new("work-v1")?;
+        let target_step_name = StepName::new("work-v2")?;
+        let source_plan = compatible_cross_family_plan(&job_name, "v1", "work-v1", "work-v1", 1)?;
+        let target_plan = compatible_cross_family_plan(&job_name, "v2", "work-v2", "work-v2", 2)?;
+        let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
+
+        let mut create = repository.begin().await?;
+        let instance = create
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        let source_job = create
+            .create_job_execution_with_definition(instance.id(), source_plan.definition_identity())
+            .await?;
+        let source_step = create
+            .create_flow_step_execution(
+                source_job.id(),
+                &source_step_name,
+                &source_node,
+                StartLimit::UNRESTRICTED,
+            )
+            .await?;
+        create.commit().await?;
+
+        let at = UNIX_EPOCH + Duration::from_secs(681);
+        let mut start = repository.begin().await?;
+        start
+            .transition_job_execution(
+                source_job.id(),
+                source_job.version(),
+                LifecycleTransition::new(BatchStatus::Started, at),
+            )
+            .await?;
+        start
+            .transition_step_execution(
+                source_step.id(),
+                source_step.version(),
+                LifecycleTransition::new(BatchStatus::Started, at),
+            )
+            .await?;
+        start.commit().await?;
+
+        let manager = postgres_chunk_transactions(&repository);
+        let source_scope = ChunkTransactionContext::new(source_job.id(), source_step.id());
+        let mut chunk = manager.begin_for(source_scope).await?;
+        let one = ChunkCount::new(1);
+        chunk
+            .commit_with_component_state(
+                ChunkCounts::new(one, one, one, ChunkCount::ZERO)?,
+                ChunkFaultProgress::NONE,
+                &[compatible_component_state(41)?],
+            )
+            .await?;
+        let committed = manager.load_committed_state(source_scope).await?;
+
+        let mut durable = repository.begin().await?;
+        let provenance = ScopeResolutionProvenance::new(
+            ScopeKind::Step,
+            ScopedComponentId::new("client")?,
+            ParameterName::new("source")?,
+            source_job.id(),
+            Some(source_step.id()),
+            ScopeResolutionSource::step_context(
+                source_node.clone(),
+                Some(source_step.id()),
+                Some(committed.step_execution().version()),
+                StateSchemaId::new("postgres.chunk.context")?,
+                StateSchemaVersion::new(1)?,
+                vec![String::from("source")],
+            )?,
+        )?;
+        durable
+            .store_scope_resolution_provenance(std::slice::from_ref(&provenance))
+            .await?;
+        durable
+            .commit_repeat_iteration(&RepeatCommitRequest::new(
+                instance.id(),
+                source_node.clone(),
+                source_step.id(),
+                RepeatId::new("window")?,
+                RepeatOrdinal::INITIAL,
+                compatible_repeat_state(1, 7)?,
+                RepeatDecision::Continue,
+                *source_plan.fingerprint(),
+            ))
+            .await?;
+        durable.commit().await?;
+
+        let mut fail = repository.begin().await?;
+        let current_step = fail
+            .get_step_execution(source_step.id())
+            .await?
+            .ok_or("source step missing before failure")?;
+        let current_job = fail
+            .get_job_execution(source_job.id())
+            .await?
+            .ok_or("source job missing before failure")?;
+        fail.transition_step_execution(
+            current_step.id(),
+            current_step.version(),
+            LifecycleTransition::failed(
+                UNIX_EPOCH + Duration::from_secs(682),
+                FailureSummary::new(FailureCategory::UserComponent, FailureId::new(951)?),
+            ),
+        )
+        .await?;
+        fail.transition_job_execution(
+            current_job.id(),
+            current_job.version(),
+            LifecycleTransition::failed(
+                UNIX_EPOCH + Duration::from_secs(682),
+                FailureSummary::new(FailureCategory::UserComponent, FailureId::new(952)?),
+            ),
+        )
+        .await?;
+        fail.commit().await?;
+
+        let transform_revision = DefinitionUpgradeRevision::new("cross-family-v1")?;
+        let edge = DefinitionUpgrade::transformed(
+            DefinitionUpgradeKey::new("cross-family-v1-to-v2")?,
+            DefinitionUpgradeRevision::new("edge-v1")?,
+            source_plan.definition_identity().clone(),
+            target_plan.definition_identity().clone(),
+            [DefinitionNodeUpgrade::new(
+                source_node.clone(),
+                target_node.clone(),
+            )],
+            [
+                DefinitionStateTransform::new(
+                    source_node.clone(),
+                    target_node.clone(),
+                    DefinitionStateKind::Checkpoint,
+                    DefinitionStateTransformId::new("checkpoint")?,
+                    StateSchemaId::new("postgres.chunk.position")?,
+                    StateSchemaVersion::new(1)?,
+                    StateSchemaId::new("postgres.chunk.position")?,
+                    StateSchemaVersion::new(2)?,
+                    transform_revision.clone(),
+                ),
+                DefinitionStateTransform::new(
+                    source_node.clone(),
+                    target_node.clone(),
+                    DefinitionStateKind::ExecutionContext,
+                    DefinitionStateTransformId::new("context")?,
+                    StateSchemaId::new("postgres.chunk.context")?,
+                    StateSchemaVersion::new(1)?,
+                    StateSchemaId::new("postgres.chunk.context")?,
+                    StateSchemaVersion::new(2)?,
+                    transform_revision.clone(),
+                ),
+                DefinitionStateTransform::new(
+                    source_node.clone(),
+                    target_node.clone(),
+                    DefinitionStateKind::ComponentState,
+                    DefinitionStateTransformId::new("upgrade.stream")?,
+                    StateSchemaId::new("postgres.upgrade.component")?,
+                    StateSchemaVersion::new(1)?,
+                    StateSchemaId::new("postgres.upgrade.component")?,
+                    StateSchemaVersion::new(2)?,
+                    transform_revision.clone(),
+                ),
+                DefinitionStateTransform::new(
+                    source_node.clone(),
+                    target_node.clone(),
+                    DefinitionStateKind::Repeat,
+                    DefinitionStateTransformId::new("window")?,
+                    StateSchemaId::new("postgres.upgrade.repeat")?,
+                    StateSchemaVersion::new(1)?,
+                    StateSchemaId::new("postgres.upgrade.repeat")?,
+                    StateSchemaVersion::new(2)?,
+                    transform_revision.clone(),
+                ),
+            ],
+        )?;
+        let rejected_selected = DefinitionUpgradeExecution::new(
+            edge.clone(),
+            [DefinitionStateTransformer::new(
+                transform_revision.clone(),
+                compatible_upgrade_failure,
+            )],
+        )?;
+        let selected = DefinitionUpgradeExecution::new(
+            edge.clone(),
+            [DefinitionStateTransformer::new(
+                transform_revision,
+                compatible_cross_family_payload,
+            )],
+        )?;
+        let mut register = repository.begin().await?;
+        register
+            .register_definition_upgrade(&job_name, &edge)
+            .await?;
+        register.commit().await?;
+
+        let mut rejected = repository.begin().await?;
+        assert_eq!(
+            rejected
+                .create_job_execution_with_upgrade(instance.id(), &rejected_selected)
+                .await,
+            Err(RepositoryError::DefinitionUpgradeFailed),
+        );
+        rejected.rollback().await?;
+
+        let mut unchanged = repository.begin().await?;
+        assert_eq!(
+            unchanged.job_executions(instance.id()).await?.len(),
+            1,
+            "a failed transform must not create a partial target attempt",
+        );
+        let repeat_before_success = unchanged
+            .latest_repeat_execution(instance.id(), &source_node, &RepeatId::new("window")?)
+            .await?
+            .ok_or("source repeat state disappeared after rejected upgrade")?;
+        assert_eq!(repeat_before_success.step_execution_id(), source_step.id());
+        assert_eq!(repeat_before_success.state().schema_version().get(), 1);
+        unchanged.rollback().await?;
+        let source_after_rejection = manager.load_committed_state(source_scope).await?;
+        assert_eq!(
+            source_after_rejection.checkpoint().schema_version().get(),
+            1
+        );
+        assert_eq!(
+            manager
+                .inherited_component_state(source_scope)
+                .await?
+                .first()
+                .ok_or("source component state disappeared after rejected upgrade")?
+                .decode(&compatible_component_codec(1)?)?,
+            41,
+        );
+
+        let mut restart = repository.begin().await?;
+        let target_job = restart
+            .create_job_execution_with_upgrade(instance.id(), &selected)
+            .await?;
+        let target_step = restart
+            .create_flow_step_execution(
+                target_job.id(),
+                &target_step_name,
+                &target_node,
+                StartLimit::UNRESTRICTED,
+            )
+            .await?;
+        restart.commit().await?;
+
+        let target_scope = ChunkTransactionContext::new(target_job.id(), target_step.id());
+        let transformed = manager.load_committed_state(target_scope).await?;
+        assert_eq!(transformed.checkpoint().schema_version().get(), 2);
+        assert_eq!(transformed.execution_context().schema_version().get(), 2);
+        let checkpoint_payload: serde_json::Value =
+            serde_json::from_slice(&transformed.checkpoint().payload_json()?)?;
+        assert_eq!(
+            checkpoint_payload
+                .get("position")
+                .and_then(serde_json::Value::as_u64),
+            Some(101)
+        );
+        let context_payload: serde_json::Value =
+            serde_json::from_slice(&transformed.execution_context().payload_json()?)?;
+        assert_eq!(
+            context_payload
+                .get("upgraded")
+                .and_then(serde_json::Value::as_bool),
+            Some(true)
+        );
+
+        let components = manager.inherited_component_state(target_scope).await?;
+        assert_eq!(components.len(), 1);
+        assert_eq!(components[0].namespace().as_str(), "upgrade.stream");
+        assert_eq!(components[0].schema_version().get(), 2);
+        assert_eq!(components[0].decode(&compatible_component_codec(2)?)?, 42);
+
+        let mut inspect = repository.begin().await?;
+        let repeat = inspect
+            .latest_repeat_execution(instance.id(), &target_node, &RepeatId::new("window")?)
+            .await?
+            .ok_or("transformed repeat state missing")?;
+        assert_eq!(repeat.step_execution_id(), target_step.id());
+        assert_eq!(repeat.definition_node_id(), &target_node);
+        assert_eq!(repeat.state().schema_version().get(), 2);
+        assert_eq!(repeat.plan_fingerprint(), target_plan.fingerprint());
+        let repeat_payload: serde_json::Value =
+            serde_json::from_slice(&repeat.state().payload_json()?)?;
+        assert_eq!(
+            repeat_payload
+                .get("value")
+                .and_then(serde_json::Value::as_u64),
+            Some(8)
+        );
+
+        let scope = inspect
+            .scope_resolution_provenance(
+                ScopeKind::Step,
+                &ScopedComponentId::new("client")?,
+                target_job.id(),
+                Some(target_step.id()),
+            )
+            .await?;
+        assert_eq!(scope.len(), 1);
+        assert_eq!(scope[0].owner_job_execution_id(), target_job.id());
+        assert_eq!(scope[0].owner_step_execution_id(), Some(target_step.id()));
+        match scope[0].source() {
+            ScopeResolutionSource::StepContext {
+                node,
+                step_execution_id,
+                schema,
+                schema_version,
+                ..
+            } => {
+                assert_eq!(node, &target_node);
+                assert_eq!(*step_execution_id, Some(target_step.id()));
+                assert_eq!(schema.as_str(), "postgres.chunk.context");
+                assert_eq!(schema_version.get(), 2);
+            }
+            _ => {
+                return Err(std::io::Error::other("unexpected transformed scope source").into());
+            }
+        }
+        inspect.rollback().await?;
+
+        repository.close().await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
 #[test]
 #[allow(
     clippy::too_many_lines,
@@ -986,15 +1499,18 @@ fn durable_restart_requires_compatible_definition_and_inherits_checkpoint()
         );
         incompatible.rollback().await?;
 
-        let upgrade = DefinitionUpgrade::new(
+        let upgrade = DefinitionUpgrade::transformed(
             DefinitionUpgradeKey::new("v1-to-v2")?,
+            DefinitionUpgradeRevision::new("edge-v1")?,
             v1,
             v2.clone(),
-            [StepDefinitionUpgrade::new(
-                source_step.clone(),
-                target_step.clone(),
+            [DefinitionNodeUpgrade::new(
+                NodeId::new(source_step.as_str())?,
+                NodeId::new(target_step.as_str())?,
             )],
+            [],
         )?;
+        let selected = DefinitionUpgradeExecution::new(upgrade.clone(), [])?;
         let mut register = repository.begin().await?;
         register
             .register_definition_upgrade(&job_name, &upgrade)
@@ -1003,7 +1519,7 @@ fn durable_restart_requires_compatible_definition_and_inherits_checkpoint()
 
         let mut restart = repository.begin().await?;
         let second = restart
-            .create_job_execution_with_definition(instance.id(), &v2)
+            .create_job_execution_with_upgrade(instance.id(), &selected)
             .await?;
         let second_step = restart
             .create_step_execution(second.id(), &target_step)
@@ -1252,24 +1768,27 @@ fn compatible_restart_with_scope_resolution_provenance_fails_closed() -> Result<
         .await?;
         stop.commit().await?;
 
-        let upgrade = DefinitionUpgrade::new(
+        let upgrade = DefinitionUpgrade::transformed(
             DefinitionUpgradeKey::new("scope-v1-to-v2")?,
+            DefinitionUpgradeRevision::new("scope-edge-v1")?,
             v1,
             v2.clone(),
-            [StepDefinitionUpgrade::new(
-                step_name.clone(),
-                step_name.clone(),
+            [DefinitionNodeUpgrade::new(
+                NodeId::new(step_name.as_str())?,
+                NodeId::new(step_name.as_str())?,
             )],
+            [],
         )?;
+        let selected = DefinitionUpgradeExecution::new(upgrade.clone(), [])?;
         let mut register = repository.begin().await?;
         register
             .register_definition_upgrade(&job_name, &upgrade)
             .await?;
         register.commit().await?;
 
-        let mut restart = repository.begin().await?;
+        let mut strict = repository.begin().await?;
         assert_eq!(
-            restart
+            strict
                 .create_job_execution_with_definition_and_parameters(
                     instance.id(),
                     &v2,
@@ -1279,9 +1798,25 @@ fn compatible_restart_with_scope_resolution_provenance_fails_closed() -> Result<
             Err(RepositoryError::IncompatibleDefinition {
                 instance_id: instance.id(),
             }),
-            "scope provenance has no accepted transform across a changed definition",
+            "a registered compatible edge never weakens the strict restart path",
         );
-        restart.rollback().await?;
+        strict.rollback().await?;
+
+        let mut restart = repository.begin().await?;
+        let second = restart
+            .create_job_execution_with_upgrade_and_parameters(instance.id(), &selected, &parameters)
+            .await?;
+        let remapped = restart
+            .scope_resolution_provenance(
+                ScopeKind::Job,
+                &ScopedComponentId::new("client")?,
+                second.id(),
+                None,
+            )
+            .await?;
+        assert_eq!(remapped.len(), 1);
+        assert_eq!(remapped[0].owner_job_execution_id(), second.id());
+        restart.commit().await?;
 
         repository.close().await?;
         remove_job_rows(&runtime_url, JOB).await?;

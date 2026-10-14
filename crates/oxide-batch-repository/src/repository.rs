@@ -10,12 +10,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
 use oxide_batch_core::{
-    BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, DomainError,
-    ExecutionContext, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus,
-    FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId,
-    JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameters, LifecycleError,
-    LifecycleTransition, NodeId, RecoveryDecisionId, RepeatId, ScopeKind, ScopedComponentId,
-    StartLimit, StepExecution, StepExecutionId, StepName, StepPartitionId,
+    BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade,
+    DefinitionUpgradeExecution, DomainError, ExecutionContext, ExecutionMetadata,
+    ExecutionTimestamps, ExecutionVersion, ExitStatus, FailureCategory, FailureId, FailureSummary,
+    IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey,
+    JobName, JobParameters, LifecycleError, LifecycleTransition, NodeId, RecoveryDecisionId,
+    RepeatId, ScopeKind, ScopedComponentId, StartLimit, StepExecution, StepExecutionId, StepName,
+    StepPartitionId,
 };
 
 use crate::{
@@ -831,6 +832,37 @@ pub trait RepositoryUnitOfWork: Send {
         definition: &'a DefinitionIdentity,
     ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>>;
 
+    /// Creates a compatible restart through one explicitly selected executable edge.
+    ///
+    /// Unlike the strict definition path, this method may cross a definition
+    /// fingerprint. The supplied edge must be the exact immutable edge
+    /// registered for the latest failed/stopped attempt, and every required
+    /// transform must complete inside this unit of work before commit.
+    fn create_job_execution_with_upgrade<'a>(
+        &'a mut self,
+        _job_instance_id: JobInstanceId,
+        _upgrade: &'a DefinitionUpgradeExecution,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
+    }
+
+    /// Creates an explicit compatible restart and binds its complete parameter set.
+    fn create_job_execution_with_upgrade_and_parameters<'a>(
+        &'a mut self,
+        _job_instance_id: JobInstanceId,
+        _upgrade: &'a DefinitionUpgradeExecution,
+        _parameters: &'a JobParameters,
+    ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
+    }
     /// Creates one attempt and binds its complete immutable parameter set.
     ///
     /// Scoped late binding requires the execution record, not the logical
@@ -1857,6 +1889,8 @@ pub enum RepositoryError {
         /// Unsupported format version.
         format: u16,
     },
+    /// A selected compatible-upgrade transformer failed before lifecycle commit.
+    DefinitionUpgradeFailed,
     /// A registered directed edge did not map a required durable step.
     InvalidDefinitionUpgrade {
         /// New execution whose mapped state could not be resolved.
@@ -2096,6 +2130,9 @@ impl fmt::Display for RepositoryError {
                     formatter,
                     "definition manifest format {format} is unsupported"
                 )
+            }
+            Self::DefinitionUpgradeFailed => {
+                formatter.write_str("definition upgrade state transformation failed")
             }
             Self::InvalidDefinitionUpgrade { execution_id } => write!(
                 formatter,

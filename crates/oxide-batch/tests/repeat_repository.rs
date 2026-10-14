@@ -8,15 +8,16 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use oxide_batch::{
-    BatchStatus, ComponentRevision, DefinitionRevision, DefinitionUpgrade, DefinitionUpgradeKey,
-    ExecutionContext, FailureCategory, FailureId, FailureSummary, FlowGraph, FlowNode, FlowTarget,
+    BatchStatus, ComponentRevision, DefinitionNodeUpgrade, DefinitionRevision, DefinitionUpgrade,
+    DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, ExecutionContext,
+    FailureCategory, FailureId, FailureSummary, FlowGraph, FlowNode, FlowTarget,
     InMemoryJobRepository, JobInstanceKey, JobName, JobParameters, JobRepository,
     LifecycleTransition, NodeId, PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry,
     PartitionedStepNode, RepeatCommitRequest, RepeatDecision, RepeatDefinition, RepeatId,
     RepeatLineage, RepeatOrdinal, RepeatPolicyConfiguration, RepeatPolicyDefinition,
     RepeatPolicyKind, RepeatStateSchema, RepositoryError, SequentialIdGenerator, StartLimit,
-    StateLimits, StateSchemaId, StateSchemaVersion, StepComponents, StepDefinitionUpgrade,
-    StepName, StepNode, SystemClock, TerminalKind,
+    StateLimits, StateSchemaId, StateSchemaVersion, StepComponents, StepName, StepNode,
+    SystemClock, TerminalKind,
 };
 
 fn plan() -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
@@ -347,8 +348,8 @@ async fn repeat_ordinal_rejects_skips_before_any_state_is_written() -> Result<()
 }
 
 #[tokio::test]
-async fn repeat_lineage_rejects_prior_state_from_an_upgraded_definition()
--> Result<(), Box<dyn Error>> {
+async fn explicit_upgrade_rebinds_repeat_lineage_to_target_definition() -> Result<(), Box<dyn Error>>
+{
     let repository = repository();
     let v1 = plan()?;
     let v2 = upgraded_plan()?;
@@ -389,34 +390,57 @@ async fn repeat_lineage_rejects_prior_state_from_an_upgraded_definition()
     .await?;
     fail.commit().await?;
 
-    let upgrade = DefinitionUpgrade::new(
+    let node = NodeId::new("repeat-step")?;
+    let upgrade = DefinitionUpgrade::transformed(
         DefinitionUpgradeKey::new("repeat-v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
         v1.definition_identity().clone(),
         v2.definition_identity().clone(),
-        [StepDefinitionUpgrade::new(
-            StepName::new("repeat-step")?,
-            StepName::new("repeat-step")?,
-        )],
+        [DefinitionNodeUpgrade::new(node.clone(), node.clone())],
+        [],
     )?;
+    let selected = DefinitionUpgradeExecution::new(upgrade.clone(), [])?;
     let mut register = repository.begin().await?;
     register
         .register_definition_upgrade(&JobName::new("repeat-repository")?, &upgrade)
         .await?;
     register.commit().await?;
 
+    let mut strict = repository.begin().await?;
+    assert_eq!(
+        strict
+            .create_job_execution_with_definition(instance, v2.definition_identity())
+            .await,
+        Err(RepositoryError::IncompatibleDefinition {
+            instance_id: instance,
+        }),
+        "registering a compatible edge must not weaken strict restart",
+    );
+    strict.rollback().await?;
+
     let mut create = repository.begin().await?;
     let second_job = create
-        .create_job_execution_with_definition(instance, v2.definition_identity())
+        .create_job_execution_with_upgrade(instance, &selected)
         .await?;
     let second_step = create
         .create_flow_step_execution(
             second_job.id(),
             &StepName::new("repeat-step")?,
-            &NodeId::new("repeat-step")?,
+            &node,
             StartLimit::UNRESTRICTED,
         )
         .await?;
     create.commit().await?;
+
+    let mut carried = repository.begin().await?;
+    let carried_repeat = carried
+        .latest_repeat_execution(instance, &node, &RepeatId::new("window")?)
+        .await?
+        .ok_or("compatible restart must materialize the prior repeat authority")?;
+    assert_eq!(carried_repeat.step_execution_id(), second_step.id());
+    assert_eq!(carried_repeat.ordinal(), RepeatOrdinal::INITIAL);
+    assert_eq!(carried_repeat.plan_fingerprint(), v2.fingerprint());
+    carried.rollback().await?;
 
     let next = request(
         &v2,
@@ -426,13 +450,11 @@ async fn repeat_lineage_rejects_prior_state_from_an_upgraded_definition()
         state("v2-state")?,
         RepeatDecision::Continue,
     )?;
-    let mut rejected = repository.begin().await?;
-    assert_eq!(
-        rejected.commit_repeat_iteration(&next).await,
-        Err(RepositoryError::RepeatStateCorrupt),
-        "a directed definition upgrade does not authorize carrying repeat lineage state across a different plan fingerprint",
-    );
-    rejected.rollback().await?;
+    let mut advance = repository.begin().await?;
+    let advanced = advance.commit_repeat_iteration(&next).await?;
+    assert_eq!(advanced.ordinal(), RepeatOrdinal::new(1));
+    assert_eq!(advanced.plan_fingerprint(), v2.fingerprint());
+    advance.commit().await?;
     Ok(())
 }
 

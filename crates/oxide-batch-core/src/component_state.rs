@@ -648,6 +648,65 @@ impl ComponentStateEnvelope {
         })
     }
 
+    /// Constructs a validated inline envelope from already-transformed payload bytes.
+    ///
+    /// The compatible-upgrade path uses this after the selected pure
+    /// transformer returns. Codec identity/version are preserved while the
+    /// application schema identity/version and checksum move to the declared
+    /// target contract.
+    ///
+    /// # Errors
+    ///
+    /// Returns a redacted bounds or JSON-shape failure.
+    #[doc(hidden)]
+    pub fn from_transformed_inline(
+        source: &Self,
+        schema_id: StateSchemaId,
+        schema_version: StateSchemaVersion,
+        payload: Vec<u8>,
+        limits: StateLimits,
+    ) -> Result<Self, ComponentStateError> {
+        if source.is_external() {
+            return Err(ComponentStateError::Malformed);
+        }
+        if payload.len() > limits.maximum_bytes() {
+            return Err(ComponentStateError::TooLarge {
+                max_bytes: limits.maximum_bytes(),
+            });
+        }
+        let payload_value: Value =
+            serde_json::from_slice(&payload).map_err(|_| ComponentStateError::InvalidPayload)?;
+        if !payload_value.is_object() {
+            return Err(ComponentStateError::PayloadNotObject);
+        }
+        if json_depth(&payload_value) > limits.maximum_depth() {
+            return Err(ComponentStateError::TooDeep {
+                max_depth: limits.maximum_depth(),
+            });
+        }
+        let checksum_algorithm = source.checksum_algorithm;
+        let checksum = checksum_algorithm.digest(&canonical_checksum_input(
+            &source.namespace,
+            &schema_id,
+            schema_version,
+            &source.codec_id,
+            source.codec_version,
+            &inline_payload_marker(&payload),
+        ));
+        let encoded_len = payload.len();
+        Ok(Self {
+            namespace: source.namespace.clone(),
+            schema_id,
+            schema_version,
+            codec_id: source.codec_id.clone(),
+            codec_version: source.codec_version,
+            checksum_algorithm,
+            checksum,
+            payload: StoredPayload::Inline(payload),
+            encoded_len,
+        })
+    }
+
     /// Constructs an envelope wrapping an already-stored external reference.
     ///
     /// The caller is responsible for having already stored the bytes through
