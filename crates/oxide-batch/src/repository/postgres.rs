@@ -33,7 +33,7 @@ use crate::{
     FailureCategory, FailureId, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
     FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
     FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
-    FlowTarget, FlowTransitionKind, IdentifierKind, InheritedStepProgress, JobExecution,
+    FlowTarget, FlowTransitionKind, ForkLineage, IdentifierKind, InheritedStepProgress, JobExecution,
     JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
     JobInstanceProjection, JobInstanceSelection, JobName, JobParameter, JobParameters,
     JobRepository, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
@@ -53,7 +53,7 @@ use crate::{
     StepPartitionProjection, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 10;
+const SUPPORTED_SCHEMA_VERSION: u32 = 11;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
@@ -2589,6 +2589,185 @@ impl PostgresUnitOfWork<'_> {
 }
 
 impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
+    fn fork_lineage<'a>(
+        &'a mut self,
+        operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<ForkLineage>, RepositoryError>> {
+        Box::pin(async move {
+            let row = sqlx::query(
+                "SELECT lineage.operation_id, lineage.source_job_execution_id, \\
+                 lineage.source_execution_version, lineage.source_definition_digest, \\
+                 lineage.source_state_digest, lineage.target_job_instance_id, \\
+                 lineage.target_job_execution_id, lineage.target_parameters_digest, \\
+                 definition.job_name, definition.definition_revision, definition.manifest_format, \\
+                 definition.manifest_digest, definition.manifest, definition.artifact_identity \\
+                 FROM oxide_batch.ob_job_fork_lineage lineage \\
+                 JOIN oxide_batch.ob_job_definition definition \\
+                   ON definition.id = lineage.target_definition_id \\
+                 WHERE lineage.operation_id = $1",
+            )
+            .bind(operation_id.as_str())
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let Some(row) = row else { return Ok(None); };
+            let target = decode_definition_registration(&row)
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let source_definition_digest = row.try_get::<Vec<u8>, _>("source_definition_digest")
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                .try_into().map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let source_state_digest = row.try_get::<Vec<u8>, _>("source_state_digest")
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                .try_into().map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let target_parameters_digest = row.try_get::<Vec<u8>, _>("target_parameters_digest")
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                .try_into().map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let lineage = ForkLineage::from_durable(
+                OperationId::new(read_text(&row, "operation_id")?)
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?,
+                JobExecutionId::new(read_u64(&row, "source_job_execution_id")?)?,
+                ExecutionVersion::new(read_u64(&row, "source_execution_version")?),
+                source_definition_digest,
+                source_state_digest,
+                target,
+                JobInstanceId::new(read_u64(&row, "target_job_instance_id")?)?,
+                JobExecutionId::new(read_u64(&row, "target_job_execution_id")?)?,
+                target_parameters_digest,
+            );
+            let consistent: bool = sqlx::query_scalar(
+                "SELECT EXISTS (SELECT 1 FROM oxide_batch.ob_job_execution target \\
+                 JOIN oxide_batch.ob_job_execution source ON source.id = $1 \\
+                 JOIN oxide_batch.ob_job_definition source_definition \\
+                   ON source_definition.id = source.definition_id \\
+                 JOIN oxide_batch.ob_job_definition target_definition \\
+                   ON target_definition.id = target.definition_id \\
+                 WHERE target.id = $2 AND target.job_instance_id = $3 \\
+                   AND target.attempt = 1 AND target.restart_of_execution_id IS NULL \\
+                   AND target.upgrade_from_definition_id IS NULL \\
+                   AND source_definition.manifest_digest = $4 \\
+                   AND target_definition.manifest_digest = $5)",
+            )
+            .bind(database_id(lineage.source_execution_id().get(), IdentifierKind::JobExecution)?)
+            .bind(database_id(lineage.target_execution_id().get(), IdentifierKind::JobExecution)?)
+            .bind(database_id(lineage.target_instance_id().get(), IdentifierKind::JobInstance)?)
+            .bind(&lineage.source_definition_digest()[..])
+            .bind(&lineage.target().definition().manifest_digest()[..])
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if !consistent { return Err(RepositoryError::ForkStateCorrupt); }
+            Ok(Some(lineage))
+        })
+    }
+
+    fn lock_fork_source(
+        &mut self,
+        source_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
+        Box::pin(async move {
+            let exists = sqlx::query(
+                "SELECT id FROM oxide_batch.ob_job_execution WHERE id = $1 FOR UPDATE",
+            )
+            .bind(database_id(source_execution_id.get(), IdentifierKind::JobExecution)?)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if exists.is_none() { return Ok(None); }
+            self.job_execution(source_execution_id).await
+        })
+    }
+
+    fn append_fork_lineage<'a>(
+        &'a mut self,
+        lineage: &'a ForkLineage,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async move {
+            let target_execution_id =
+                database_id(lineage.target_execution_id().get(), IdentifierKind::JobExecution)?;
+            let target_instance_id =
+                database_id(lineage.target_instance_id().get(), IdentifierKind::JobInstance)?;
+            let source_execution_id =
+                database_id(lineage.source_execution_id().get(), IdentifierKind::JobExecution)?;
+            let state = sqlx::query(
+                "SELECT job_instance_id, definition_id, attempt, restart_of_execution_id, \\
+                 upgrade_from_definition_id FROM oxide_batch.ob_job_execution \\
+                 WHERE id = $1 FOR UPDATE",
+            )
+            .bind(target_execution_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::ForkStateCorrupt)?;
+            let attempt = state.try_get::<i32, _>("attempt")
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            if attempt != 1
+                || state.try_get::<i64, _>("job_instance_id")
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)? != target_instance_id
+                || state.try_get::<Option<i64>, _>("restart_of_execution_id")
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?.is_some()
+                || state.try_get::<Option<i64>, _>("upgrade_from_definition_id")
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?.is_some()
+            {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            let target_parameters = load_execution_parameters(
+                &mut **self.transaction()?, lineage.target_execution_id(),
+            ).await.map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            if &target_parameters.flow_input_digest() != lineage.target_parameters_digest() {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            let definition_id: i64 = state.try_get("definition_id")
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let target = sqlx::query(
+                "SELECT job_name, definition_revision, manifest_format, manifest_digest, \\
+                 manifest, artifact_identity FROM oxide_batch.ob_job_definition \\
+                 WHERE id = $1",
+            )
+            .bind(definition_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let registered = decode_definition_registration(&target)
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            if registered != *lineage.target() {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            let source_digest: Vec<u8> = sqlx::query_scalar(
+                "SELECT definition.manifest_digest \\
+                 FROM oxide_batch.ob_job_execution execution \\
+                 JOIN oxide_batch.ob_job_definition definition \\
+                   ON definition.id = execution.definition_id WHERE execution.id = $1",
+            )
+            .bind(source_execution_id)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            if source_digest != lineage.source_definition_digest().as_slice() {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            sqlx::query(
+                "INSERT INTO oxide_batch.ob_job_fork_lineage \\
+                 (operation_id, source_job_execution_id, source_execution_version, \\
+                  source_definition_digest, source_state_digest, target_definition_id, \\
+                  target_job_instance_id, target_job_execution_id, target_parameters_digest) \\
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
+            )
+            .bind(lineage.operation_id().as_str())
+            .bind(source_execution_id)
+            .bind(database_id(lineage.source_version().get(), IdentifierKind::JobExecution)?)
+            .bind(&lineage.source_definition_digest()[..])
+            .bind(&lineage.source_state_digest()[..])
+            .bind(definition_id)
+            .bind(target_instance_id)
+            .bind(target_execution_id)
+            .bind(&lineage.target_parameters_digest()[..])
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::ForkOperationConflict)?;
+            Ok(())
+        })
+    }
+
     fn register_definition<'a>(
         &'a mut self,
         registration: &'a DefinitionRegistration,
