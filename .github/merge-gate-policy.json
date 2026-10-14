@@ -166,14 +166,16 @@
           "c955cf3e52ee5bb594ead8384bdf90dc55803c52",
           "6ffa5c57072834ed5c71668e2fd8de47d11b0665",
           "db6c4951f5012e5cdaf97949eb7f48aeba5e8f70",
-          "80cf2acbe04a479865575370231dafe6f89d53e6"
+          "80cf2acbe04a479865575370231dafe6f89d53e6",
+          "dac652dc17307080f8ec92552f755735572686e2"
         ]
       },
       {
         "workflow": ".github/workflows/dependency-review.yml",
         "accepted_blobs": [
           "631bf08c7be9704b633cb4d0210db10fba832fec",
-          "999a160fd0c15680d5fcd46818da68c59b6c3f3d"
+          "999a160fd0c15680d5fcd46818da68c59b6c3f3d",
+          "40f744581b4606366bace85054cd72b50ee15767"
         ]
       },
       {
@@ -202,7 +204,8 @@
         "workflow": ".github/workflows/evidence.yml",
         "accepted_blobs": [
           "122e3b9671bbbbb69d77011c52b323e028e2fbb1",
-          "60e5af0c901d84ae02eed5c3ad0d7927e7302eba"
+          "60e5af0c901d84ae02eed5c3ad0d7927e7302eba",
+          "957f3140e43432676e94337b067b098bdb8dfb3b"
         ]
       },
       {
@@ -210,7 +213,8 @@
         "accepted_blobs": [
           "f3ffe4aaf4cab64a315fe94f67a8498e9b6509ad",
           "c6456410b50ded7b0775c5480179ecf62fbd9517",
-          "02b9f5d8079eb916bb3d6019c38fbb37bf8ee77b"
+          "02b9f5d8079eb916bb3d6019c38fbb37bf8ee77b",
+          "7cf8411921be9ce4612c28c032158134e0224c60"
         ]
       },
       {
@@ -230,7 +234,8 @@
           "3d347b0350e894a66e8bc256cc4a3085a76307c2",
           "3f002e551fae9e21bd135e5ce8e0afd18488ff5a",
           "f1ff93d1ad2e0a59d5c94384705279a1fc4b501b",
-          "8f35cfaee087588ce5f5ff1748d3ca391feee06e"
+          "8f35cfaee087588ce5f5ff1748d3ca391feee06e",
+          "c68d79972804582c15f1a3c9c947c85cd77663e1"
         ]
       }
     ],
@@ -253,7 +258,8 @@
           "e7d494a86512bf66c09159e42b92d2bbb44aae23",
           "0d3c17332885ba1b2966edc0fd90b95bb5fb6c41",
           "92c0b71080835863bc6d98604a19d126ab9671a4",
-          "f35e666618f5c53eade218d80b12f03fd470e56e"
+          "f35e666618f5c53eade218d80b12f03fd470e56e",
+          "3ecd2faa41176f42ec652a124f67788242d6ba4b"
         ]
       },
       {
@@ -265,7 +271,8 @@
           "3cd08f87b6ae6db61c3d910e2b5a50bea3e0bbb2",
           "977eef8c5d0692fff433b651c49521a3f570a2a7",
           "116ada3947dc5fbfc557a4a3cd653ce3ae2972e4",
-          "d20de2d87bd1c9f073cb579c12865f82e2e22e6a"
+          "d20de2d87bd1c9f073cb579c12865f82e2e22e6a",
+          "7b7b485ed68334fcbef40dc7685e57a06e98101e"
         ]
       },
       {
