@@ -11,7 +11,7 @@ use oxide_batch::{
     DefinitionStateTransform, DefinitionStateTransformError, DefinitionStateTransformId,
     DefinitionStateTransformer, DefinitionUpgradeRevision, ExecutionContext, ForkContextTransform,
     ForkRequest, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
-    LifecycleTransition, NodeId, OperationId, PostgresConfig, PostgresJobRepository,
+    LifecycleTransition, NodeId, OperationId, PostgresConfig, PostgresJobRepository, PostgresMigrator,
     RepositoryError, StateLimits, StateSchemaId, StateSchemaVersion, StepName, TlsMode,
 };
 
@@ -66,6 +66,7 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
         .enable_all()
         .build()?
         .block_on(async {
+            PostgresMigrator::migrate(&config).await?;
             let clock = Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90)));
             let repository = PostgresJobRepository::connect(config.clone(), clock.clone()).await?;
             let source = registration(&source_name)?;
