@@ -7569,6 +7569,7 @@ fn job_execution_select(suffix: &str) -> String {
 fn step_execution_select(suffix: &str) -> String {
     format!(
         "SELECT execution.id, execution.job_execution_id, execution.step_name, \
+         execution.step_logical_id, \
          execution.step_logical_id, execution.status, execution.exit_code, execution.read_count, \
          execution.processed_count, execution.write_count, execution.filter_count, \
          execution.commit_count, execution.rollback_count, execution.failure_category, \

@@ -10,9 +10,10 @@ use oxide_batch::{
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, DefinitionStateKind,
     DefinitionStateTransform, DefinitionStateTransformError, DefinitionStateTransformId,
     DefinitionStateTransformer, DefinitionUpgradeRevision, ExecutionContext, ForkContextTransform,
-    ForkLineage, ForkRequest, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
-    LifecycleTransition, NodeId, OperationId, PostgresConfig, PostgresJobRepository, PostgresMigrator,
-    RepositoryError, StateLimits, StateSchemaId, StateSchemaVersion, StepName, TlsMode,
+    ForkRequest, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
+    LifecycleTransition, NodeId, OperationId, PostgresConfig, PostgresJobRepository,
+    PostgresMigrator, RepositoryError, StateLimits, StateSchemaId, StateSchemaVersion, StepName,
+    TlsMode,
 };
 
 #[derive(Clone, Copy)]
@@ -66,18 +67,14 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
         .enable_all()
         .build()?
         .block_on(async {
-            eprintln!("m7-fork-proof: migration start");
             PostgresMigrator::migrate(&config).await?;
-            eprintln!("m7-fork-proof: migration complete");
             let clock = Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90)));
             let repository = PostgresJobRepository::connect(config.clone(), clock.clone()).await?;
-            eprintln!("m7-fork-proof: repository connected");
             let source = registration(&source_name)?;
             let target = registration(&target_name)?;
             let registry = DefinitionRegistry::new(repository.clone());
             registry.register(&source).await?;
             registry.register(&target).await?;
-            eprintln!("m7-fork-proof: registrations complete");
             let parameters = JobParameters::new();
 
             let mut uow = repository.begin().await?;
@@ -149,7 +146,6 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
                 )
                 .await?;
             uow.commit().await?;
-            eprintln!("m7-fork-proof: source committed");
 
             let descriptor = DefinitionStateTransform::new(
                 NodeId::new("only")?,
@@ -178,53 +174,9 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
                 DefinitionUpgradeRevision::new("pg-fork-transform-v1")?,
                 increment,
             );
-            // Diagnostic transaction: isolate repository failure boundaries.
-            // This entire candidate is rolled back before the real fork.
-            let mut probe = repository.begin().await?;
-            probe.fork_lineage(request.operation_id()).await?;
-            eprintln!("m7-fork-proof: lookup");
-            probe.lock_fork_source(stopped.id()).await?;
-            eprintln!("m7-fork-proof: source lock");
-            probe.job_executions(stopped.job_instance_id()).await?;
-            eprintln!("m7-fork-proof: source attempts");
-            let source_definition = probe.scope_execution_definition(stopped.id()).await?;
-            eprintln!("m7-fork-proof: definition scope");
-            probe.definition(
-                source_definition.job_name().ok_or(RepositoryError::ForkStateCorrupt)?,
-                source_definition.revision(),
-            ).await?;
-            eprintln!("m7-fork-proof: source registered");
-            probe.step_executions(stopped.id()).await?;
-            eprintln!("m7-fork-proof: step list");
-            probe.scope_step_state(step.id()).await?;
-            eprintln!("m7-fork-proof: step scope");
-            probe.definition(request.target().job_name(), request.target().revision()).await?;
-            eprintln!("m7-fork-proof: target registered");
-            let selected = probe.select_or_create_job_instance(&request.target_key()).await?;
-            eprintln!("m7-fork-proof: target key");
-            let target_execution = probe.create_job_execution_with_definition_and_parameters(
-                selected.instance().id(), request.target().definition(), request.parameters(),
-            ).await?;
-            eprintln!("m7-fork-proof: target execution");
-            let transformed = ExecutionContext::from_transformed_payload(
-                StateSchemaId::new("fork-pg-v2")?, StateSchemaVersion::new(2)?,
-                br#"{"value":12}"#, StateLimits::default(),
-            )?;
-            probe.stage_fork_job_context(target_execution.id(), &transformed).await?;
-            eprintln!("m7-fork-proof: target context");
-            let lineage_probe = ForkLineage::new(
-                &request, &source_definition, [9_u8; 32],
-                selected.instance().id(), target_execution.id(),
-            );
-            probe.append_fork_lineage(&lineage_probe).await?;
-            eprintln!("m7-fork-proof: lineage appended");
-            probe.rollback().await?;
-            eprintln!("m7-fork-proof: probe rolled back");
-            eprintln!("m7-fork-proof: invoke fork");
             let lineage = JobFork::new(repository.clone())
                 .fork_transformed(&request, &transformer)
                 .await?;
-            eprintln!("m7-fork-proof: fork committed");
             assert_ne!(lineage.target_instance_id(), stopped.job_instance_id());
             assert_ne!(lineage.target_execution_id(), stopped.id());
             drop(repository);
@@ -232,7 +184,6 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
             // A new connection sees the exact immutable descriptor and the new
             // context; replay must not create an extra execution or invent restart.
             let reopened = PostgresJobRepository::connect(config, clock).await?;
-            eprintln!("m7-fork-proof: repository reopened");
             let service = JobFork::new(reopened.clone());
             assert_eq!(
                 service.lineage(request.operation_id()).await?,
