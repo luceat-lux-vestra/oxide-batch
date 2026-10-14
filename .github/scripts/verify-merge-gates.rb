@@ -1203,6 +1203,7 @@ module MergeGateVerifier
         end
       end
 
+    direct_authority_workflows = pr_proof_authorities_for(policy: policy).map { |member| member.fetch('workflow') }
     pr_topology_reusable_authorities_for(policy: policy).each do |workflow|
       doc = docs[workflow]
       unless doc.is_a?(Hash)
@@ -1210,11 +1211,20 @@ module MergeGateVerifier
         next
       end
       violations << "#{workflow} must expose workflow_call" unless workflow_event?(doc, 'workflow_call')
-      if workflow_event?(doc, 'pull_request')
-        violations << "#{workflow} must not trigger directly on pull_request after the direct-DAG cutover"
-      end
-      if workflow_event?(doc, 'workflow_dispatch')
-        violations << "#{workflow} must not expose the retired PR-authority workflow_dispatch surface"
+      if direct_authority_workflows.include?(workflow)
+        if workflow_event?(doc, 'pull_request')
+          violations << "#{workflow} must not trigger directly on pull_request after the direct-DAG cutover"
+        end
+        if workflow_event?(doc, 'workflow_dispatch')
+          violations << "#{workflow} must not expose the retired PR-authority workflow_dispatch surface"
+        end
+      else
+        pr_present, pr_config = event_config(doc, 'pull_request')
+        unless pr_present && pr_config.is_a?(Hash) &&
+               pr_config['paths'] == [PR_TOPOLOGY_MIGRATION_MARKER] &&
+               !pr_config.key?('paths-ignore')
+          violations << "#{workflow} direct pull_request trigger must remain marker-only during v7 migration"
+        end
       end
     end
 
