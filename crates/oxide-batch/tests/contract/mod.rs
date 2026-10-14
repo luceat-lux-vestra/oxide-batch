@@ -821,11 +821,12 @@ where
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
         let context = contract_upgrade_context(value, 1)
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-        let committed =
-            block_on(setup.commit_step_execution_context(started.id(), started.version(), &context))
-                .map_err(|error| {
-                    RepositoryContractFailure::new(backend, CASE, error.to_string())
-                })?;
+        let committed = block_on(setup.commit_step_execution_context(
+            started.id(),
+            started.version(),
+            &context,
+        ))
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
         block_on(setup.transition_step_execution(
             committed.id(),
             committed.version(),
@@ -910,11 +911,12 @@ where
     let mapped_context = mapped.context().ok_or_else(|| {
         RepositoryContractFailure::new(backend, CASE, "mapped source state was dropped")
     })?;
-    let mapped_payload: serde_json::Value =
-        serde_json::from_slice(&mapped_context.payload_json().map_err(|error| {
-            RepositoryContractFailure::new(backend, CASE, error.to_string())
-        })?)
-        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let mapped_payload: serde_json::Value = serde_json::from_slice(
+        &mapped_context
+            .payload_json()
+            .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+    )
+    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         mapped_payload
             .get("value")
