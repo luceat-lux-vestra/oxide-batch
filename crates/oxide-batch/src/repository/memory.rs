@@ -1881,7 +1881,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 self.staged.step_contexts.insert(id, context);
             }
             if let Some(seed) = upgrade_seed {
-                for repeat in seed.repeats.iter().cloned() {
+                for repeat in &seed.repeats {
                     let materialized = RepeatExecution::new(
                         instance_id,
                         node_id.clone(),

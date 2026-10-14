@@ -73,20 +73,6 @@ pub(crate) async fn store_scope_resolution_provenance(
     Ok(())
 }
 
-pub(crate) async fn has_scope_resolution_provenance(
-    transaction: &mut PgConnection,
-    owner_job_execution_id: JobExecutionId,
-) -> Result<bool, RepositoryError> {
-    sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_scope_resolution_provenance \
-         WHERE owner_job_execution_id = $1)",
-    )
-    .bind(job_database_id(owner_job_execution_id)?)
-    .fetch_one(transaction)
-    .await
-    .map_err(|_| RepositoryError::Unavailable)
-}
-
 pub(crate) async fn copy_forward_job_scope_resolution_provenance(
     transaction: &mut PgConnection,
     source_job_execution_id: JobExecutionId,
