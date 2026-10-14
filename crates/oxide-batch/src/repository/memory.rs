@@ -463,9 +463,10 @@ impl InMemoryUnitOfWork<'_> {
                             DefinitionStateKind::ExecutionContext,
                             None,
                         )? {
-                            Some(transform) => {
-                                (transform.target_schema().clone(), transform.target_version())
-                            }
+                            Some(transform) => (
+                                transform.target_schema().clone(),
+                                transform.target_version(),
+                            ),
                             None => (schema.clone(), *schema_version),
                         };
                         ScopeResolutionSource::StepContext {

@@ -1902,7 +1902,6 @@ async fn registered_upgrade_matches(
     .map_err(|_| RepositoryError::Unavailable)
 }
 
-
 async fn scope_upgrade_seeds(
     transaction: &mut PgConnection,
     owner_job_execution_id: JobExecutionId,
@@ -1924,7 +1923,10 @@ async fn scope_upgrade_seeds(
            AND owner_step_execution_id IS NOT DISTINCT FROM $2 \
          ORDER BY component_id, input_name",
     )
-    .bind(database_id(owner_job_execution_id.get(), IdentifierKind::JobExecution)?)
+    .bind(database_id(
+        owner_job_execution_id.get(),
+        IdentifierKind::JobExecution,
+    )?)
     .bind(
         owner_step_execution_id
             .map(|id| database_id(id.get(), IdentifierKind::StepExecution))
@@ -1966,8 +1968,8 @@ async fn scope_upgrade_seeds(
                 .get("source_node_id")
                 .and_then(Value::as_str)
                 .ok_or(RepositoryError::ScopeResolutionStateCorrupt)?;
-            let source_node =
-                NodeId::new(source_node).map_err(|_| RepositoryError::ScopeResolutionStateCorrupt)?;
+            let source_node = NodeId::new(source_node)
+                .map_err(|_| RepositoryError::ScopeResolutionStateCorrupt)?;
             let target_node = upgrade
                 .upgrade()
                 .node_mapping()
@@ -3178,12 +3180,8 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let (id, strict_source) = if upgraded {
                 let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, &node_id).await?;
                 if let Some(seed) = seed.as_ref() {
-                    validate_upgrade_seed_scope_sources(
-                        &mut **self.transaction()?,
-                        job_id,
-                        seed,
-                    )
-                    .await?;
+                    validate_upgrade_seed_scope_sources(&mut **self.transaction()?, job_id, seed)
+                        .await?;
                 }
                 let id = match seed.as_ref() {
                     Some(seed) => {
@@ -3384,12 +3382,8 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let (id, strict_source) = if upgraded {
                 let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, node_id).await?;
                 if let Some(seed) = seed.as_ref() {
-                    validate_upgrade_seed_scope_sources(
-                        &mut **self.transaction()?,
-                        job_id,
-                        seed,
-                    )
-                    .await?;
+                    validate_upgrade_seed_scope_sources(&mut **self.transaction()?, job_id, seed)
+                        .await?;
                 }
                 let id = match seed.as_ref() {
                     Some(seed) => {

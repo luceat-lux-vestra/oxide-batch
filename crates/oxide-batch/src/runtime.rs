@@ -1394,12 +1394,14 @@ impl<'a> JobLauncher<'a> {
             .instance()
             .clone();
         let job_execution = match upgrade {
-            Some(upgrade) => unit
-                .create_job_execution_with_upgrade(instance.id(), upgrade)
-                .await?,
-            None => unit
-                .create_job_execution_with_definition(instance.id(), definition)
-                .await?,
+            Some(upgrade) => {
+                unit.create_job_execution_with_upgrade(instance.id(), upgrade)
+                    .await?
+            }
+            None => {
+                unit.create_job_execution_with_definition(instance.id(), definition)
+                    .await?
+            }
         };
         let job_execution = if let Some((owner, _)) = self.execution_control {
             unit.claim_execution_owner(
