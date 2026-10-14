@@ -29,6 +29,10 @@ CREATE TABLE ob_job_fork_lineage (
         REFERENCES ob_job_execution (id) ON DELETE RESTRICT,
     target_parameters_digest bytea NOT NULL
         CHECK (octet_length(target_parameters_digest) = 32),
+    -- Reviewed descriptor only; transformed application state is stored in the
+    -- target execution context, never as a lineage payload.
+    fork_transform jsonb NULL
+        CHECK (fork_transform IS NULL OR jsonb_typeof(fork_transform) = 'object'),
     created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP,
     CONSTRAINT ob_job_fork_lineage_new_identity
         CHECK (source_job_execution_id <> target_job_execution_id)
