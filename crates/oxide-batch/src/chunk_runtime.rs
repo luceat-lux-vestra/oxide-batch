@@ -791,6 +791,51 @@ impl JobLauncher<'_> {
         P: ItemProcessor<I, O> + Send + 'static,
         W: ItemWriter<O> + Send + 'static,
     {
+        self.launch_chunk_selected(job, None, parameters, stop).await
+    }
+
+    /// Launches one explicitly selected compatible restart of a stateful chunk job.
+    ///
+    /// The selected direct edge is validated and every required durable restart
+    /// state is transformed before the lowered tasklet reaches user work.
+    ///
+    /// # Errors
+    ///
+    /// Returns LaunchError when the selected edge is incompatible, state
+    /// transformation fails, or repository metadata cannot reach a trustworthy
+    /// state.
+    pub async fn launch_chunk_compatible<I, O, R, P, W>(
+        &self,
+        job: &mut ChunkJob<I, O, R, P, W>,
+        upgrade: &crate::DefinitionUpgradeExecution,
+        parameters: &JobParameters,
+        stop: &StopToken,
+    ) -> Result<ChunkLaunchReport, LaunchError>
+    where
+        I: Send + Sync + 'static,
+        O: Send + Sync + 'static,
+        R: ItemReader<I> + Send + 'static,
+        P: ItemProcessor<I, O> + Send + 'static,
+        W: ItemWriter<O> + Send + 'static,
+    {
+        self.launch_chunk_selected(job, Some(upgrade), parameters, stop)
+            .await
+    }
+
+    async fn launch_chunk_selected<I, O, R, P, W>(
+        &self,
+        job: &mut ChunkJob<I, O, R, P, W>,
+        upgrade: Option<&crate::DefinitionUpgradeExecution>,
+        parameters: &JobParameters,
+        stop: &StopToken,
+    ) -> Result<ChunkLaunchReport, LaunchError>
+    where
+        I: Send + Sync + 'static,
+        O: Send + Sync + 'static,
+        R: ItemReader<I> + Send + 'static,
+        P: ItemProcessor<I, O> + Send + 'static,
+        W: ItemWriter<O> + Send + 'static,
+    {
         job.tasklet.clear_last_report();
         let tasklet: Arc<dyn Tasklet> = job.tasklet.clone();
         let mut tasklet_step = TaskletStep::new(job.step_name.clone(), tasklet);
@@ -803,7 +848,13 @@ impl JobLauncher<'_> {
             tasklet_job = tasklet_job.with_listener(Arc::clone(listener));
         }
 
-        let launch = self.launch(&tasklet_job, parameters, stop).await?;
+        let launch = match upgrade {
+            Some(upgrade) => {
+                self.launch_compatible(&tasklet_job, upgrade, parameters, stop)
+                    .await?
+            }
+            None => self.launch(&tasklet_job, parameters, stop).await?,
+        };
         let chunk = job.tasklet.take_last_report();
         Ok(ChunkLaunchReport { launch, chunk })
     }
