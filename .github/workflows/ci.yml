@@ -634,7 +634,7 @@ jobs:
         run: >-
           python3 .github/scripts/pr-scope.py
           --repo-root .
-          --policy .github/merge-gate-policy.json
+          --policy .github/pr-scope-policy.json
           --self-test
 
       - name: Require all quality components
