@@ -1,4 +1,4 @@
-//! M7/#552: durable transformed-fork integration on real PostgreSQL 15/18.
+//! M7/#552: durable transformed-fork integration on real `PostgreSQL` 15/18.
 #![cfg(feature = "postgres")]
 
 use std::error::Error;
