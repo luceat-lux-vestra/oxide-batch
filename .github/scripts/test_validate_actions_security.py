@@ -592,7 +592,7 @@ assert ACTIVE_WRITER.read_bytes() == STAGED_WRITER.read_bytes(), "M6 writer diff
 assert m6_git_blob(STAGED_CODEQL) == "2d6e80287d137c2d63da431ed9c085e24a920071", (
     "Historical M6 CodeQL stage changed without review"
 )
-assert m6_git_blob(ACTIVE_CODEQL) == "68878572050524d1f65e0aa7c14baca49074a953", (
+assert m6_git_blob(ACTIVE_CODEQL) == "f2010766c0a9bfce7714b56852d2f57deeac8182", (
     "Activated CodeQL must match its new exact pre-admitted Git blob"
 )
 staged_wallclock = (
@@ -624,10 +624,16 @@ assert (ROOT / "docs/engineering/ci-staging/codeql-rust-no-database-upload-candi
 )
 
 activated_codeql = ACTIVE_CODEQL.read_text(encoding="utf-8")
-assert activated_codeql.count("89fd82a519b43c5fad5d7300c9ab42e09392e9da") == 2, "M6 CodeQL writer SHA must occur exactly twice"
-assert "beb69de6b58d89b3814b23017e408775659b275f" not in activated_codeql, "M6 CodeQL retains stale writer SHA"
-assert "!cancelled()" in activated_codeql, "M6 Rust Analyze cancellation guard regressed"
-assert not codeql_routing_violations(activated_codeql), "active CodeQL must pass the activated trusted-dispatch security validator"
+active_codeql_errors = MODULE.check_codeql_weekly_manual_contract_text(activated_codeql)
+assert active_codeql_errors == [], ("active weekly/manual CodeQL contract invalid", active_codeql_errors)
+assert "candidate_sha:" in activated_codeql, "manual exact-main CodeQL candidate input missing"
+assert activated_codeql.count("github/codeql-action/init@") == 2, "full Actions+Rust CodeQL init coverage changed"
+assert activated_codeql.count("github/codeql-action/analyze@") == 2, "full Actions+Rust CodeQL analyze coverage changed"
+for forbidden in ("  pull_request:", "  workflow_run:", "  workflow_call:", "  push:"):
+    assert forbidden not in activated_codeql, f"routine/derived CodeQL trigger remains active: {forbidden}"
+assert activated_codeql.count("          upload-database: false\n") == 1, (
+    "Exactly one Rust CodeQL Analyze database upload override must remain active"
+)
 
 policy = json.loads(POLICY.read_text(encoding="utf-8"))
 approved = next(
@@ -665,24 +671,6 @@ assert STAGED_NO_DB_UPLOAD.read_bytes() == expected_active_codeql, (
 STAGED_CALLER_RECHECK = ROOT / "docs/engineering/ci-staging/codeql-rust-caller-recheck-candidate.yml"
 assert STAGED_CALLER_RECHECK.is_file(), "missing caller recheck pre-approved stage"
 assert m6_git_blob(STAGED_CALLER_RECHECK) == "af148fc7f0cee653e2f29e017e2fa73c928c910e", "caller recheck staged blob drift"
-from test_codeql_rust_caller_recheck_stage import without_caller, codeql_before_action_update
-prior_action_codeql = codeql_before_action_update(activated_codeql)
-for unexpected in (
-    activated_codeql.replace("ubuntu-24.04-arm", "ubuntu-latest", 1),
-    activated_codeql.replace("          upload-database: false\n", "", 1),
-    activated_codeql.replace("attempts = 15", "attempts = 16", 1),
-    activated_codeql.replace("# v4.38.3", "# v4.38.2", 1),
-):
-    assert unexpected != activated_codeql, "action-update negative fixture did not mutate"
-    try:
-        codeql_before_action_update(unexpected)
-    except AssertionError:
-        pass
-    else:
-        raise AssertionError("action update proof accepted non-pin workflow drift")
-assert without_caller(STAGED_CALLER_RECHECK.read_text(encoding="utf-8")) == without_caller(prior_action_codeql), (
-    "Activated CodeQL differs beyond the audited caller-provenance retry block"
-)
 assert m6_git_blob(STAGED_NO_DB_UPLOAD) == "894db7fb531721bbb961ce59231e08b9331b7444", (
     "CodeQL no-database-upload candidate Git blob drift"
 )
@@ -709,12 +697,12 @@ with tempfile.TemporaryDirectory(prefix="oxide-m6-active-writer-") as td:
         + writer_contract.stdout + writer_contract.stderr
     )
 
-# CI wall-clock: preserve the historical x64 stage and validator evidence;
-# active Rust CodeQL now differs ONLY by its exactly pre-admitted ARM64 runner.
+# CI wall-clock: preserve historical x64/trusted-dispatch evidence independently;
+# the active workflow has now moved to the separately pre-admitted weekly/manual contract.
 WALLCLOCK_CODEQL = ROOT / "docs/engineering/ci-staging/codeql-wallclock-rust-impact-candidate.yml"
 WALLCLOCK_VALIDATOR = ROOT / "docs/engineering/ci-staging/actions-security-wallclock-rust-impact-candidate.py"
 assert WALLCLOCK_CODEQL.is_file() and WALLCLOCK_VALIDATOR.is_file()
-assert m6_git_blob(ACTIVE_CODEQL) == "68878572050524d1f65e0aa7c14baca49074a953"
+assert m6_git_blob(ACTIVE_CODEQL) == "f2010766c0a9bfce7714b56852d2f57deeac8182"
 assert m6_git_blob(ROOT / ".github/scripts/validate_actions_security.py") == (
     "d111be338f22d67cdd4cade2ebb0fa7839bb969a"
 )
@@ -785,9 +773,9 @@ for title, old, bad, diagnostic in (
 candidate_policy = json.loads(POLICY.read_text(encoding="utf-8"))
 for collection, key, path, admitted, prior in (
     ("protected_workflows", "workflow", ".github/workflows/codeql.yml",
-     "c150f2001a74e802180369fd16ee462b63e99232", "2d6e80287d137c2d63da431ed9c085e24a920071"),
+     "f2010766c0a9bfce7714b56852d2f57deeac8182", "68878572050524d1f65e0aa7c14baca49074a953"),
     ("protected_files", "path", ".github/scripts/validate_actions_security.py",
-     "29fe8e7a6778f433c6f0390f11aed10820764ee4", "bbec03ce7e6f4696fc56c19c76f62e0cc7c3acc1"),
+     "d111be338f22d67cdd4cade2ebb0fa7839bb969a", "29fe8e7a6778f433c6f0390f11aed10820764ee4"),
 ):
     entries = [
         row for row in candidate_policy["repository_merge_gate"][collection]
@@ -806,62 +794,38 @@ assert classifier_test.returncode == 0, (
 )
 print("CI wall-clock trusted dispatch routing candidate contract: PASS")
 
-# Future CodeQL caller-provenance retry pre-admission: execute the exact
-# staged embedded-function mock contract as part of the required security suite.
-from test_codeql_rust_caller_recheck_stage import run_checks as verify_caller_recheck_stage
-verify_caller_recheck_stage()
+# Historical caller-provenance retry evidence remains immutable above, but
+# it is no longer an active CodeQL execution contract after the scheduled/manual
+# cutover. Do not compare the current workflow against that retired PR-caller stage.
 
-# Exercise the ACTUAL new protected CodeQL code with mocked read-only API
-# responses. Keep the historical three-attempt stage tests above intact.
-import test_codeql_rust_caller_recheck_stage as caller_stage
-import unittest
+# Exercise the ACTUAL scheduled/manual CodeQL contract and prove the old
+# PR-derived execution surface cannot be reintroduced silently.
+assert MODULE.check_codeql_weekly_manual_contract_text(activated_codeql) == []
 
-class ActiveCallerReadbackContract(caller_stage.CallerRecheckContract):
-    def setUp(self):
-        super().setUp()
-        self.source = ACTIVE_CODEQL.read_text(encoding="utf-8")
-        namespace = {
-            "os": caller_stage.os, "json": caller_stage.json,
-            "time": caller_stage.time, "urllib": caller_stage.urllib,
-            "base_sha": caller_stage.BASE, "repository": caller_stage.REPO,
-            "token": "offline-test-token", "api_url": "https://api.invalid",
-        }
-        exec(compile(caller_stage.embedded(self.source), "<active caller>", "exec"), namespace)
-        self.verify = namespace["trusted_dispatch_identity"]
+for title, mutated, diagnostic in (
+    (
+        "re-enable pull_request",
+        activated_codeql.replace("  schedule:\n", "  pull_request:\n  schedule:\n", 1),
+        "exactly schedule and workflow_dispatch events",
+    ),
+    (
+        "remove exact input-to-run SHA binding",
+        activated_codeql.replace('              test "$INPUT_SHA" = "$GITHUB_SHA"\n', "", 1),
+        'test "$INPUT_SHA" = "$GITHUB_SHA"',
+    ),
+    (
+        "remove live protected-main binding",
+        activated_codeql.replace('              test "$live_sha" = "$INPUT_SHA"\n', "", 1),
+        'test "$live_sha" = "$INPUT_SHA"',
+    ),
+    (
+        "drop Rust full analysis",
+        activated_codeql.replace("  analyze-rust:\n", "  analyze-rust-disabled:\n", 1),
+        "full CodeQL rust analysis job missing",
+    ),
+):
+    assert mutated != activated_codeql, ("scheduled-only negative fixture ineffective", title)
+    errors = MODULE.check_codeql_weekly_manual_contract_text(mutated)
+    assert any(diagnostic in error for error in errors), (title, errors)
 
-    def test_exact_stage_delta_and_preapproval(self):
-        assert m6_git_blob(ACTIVE_CODEQL) == "68878572050524d1f65e0aa7c14baca49074a953"
-        assert without_caller(STAGED_CALLER_RECHECK.read_text(encoding="utf-8")) == without_caller(codeql_before_action_update(self.source))
-        assert "68878572050524d1f65e0aa7c14baca49074a953" in approved
-        assert "fef6dc22f11826543b3099c8e80e0adad928adf1" in approved
-        assert "attempts = 15" in self.source
-
-    def test_unresolved_queued_remains_fail_closed(self):
-        queued = {**self.valid, "status": "queued"}
-        with self.assertRaisesRegex(RuntimeError, "after 15 read-only checks"):
-            self.call([queued] * 15)
-        self.assertEqual(len(self.requests), 15)
-        self.assertEqual(self.sleeps, [1] * 14)
-
-    def test_mismatched_identity_never_authorized(self):
-        for field, value in [
-            ("id", 8), ("event", "workflow_dispatch"), ("run_attempt", 2),
-            ("path", ".github/workflows/other.yml"), ("head_sha", "b" * 40),
-            ("status", "cancelled"),
-        ]:
-            with self.subTest(field=field):
-                self.requests.clear()
-                self.sleeps.clear()
-                with self.assertRaisesRegex(RuntimeError, "mismatched fields:"):
-                    self.call([{**self.valid, field: value}] * 15)
-                self.assertEqual(len(self.requests), 15)
-                self.assertEqual(len(self.sleeps), 14)
-
-    def test_failed_terminal_caller_never_authorized(self):
-        with self.assertRaisesRegex(RuntimeError, "conclusion"):
-            self.call([{**self.valid, "status": "completed", "conclusion": "failure"}] * 15)
-        self.assertEqual(len(self.requests), 15)
-
-suite = unittest.defaultTestLoader.loadTestsFromTestCase(ActiveCallerReadbackContract)
-result = unittest.TextTestRunner(verbosity=1).run(suite)
-assert result.wasSuccessful(), "Activated CodeQL caller readback fails adversarial tests"
+print("Activated weekly/manual CodeQL security contract: PASS")

@@ -20,6 +20,10 @@ rules:
       # adjacent to the jobs explain their purpose; this pedantic rule only
       # recognizes inline comments on each permission key.
       - ci.yml:470
+      # CodeQL analysis jobs need this write only to upload SARIF/security results.
+      # The scheduled/manual workflow itself is exact-blob protected.
+      - codeql.yml:67
+      - codeql.yml:95
       - issue-labeler.yml:24
       - pr-labeler.yml:29
       - release-draft.yml:27
