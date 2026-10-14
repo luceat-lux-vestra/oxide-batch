@@ -66,14 +66,18 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
         .enable_all()
         .build()?
         .block_on(async {
+            eprintln!("m7-fork-proof: migration start");
             PostgresMigrator::migrate(&config).await?;
+            eprintln!("m7-fork-proof: migration complete");
             let clock = Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90)));
             let repository = PostgresJobRepository::connect(config.clone(), clock.clone()).await?;
+            eprintln!("m7-fork-proof: repository connected");
             let source = registration(&source_name)?;
             let target = registration(&target_name)?;
             let registry = DefinitionRegistry::new(repository.clone());
             registry.register(&source).await?;
             registry.register(&target).await?;
+            eprintln!("m7-fork-proof: registrations complete");
             let parameters = JobParameters::new();
 
             let mut uow = repository.begin().await?;
@@ -145,6 +149,7 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
                 )
                 .await?;
             uow.commit().await?;
+            eprintln!("m7-fork-proof: source committed");
 
             let descriptor = DefinitionStateTransform::new(
                 NodeId::new("only")?,
@@ -173,9 +178,11 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
                 DefinitionUpgradeRevision::new("pg-fork-transform-v1")?,
                 increment,
             );
+            eprintln!("m7-fork-proof: invoke fork");
             let lineage = JobFork::new(repository.clone())
                 .fork_transformed(&request, &transformer)
                 .await?;
+            eprintln!("m7-fork-proof: fork committed");
             assert_ne!(lineage.target_instance_id(), stopped.job_instance_id());
             assert_ne!(lineage.target_execution_id(), stopped.id());
             drop(repository);
@@ -183,6 +190,7 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
             // A new connection sees the exact immutable descriptor and the new
             // context; replay must not create an extra execution or invent restart.
             let reopened = PostgresJobRepository::connect(config, clock).await?;
+            eprintln!("m7-fork-proof: repository reopened");
             let service = JobFork::new(reopened.clone());
             assert_eq!(
                 service.lineage(request.operation_id()).await?,
