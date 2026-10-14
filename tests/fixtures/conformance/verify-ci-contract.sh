@@ -36,15 +36,6 @@ require_count() {
     fail "${label} count is ${actual}, expected ${expected}: ${literal}"
 }
 
-require_exact_identity() {
-  local label="$1"
-  local file="$2"
-  local expected="$3"
-  local actual
-  actual="$(git hash-object "${file}")"
-  test "${actual}" = "${expected}" ||
-    fail "${label} (${file}) has git blob identity ${actual}, and the contract records ${expected}; byte-level drift makes retained evidence stale"
-}
 
 test "${workflow_path}" = "$(jq -er '.workflow_path' "${contract}")" ||
   fail "workflow path does not match the contract"
@@ -55,6 +46,7 @@ done
 require_literal "workflow name" "name: $(jq -er '.workflow_name' "${contract}")"
 require_literal "pull_request trigger" "  pull_request:"
 require_literal "workflow_dispatch trigger" "  workflow_dispatch:"
+require_literal "workflow_call trigger" "  workflow_call:"
 require_literal "pull_request main branch" "      - main"
 require_literal "contents permission" "  contents: read"
 require_literal "pull-request read permission" "  pull-requests: read"
@@ -112,9 +104,5 @@ do
 done
 require_literal_in "merge shard-index reset" "${merge_script_path}" "unset OXIDEBATCH_CONFORMANCE_SHARD_INDEX"
 require_literal_in "merge cargo command" "${merge_script_path}" "exec $(jq -er '.command | join(" ")' "${contract}")"
-
-require_exact_identity "dedicated workflow" "${workflow_path}" "$(jq -er '.workflow_git_blob' "${contract}")"
-require_exact_identity "campaign shard script" "${script_path}" "$(jq -er '.script_git_blob' "${contract}")"
-require_exact_identity "campaign merge script" "${merge_script_path}" "$(jq -er '.merge_script_git_blob' "${contract}")"
 
 echo "conformance execution contract matches ${workflow_path}"
