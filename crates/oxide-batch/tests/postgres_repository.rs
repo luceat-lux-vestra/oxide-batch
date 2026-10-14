@@ -906,9 +906,7 @@ fn compatible_repeat_state(version: u32, value: u64) -> Result<ExecutionContext,
     Ok(ExecutionContext::from_json(&bytes, StateLimits::default())?)
 }
 
-fn compatible_upgrade_failure(
-    _payload: &[u8],
-) -> Result<Vec<u8>, DefinitionStateTransformError> {
+fn compatible_upgrade_failure(_payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
     Err(DefinitionStateTransformError::TransformFailed)
 }
 
@@ -1223,7 +1221,10 @@ fn compatible_restart_transforms_cross_family_state_on_postgres() -> Result<(), 
         assert_eq!(repeat_before_success.state().schema_version().get(), 1);
         unchanged.rollback().await?;
         let source_after_rejection = manager.load_committed_state(source_scope).await?;
-        assert_eq!(source_after_rejection.checkpoint().schema_version().get(), 1);
+        assert_eq!(
+            source_after_rejection.checkpoint().schema_version().get(),
+            1
+        );
         assert_eq!(
             manager
                 .inherited_component_state(source_scope)
