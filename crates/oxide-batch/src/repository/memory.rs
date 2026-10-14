@@ -1414,17 +1414,28 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         context: &'a ExecutionContext,
     ) -> BoxFuture<'a, Result<(), RepositoryError>> {
         Box::pin(async move {
-            let target = self.staged.job_executions.get(&target_execution_id)
+            let target = self
+                .staged
+                .job_executions
+                .get(&target_execution_id)
                 .ok_or(RepositoryError::ForkStateCorrupt)?;
             if target.metadata().status() != BatchStatus::Starting
                 || target.version() != ExecutionVersion::INITIAL
-                || self.staged.fork_job_contexts.contains_key(&target_execution_id)
-                || self.staged.execution_attempts.get(&target_execution_id)
+                || self
+                    .staged
+                    .fork_job_contexts
+                    .contains_key(&target_execution_id)
+                || self
+                    .staged
+                    .execution_attempts
+                    .get(&target_execution_id)
                     .is_none_or(|attempt| attempt.get() != 1)
             {
                 return Err(RepositoryError::ForkStateCorrupt);
             }
-            self.staged.fork_job_contexts.insert(target_execution_id, context.clone());
+            self.staged
+                .fork_job_contexts
+                .insert(target_execution_id, context.clone());
             Ok(())
         })
     }
@@ -2896,7 +2907,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
     ) -> BoxFuture<'_, Result<Option<crate::ExecutionContext>, RepositoryError>> {
         Box::pin(async move {
             self.instance_for_execution(job_execution_id)?;
-            Ok(self.staged.fork_job_contexts.get(&job_execution_id).cloned())
+            Ok(self
+                .staged
+                .fork_job_contexts
+                .get(&job_execution_id)
+                .cloned())
         })
     }
 
@@ -2906,7 +2921,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
     ) -> BoxFuture<'_, Result<Option<crate::ExecutionContext>, RepositoryError>> {
         Box::pin(async move {
             self.instance_for_execution(job_execution_id)?;
-            Ok(self.staged.fork_job_contexts.get(&job_execution_id).cloned())
+            Ok(self
+                .staged
+                .fork_job_contexts
+                .get(&job_execution_id)
+                .cloned())
         })
     }
 
