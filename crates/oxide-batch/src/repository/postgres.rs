@@ -2122,6 +2122,7 @@ async fn build_postgres_upgrade_seed(
             target_node.as_str().to_owned(),
             json!({
                 "source_node": source_node.as_str(),
+                "source_step_execution_id": durable.step_execution.id().get(),
                 "counts": {
                     "read": counts.read(),
                     "processed": counts.processed(),
@@ -2180,6 +2181,46 @@ async fn upgrade_seed_node(
     Ok(seed
         .map(|Json(value)| value)
         .filter(|value| !value.is_null()))
+}
+
+fn context_from_upgrade_seed(seed: &Value) -> Result<Option<ExecutionContext>, RepositoryError> {
+    let context = seed
+        .get("context")
+        .and_then(Value::as_object)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let format_version = context
+        .get("format")
+        .and_then(Value::as_u64)
+        .and_then(|value| u16::try_from(value).ok())
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let schema = context
+        .get("schema")
+        .and_then(Value::as_str)
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    if schema == DEFAULT_CONTEXT_SCHEMA {
+        return Ok(None);
+    }
+    let schema_version = context
+        .get("schema_version")
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let payload = context
+        .get("payload")
+        .cloned()
+        .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+    let envelope = json!({
+        "format": "oxide-batch.execution-context",
+        "format_version": format_version,
+        "schema": schema,
+        "schema_version": schema_version,
+        "payload": payload,
+    });
+    let bytes =
+        serde_json::to_vec(&envelope).map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+    ExecutionContext::from_json(&bytes, StateLimits::default())
+        .map(Some)
+        .map_err(|_| RepositoryError::DefinitionUpgradeFailed)
 }
 
 async fn validate_upgrade_seed_scope_sources(
@@ -3806,18 +3847,39 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     id: job_instance_id,
                 });
             }
-            let row = sqlx::query(AssertSqlSafe(durable_step_select(
-                "JOIN oxide_batch.ob_job_execution flow_job \
-                 ON flow_job.id = execution.job_execution_id \
-                 WHERE flow_job.job_instance_id = $1 AND execution.step_logical_id = $2 \
-                 ORDER BY flow_job.attempt DESC, execution.id DESC LIMIT 1",
-            )))
+
+            let boundary = sqlx::query(
+                "SELECT flow_job.id, flow_job.upgrade_seed, \
+                   (SELECT step.id FROM oxide_batch.ob_step_execution step \
+                    WHERE step.job_execution_id = flow_job.id AND step.step_logical_id = $2 \
+                    ORDER BY step.id DESC LIMIT 1) AS target_step_id \
+                 FROM oxide_batch.ob_job_execution flow_job \
+                 WHERE flow_job.job_instance_id = $1 \
+                   AND (flow_job.upgrade_seed IS NOT NULL OR EXISTS( \
+                     SELECT 1 FROM oxide_batch.ob_step_execution step \
+                     WHERE step.job_execution_id = flow_job.id AND step.step_logical_id = $2)) \
+                 ORDER BY flow_job.attempt DESC LIMIT 1",
+            )
             .bind(instance_id)
             .bind(node_id.as_str())
             .fetch_optional(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            row.map(|row| {
+
+            let Some(boundary) = boundary else {
+                return Ok(None);
+            };
+            if let Some(step_id) = boundary
+                .try_get::<Option<i64>, _>("target_step_id")
+                .map_err(|_| RepositoryError::Unavailable)?
+            {
+                let row = sqlx::query(AssertSqlSafe(durable_step_select(
+                    "WHERE execution.id = $1",
+                )))
+                .bind(step_id)
+                .fetch_one(&mut **self.transaction()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
                 let durable = decode_durable_step_state(&row)?;
                 let context =
                     if durable.execution_context.schema_id().as_str() == DEFAULT_CONTEXT_SCHEMA {
@@ -3825,13 +3887,44 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     } else {
                         Some(durable.execution_context)
                     };
-                Ok(FlowStepState::new(
+                return Ok(Some(FlowStepState::new(
                     node_id.clone(),
                     durable.step_execution,
                     context,
-                ))
-            })
-            .transpose()
+                )));
+            }
+
+            let Some(Json(seed)) = boundary
+                .try_get::<Option<Json<Value>>, _>("upgrade_seed")
+                .map_err(|_| RepositoryError::Unavailable)?
+            else {
+                return Ok(None);
+            };
+            let Some(node_seed) = seed
+                .get("nodes")
+                .and_then(Value::as_object)
+                .and_then(|nodes| nodes.get(node_id.as_str()))
+            else {
+                return Ok(None);
+            };
+            let source_id = node_seed
+                .get("source_step_execution_id")
+                .and_then(Value::as_u64)
+                .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
+            let row = sqlx::query(AssertSqlSafe(durable_step_select(
+                "WHERE execution.id = $1",
+            )))
+            .bind(database_id(source_id, IdentifierKind::StepExecution)?)
+            .fetch_one(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::DefinitionUpgradeFailed)?;
+            let source = decode_durable_step_state(&row)?;
+            let context = context_from_upgrade_seed(node_seed)?;
+            Ok(Some(FlowStepState::new(
+                node_id.clone(),
+                source.step_execution,
+                context,
+            )))
         })
     }
 
@@ -3904,7 +3997,12 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                        JOIN oxide_batch.ob_job_execution target_job ON target_job.id = $1 \
                        WHERE source.id = $2 \
                          AND source_job.job_instance_id = target_job.job_instance_id \
-                         AND source.step_logical_id = $3)",
+                         AND (source.step_logical_id = $3 OR EXISTS( \
+                           SELECT 1 FROM oxide_batch.ob_job_execution mapped_job \
+                           WHERE mapped_job.job_instance_id = target_job.job_instance_id \
+                             AND mapped_job.definition_id = target_job.definition_id \
+                             AND mapped_job.upgrade_seed -> 'nodes' -> $3 \
+                                 ->> 'source_step_execution_id' = source.id::text)))",
                 )
                 .bind(job_id)
                 .bind(database_id(step_id.get(), IdentifierKind::StepExecution)?)
