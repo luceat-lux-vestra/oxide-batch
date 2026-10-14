@@ -417,6 +417,10 @@ fn transformed_upgrade_requires_changed_manifest_state_schema_transform()
     Ok(())
 }
 
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "DefinitionStateTransformer requires the fallible transform signature"
+)]
 fn identity_upgrade_payload(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
     Ok(payload.to_vec())
 }
