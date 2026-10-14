@@ -105,3 +105,69 @@ BEGIN
     END;
 END
 $verify$;
+
+-- One separately reviewed transformed fork: the new target carries ONLY
+-- the explicitly transformed job-level context. Its source history is intact.
+INSERT INTO ob_job_instance
+    (id, job_name, instance_key, identifying_parameters, created_at)
+VALUES
+    (92004, 'schema5_fixture_child', decode(repeat('34',32),'hex'),
+     '{}'::jsonb, '2026-10-14 00:00:05+00');
+
+INSERT INTO ob_job_execution (
+    id, job_instance_id, definition_id, upgrade_from_definition_id,
+    restart_of_execution_id, attempt, status, exit_code, parameters,
+    context_format, context_schema, context_schema_version, context_payload,
+    created_at, updated_at, version
+) VALUES (
+    93004, 92004, 91002, NULL,
+    NULL, 1, 'STARTING', 'UNKNOWN', '{}'::jsonb,
+    1, 'fixture-context-v2', 2, '{"value":8}'::jsonb,
+    '2026-10-14 00:00:06+00', '2026-10-14 00:00:06+00', 0
+);
+
+INSERT INTO ob_job_fork_lineage (
+    operation_id, source_job_execution_id, source_execution_version,
+    source_definition_digest, source_state_digest, target_definition_id,
+    target_job_instance_id, target_job_execution_id, target_parameters_digest,
+    fork_transform
+) VALUES (
+    'schema11-fixture-transformed', 93001, 2,
+    decode(repeat('11',32),'hex'), decode(repeat('cc',32),'hex'), 91002,
+    92004, 93004, decode(repeat('dd',32),'hex'),
+    '{
+        "source_step_execution_id": 94001,
+        "source_step_version": 2,
+        "source_node": "preserved_step",
+        "target_node": "preserved_step",
+        "kind": "execution-context",
+        "state_id": "fixture-context",
+        "source_schema": "fixture-context",
+        "source_version": 1,
+        "target_schema": "fixture-context-v2",
+        "target_version": 2,
+        "revision": "fixture-transform-v1"
+    }'::jsonb
+);
+
+DO $verify$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM ob_job_fork_lineage fork
+        JOIN ob_job_execution target ON target.id = fork.target_job_execution_id
+        WHERE fork.operation_id = 'schema11-fixture-transformed'
+          AND fork.fork_transform ->> 'revision' = 'fixture-transform-v1'
+          AND fork.fork_transform ->> 'kind' = 'execution-context'
+          AND (fork.fork_transform ->> 'source_step_execution_id')::bigint = 94001
+          AND (fork.fork_transform ->> 'source_step_version')::bigint = 2
+          AND target.context_schema = 'fixture-context-v2'
+          AND target.context_schema_version = 2
+          AND target.context_payload = '{"value":8}'::jsonb
+          AND target.attempt = 1
+          AND target.restart_of_execution_id IS NULL
+          AND target.upgrade_from_definition_id IS NULL
+    ) THEN
+        RAISE EXCEPTION 'schema11 transformed fork descriptor or context is inconsistent';
+    END IF;
+END
+$verify$;
