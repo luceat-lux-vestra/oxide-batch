@@ -1,0 +1,46 @@
+{
+  "document": "Trusted PR scope and campaign routing policy",
+  "schema_version": 1,
+  "pr_scope": {
+    "docs_only": {
+      "exact_paths": [
+        "README.md",
+        "AGENTS.md",
+        "CHANGELOG.md",
+        "CODE_OF_CONDUCT.md",
+        "CONTRIBUTING.md",
+        "SECURITY.md"
+      ],
+      "markdown_prefixes": [
+        "docs/"
+      ],
+      "excluded_prefixes": []
+    },
+    "campaign_semantics_glob": "tests/fixtures/**/campaign-semantics.json",
+    "retained_evidence_policy": "docs/engineering/retained-evidence-policy.json",
+    "global_campaign_paths": [
+      "Cargo.lock"
+    ],
+    "trusted_tree_contract": "exact-git-base-sha",
+    "global_direct_proof_paths": [
+      ".github/scripts/pr-scope.py",
+      ".github/pr-scope-policy.json",
+      ".github/workflows/pr-ci.yml",
+      "docs/engineering/retained-evidence-policy.json"
+    ],
+    "docs_only_applicability": {
+      "supply_chain": {
+        "sensitive_exact_paths": [
+          "docs/engineering/dependency-policy.md"
+        ],
+        "sensitive_prefixes": []
+      },
+      "evidence_provenance": {
+        "sensitive_exact_paths": [],
+        "sensitive_prefixes": [
+          "docs/engineering/campaigns/"
+        ]
+      }
+    }
+  }
+}
