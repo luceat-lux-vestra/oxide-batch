@@ -25,7 +25,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oxide_batch::{
-    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade, DefinitionRevision,
+    BatchStatus, DefinitionIdentity, DefinitionNodeUpgrade, DefinitionRevision,
     DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
     DefinitionStateTransformId, DefinitionStateTransformer, DefinitionUpgrade,
     DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, ExecutionContext,
@@ -135,9 +135,13 @@ async fn run_phase(
         &mut block,
     )
     .await;
+    if observed.is_err() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
 
-    // A failed assertion must not leave a deferred trigger that poisons the
-    // next test invocation.
+    // A failed assertion must not leave a child or deferred trigger that
+    // poisons the next test invocation.
     let _ = block.release().await;
     let _ = drop_commit_gate(migrator_url).await;
     let result = observed;
