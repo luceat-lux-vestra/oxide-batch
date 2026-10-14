@@ -2684,18 +2684,53 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         source_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
         Box::pin(async move {
-            let exists =
-                sqlx::query("SELECT id FROM oxide_batch.ob_job_execution WHERE id = $1 FOR UPDATE")
-                    .bind(database_id(
-                        source_execution_id.get(),
-                        IdentifierKind::JobExecution,
-                    )?)
-                    .fetch_optional(&mut **self.transaction()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?;
-            if exists.is_none() {
+            let source_id =
+                database_id(source_execution_id.get(), IdentifierKind::JobExecution)?;
+            // Match launch's lock order: instance first, then attempt, then
+            // committed steps. A new attempt must not race the latest-source
+            // check and step context updates cannot race the snapshot.
+            let instance_id: Option<i64> = sqlx::query_scalar(
+                "SELECT job_instance_id FROM oxide_batch.ob_job_execution WHERE id = $1",
+            )
+            .bind(source_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let Some(instance_id) = instance_id else {
                 return Ok(None);
+            };
+            let instance = sqlx::query(
+                "SELECT id FROM oxide_batch.ob_job_instance WHERE id = $1 FOR UPDATE",
+            )
+            .bind(instance_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if instance.is_none() {
+                return Err(RepositoryError::ForkStateCorrupt);
             }
+            let attempt = sqlx::query(
+                "SELECT id FROM oxide_batch.ob_job_execution \
+                 WHERE id = $1 AND job_instance_id = $2 FOR UPDATE",
+            )
+            .bind(source_id)
+            .bind(instance_id)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if attempt.is_none() {
+                return Err(RepositoryError::ForkSourceStale);
+            }
+            // Lock in deterministic ID order so subsequent state reads in this
+            // UoW cannot mix committed versions with in-flight context writes.
+            sqlx::query(
+                "SELECT id FROM oxide_batch.ob_step_execution \
+                 WHERE job_execution_id = $1 ORDER BY id FOR UPDATE",
+            )
+            .bind(source_id)
+            .fetch_all(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
             self.job_execution(source_execution_id).await
         })
     }

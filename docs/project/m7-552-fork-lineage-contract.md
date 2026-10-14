@@ -31,7 +31,7 @@ Source historical definition identity and durable state are read-only.
   registry/artifact mismatches before any target mutation.
 - A source-state identity contains the exact source execution ID/version and a
   domain-separated digest of an ordered, bounded projection of committed
-  source step-execution IDs/versions. This is evidence of the source snapshot,
+  source step-execution IDs/versions, statuses, node IDs and validated step context envelopes. This is evidence of the source snapshot,
   **not** a token that authorizes unbounded state copying.
 - The immutable `ForkLineage` stores operation ID, source execution/state
   identity, source and target definition IDs/fingerprints, target artifact ID,

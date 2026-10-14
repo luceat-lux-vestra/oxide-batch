@@ -120,12 +120,36 @@ impl<R: JobRepository> JobFork<R> {
         }
         steps.sort_by_key(crate::StepExecution::id);
         let mut hash = Sha256::new();
-        hash.update(b"oxide-batch.fork-source-committed-state.v1\0");
+        hash.update(b"oxide-batch.fork-source-committed-state.v2\0");
         hash.update(source.id().get().to_be_bytes());
         hash.update(source.version().get().to_be_bytes());
+        hash.update(source.metadata().status().as_str().as_bytes());
         for step in steps {
+            let committed = unit
+                .scope_step_state(step.id())
+                .await?
+                .ok_or(RepositoryError::ForkStateCorrupt)?;
+            if committed.execution() != &step
+                || committed.execution().job_execution_id() != source.id()
+            {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
             hash.update(step.id().get().to_be_bytes());
             hash.update(step.version().get().to_be_bytes());
+            hash.update(step.metadata().status().as_str().as_bytes());
+            hash.update(committed.node_id().as_str().as_bytes());
+            if let Some(context) = committed.context() {
+                let data = context
+                    .to_json()
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+                hash.update([1_u8]);
+                hash.update(u64::try_from(data.len())
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                    .to_be_bytes());
+                hash.update(&data);
+            } else {
+                hash.update([0_u8]);
+            }
         }
         let source_state_digest: [u8; 32] = hash.finalize().into();
 
