@@ -750,24 +750,24 @@ fn one_step_durable_state_contracts(
     if object.get("kind").and_then(serde_json::Value::as_str) != Some("chunk") {
         return Ok(Vec::new());
     }
-    let mut contracts = Vec::new();
-    contracts.push(schema_contract(
-        DefinitionStateKind::Checkpoint,
-        None,
-        object
-            .get("checkpoint")
-            .ok_or(DefinitionError::ManifestEncoding)?,
-        "schema",
-    )?);
-    contracts.push(schema_contract(
-        DefinitionStateKind::ExecutionContext,
-        None,
-        object
-            .get("context")
-            .ok_or(DefinitionError::ManifestEncoding)?,
-        "schema",
-    )?);
-    Ok(contracts)
+    Ok(vec![
+        schema_contract(
+            DefinitionStateKind::Checkpoint,
+            None,
+            object
+                .get("checkpoint")
+                .ok_or(DefinitionError::ManifestEncoding)?,
+            "schema",
+        )?,
+        schema_contract(
+            DefinitionStateKind::ExecutionContext,
+            None,
+            object
+                .get("context")
+                .ok_or(DefinitionError::ManifestEncoding)?,
+            "schema",
+        )?,
+    ])
 }
 
 fn graph_node_durable_state_contracts(
