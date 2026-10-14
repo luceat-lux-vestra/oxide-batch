@@ -8,8 +8,8 @@ use oxide_batch::{
     DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
     DefinitionStateTransformError, DefinitionStateTransformId, DefinitionStateTransformer,
     DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
-    InFlightPolicy, JobName, NodeId, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade,
-    StepName,
+    InFlightPolicy, JobName, MAX_DEFINITION_UPGRADE_NODES, MAX_DEFINITION_UPGRADE_TRANSFORMS,
+    NodeId, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepName,
 };
 
 #[test]
@@ -471,5 +471,151 @@ fn transformed_upgrade_execution_requires_exact_live_revision_set() -> Result<()
     )?;
     assert!(execution.upgrade().is_transformed());
     assert_eq!(execution.upgrade().transforms().len(), 1);
+    Ok(())
+}
+
+
+fn two_node_upgrade_identity(
+    job: &JobName,
+    revision: &str,
+    first: &str,
+    second: &str,
+) -> Result<DefinitionIdentity, Box<dyn Error>> {
+    let manifest = serde_json::json!({
+        "entry": first,
+        "format": 4,
+        "job": job.as_str(),
+        "nodes": [
+            {
+                "handler_revision": revision,
+                "id": first,
+                "kind": "custom_leaf",
+                "leaf_kind": "upgrade-proof",
+                "listeners": [],
+                "policy": null,
+                "start": {
+                    "allow_start_if_complete": false,
+                    "start_limit": u32::MAX,
+                },
+                "state_schema": {
+                    "id": "upgrade-proof.state",
+                    "version": 1,
+                },
+                "step_name": first,
+            },
+            {
+                "handler_revision": revision,
+                "id": second,
+                "kind": "custom_leaf",
+                "leaf_kind": "upgrade-proof",
+                "listeners": [],
+                "policy": null,
+                "start": {
+                    "allow_start_if_complete": false,
+                    "start_limit": u32::MAX,
+                },
+                "state_schema": {
+                    "id": "upgrade-proof.state",
+                    "version": 1,
+                },
+                "step_name": second,
+            }
+        ],
+        "transitions": [],
+    });
+    let bytes = serde_json::to_vec(&manifest)?;
+    Ok(DefinitionIdentity::from_flow_manifest(
+        job,
+        DefinitionRevision::new(revision)?,
+        &bytes,
+    )?)
+}
+
+#[test]
+fn transformed_upgrade_rejects_omitted_source_node() -> Result<(), Box<dyn Error>> {
+    let job = JobName::new("upgrade-omitted-source")?;
+    let from = two_node_upgrade_identity(&job, "v1", "source-a", "source-b")?;
+    let to = two_node_upgrade_identity(&job, "v2", "target-a", "target-b")?;
+
+    assert_eq!(
+        DefinitionUpgrade::transformed(
+            DefinitionUpgradeKey::new("v1-to-v2")?,
+            DefinitionUpgradeRevision::new("edge-v1")?,
+            from,
+            to,
+            [DefinitionNodeUpgrade::new(
+                NodeId::new("source-a")?,
+                NodeId::new("target-a")?,
+            )],
+            [],
+        ),
+        Err(DefinitionError::MissingUpgradeSourceNode)
+    );
+    Ok(())
+}
+
+#[test]
+fn transformed_upgrade_enforces_node_and_transform_bounds() -> Result<(), Box<dyn Error>> {
+    let job = JobName::new("upgrade-bounds")?;
+    let from = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("source")?,
+        DefinitionRevision::new("v1")?,
+        &ComponentRevision::new("tasklet-v1")?,
+    )?;
+    let to = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("target")?,
+        DefinitionRevision::new("v2")?,
+        &ComponentRevision::new("tasklet-v2")?,
+    )?;
+
+    let mut mappings = Vec::with_capacity(MAX_DEFINITION_UPGRADE_NODES + 1);
+    for index in 0..=MAX_DEFINITION_UPGRADE_NODES {
+        mappings.push(DefinitionNodeUpgrade::new(
+            NodeId::new(format!("source-{index}"))?,
+            NodeId::new(format!("target-{index}"))?,
+        ));
+    }
+    assert_eq!(
+        DefinitionUpgrade::transformed(
+            DefinitionUpgradeKey::new("too-many-nodes")?,
+            DefinitionUpgradeRevision::new("edge-v1")?,
+            from.clone(),
+            to.clone(),
+            mappings,
+            [],
+        ),
+        Err(DefinitionError::TooManyUpgradeNodes {
+            max: MAX_DEFINITION_UPGRADE_NODES,
+        })
+    );
+
+    let source = NodeId::new("source")?;
+    let target = NodeId::new("target")?;
+    let transform = DefinitionStateTransform::new(
+        source.clone(),
+        target.clone(),
+        DefinitionStateKind::ExecutionContext,
+        DefinitionStateTransformId::new("state")?,
+        StateSchemaId::new("upgrade.state")?,
+        StateSchemaVersion::new(1)?,
+        StateSchemaId::new("upgrade.state")?,
+        StateSchemaVersion::new(2)?,
+        DefinitionUpgradeRevision::new("state-v1-to-v2")?,
+    );
+    assert_eq!(
+        DefinitionUpgrade::transformed(
+            DefinitionUpgradeKey::new("too-many-transforms")?,
+            DefinitionUpgradeRevision::new("edge-v1")?,
+            from,
+            to,
+            [DefinitionNodeUpgrade::new(source, target)],
+            std::iter::repeat_n(transform, MAX_DEFINITION_UPGRADE_TRANSFORMS + 1),
+        ),
+        Err(DefinitionError::TooManyUpgradeTransforms {
+            max: MAX_DEFINITION_UPGRADE_TRANSFORMS,
+        })
+    );
     Ok(())
 }
