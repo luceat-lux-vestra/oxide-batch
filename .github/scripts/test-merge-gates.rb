@@ -2239,6 +2239,44 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v7_topology_accepts_direct_authority_without_migration_trigger
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      original = File.read(path)
+      body = original.sub(
+        "  pull_request:\n    paths:\n      - .github/ci-topology-v7-migration\n",
+        ''
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/evidence.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_empty violations
+    end
+  end
+
+  def test_v7_topology_rejects_arbitrary_direct_authority_pr_trigger
+    with_v7_topology_contract do |root, policy|
+      path = File.join(root, '.github/workflows/evidence.yml')
+      original = File.read(path)
+      body = original.sub(
+        "      - .github/ci-topology-v7-migration\n",
+        "      - src/**\n"
+      )
+      refute_equal original, body
+      write(root, '.github/workflows/evidence.yml', body)
+      violations = MergeGateVerifier.pr_topology_v7_contract(
+        root: root,
+        policy: policy,
+        producer_summary: v7_producer_summary(root)
+      )
+      assert_includes violations.join("\n"), 'must be absent or marker-only during direct-DAG transition'
+    end
+  end
+
   def test_v7_topology_rejects_missing_workflow_call
     with_v7_topology_contract do |root, policy|
       path = File.join(root, '.github/workflows/evidence.yml')
