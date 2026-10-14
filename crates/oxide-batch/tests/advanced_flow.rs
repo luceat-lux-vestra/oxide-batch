@@ -670,6 +670,119 @@ async fn compatible_flow_restart_requires_the_explicit_selected_edge() -> Result
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn compatible_flow_reuses_completed_renamed_node_without_user_reexecution()
+-> Result<(), Box<dyn Error>> {
+    let name = JobName::new("compatible-renamed-completed")?;
+    let source_prepare = NodeId::new("prepare")?;
+    let source_work = NodeId::new("work")?;
+    let target_prepare = NodeId::new("prepare-v2")?;
+    let target_work = NodeId::new("work-v2")?;
+
+    let source_plan = FlowGraph::new(source_prepare.clone())
+        .with_node(step_node(source_prepare.as_str())?)
+        .with_node(step_node(source_work.as_str())?)
+        .with_sequence(source_prepare.clone(), FlowTarget::Node(source_work.clone()))?
+        .with_sequence(
+            source_work.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+    let target_plan = FlowGraph::new(target_prepare.clone())
+        .with_node(step_node(target_prepare.as_str())?)
+        .with_node(step_node(target_work.as_str())?)
+        .with_sequence(target_prepare.clone(), FlowTarget::Node(target_work.clone()))?
+        .with_sequence(
+            target_work.clone(),
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
+        .compile(&name, DefinitionRevision::new("v2")?)?;
+
+    let source_prepare_calls = Arc::new(AtomicUsize::new(0));
+    let source_work_calls = Arc::new(AtomicUsize::new(0));
+    let target_prepare_calls = Arc::new(AtomicUsize::new(0));
+    let target_work_calls = Arc::new(AtomicUsize::new(0));
+
+    let source = FlowJob::new(name.clone(), source_plan.clone())?
+        .with_tasklet_step(
+            source_prepare.clone(),
+            tasklet(
+                source_prepare.as_str(),
+                Arc::clone(&source_prepare_calls),
+                Outcome::Complete,
+            )?,
+        )?
+        .with_tasklet_step(
+            source_work.clone(),
+            tasklet(
+                source_work.as_str(),
+                Arc::clone(&source_work_calls),
+                Outcome::FailOnce,
+            )?,
+        )?;
+    let target = FlowJob::new(name.clone(), target_plan.clone())?
+        .with_tasklet_step(
+            target_prepare.clone(),
+            tasklet(
+                target_prepare.as_str(),
+                Arc::clone(&target_prepare_calls),
+                Outcome::Complete,
+            )?,
+        )?
+        .with_tasklet_step(
+            target_work.clone(),
+            tasklet(
+                target_work.as_str(),
+                Arc::clone(&target_work_calls),
+                Outcome::Complete,
+            )?,
+        )?;
+
+    let (clock, ids, repository) = infrastructure();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let (_, first_stop) = StopSource::new();
+    let first = launcher
+        .launch(&source, &JobParameters::new(), &first_stop)
+        .await?;
+    assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert_eq!(source_prepare_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(source_work_calls.load(Ordering::SeqCst), 1);
+
+    let edge = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("rename-v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        source_plan.definition_identity().clone(),
+        target_plan.definition_identity().clone(),
+        [
+            DefinitionNodeUpgrade::new(source_prepare, target_prepare),
+            DefinitionNodeUpgrade::new(source_work, target_work),
+        ],
+        [],
+    )?;
+    let selected = DefinitionUpgradeExecution::new(edge.clone(), [])?;
+    let mut register = repository.begin().await?;
+    register.register_definition_upgrade(&name, &edge).await?;
+    register.commit().await?;
+
+    let (_, restart_stop) = StopSource::new();
+    let restarted = launcher
+        .launch_compatible(
+            &target,
+            &selected,
+            &JobParameters::new(),
+            &restart_stop,
+        )
+        .await?;
+    assert_eq!(restarted.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(
+        target_prepare_calls.load(Ordering::SeqCst),
+        0,
+        "a transformed historical COMPLETED node must not run user work again",
+    );
+    assert_eq!(target_work_calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn completed_split_subgraph_branch_is_reused_on_restart() -> Result<(), Box<dyn Error>> {
     let name = JobName::new("split-subgraph-restart")?;
     let prepare_calls = Arc::new(AtomicUsize::new(0));
