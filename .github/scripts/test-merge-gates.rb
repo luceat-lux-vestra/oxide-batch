@@ -2401,11 +2401,20 @@ class MergeGateVerifierTest < Minitest::Test
         campaign-orchestrator.yml
       ]
       authorities.each do |name|
+        trigger = if name == 'campaign-orchestrator.yml'
+                    <<~YAML
+                      pull_request:
+                        paths:
+                          - .github/ci-topology-v7-migration
+                      workflow_call:
+                    YAML
+                  else
+                    "workflow_call:\n"
+                  end
         write(root, ".github/workflows/#{name}", <<~YAML)
           name: #{name}
           on:
-            workflow_call:
-          jobs:
+        #{trigger.lines.map { |line| "    #{line}" }.join}  jobs:
             noop:
               runs-on: ubuntu-latest
               steps:
