@@ -232,11 +232,7 @@ async fn prepare_source(runtime_url: &str, job: &str) -> Result<UpgradeFixture, 
         )
         .await?;
     let with_context = finish
-        .commit_step_execution_context(
-            started_step.id(),
-            started_step.version(),
-            &context(1, 7)?,
-        )
+        .commit_step_execution_context(started_step.id(), started_step.version(), &context(1, 7)?)
         .await?;
     finish
         .transition_step_execution(
@@ -262,7 +258,9 @@ async fn prepare_source(runtime_url: &str, job: &str) -> Result<UpgradeFixture, 
 
     let (edge, _) = selected_upgrade(&job_name, normal_transform)?;
     let mut register = repository.begin().await?;
-    register.register_definition_upgrade(&job_name, &edge).await?;
+    register
+        .register_definition_upgrade(&job_name, &edge)
+        .await?;
     register.commit().await?;
     repository.close().await?;
 
@@ -395,11 +393,9 @@ fn compatible_upgrade_kill_worker_process() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()?
         .block_on(async {
-            let repository = PostgresJobRepository::connect(
-                config(runtime_url)?,
-                Arc::new(FixedClock(at(554))),
-            )
-            .await?;
+            let repository =
+                PostgresJobRepository::connect(config(runtime_url)?, Arc::new(FixedClock(at(554))))
+                    .await?;
             let job_name = JobName::new(job)?;
             let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
             let mut read = repository.begin().await?;
@@ -554,10 +550,14 @@ async fn assert_phase_state(
         .latest_flow_step(instance_id, &NodeId::new(TARGET_NODE)?)
         .await?
         .ok_or("commit-in-flight left no target step")?;
-    let target_context = target.context().ok_or("target context was not materialized")?;
+    let target_context = target
+        .context()
+        .ok_or("target context was not materialized")?;
     assert_eq!(target_context.schema_version().get(), 2);
     assert_eq!(context_value(target_context)?, 8);
-    let target_definition = inspect.scope_execution_definition(executions[1].id()).await?;
+    let target_definition = inspect
+        .scope_execution_definition(executions[1].id())
+        .await?;
     assert_eq!(target_definition.revision().as_str(), "v2");
     inspect.rollback().await?;
 
@@ -664,11 +664,9 @@ async fn cleanup_job(url: &str, job_name: &str) -> Result<(), Box<dyn Error>> {
 
 async fn drop_commit_gate(url: &str) -> Result<(), Box<dyn Error>> {
     let mut connection = PgConnection::connect(url).await?;
-    sqlx::query(
-        "DROP TRIGGER IF EXISTS m7_upgrade_commit_gate ON oxide_batch.ob_job_execution",
-    )
-    .execute(&mut connection)
-    .await?;
+    sqlx::query("DROP TRIGGER IF EXISTS m7_upgrade_commit_gate ON oxide_batch.ob_job_execution")
+        .execute(&mut connection)
+        .await?;
     sqlx::query("DROP FUNCTION IF EXISTS oxide_batch.m7_upgrade_commit_gate()")
         .execute(&mut connection)
         .await?;
