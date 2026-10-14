@@ -388,7 +388,7 @@ fn compatible_upgrade_kill_worker_process() -> Result<(), Box<dyn Error>> {
     let Ok(raw_phase) = std::env::var(PHASE_ENV) else {
         return Ok(());
     };
-    let phase = Phase::parse(&raw_phase)?;
+    Phase::parse(&raw_phase)?;
     let job = std::env::var(JOB_ENV)?;
     let handshake = PathBuf::from(std::env::var(HANDSHAKE_ENV)?);
     let runtime_url = runtime_url().ok_or("upgrade worker has no runtime URL")?;
