@@ -39,7 +39,7 @@ use oxide_batch::{
     RestartabilityDeclaration, RetryKey, RetryLimit, RetryOrdinal, RetryReservation,
     RetryStateLimit, ScopeKind, ScopedComponentId, SequentialIdGenerator, SkipCounts, SkipLimit,
     StartLimit, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepComponents,
-    StepDefinitionUpgrade, StepExecutionId, StepName, StepNode, StopSource, TerminalKind,
+    StepExecutionId, StepName, StepNode, StopSource, TerminalKind,
     TerminalStatusSet, TlsMode, VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 use oxide_batch_repository::{ScopeResolutionProvenance, ScopeResolutionSource};
@@ -1318,7 +1318,9 @@ fn compatible_restart_transforms_cross_family_state_on_postgres() -> Result<(), 
                 assert_eq!(schema.as_str(), "postgres.chunk.context");
                 assert_eq!(schema_version.get(), 2);
             }
-            other => panic!("unexpected transformed scope source: {other:?}"),
+            _ => {
+                return Err(std::io::Error::other("unexpected transformed scope source").into());
+            }
         }
         inspect.rollback().await?;
 
