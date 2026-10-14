@@ -2900,11 +2900,14 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             {
                 return Err(RepositoryError::ForkStateCorrupt);
             }
-            let durable_context_schema: String = state.try_get("context_schema")
+            let durable_context_schema: String = state
+                .try_get("context_schema")
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?;
-            let durable_context_version: i32 = state.try_get("context_schema_version")
+            let durable_context_version: i32 = state
+                .try_get("context_schema_version")
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?;
-            let durable_context_payload: Json<Value> = state.try_get("context_payload")
+            let durable_context_payload: Json<Value> = state
+                .try_get("context_payload")
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?;
             if let Some(transform) = lineage.context_transform() {
                 if durable_context_schema != transform.descriptor().target_schema().as_str()
