@@ -188,7 +188,12 @@ impl<R: JobRepository> JobFork<R> {
                 {
                     return Err(RepositoryError::ForkTransformRejected);
                 }
-                let source_step = unit
+                if !definition_contains_node(&source_definition, descriptor.source_node())
+                || !definition_contains_node(target.definition(), descriptor.target_node())
+            {
+                return Err(RepositoryError::ForkTransformRejected);
+            }
+            let source_step = unit
                     .scope_step_state(selected.source_step_execution_id())
                     .await?
                     .ok_or(RepositoryError::ForkTransformRejected)?;
@@ -273,4 +278,18 @@ impl<R: JobRepository> JobFork<R> {
             Err(error) => Err(error),
         }
     }
+}
+
+/// Checks a declared node against the exact immutable definition manifest.
+fn definition_contains_node(definition: &crate::DefinitionIdentity, node: &crate::NodeId) -> bool {
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(definition.canonical_manifest())
+    else {
+        return false;
+    };
+    value.get("step").and_then(serde_json::Value::as_str) == Some(node.as_str())
+        || value.get("nodes").and_then(serde_json::Value::as_array).is_some_and(|nodes| {
+            nodes.iter().any(|item| {
+                item.get("id").and_then(serde_json::Value::as_str) == Some(node.as_str())
+            })
+        })
 }
