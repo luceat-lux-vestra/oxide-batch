@@ -288,7 +288,6 @@
     "reusable_authorities": [
       ".github/workflows/ci.yml",
       ".github/workflows/dependency-review.yml",
-      ".github/workflows/codeql.yml",
       ".github/workflows/evidence.yml",
       ".github/workflows/supply-chain.yml",
       ".github/workflows/campaign-orchestrator.yml"
@@ -315,11 +314,6 @@
       {
         "id": "dependency",
         "workflow": ".github/workflows/dependency-review.yml",
-        "applicability": "non_docs"
-      },
-      {
-        "id": "codeql",
-        "workflow": ".github/workflows/codeql.yml",
         "applicability": "non_docs"
       },
       {
