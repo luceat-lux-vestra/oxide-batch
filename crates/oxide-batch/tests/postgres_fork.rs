@@ -63,11 +63,14 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
     let target_name = format!("fork_pg_target_{stamp}");
     let operation = format!("fork-pg-{stamp}");
     let config = PostgresConfig::new(url)?.with_tls_mode(TlsMode::Plaintext);
+    let migrator_url = std::env::var("OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL")
+        .map_err(|_| "fork integration needs an explicitly configured migrator")?;
+    let migrator = PostgresConfig::new(migrator_url)?.with_tls_mode(TlsMode::Plaintext);
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?
         .block_on(async {
-            PostgresMigrator::migrate(&config).await?;
+            PostgresMigrator::migrate(&migrator).await?;
             let clock = Arc::new(FixedClock(UNIX_EPOCH + Duration::from_secs(90)));
             let repository = PostgresJobRepository::connect(config.clone(), clock.clone()).await?;
             let source = registration(&source_name)?;

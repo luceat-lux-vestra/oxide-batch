@@ -236,8 +236,13 @@ fn fork_process_kill_preserves_transactional_source_and_target() -> Result<(), B
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL not configured");
         return Ok(());
     };
-    let Some(admin) = migrator_url() else {
+    let Some(migrator) = migrator_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL not configured");
+        return Ok(());
+    };
+    let Some(admin) = std::env::var("OXIDEBATCH_POSTGRES_ADMIN_TEST_URL")
+        .ok().filter(|value| !value.is_empty()) else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_ADMIN_TEST_URL not configured");
         return Ok(());
     };
     let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
@@ -245,7 +250,7 @@ fn fork_process_kill_preserves_transactional_source_and_target() -> Result<(), B
         .enable_all()
         .build()?
         .block_on(async {
-            PostgresMigrator::migrate(&config(admin.clone())?).await?;
+            PostgresMigrator::migrate(&config(migrator)?).await?;
             for phase in Phase::ALL {
                 let job = format!("fork_kill_{}_{}", phase.id().replace('-', "_"), stamp);
                 run_phase(phase, &job, &runtime, &admin).await?;

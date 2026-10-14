@@ -311,6 +311,22 @@ docker exec -i \
       -- \
       --nocapture \
       --test-threads=1
+
+  # M7 Gate-D tests run under the existing PostgreSQL authority envelope.
+  # Migrator and runtime credentials remain distinct; the process-kill
+  # harness additionally uses the disposable admin URL only for lock probes.
+  for fork_test in postgres_fork postgres_fork_process_kill; do
+    OXIDEBATCH_POSTGRES_ADMIN_TEST_URL="postgres://postgres:postgres@localhost:${database_port}/oxide_batch_design" \
+    OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL="postgres://oxide_batch_migrator:fixture-migrator-only@localhost:${database_port}/oxide_batch_design" \
+    OXIDEBATCH_POSTGRES_TEST_URL="${OXIDEBATCH_DESIGN_GATE_RUNTIME_URL}" \
+      cargo test \
+        -p oxide-batch \
+        --features postgres \
+        --test "${fork_test}" \
+        -- \
+        --nocapture \
+        --test-threads=1
+  done
 )
 
 docker exec \
