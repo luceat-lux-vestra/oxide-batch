@@ -2,7 +2,6 @@
 #![cfg(feature = "postgres")]
 
 use std::error::Error;
-use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
