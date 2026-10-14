@@ -1873,6 +1873,27 @@ class MergeGateVerifierTest < Minitest::Test
     end
   end
 
+  def test_v8_pr_proof_accepts_explicit_scheduled_only_codeql_inventory
+    policy = {'schema_version' => 8, 'pr_proof' => canonical_pr_proof_policy}
+    policy['pr_proof']['members'].reject! { |member| member['id'] == 'codeql' }
+    assert_empty MergeGateVerifier.pr_proof_policy_contract(policy: policy)
+    actual = MergeGateVerifier.required_pr_proof_authority_ids(
+      scope_result: 'failure', classification_outcome: 'failure',
+      legacy_base: 'unknown', docs_only: 'unknown',
+      evidence_impact: 'unknown', supply_chain_impact: 'unknown',
+      authorities: MergeGateVerifier.pr_proof_authorities_for(policy: policy)
+    )
+    assert_equal %w[rust dependency evidence supply], actual
+    assert_equal MergeGateVerifier::PR_TOPOLOGY_REUSABLE_AUTHORITIES_NO_PR_CODEQL,
+                 MergeGateVerifier.pr_topology_reusable_authorities_for(policy: policy)
+  end
+
+  def test_v8_pr_proof_rejects_arbitrary_authority_removal
+    policy = {'schema_version' => 8, 'pr_proof' => canonical_pr_proof_policy}
+    policy['pr_proof']['members'].reject! { |member| member['id'] == 'rust' }
+    refute_empty MergeGateVerifier.pr_proof_policy_contract(policy: policy)
+  end
+
   def test_v7_pr_proof_policy_rejects_missing_optional_authority
     with_v7_topology_contract do |_root, policy|
       policy['pr_proof'] = canonical_pr_proof_policy
