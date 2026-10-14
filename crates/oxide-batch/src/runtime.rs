@@ -1423,7 +1423,23 @@ impl<'a> JobLauncher<'a> {
             .and_then(NonZeroU64::new)
             .map(ExecutionAttempt::new)
             .ok_or(RepositoryError::Unavailable)?;
-        unit.commit().await?;
+        match unit.commit().await {
+            Ok(()) => {}
+            Err(RepositoryError::CommitOutcomeUnknown) if upgrade.is_some() => {
+                let mut recovery = self.repository.begin().await?;
+                let durable_job = recovery.get_job_execution(job_execution.id()).await?;
+                let durable_step = recovery.get_step_execution(step_execution.id()).await?;
+                let durable_attempts = recovery.job_executions(instance.id()).await?;
+                recovery.rollback().await?;
+                let exact = durable_job.as_ref() == Some(&job_execution)
+                    && durable_step.as_ref() == Some(&step_execution)
+                    && durable_attempts.last().map(JobExecution::id) == Some(job_execution.id());
+                if !exact {
+                    return Err(RepositoryError::CommitOutcomeUnknown.into());
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
         let correlation = ExecutionCorrelation::new(
             key.job_name().clone(),
             instance.id(),

@@ -4075,7 +4075,21 @@ impl<'a> FlowLauncher<'a> {
         )
         .map(ExecutionAttempt::new)
         .ok_or(FlowRuntimeError::CountExhausted)?;
-        unit.commit().await?;
+        match unit.commit().await {
+            Ok(()) => {}
+            Err(RepositoryError::CommitOutcomeUnknown) if upgrade.is_some() => {
+                let mut recovery = self.repository.begin().await?;
+                let durable = recovery.get_job_execution(execution.id()).await?;
+                let durable_attempts = recovery.job_executions(instance.id()).await?;
+                recovery.rollback().await?;
+                let exact = durable.as_ref() == Some(&execution)
+                    && durable_attempts.last().map(JobExecution::id) == Some(execution.id());
+                if !exact {
+                    return Err(RepositoryError::CommitOutcomeUnknown.into());
+                }
+            }
+            Err(error) => return Err(error.into()),
+        }
         Ok((instance, execution, attempt))
     }
 
