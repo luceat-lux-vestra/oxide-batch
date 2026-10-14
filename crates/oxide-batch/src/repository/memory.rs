@@ -319,6 +319,7 @@ struct MemoryScopeSeed {
 
 #[derive(Clone, Debug)]
 struct MemoryUpgradeNodeSeed {
+    source_step_execution_id: StepExecutionId,
     counts: ExecutionCounts,
     context: Option<ExecutionContext>,
     repeats: Vec<RepeatExecution>,
@@ -669,6 +670,7 @@ impl InMemoryUnitOfWork<'_> {
             seeds.insert(
                 target_node.clone(),
                 MemoryUpgradeNodeSeed {
+                    source_step_execution_id: prior.execution().id(),
                     counts: prior.execution().metadata().counts(),
                     context,
                     repeats,
@@ -1322,8 +1324,69 @@ impl InMemoryUnitOfWork<'_> {
                     )));
                 }
             }
+
+            if let Some(seed) = self
+                .staged
+                .upgrade_seeds
+                .get(&(*execution_id, node_id.clone()))
+            {
+                let source = self
+                    .staged
+                    .step_executions
+                    .get(&seed.source_step_execution_id)
+                    .cloned()
+                    .ok_or(RepositoryError::FlowStateCorrupt)?;
+                return Ok(Some(FlowStepState::new(
+                    node_id.clone(),
+                    source,
+                    seed.context.clone(),
+                )));
+            }
+
+            if self
+                .staged
+                .upgrade_seeds
+                .keys()
+                .any(|(job_id, _)| job_id == execution_id)
+            {
+                return Ok(None);
+            }
         }
         Ok(None)
+    }
+
+    fn upgrade_seed_authorizes_source_step(
+        &self,
+        target_job_execution_id: JobExecutionId,
+        target_node: &NodeId,
+        source_step_execution_id: StepExecutionId,
+    ) -> Result<bool, RepositoryError> {
+        let target = self
+            .staged
+            .execution_definitions
+            .get(&target_job_execution_id)
+            .ok_or(RepositoryError::FlowStateCorrupt)?;
+        let instance_id = self.instance_for_execution(target_job_execution_id)?;
+        let executions = self
+            .staged
+            .job_executions_by_instance
+            .get(&instance_id)
+            .ok_or(RepositoryError::FlowStateCorrupt)?;
+        Ok(executions.iter().any(|execution_id| {
+            self.staged
+                .execution_definitions
+                .get(execution_id)
+                .is_some_and(|definition| {
+                    definition.manifest_digest() == target.manifest_digest()
+                })
+                && self
+                    .staged
+                    .upgrade_seeds
+                    .get(&(*execution_id, target_node.clone()))
+                    .is_some_and(|seed| {
+                        seed.source_step_execution_id == source_step_execution_id
+                    })
+        }))
     }
 }
 
@@ -2191,8 +2254,15 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     .step_executions
                     .get(&step_id)
                     .ok_or(RepositoryError::FlowStateCorrupt)?;
+                let exact_node =
+                    self.staged.step_logical_ids.get(&step_id) == Some(request.source_node_id());
+                let upgraded_node = self.upgrade_seed_authorizes_source_step(
+                    request.job_execution_id(),
+                    request.source_node_id(),
+                    step_id,
+                )?;
                 if self.instance_for_execution(step.job_execution_id())? != instance_id
-                    || self.staged.step_logical_ids.get(&step_id) != Some(request.source_node_id())
+                    || (!exact_node && !upgraded_node)
                 {
                     return Err(RepositoryError::FlowStateCorrupt);
                 }
