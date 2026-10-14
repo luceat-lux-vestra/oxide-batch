@@ -2872,7 +2872,8 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             )?;
             let state = sqlx::query(
                 "SELECT job_instance_id, definition_id, attempt, restart_of_execution_id, \
-                 upgrade_from_definition_id FROM oxide_batch.ob_job_execution \
+                 upgrade_from_definition_id, context_schema, context_schema_version, \
+                 context_payload FROM oxide_batch.ob_job_execution \
                  WHERE id = $1 FOR UPDATE",
             )
             .bind(target_execution_id)
@@ -2896,6 +2897,25 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     .try_get::<Option<i64>, _>("upgrade_from_definition_id")
                     .map_err(|_| RepositoryError::ForkStateCorrupt)?
                     .is_some()
+            {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            let durable_context_schema: String = state.try_get("context_schema")
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let durable_context_version: i32 = state.try_get("context_schema_version")
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            let durable_context_payload: Json<Value> = state.try_get("context_payload")
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            if let Some(transform) = lineage.context_transform() {
+                if durable_context_schema != transform.descriptor().target_schema().as_str()
+                    || u32::try_from(durable_context_version)
+                        .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                        != transform.descriptor().target_version().get()
+                {
+                    return Err(RepositoryError::ForkStateCorrupt);
+                }
+            } else if durable_context_schema != DEFAULT_CONTEXT_SCHEMA
+                || durable_context_payload.0 != json!({})
             {
                 return Err(RepositoryError::ForkStateCorrupt);
             }
