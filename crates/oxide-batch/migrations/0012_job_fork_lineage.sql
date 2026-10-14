@@ -34,6 +34,20 @@ CREATE TABLE ob_job_fork_lineage (
         CHECK (source_job_execution_id <> target_job_execution_id)
 );
 
+-- Defense in depth: a broad default runtime table grant must not permit
+-- rewriting or deleting the historical identity of an existing fork.
+CREATE FUNCTION ob_reject_job_fork_lineage_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $
+BEGIN
+    RAISE EXCEPTION 'immutable fork lineage cannot be modified'
+        USING ERRCODE = 'integrity_constraint_violation';
+END
+$;
+
+CREATE TRIGGER ob_job_fork_lineage_immutable
+BEFORE UPDATE OR DELETE ON ob_job_fork_lineage
+FOR EACH ROW EXECUTE FUNCTION ob_reject_job_fork_lineage_mutation();
+
 CREATE INDEX ob_job_fork_lineage_source
     ON ob_job_fork_lineage (source_job_execution_id);
 
