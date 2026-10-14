@@ -143,8 +143,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -239,8 +239,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -336,8 +336,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -433,8 +433,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -530,8 +530,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -627,8 +627,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -649,8 +649,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -711,8 +711,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Test trusted PR scope classifier
@@ -756,8 +756,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -774,8 +774,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -801,8 +801,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -843,8 +843,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -1066,8 +1066,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
 
@@ -1254,8 +1254,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.event.pull_request.head.repo.full_name || github.repository }}
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
 
       - name: Evaluate selective-rerun-safe PostgreSQL aggregate
