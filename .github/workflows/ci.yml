@@ -848,8 +848,10 @@ jobs:
           persist-credentials: false
 
 
-      # Build the exact 14 integration-test executables plus --lib in one
-      # Cargo graph. Original 29 test invocations, filters, ordering, service
+      # Build the exact 15 integration-test executables plus --lib in one
+      # Cargo graph. The compatible-upgrade process-kill target is part of the
+      # PostgreSQL 15/18 repository authority rather than a DB-less shard.
+      # Original test invocations, filters, ordering, service
       # DB state and --test-threads=1 remain unchanged below.
       - name: Grouped prebuild PostgreSQL repository test executables
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -873,6 +875,7 @@ jobs:
             --test postgres_nested_job_crash_recovery
             --test postgres_scope_resolution_crash_recovery
             --test postgres_custom_leaf_crash_recovery
+            --test postgres_compatible_upgrade_process_kill
             --test postgres_item_stream_crash_recovery
             --test postgres_retention_component_state
           )
@@ -910,6 +913,10 @@ jobs:
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
             optimistic_conflict_has_one_winner \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_repository \
+            compatible_restart_transforms_cross_family_state_on_postgres \
             -- --nocapture --test-threads=1
 
       - name: Run shared PostgreSQL operator, explorer, and retention contract
@@ -1018,6 +1025,9 @@ jobs:
             -- --nocapture --test-threads=1
           cargo test -p oxide-batch --features postgres \
             --test postgres_custom_leaf_crash_recovery \
+            -- --nocapture --test-threads=1
+          cargo test -p oxide-batch --features postgres \
+            --test postgres_compatible_upgrade_process_kill \
             -- --nocapture --test-threads=1
 
       - name: Run PostgreSQL M6 #144 item-stream component-state crash/restart evidence
