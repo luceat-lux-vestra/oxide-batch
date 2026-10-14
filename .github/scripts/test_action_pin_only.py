@@ -4,7 +4,7 @@
 import unittest
 from pathlib import Path
 
-from action_pin_only import ACTION, ALLOWED_SITES, AdmissionError, Patch, classify, verify_release
+from action_pin_only import ACTION, ALLOWED_SITES, CODEQL_SCHEDULED_ONLY_SITES, AdmissionError, Patch, audited_sites, classify, verify_release
 
 OLD = "1" * 40
 NEW = "2" * 40
@@ -30,11 +30,26 @@ class PinOnlyTests(unittest.TestCase):
                 self.assertTrue(results)
                 self.assertEqual({p.new_sha for p in results}, {NEW})
 
+    def test_scheduled_only_codeql_action_layout_is_explicitly_audited(self):
+        path = ".github/workflows/codeql.yml"
+        sites = CODEQL_SCHEDULED_ONLY_SITES
+        lines = [f"# unchanged line {i}\n" for i in range(1, max(sites) + 2)]
+        for number, action in sites.items():
+            lines[number - 1] = f"        uses: {action}@{OLD} # v7.0.1\n"
+        original = "".join(lines).encode()
+        self.assertEqual(audited_sites(path, original), sites)
+        results = classify(path, original, bump(path, original))
+        self.assertTrue(results)
+        malformed = original.replace(b"github/codeql-action/init@", b"attacker/codeql-action/init@", 1)
+        with self.assertRaises(AdmissionError):
+            audited_sites(path, malformed)
+
     def test_audited_sites_match_real_workflow_and_replay(self):
         root = Path(__file__).resolve().parents[2]
-        for workflow, sites in ALLOWED_SITES.items():
+        for workflow in ALLOWED_SITES:
             with self.subTest(workflow=workflow):
                 original = (root / workflow).read_bytes()
+                sites = audited_sites(workflow, original)
                 lines = original.decode("utf-8").splitlines(keepends=True)
                 repos = {}
                 for number, action in sites.items():

@@ -82,6 +82,15 @@ ALLOWED_SITES: dict[str, dict[int, str]] = {
     },
 }
 
+CODEQL_SCHEDULED_ONLY_SITES = {
+    70: "actions/checkout",
+    79: "github/codeql-action/init",
+    84: "github/codeql-action/analyze",
+    98: "actions/checkout",
+    107: "github/codeql-action/init",
+    112: "github/codeql-action/analyze",
+}
+
 ACTION = re.compile(
     r"^(?P<indent>[ ]+)uses: (?P<action>[a-z0-9_.-]+/[a-z0-9_.-]+(?:/[a-z0-9_.-]+)?)"
     r"@(?P<sha>[0-9a-f]{40}) # v(?P<major>0|[1-9][0-9]*)\."
@@ -92,6 +101,37 @@ ACTION = re.compile(
 
 class AdmissionError(ValueError):
     """Candidate must be blocked; do not silently fall back to allow."""
+
+
+def audited_sites(path: str, lines: list[str] | bytes) -> dict[int, str]:
+    """Resolve exactly one reviewed Action-site layout for the workflow."""
+    if isinstance(lines, bytes):
+        try:
+            lines = lines.decode("utf-8").splitlines(keepends=True)
+        except UnicodeError as exc:
+            raise AdmissionError("workflow is not valid UTF-8") from exc
+    primary = ALLOWED_SITES.get(path)
+    if not primary:
+        raise AdmissionError("workflow is not allowed for pin-only updates")
+    variants = [primary]
+    if path == ".github/workflows/codeql.yml":
+        variants.append(CODEQL_SCHEDULED_ONLY_SITES)
+    matched: list[dict[int, str]] = []
+    for sites in variants:
+        valid = True
+        for number, action in sites.items():
+            if number > len(lines):
+                valid = False
+                break
+            match = ACTION.fullmatch(lines[number - 1])
+            if not match or match.group("action") != action:
+                valid = False
+                break
+        if valid:
+            matched.append(sites)
+    if len(matched) != 1:
+        raise AdmissionError("workflow does not match exactly one audited Action-site layout")
+    return matched[0]
 
 
 @dataclass(frozen=True)
@@ -116,14 +156,13 @@ def classify(path: str, trusted: bytes, candidate: bytes) -> tuple[Patch, ...]:
     Every returned patch also requires independent upstream release verification
     before any caller can accept the candidate.
     """
-    sites = ALLOWED_SITES.get(path)
-    if not sites:
-        raise AdmissionError("workflow is not allowed for pin-only updates")
     try:
         before = trusted.decode("utf-8").splitlines(keepends=True)
         after = candidate.decode("utf-8").splitlines(keepends=True)
     except UnicodeError as exc:
         raise AdmissionError("workflow is not valid UTF-8") from exc
+    sites = audited_sites(path, before)
+
     if len(before) != len(after) or not before or before == after:
         raise AdmissionError("line count changed or no pin update was made")
 

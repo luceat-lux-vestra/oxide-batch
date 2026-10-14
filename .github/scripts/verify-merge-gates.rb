@@ -1161,7 +1161,7 @@ module MergeGateVerifier
 
   # Immutable trusted-base classifier, not the PR-head copy. Pin the Git blob
   # here so editing the helper itself cannot silently alter gate semantics.
-  ACTION_PIN_ONLY_HELPER_BLOB = '2ed10e141c7c11b1a88940256e3a68ca272467a4'
+  ACTION_PIN_ONLY_HELPER_BLOB = '5a73ced5853a42078d0abdfbd3df4e08d9875968'
   ACTION_PIN_ONLY_WORKFLOWS = %w[
     .github/workflows/pr-ci.yml
     .github/workflows/ci.yml

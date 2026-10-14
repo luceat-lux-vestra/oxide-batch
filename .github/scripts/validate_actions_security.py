@@ -294,10 +294,101 @@ def _job_block(text: str, job_id: str) -> str | None:
     return match.group(0) if match else None
 
 
+def check_codeql_weekly_manual_contract_text(
+    text: str, path: Path = Path(".github/workflows/codeql.yml")
+) -> list[str]:
+    """Require exact-main full scans and reject PR-derived CodeQL invocation."""
+    violations: list[str] = []
+    event_match = re.search(
+        r"(?ms)^on:\n(?P<body>.*?)(?=^permissions:\n)",
+        text,
+    )
+    if event_match is None:
+        return [f"{path}: CodeQL must declare schedule/manual event block"]
+    event_block = event_match.group("body")
+    events = re.findall(r"(?m)^  ([a-z_]+):", event_block)
+    if events != ["schedule", "workflow_dispatch"]:
+        violations.append(
+            f"{path}: scheduled-only CodeQL must have exactly schedule and workflow_dispatch events"
+        )
+    for fragment in (
+        'cron: "47 18 * * 1"',
+        "inputs:",
+        "candidate_sha:",
+        "required: true",
+    ):
+        if fragment not in event_block:
+            violations.append(f"{path}: full scan event contract missing: {fragment}")
+    for forbidden in ("pull_request:", "workflow_run:", "workflow_call:", "push:"):
+        if forbidden in event_block:
+            violations.append(f"{path}: PR/push-derived CodeQL event forbidden: {forbidden}")
+
+    verify = _job_block(text, "verify-source")
+    if verify is None:
+        violations.append(f"{path}: trusted exact-source verification job missing")
+    else:
+        for fragment in (
+            "name: Verify trusted CodeQL source identity",
+            "runs-on: ubuntu-slim",
+            "GH_TOKEN:",
+            "INPUT_SHA:",
+            'test "$GITHUB_REF" = "refs/heads/main"',
+            '[[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]',
+            '[[ "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]]',
+            'test "$INPUT_SHA" = "$GITHUB_SHA"',
+            'test "$live_sha" = "$INPUT_SHA"',
+            'echo "candidate_sha=$GITHUB_SHA"',
+            'case "$GITHUB_EVENT_NAME" in',
+            "workflow_dispatch)",
+            "schedule)",
+        ):
+            if fragment not in verify:
+                violations.append(f"{path}: exact source guard missing: {fragment}")
+        api_path = "repos/" + "$" + "{GITHUB_REPOSITORY}/git/ref/heads/main"
+        if api_path not in verify or ("\\" + api_path) in verify:
+            violations.append(f"{path}: live protected main API URL malformed or escaped")
+        if "candidate_sha: ${{ steps.check.outputs.candidate_sha }}" not in verify:
+            violations.append(f"{path}: scanned SHA output is not bound")
+
+    if _job_block(text, "rust-impact") is not None:
+        violations.append(f"{path}: obsolete PR Rust-impact routing remains")
+    if _job_block(text, "orphan-codeql-live") is not None:
+        violations.append(f"{path}: obsolete PR orphan cancellation remains")
+
+    for job_id, language in (("analyze-actions", "actions"), ("analyze-rust", "rust")):
+        job = _job_block(text, job_id)
+        if job is None:
+            violations.append(f"{path}: full CodeQL {language} analysis job missing")
+            continue
+        for fragment in (
+            f"name: Analyze ({language})",
+            "needs: verify-source",
+            "security-events: write",
+            "needs.verify-source.outputs.candidate_sha",
+            'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"',
+            "github/codeql-action/init@",
+            "github/codeql-action/analyze@",
+            f"languages: {language}",
+            "build-mode: none",
+            f"category: /language:{language}",
+        ):
+            if fragment not in job:
+                violations.append(
+                    f"{path}: full CodeQL {language} analysis contract missing: {fragment}"
+                )
+        if any(token in job for token in ("pull_request", "head_repo", "run_rust=false")):
+            violations.append(
+                f"{path}: full CodeQL {language} must not use PR source or conditional skip"
+            )
+    return violations
+
+
 def check_codeql_rust_routing_contract_text(
     text: str, path: Path = Path(".github/workflows/codeql.yml")
 ) -> list[str]:
-    """Bind trusted-base Rust-impact routing and its fail-closed fallback."""
+    """Validate either legacy trusted PR routing or exact weekly/manual full scans."""
+    if _job_block(text, "verify-source") is not None:
+        return check_codeql_weekly_manual_contract_text(text, path)
     violations: list[str] = []
 
     required_top_level = (
