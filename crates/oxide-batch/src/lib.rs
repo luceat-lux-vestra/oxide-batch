@@ -535,6 +535,7 @@ pub use oxide_batch_repository::{
     ActorRef, AuthorizationClass, BoxFuture, Clock, Cursor, CursorError, CursorKey,
     DEFAULT_MAX_CLOCK_SKEW, DEFAULT_PAGE_SIZE, DEFAULT_PURGE_AGE, DEFAULT_STALE_THRESHOLD,
     DefinitionDescriptor, DefinitionRegistration, DefinitionRegistrationError, ExecutionControl,
+    ForkLineage, ForkRequest,
     ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
     FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTransitionKind,
     IdGenerationError, IdGenerator, JobExecutionProjection, JobInstanceProjection,
@@ -584,7 +585,7 @@ pub use scope_live::{
 };
 pub use scope_runtime::ScopeResolutionFailure;
 pub use service::{
-    DefinitionRegistry, JobExplorer, JobOperator, OperatorError, OperatorOutcome, RecoveryProposer,
+    DefinitionRegistry, JobExplorer, JobFork, JobOperator, OperatorError, OperatorOutcome, RecoveryProposer,
     RetentionReport, RetentionService,
 };
 pub use shutdown::{

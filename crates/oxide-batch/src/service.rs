@@ -12,6 +12,7 @@
 
 mod definition_registry;
 mod explorer;
+mod fork;
 mod operator;
 mod recovery;
 mod retention;
@@ -19,6 +20,7 @@ mod retention;
 pub use definition_registry::DefinitionRegistry;
 pub(crate) use definition_registry::verify_registered_definition;
 pub use explorer::JobExplorer;
+pub use fork::JobFork;
 pub use operator::{JobOperator, OperatorError, OperatorOutcome};
 pub use recovery::RecoveryProposer;
 pub use retention::{RetentionReport, RetentionService};

@@ -37,6 +37,7 @@
 
 mod definition;
 mod explorer;
+mod fork;
 mod flow;
 mod nested_job;
 mod operator;
@@ -49,6 +50,7 @@ mod retention;
 mod scope;
 
 pub use definition::{DefinitionRegistration, DefinitionRegistrationError};
+pub use fork::{ForkLineage, ForkRequest};
 pub use explorer::{
     Cursor, CursorError, CursorKey, DEFAULT_PAGE_SIZE, DefinitionDescriptor, ExplorerError,
     ExplorerQuery, ExplorerRepository, JobExecutionProjection, JobInstanceProjection,

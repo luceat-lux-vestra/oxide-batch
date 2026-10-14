@@ -20,7 +20,7 @@ use oxide_batch_core::{
 };
 
 use crate::{
-    ActorRef, DefinitionRegistration, FlowDecision, FlowDecisionRequest, FlowStepState,
+    ActorRef, DefinitionRegistration, ForkLineage, FlowDecision, FlowDecisionRequest, FlowStepState,
     FlowTransitionKind, NestedJobLink, NestedJobLinkRequest, OperationId, OperatorAction,
     OperatorRecord, OperatorRecordDraft, OwnerToken, PartitionAggregate, PartitionAggregationError,
     PartitionPlanEntry, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode,
@@ -771,6 +771,31 @@ impl ExecutionControl {
 /// `PostgreSQL` adapter to keep its concrete transaction private. A successful
 /// operation is still provisional until [`commit`](Self::commit) succeeds.
 pub trait RepositoryUnitOfWork: Send {
+    /// Looks up one immutable fork key in this transaction.
+    fn fork_lineage<'a>(
+        &'a mut self, _operation_id: &'a OperationId,
+    ) -> BoxFuture<'a, Result<Option<ForkLineage>, RepositoryError>> {
+        Box::pin(async { Err(RepositoryError::UnsupportedCapability {
+            capability: RepositoryCapability::DefinitionRegistry,
+        }) })
+    }
+    /// Serializes source validation against durable mutation.
+    fn lock_fork_source(
+        &mut self, _source_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
+        Box::pin(async { Err(RepositoryError::UnsupportedCapability {
+            capability: RepositoryCapability::DefinitionRegistry,
+        }) })
+    }
+    /// Appends immutable lineage within the target creation UoW.
+    fn append_fork_lineage<'a>(
+        &'a mut self, _lineage: &'a ForkLineage,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async { Err(RepositoryError::UnsupportedCapability {
+            capability: RepositoryCapability::DefinitionRegistry,
+        }) })
+    }
+
     /// Registers one immutable exact definition/artifact binding.
     ///
     /// Exact replay is idempotent. Reusing a revision with another manifest or
@@ -1872,6 +1897,16 @@ pub enum RepositoryError {
     },
     /// Durable definition-registry state is contradictory or cannot be decoded.
     DefinitionRegistryStateCorrupt,
+    /// Normal identifying parameters already select a target instance.
+    ForkInstanceCollision { id: JobInstanceId },
+    /// One operation ID was replayed with a divergent command.
+    ForkOperationConflict,
+    /// Source attempt or optimistic version is stale.
+    ForkSourceStale,
+    /// Source is not a terminal committed snapshot.
+    ForkSourceNotTerminal,
+    /// Source durable state is invalid or exceeds the fork bound.
+    ForkStateCorrupt,
     /// A manifest was registered or launched under a different job name.
     DefinitionJobMismatch {
         /// Job name selected by the instance or registration call.
@@ -2117,6 +2152,16 @@ impl fmt::Display for RepositoryError {
             Self::DefinitionRegistryStateCorrupt => {
                 formatter.write_str("durable definition registry state is corrupt")
             }
+            Self::ForkInstanceCollision { id } =>
+                write!(formatter, "fork target instance {id} already exists"),
+            Self::ForkOperationConflict =>
+                formatter.write_str("fork operation conflicts with immutable lineage"),
+            Self::ForkSourceStale =>
+                formatter.write_str("fork source execution is stale"),
+            Self::ForkSourceNotTerminal =>
+                formatter.write_str("fork source is not terminal"),
+            Self::ForkStateCorrupt =>
+                formatter.write_str("fork source state is corrupt or unbounded"),
             Self::DefinitionJobMismatch { expected, actual } => write!(
                 formatter,
                 "definition for job {actual} cannot be used for job {expected}"
