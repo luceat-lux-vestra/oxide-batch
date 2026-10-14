@@ -28,19 +28,19 @@ use oxide_batch::{
     FailureCategory, FailureId, FailureSummary, FaultAction, FaultClassifier, FaultPhase,
     FaultPolicy, FaultRule, FaultStateError, FaultStateFormatError, FaultStateStore, FlowGraph,
     FlowNode, FlowTarget, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey, JobLauncher,
-    JobName, JobParameter, JobParameters, JobRepository, LifecycleTransition, NodeId, ParameterName,
-    ParameterRole, ParameterValue, PostgresChunkStateError, PostgresChunkStateProvider,
-    PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresExplorer,
-    PostgresFaultState, PostgresJobRepository, PostgresMigrator, ProcessContext, ProcessOutcome,
-    ProcessorError, PurgeBatchBound, PurgePlanRequest, ReadContext, ReadOutcome, ReaderError,
-    RecoveryRequest, RepeatCommitRequest, RepeatDecision, RepeatDefinition, RepeatId,
-    RepeatOrdinal, RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind,
-    RepeatStateSchema, RepositoryError, RestartabilityDeclaration, RetryKey, RetryLimit,
-    RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId,
-    SequentialIdGenerator, SkipCounts, SkipLimit, StartLimit, StateCodecError, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepComponents, StepDefinitionUpgrade, StepExecutionId,
-    StepName, StepNode, StopSource, TerminalKind, TerminalStatusSet, TlsMode, VersionedStateCodec,
-    WriteContext, WriteOutcome, WriterError,
+    JobName, JobParameter, JobParameters, JobRepository, LifecycleTransition, NodeId,
+    ParameterName, ParameterRole, ParameterValue, PostgresChunkStateError,
+    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
+    PostgresConfigError, PostgresExplorer, PostgresFaultState, PostgresJobRepository,
+    PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, PurgeBatchBound,
+    PurgePlanRequest, ReadContext, ReadOutcome, ReaderError, RecoveryRequest, RepeatCommitRequest,
+    RepeatDecision, RepeatDefinition, RepeatId, RepeatOrdinal, RepeatPolicyConfiguration,
+    RepeatPolicyDefinition, RepeatPolicyKind, RepeatStateSchema, RepositoryError,
+    RestartabilityDeclaration, RetryKey, RetryLimit, RetryOrdinal, RetryReservation,
+    RetryStateLimit, ScopeKind, ScopedComponentId, SequentialIdGenerator, SkipCounts, SkipLimit,
+    StartLimit, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepComponents,
+    StepDefinitionUpgrade, StepExecutionId, StepName, StepNode, StopSource, TerminalKind,
+    TerminalStatusSet, TlsMode, VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 use oxide_batch_repository::{ScopeResolutionProvenance, ScopeResolutionSource};
 use sqlx::postgres::PgPoolOptions;
@@ -844,7 +844,6 @@ async fn launch_postgres_chunk(
     Ok((report, transactions))
 }
 
-
 struct CompatibleComponentCodec {
     schema: StateSchemaId,
     version: StateSchemaVersion,
@@ -896,10 +895,7 @@ fn compatible_component_state(value: u64) -> Result<ComponentStateEnvelope, Box<
     )?)
 }
 
-fn compatible_repeat_state(
-    version: u32,
-    value: u64,
-) -> Result<ExecutionContext, Box<dyn Error>> {
+fn compatible_repeat_state(version: u32, value: u64) -> Result<ExecutionContext, Box<dyn Error>> {
     let bytes = serde_json::to_vec(&serde_json::json!({
         "format": "oxide-batch.execution-context",
         "format_version": 1,
@@ -913,15 +909,12 @@ fn compatible_repeat_state(
 fn compatible_cross_family_payload(
     payload: &[u8],
 ) -> Result<Vec<u8>, DefinitionStateTransformError> {
-    let mut value: serde_json::Value =
-        serde_json::from_slice(payload).map_err(|_| DefinitionStateTransformError::InvalidSource)?;
+    let mut value: serde_json::Value = serde_json::from_slice(payload)
+        .map_err(|_| DefinitionStateTransformError::InvalidSource)?;
     let object = value
         .as_object_mut()
         .ok_or(DefinitionStateTransformError::InvalidSource)?;
-    if let Some(position) = object
-        .get("position")
-        .and_then(serde_json::Value::as_u64)
-    {
+    if let Some(position) = object.get("position").and_then(serde_json::Value::as_u64) {
         object.insert("position".to_owned(), serde_json::json!(position + 100));
     } else if let Some(current) = object.get("value").and_then(serde_json::Value::as_u64) {
         object.insert("value".to_owned(), serde_json::json!(current + 1));
@@ -1008,10 +1001,8 @@ fn compatible_restart_transforms_cross_family_state_on_postgres() -> Result<(), 
         let target_node = NodeId::new("work-v2")?;
         let source_step_name = StepName::new("work-v1")?;
         let target_step_name = StepName::new("work-v2")?;
-        let source_plan =
-            compatible_cross_family_plan(&job_name, "v1", "work-v1", "work-v1", 1)?;
-        let target_plan =
-            compatible_cross_family_plan(&job_name, "v2", "work-v2", "work-v2", 2)?;
+        let source_plan = compatible_cross_family_plan(&job_name, "v1", "work-v1", "work-v1", 1)?;
+        let target_plan = compatible_cross_family_plan(&job_name, "v2", "work-v2", "work-v2", 2)?;
         let key = JobInstanceKey::new(job_name.clone(), &JobParameters::new());
 
         let mut create = repository.begin().await?;
@@ -1191,7 +1182,9 @@ fn compatible_restart_transforms_cross_family_state_on_postgres() -> Result<(), 
             )],
         )?;
         let mut register = repository.begin().await?;
-        register.register_definition_upgrade(&job_name, &edge).await?;
+        register
+            .register_definition_upgrade(&job_name, &edge)
+            .await?;
         register.commit().await?;
 
         let mut restart = repository.begin().await?;
