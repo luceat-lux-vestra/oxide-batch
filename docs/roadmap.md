@@ -317,11 +317,14 @@ separate governance decision.
 gate and ADR-0013 became the binding M7 architecture decision.
 
 The active execution boundary is issue #192 / native milestone #8. #195
-(advanced compiled flow/custom-step ownership) and #196 (scope/factories/late
-binding) are complete. #197 and #198 remain active delivery owners; #199 is
-blocked by #198; #200 remains the conformance/restart/documentation exit gate
-and does not close until all M7 delivery owners and post-merge evidence are
-complete.
+(advanced compiled flow/custom-step ownership), #196 (scope/factories/late
+binding), #197 (repeat/interceptor semantics), and #198 (registry/evolution,
+compatible upgrade, and explicit fork) are complete. #199 is unblocked and
+remains the active launcher/operator/explorer owner; #200 remains the
+conformance/restart/documentation exit gate, and M7 cannot close until
+both remaining owners and their evidence are complete.
+The #198 Gate-D closeout matrix is in
+[`m7-198-gate-d-closeout.md`](project/m7-198-gate-d-closeout.md).
 
 Binding M7 authority is
 [ADR-0013](architecture/decisions/0013-m7-advanced-flow-scope-repeat-and-evolution.md)
