@@ -22,8 +22,6 @@ from typing import Callable
 ALLOWED_SITES: dict[str, dict[int, str]] = {
     ".github/workflows/pr-ci.yml": {
         34: "actions/checkout",
-        130: "actions/checkout",
-        191: "actions/checkout",
     },
     ".github/workflows/ci.yml": {
         144: "actions/checkout",
