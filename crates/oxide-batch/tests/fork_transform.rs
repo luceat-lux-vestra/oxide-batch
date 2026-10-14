@@ -13,7 +13,7 @@ use oxide_batch::{
     DefinitionStateTransformer, DefinitionUpgradeRevision, ExecutionContext, ForkContextTransform,
     ForkRequest, InMemoryJobRepository, JobFork, JobInstanceKey, JobName, JobParameters,
     JobRepository, LifecycleTransition, NodeId, OperationId, RepositoryError,
-    SequentialIdGenerator, StateLimits, StateSchemaId, StateSchemaVersion, StepName, 
+    SequentialIdGenerator, StateLimits, StateSchemaId, StateSchemaVersion, StepName,
 };
 
 #[derive(Clone, Copy)]

@@ -11,7 +11,6 @@ use oxide_batch::{
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, ExecutionVersion, ForkRequest,
     InMemoryJobRepository, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
     LifecycleTransition, OperationId, RepositoryError, SequentialIdGenerator, StepName,
-    
 };
 
 #[derive(Clone, Copy)]
