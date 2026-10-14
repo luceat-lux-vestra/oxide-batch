@@ -195,7 +195,6 @@ struct MemoryState {
     execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
     definition_upgrades: BTreeMap<(JobName, [u8; 32], [u8; 32]), DefinitionUpgrade>,
     fork_lineages: BTreeMap<OperationId, ForkLineage>,
-    fork_job_contexts: BTreeMap<JobExecutionId, ExecutionContext>,
     upgrade_sources: BTreeMap<JobExecutionId, JobExecutionId>,
     upgrade_seeds: BTreeMap<(JobExecutionId, NodeId), MemoryUpgradeNodeSeed>,
     job_name_order: BTreeMap<JobName, u64>,
@@ -1406,27 +1405,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         operation_id: &'a OperationId,
     ) -> BoxFuture<'a, Result<Option<ForkLineage>, RepositoryError>> {
         Box::pin(async move { Ok(self.staged.fork_lineages.get(operation_id).cloned()) })
-    }
-
-    fn stage_fork_job_context<'a>(
-        &'a mut self,
-        target_execution_id: JobExecutionId,
-        context: &'a ExecutionContext,
-    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
-        Box::pin(async move {
-            let target = self.staged.job_executions.get(&target_execution_id)
-                .ok_or(RepositoryError::ForkStateCorrupt)?;
-            if target.metadata().status() != BatchStatus::Starting
-                || target.version() != ExecutionVersion::INITIAL
-                || self.staged.fork_job_contexts.contains_key(&target_execution_id)
-                || self.staged.execution_attempts.get(&target_execution_id)
-                    .is_none_or(|attempt| attempt.get() != 1)
-            {
-                return Err(RepositoryError::ForkStateCorrupt);
-            }
-            self.staged.fork_job_contexts.insert(target_execution_id, context.clone());
-            Ok(())
-        })
     }
 
     fn lock_fork_source(
@@ -2896,7 +2874,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
     ) -> BoxFuture<'_, Result<Option<crate::ExecutionContext>, RepositoryError>> {
         Box::pin(async move {
             self.instance_for_execution(job_execution_id)?;
-            Ok(self.staged.fork_job_contexts.get(&job_execution_id).cloned())
+            Ok(None)
         })
     }
 
@@ -2906,7 +2884,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
     ) -> BoxFuture<'_, Result<Option<crate::ExecutionContext>, RepositoryError>> {
         Box::pin(async move {
             self.instance_for_execution(job_execution_id)?;
-            Ok(self.staged.fork_job_contexts.get(&job_execution_id).cloned())
+            Ok(None)
         })
     }
 
@@ -3736,7 +3714,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 self.staged.job_executions.remove(&execution_id);
                 self.staged.execution_attempts.remove(&execution_id);
                 self.staged.job_parameters.remove(&execution_id);
-                self.staged.fork_job_contexts.remove(&execution_id);
                 self.staged
                     .scope_resolution_provenance
                     .retain(|(_, _, _, owner_job, _), _| *owner_job != execution_id);
