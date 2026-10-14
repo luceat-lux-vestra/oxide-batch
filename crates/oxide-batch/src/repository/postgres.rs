@@ -2684,8 +2684,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         source_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
         Box::pin(async move {
-            let source_id =
-                database_id(source_execution_id.get(), IdentifierKind::JobExecution)?;
+            let source_id = database_id(source_execution_id.get(), IdentifierKind::JobExecution)?;
             // Match launch's lock order: instance first, then attempt, then
             // committed steps. A new attempt must not race the latest-source
             // check and step context updates cannot race the snapshot.
@@ -2699,13 +2698,12 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let Some(instance_id) = instance_id else {
                 return Ok(None);
             };
-            let instance = sqlx::query(
-                "SELECT id FROM oxide_batch.ob_job_instance WHERE id = $1 FOR UPDATE",
-            )
-            .bind(instance_id)
-            .fetch_optional(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            let instance =
+                sqlx::query("SELECT id FROM oxide_batch.ob_job_instance WHERE id = $1 FOR UPDATE")
+                    .bind(instance_id)
+                    .fetch_optional(&mut **self.transaction()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
             if instance.is_none() {
                 return Err(RepositoryError::ForkStateCorrupt);
             }

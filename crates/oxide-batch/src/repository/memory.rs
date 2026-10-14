@@ -3789,7 +3789,10 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     .fail_next_repeat_commit
                     .swap(false, Ordering::AcqRel);
             let fork_unknown = self.created_fork_lineage
-                && self.repository.fail_next_fork_commit.swap(false, Ordering::AcqRel);
+                && self
+                    .repository
+                    .fail_next_fork_commit
+                    .swap(false, Ordering::AcqRel);
             if partition_unknown || repeat_unknown || fork_unknown {
                 return Err(RepositoryError::CommitOutcomeUnknown);
             }

@@ -143,9 +143,11 @@ impl<R: JobRepository> JobFork<R> {
                     .to_json()
                     .map_err(|_| RepositoryError::ForkStateCorrupt)?;
                 hash.update([1_u8]);
-                hash.update(u64::try_from(data.len())
-                    .map_err(|_| RepositoryError::ForkStateCorrupt)?
-                    .to_be_bytes());
+                hash.update(
+                    u64::try_from(data.len())
+                        .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                        .to_be_bytes(),
+                );
                 hash.update(&data);
             } else {
                 hash.update([0_u8]);
