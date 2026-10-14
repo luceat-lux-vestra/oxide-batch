@@ -8,9 +8,8 @@
 mod crash_restore;
 
 use std::error::Error;
-use std::num::NonZeroU64;
 use std::os::unix::process::ExitStatusExt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};

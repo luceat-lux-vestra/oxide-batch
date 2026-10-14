@@ -43,6 +43,8 @@ jobs:
           persist-credentials: false
       - name: Verify transformed fork on PostgreSQL 15
         run: cargo test --locked --package oxide-batch --features postgres --test postgres_fork -- --nocapture --test-threads=1
+      - name: SIGKILL proof at source lock transform and commit on PostgreSQL ${{ matrix.postgres }}
+        run: cargo test --locked --package oxide-batch --features postgres --test postgres_fork_process_kill -- --nocapture --test-threads=1
       - name: Verify populated schema 10 to 11 migration and dump restore on PostgreSQL 15
         run: bash ./tests/fixtures/postgres/run-design-gate.sh 15
 
