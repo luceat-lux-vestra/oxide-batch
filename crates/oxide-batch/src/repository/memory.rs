@@ -49,6 +49,7 @@ pub struct InMemoryJobRepository {
     ids: Arc<dyn IdGenerator>,
     fail_next_partition_aggregate_commit: Arc<AtomicBool>,
     fail_next_repeat_commit: Arc<AtomicBool>,
+    fail_next_fork_commit: Arc<AtomicBool>,
 }
 
 impl InMemoryJobRepository {
@@ -61,6 +62,7 @@ impl InMemoryJobRepository {
             ids,
             fail_next_partition_aggregate_commit: Arc::new(AtomicBool::new(false)),
             fail_next_repeat_commit: Arc::new(AtomicBool::new(false)),
+            fail_next_fork_commit: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -78,6 +80,14 @@ impl InMemoryJobRepository {
     /// A fresh unit of work must inspect durable repeat state before retrying.
     pub fn inject_next_repeat_commit_unknown(&self) {
         self.fail_next_repeat_commit.store(true, Ordering::Release);
+    }
+
+    /// Simulates a fork commit whose durable outcome is unknown to the caller.
+    ///
+    /// The staged target and lineage become visible, but the commit reports
+    /// `CommitOutcomeUnknown` so the service must read back the exact key.
+    pub fn inject_next_fork_commit_unknown(&self) {
+        self.fail_next_fork_commit.store(true, Ordering::Release);
     }
 }
 
@@ -142,6 +152,7 @@ impl JobRepository for InMemoryJobRepository {
                 created_partition_plans: BTreeSet::new(),
                 aggregated_partition_parent: false,
                 committed_repeat_iteration: false,
+                created_fork_lineage: false,
             }) as Box<dyn RepositoryUnitOfWork + 'a>)
         })
     }
@@ -336,6 +347,7 @@ struct InMemoryUnitOfWork<'repository> {
     created_partition_plans: BTreeSet<StepExecutionId>,
     aggregated_partition_parent: bool,
     committed_repeat_iteration: bool,
+    created_fork_lineage: bool,
 }
 
 impl InMemoryUnitOfWork<'_> {
@@ -1465,6 +1477,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             self.staged
                 .fork_lineages
                 .insert(lineage.operation_id().clone(), lineage.clone());
+            self.created_fork_lineage = true;
             Ok(())
         })
     }
@@ -3775,7 +3788,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     .repository
                     .fail_next_repeat_commit
                     .swap(false, Ordering::AcqRel);
-            if partition_unknown || repeat_unknown {
+            let fork_unknown = self.created_fork_lineage
+                && self.repository.fail_next_fork_commit.swap(false, Ordering::AcqRel);
+            if partition_unknown || repeat_unknown || fork_unknown {
                 return Err(RepositoryError::CommitOutcomeUnknown);
             }
             Ok(())
