@@ -354,6 +354,23 @@ module MergeGateVerifier
       'applicability' => 'supply_chain_impact'
     }
   ].freeze
+  # The scheduled-only CodeQL migration has two explicitly enumerated,
+  # immutable admission states. Never derive the accepted inventory from
+  # untrusted PR-controlled policy or silently accept an arbitrary subset.
+  PR_PROOF_AUTHORITIES_NO_PR_CODEQL = PR_PROOF_AUTHORITIES.reject do |member|
+    member.fetch('id') == 'codeql'
+  end.freeze
+  PR_PROOF_ACCEPTED_INVENTORIES = [
+    PR_PROOF_AUTHORITIES,
+    PR_PROOF_AUTHORITIES_NO_PR_CODEQL
+  ].freeze
+
+  def pr_proof_authorities_for(policy:)
+    proof = policy['pr_proof']
+    members = proof.is_a?(Hash) ? proof['members'] : nil
+    PR_PROOF_ACCEPTED_INVENTORIES.find { |inventory| inventory == members } || PR_PROOF_AUTHORITIES
+  end
+
   PR_PROOF_PERMISSIONS = {
     'rust' => {'actions' => 'read', 'contents' => 'read'},
     'dependency' => {'contents' => 'read'},
@@ -384,6 +401,18 @@ module MergeGateVerifier
     '.github/workflows/supply-chain.yml',
     '.github/workflows/campaign-orchestrator.yml'
   ].freeze
+  PR_TOPOLOGY_REUSABLE_AUTHORITIES_NO_PR_CODEQL = PR_TOPOLOGY_REUSABLE_AUTHORITIES.reject do |workflow|
+    workflow == '.github/workflows/codeql.yml'
+  end.freeze
+
+  def pr_topology_reusable_authorities_for(policy:)
+    if pr_proof_authorities_for(policy: policy) == PR_PROOF_AUTHORITIES_NO_PR_CODEQL
+      PR_TOPOLOGY_REUSABLE_AUTHORITIES_NO_PR_CODEQL
+    else
+      PR_TOPOLOGY_REUSABLE_AUTHORITIES
+    end
+  end
+
   PR_TOPOLOGY_PROTECTED_AUTHORITIES = [
     PR_CI_WORKFLOW,
     '.github/workflows/ci.yml',
@@ -906,7 +935,11 @@ module MergeGateVerifier
     unless proof['schema'] == PR_PROOF_SCHEMA
       violations << "schema v7 pr_proof schema must be #{PR_PROOF_SCHEMA.inspect}"
     end
-    unless proof['members'] == PR_PROOF_AUTHORITIES
+    # Legacy schema v7 remains five-authority only. The explicit
+    # scheduled-only alternative is admitted solely under schema v8.
+    accepted_inventories = policy['schema_version'].to_i >= 8 ?
+      PR_PROOF_ACCEPTED_INVENTORIES : [PR_PROOF_AUTHORITIES]
+    unless accepted_inventories.include?(proof['members'])
       violations << 'schema v7 pr_proof members must exactly match the canonical trusted-scope optional-authority inventory'
     end
     violations
@@ -918,9 +951,10 @@ module MergeGateVerifier
     legacy_base:,
     docs_only:,
     evidence_impact:,
-    supply_chain_impact:
+    supply_chain_impact:,
+    authorities: PR_PROOF_AUTHORITIES
   )
-    all_ids = PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }
+    all_ids = authorities.map { |member| member.fetch('id') }
     boolean_outputs = [docs_only, evidence_impact, supply_chain_impact]
     trusted = scope_result == 'success' &&
               classification_outcome == 'success' &&
@@ -929,7 +963,7 @@ module MergeGateVerifier
     return all_ids unless trusted
 
     required = []
-    required.concat(%w[rust dependency codeql]) unless docs_only == 'true'
+    required.concat(authorities.select { |member| member.fetch('applicability') == 'non_docs' }.map { |member| member.fetch('id') }) unless docs_only == 'true'
     required << 'evidence' unless evidence_impact == 'false'
     required << 'supply' unless supply_chain_impact == 'false'
     required
@@ -1096,7 +1130,7 @@ module MergeGateVerifier
       end
     end
 
-    PR_PROOF_AUTHORITIES.each do |member|
+    pr_proof_authorities_for(policy: policy).each do |member|
       workflow = member.fetch('workflow')
       authority_id = member.fetch('id')
       doc = docs[workflow]
@@ -1182,7 +1216,7 @@ module MergeGateVerifier
       'schema' => PR_TOPOLOGY_SCHEMA,
       'entrypoint' => PR_CI_WORKFLOW,
       'migration_marker' => PR_TOPOLOGY_MIGRATION_MARKER,
-      'reusable_authorities' => PR_TOPOLOGY_REUSABLE_AUTHORITIES,
+      'reusable_authorities' => pr_topology_reusable_authorities_for(policy: policy),
       'independent_pr_authorities' => [
         {
           'workflow' => PR_TOPOLOGY_INDEPENDENT_M5,
@@ -1199,6 +1233,17 @@ module MergeGateVerifier
     end
 
     docs = producer_summary.fetch('workflow_docs')
+    if pr_proof_authorities_for(policy: policy) == PR_PROOF_AUTHORITIES_NO_PR_CODEQL
+      codeql_doc = docs['.github/workflows/codeql.yml']
+      unless codeql_doc.is_a?(Hash) &&
+             workflow_event?(codeql_doc, 'schedule') &&
+             workflow_event?(codeql_doc, 'workflow_dispatch') &&
+             !workflow_event?(codeql_doc, 'pull_request') &&
+             !workflow_event?(codeql_doc, 'workflow_run') &&
+             !workflow_event?(codeql_doc, 'workflow_call')
+        violations << 'scheduled-only CodeQL must keep weekly/manual and must not have PR/indirect PR triggers'
+      end
+    end
     entrypoint = docs[PR_CI_WORKFLOW]
     unless entrypoint.is_a?(Hash)
       return violations + ["schema v7 entrypoint #{PR_CI_WORKFLOW} is missing"]
@@ -1229,12 +1274,12 @@ module MergeGateVerifier
         )
       )
     else
-      proof_authority_ids = PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }
+      proof_authority_ids = pr_proof_authorities_for(policy: policy).map { |member| member.fetch('id') }
       expected_jobs = ([PR_CI_SCOPE_JOB] + proof_authority_ids + [PR_CI_PROOF_JOB])
       missing_jobs = expected_jobs - jobs.keys.map(&:to_s)
       violations << "#{PR_CI_WORKFLOW} is missing canonical jobs: #{missing_jobs.join(', ')}" unless missing_jobs.empty?
 
-      call_contracts = PR_PROOF_AUTHORITIES.to_h do |member|
+      call_contracts = pr_proof_authorities_for(policy: policy).to_h do |member|
         [member.fetch('id'), member.fetch('workflow')]
       end
       call_contracts.each do |job_id, workflow|
@@ -1256,7 +1301,7 @@ module MergeGateVerifier
         end
       end
 
-      PR_PROOF_AUTHORITIES.each do |member|
+      pr_proof_authorities_for(policy: policy).each do |member|
         job_id = member.fetch('id')
         condition = normalized_shell(jobs.dig(job_id, 'if'))
         required_token = case member.fetch('applicability')
@@ -1348,7 +1393,7 @@ module MergeGateVerifier
         violations << "#{PR_CI_WORKFLOW} must declare #{PR_CI_PROOF_JOB}"
       else
         violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} must emit context pr-proof" unless proof['name'] == 'pr-proof'
-        expected_needs = ([PR_CI_SCOPE_JOB] + PR_PROOF_AUTHORITIES.map { |member| member.fetch('id') }).sort
+        expected_needs = ([PR_CI_SCOPE_JOB] + pr_proof_authorities_for(policy: policy).map { |member| member.fetch('id') }).sort
         actual_needs = normalize_needs(proof).sort
         unless actual_needs == expected_needs
           violations << "#{PR_CI_WORKFLOW}##{PR_CI_PROOF_JOB} needs mismatch: expected=#{expected_needs.inspect} actual=#{actual_needs.inspect}"
@@ -1368,7 +1413,7 @@ module MergeGateVerifier
 
     end
 
-    PR_TOPOLOGY_REUSABLE_AUTHORITIES.each do |workflow|
+    pr_topology_reusable_authorities_for(policy: policy).each do |workflow|
       doc = docs[workflow]
       unless doc.is_a?(Hash)
         violations << "reusable authority #{workflow} is missing"
