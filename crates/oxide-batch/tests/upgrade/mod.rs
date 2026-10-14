@@ -804,10 +804,18 @@ pub fn durable_tables(version: u32) -> Vec<&'static str> {
     if version >= 4 {
         tables.extend_from_slice(SCHEMA4_TABLES);
     }
-    if version >= 5 { tables.extend_from_slice(SCHEMA5_TABLES); }
-    if version >= 6 { tables.extend_from_slice(SCHEMA6_TABLES); }
-    if version >= 7 { tables.extend_from_slice(SCHEMA7_TABLES); }
-    if version >= 11 { tables.extend_from_slice(SCHEMA11_TABLES); }
+    if version >= 5 {
+        tables.extend_from_slice(SCHEMA5_TABLES);
+    }
+    if version >= 6 {
+        tables.extend_from_slice(SCHEMA6_TABLES);
+    }
+    if version >= 7 {
+        tables.extend_from_slice(SCHEMA7_TABLES);
+    }
+    if version >= 11 {
+        tables.extend_from_slice(SCHEMA11_TABLES);
+    }
     tables
 }
 

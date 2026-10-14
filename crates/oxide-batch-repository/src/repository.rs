@@ -20,12 +20,12 @@ use oxide_batch_core::{
 };
 
 use crate::{
-    ActorRef, DefinitionRegistration, ForkLineage, FlowDecision, FlowDecisionRequest, FlowStepState,
-    FlowTransitionKind, NestedJobLink, NestedJobLinkRequest, OperationId, OperatorAction,
-    OperatorRecord, OperatorRecordDraft, OwnerToken, PartitionAggregate, PartitionAggregationError,
-    PartitionPlanEntry, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, ReasonCode,
-    RepeatCommitRequest, RepeatExecution, RepeatLineage, RetentionAction, RetentionHold,
-    RetentionRecord, RetentionRecordDraft, ScopeResolutionProvenance, StepPartition,
+    ActorRef, DefinitionRegistration, FlowDecision, FlowDecisionRequest, FlowStepState,
+    FlowTransitionKind, ForkLineage, NestedJobLink, NestedJobLinkRequest, OperationId,
+    OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PartitionAggregate,
+    PartitionAggregationError, PartitionPlanEntry, PurgeCounts, PurgePlan, PurgePlanRequest,
+    PurgeSurvey, ReasonCode, RepeatCommitRequest, RepeatExecution, RepeatLineage, RetentionAction,
+    RetentionHold, RetentionRecord, RetentionRecordDraft, ScopeResolutionProvenance, StepPartition,
 };
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
@@ -773,27 +773,36 @@ impl ExecutionControl {
 pub trait RepositoryUnitOfWork: Send {
     /// Looks up one immutable fork key in this transaction.
     fn fork_lineage<'a>(
-        &'a mut self, _operation_id: &'a OperationId,
+        &'a mut self,
+        _operation_id: &'a OperationId,
     ) -> BoxFuture<'a, Result<Option<ForkLineage>, RepositoryError>> {
-        Box::pin(async { Err(RepositoryError::UnsupportedCapability {
-            capability: RepositoryCapability::DefinitionRegistry,
-        }) })
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
     }
     /// Serializes source validation against durable mutation.
     fn lock_fork_source(
-        &mut self, _source_execution_id: JobExecutionId,
+        &mut self,
+        _source_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
-        Box::pin(async { Err(RepositoryError::UnsupportedCapability {
-            capability: RepositoryCapability::DefinitionRegistry,
-        }) })
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
     }
     /// Appends immutable lineage within the target creation UoW.
     fn append_fork_lineage<'a>(
-        &'a mut self, _lineage: &'a ForkLineage,
+        &'a mut self,
+        _lineage: &'a ForkLineage,
     ) -> BoxFuture<'a, Result<(), RepositoryError>> {
-        Box::pin(async { Err(RepositoryError::UnsupportedCapability {
-            capability: RepositoryCapability::DefinitionRegistry,
-        }) })
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
     }
 
     /// Registers one immutable exact definition/artifact binding.
@@ -2152,16 +2161,17 @@ impl fmt::Display for RepositoryError {
             Self::DefinitionRegistryStateCorrupt => {
                 formatter.write_str("durable definition registry state is corrupt")
             }
-            Self::ForkInstanceCollision { id } =>
-                write!(formatter, "fork target instance {id} already exists"),
-            Self::ForkOperationConflict =>
-                formatter.write_str("fork operation conflicts with immutable lineage"),
-            Self::ForkSourceStale =>
-                formatter.write_str("fork source execution is stale"),
-            Self::ForkSourceNotTerminal =>
-                formatter.write_str("fork source is not terminal"),
-            Self::ForkStateCorrupt =>
-                formatter.write_str("fork source state is corrupt or unbounded"),
+            Self::ForkInstanceCollision { id } => {
+                write!(formatter, "fork target instance {id} already exists")
+            }
+            Self::ForkOperationConflict => {
+                formatter.write_str("fork operation conflicts with immutable lineage")
+            }
+            Self::ForkSourceStale => formatter.write_str("fork source execution is stale"),
+            Self::ForkSourceNotTerminal => formatter.write_str("fork source is not terminal"),
+            Self::ForkStateCorrupt => {
+                formatter.write_str("fork source state is corrupt or unbounded")
+            }
             Self::DefinitionJobMismatch { expected, actual } => write!(
                 formatter,
                 "definition for job {actual} cannot be used for job {expected}"

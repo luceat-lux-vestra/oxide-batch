@@ -37,8 +37,8 @@
 
 mod definition;
 mod explorer;
-mod fork;
 mod flow;
+mod fork;
 mod nested_job;
 mod operator;
 mod partition;
@@ -50,7 +50,6 @@ mod retention;
 mod scope;
 
 pub use definition::{DefinitionRegistration, DefinitionRegistrationError};
-pub use fork::{ForkLineage, ForkRequest};
 pub use explorer::{
     Cursor, CursorError, CursorKey, DEFAULT_PAGE_SIZE, DefinitionDescriptor, ExplorerError,
     ExplorerQuery, ExplorerRepository, JobExecutionProjection, JobInstanceProjection,
@@ -63,6 +62,7 @@ pub use flow::{
     FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
     FlowTransitionKind,
 };
+pub use fork::{ForkLineage, ForkRequest};
 pub use nested_job::{NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation};
 pub use operator::{
     OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequest,

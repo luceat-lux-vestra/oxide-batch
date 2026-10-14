@@ -1,10 +1,10 @@
 //! Explicit new-lineage fork identity. No raw parameter or state payload is persisted here.
 
+use crate::{DefinitionRegistration, OperationId};
 use oxide_batch_core::{
     DefinitionIdentity, ExecutionVersion, JobExecutionId, JobInstanceId, JobInstanceKey,
     JobParameters,
 };
-use crate::{DefinitionRegistration, OperationId};
 
 /// A caller-supplied idempotent fork command, distinct from restart and upgrade.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -19,27 +19,45 @@ impl ForkRequest {
     /// Creates a fork from one exact committed execution.
     #[must_use]
     pub const fn new(
-        operation_id: OperationId, source_execution_id: JobExecutionId,
-        source_version: ExecutionVersion, target: DefinitionRegistration,
+        operation_id: OperationId,
+        source_execution_id: JobExecutionId,
+        source_version: ExecutionVersion,
+        target: DefinitionRegistration,
         parameters: JobParameters,
     ) -> Self {
-        Self { operation_id, source_execution_id, source_version, target, parameters }
+        Self {
+            operation_id,
+            source_execution_id,
+            source_version,
+            target,
+            parameters,
+        }
     }
     /// Borrows the idempotency key.
     #[must_use]
-    pub const fn operation_id(&self) -> &OperationId { &self.operation_id }
+    pub const fn operation_id(&self) -> &OperationId {
+        &self.operation_id
+    }
     /// Returns the source execution identity.
     #[must_use]
-    pub const fn source_execution_id(&self) -> JobExecutionId { self.source_execution_id }
+    pub const fn source_execution_id(&self) -> JobExecutionId {
+        self.source_execution_id
+    }
     /// Returns the expected source version.
     #[must_use]
-    pub const fn source_version(&self) -> ExecutionVersion { self.source_version }
+    pub const fn source_version(&self) -> ExecutionVersion {
+        self.source_version
+    }
     /// Borrows the exact registered target.
     #[must_use]
-    pub const fn target(&self) -> &DefinitionRegistration { &self.target }
+    pub const fn target(&self) -> &DefinitionRegistration {
+        &self.target
+    }
     /// Borrows the explicitly supplied target parameters.
     #[must_use]
-    pub const fn parameters(&self) -> &JobParameters { &self.parameters }
+    pub const fn parameters(&self) -> &JobParameters {
+        &self.parameters
+    }
     /// Derives the normal identifying-parameter key without suffixes.
     #[must_use]
     pub fn target_key(&self) -> JobInstanceKey {
@@ -64,15 +82,22 @@ impl ForkLineage {
     /// Creates a committed candidate from validated source and new target.
     #[must_use]
     pub fn new(
-        request: &ForkRequest, source_definition: &DefinitionIdentity,
-        source_state_digest: [u8; 32], target_instance_id: JobInstanceId,
+        request: &ForkRequest,
+        source_definition: &DefinitionIdentity,
+        source_state_digest: [u8; 32],
+        target_instance_id: JobInstanceId,
         target_execution_id: JobExecutionId,
     ) -> Self {
         Self::from_durable(
-            request.operation_id().clone(), request.source_execution_id(),
-            request.source_version(), *source_definition.manifest_digest(),
-            source_state_digest, request.target().clone(), target_instance_id,
-            target_execution_id, request.parameters().flow_input_digest(),
+            request.operation_id().clone(),
+            request.source_execution_id(),
+            request.source_version(),
+            *source_definition.manifest_digest(),
+            source_state_digest,
+            request.target().clone(),
+            target_instance_id,
+            target_execution_id,
+            request.parameters().flow_input_digest(),
         )
     }
     /// Reconstitutes the bounded, payload-free database projection.
@@ -80,15 +105,27 @@ impl ForkLineage {
     #[must_use]
     #[allow(clippy::too_many_arguments)]
     pub const fn from_durable(
-        operation_id: OperationId, source_execution_id: JobExecutionId,
-        source_version: ExecutionVersion, source_definition_digest: [u8; 32],
-        source_state_digest: [u8; 32], target: DefinitionRegistration,
-        target_instance_id: JobInstanceId, target_execution_id: JobExecutionId,
+        operation_id: OperationId,
+        source_execution_id: JobExecutionId,
+        source_version: ExecutionVersion,
+        source_definition_digest: [u8; 32],
+        source_state_digest: [u8; 32],
+        target: DefinitionRegistration,
+        target_instance_id: JobInstanceId,
+        target_execution_id: JobExecutionId,
         target_parameters_digest: [u8; 32],
     ) -> Self {
-        Self { operation_id, source_execution_id, source_version,
-               source_definition_digest, source_state_digest, target,
-               target_instance_id, target_execution_id, target_parameters_digest }
+        Self {
+            operation_id,
+            source_execution_id,
+            source_version,
+            source_definition_digest,
+            source_state_digest,
+            target,
+            target_instance_id,
+            target_execution_id,
+            target_parameters_digest,
+        }
     }
     /// Returns true only for the original, immutable command payload.
     #[must_use]
@@ -101,29 +138,47 @@ impl ForkLineage {
     }
     /// Returns the operation key.
     #[must_use]
-    pub const fn operation_id(&self) -> &OperationId { &self.operation_id }
+    pub const fn operation_id(&self) -> &OperationId {
+        &self.operation_id
+    }
     /// Returns the source execution.
     #[must_use]
-    pub const fn source_execution_id(&self) -> JobExecutionId { self.source_execution_id }
+    pub const fn source_execution_id(&self) -> JobExecutionId {
+        self.source_execution_id
+    }
     /// Returns the source version.
     #[must_use]
-    pub const fn source_version(&self) -> ExecutionVersion { self.source_version }
+    pub const fn source_version(&self) -> ExecutionVersion {
+        self.source_version
+    }
     /// Returns the source definition fingerprint.
     #[must_use]
-    pub const fn source_definition_digest(&self) -> &[u8; 32] { &self.source_definition_digest }
+    pub const fn source_definition_digest(&self) -> &[u8; 32] {
+        &self.source_definition_digest
+    }
     /// Returns the bounded committed-state fingerprint.
     #[must_use]
-    pub const fn source_state_digest(&self) -> &[u8; 32] { &self.source_state_digest }
+    pub const fn source_state_digest(&self) -> &[u8; 32] {
+        &self.source_state_digest
+    }
     /// Borrows the immutable target binding.
     #[must_use]
-    pub const fn target(&self) -> &DefinitionRegistration { &self.target }
+    pub const fn target(&self) -> &DefinitionRegistration {
+        &self.target
+    }
     /// Returns the new instance ID.
     #[must_use]
-    pub const fn target_instance_id(&self) -> JobInstanceId { self.target_instance_id }
+    pub const fn target_instance_id(&self) -> JobInstanceId {
+        self.target_instance_id
+    }
     /// Returns the first execution ID.
     #[must_use]
-    pub const fn target_execution_id(&self) -> JobExecutionId { self.target_execution_id }
+    pub const fn target_execution_id(&self) -> JobExecutionId {
+        self.target_execution_id
+    }
     /// Returns the complete target parameter digest.
     #[must_use]
-    pub const fn target_parameters_digest(&self) -> &[u8; 32] { &self.target_parameters_digest }
+    pub const fn target_parameters_digest(&self) -> &[u8; 32] {
+        &self.target_parameters_digest
+    }
 }
