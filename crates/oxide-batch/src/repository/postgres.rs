@@ -1624,15 +1624,13 @@ fn transformed_component_for_upgrade(
     source_node: &NodeId,
     source: &ComponentStateEnvelope,
 ) -> Result<ComponentStateEnvelope, RepositoryError> {
-    let Some(transform) = selected_upgrade_transform(
+    let transform = selected_upgrade_transform(
         upgrade,
         source_node,
         DefinitionStateKind::ComponentState,
         Some(source.namespace().as_str()),
     )?
-    else {
-        return Ok(source.clone());
-    };
+    .ok_or(RepositoryError::DefinitionUpgradeFailed)?;
     if source.schema_id() != transform.source_schema()
         || source.schema_version() != transform.source_version()
     {
