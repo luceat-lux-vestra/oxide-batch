@@ -865,7 +865,7 @@ fn schema_contract(
     Ok(DefinitionDurableStateContract {
         kind,
         state_id,
-        schema: StateSchemaId::new(schema)?,
+        schema: StateSchemaId::new(schema).map_err(|_| DefinitionError::ManifestEncoding)?,
         version,
     })
 }
