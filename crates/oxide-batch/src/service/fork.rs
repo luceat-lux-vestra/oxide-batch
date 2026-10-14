@@ -4,7 +4,7 @@
 
 use sha2::{Digest, Sha256};
 use crate::{
-    DefinitionRegistration, ForkLineage, ForkRequest, JobInstanceSelection,
+    ForkLineage, ForkRequest, JobInstanceSelection,
     JobRepository, RepositoryCapability, RepositoryError,
 };
 
@@ -111,7 +111,14 @@ impl<R: JobRepository> JobFork<R> {
         let instance = match unit.select_or_create_job_instance(&key).await? {
             JobInstanceSelection::Created(created) => created,
             JobInstanceSelection::Existing(existing) => {
-                return Err(RepositoryError::ForkInstanceCollision { id: existing.id() });
+                // The unique target key can race with a concurrent request.
+                // Reconcile the exact immutable operation before declaring a collision.
+                unit.rollback().await?;
+                return match self.lineage(request.operation_id()).await? {
+                    Some(stored) if stored.matches_request(request) => Ok(stored),
+                    Some(_) => Err(RepositoryError::ForkOperationConflict),
+                    None => Err(RepositoryError::ForkInstanceCollision { id: existing.id() }),
+                };
             }
             _ => return Err(RepositoryError::ForkStateCorrupt),
         };

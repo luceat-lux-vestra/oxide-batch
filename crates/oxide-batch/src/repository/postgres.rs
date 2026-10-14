@@ -2595,15 +2595,15 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
     ) -> BoxFuture<'a, Result<Option<ForkLineage>, RepositoryError>> {
         Box::pin(async move {
             let row = sqlx::query(
-                "SELECT lineage.operation_id, lineage.source_job_execution_id, \\
-                 lineage.source_execution_version, lineage.source_definition_digest, \\
-                 lineage.source_state_digest, lineage.target_job_instance_id, \\
-                 lineage.target_job_execution_id, lineage.target_parameters_digest, \\
-                 definition.job_name, definition.definition_revision, definition.manifest_format, \\
-                 definition.manifest_digest, definition.manifest, definition.artifact_identity \\
-                 FROM oxide_batch.ob_job_fork_lineage lineage \\
-                 JOIN oxide_batch.ob_job_definition definition \\
-                   ON definition.id = lineage.target_definition_id \\
+                "SELECT lineage.operation_id, lineage.source_job_execution_id, \
+                 lineage.source_execution_version, lineage.source_definition_digest, \
+                 lineage.source_state_digest, lineage.target_job_instance_id, \
+                 lineage.target_job_execution_id, lineage.target_parameters_digest, \
+                 definition.job_name, definition.definition_revision, definition.manifest_format, \
+                 definition.manifest_digest, definition.manifest, definition.artifact_identity \
+                 FROM oxide_batch.ob_job_fork_lineage lineage \
+                 JOIN oxide_batch.ob_job_definition definition \
+                   ON definition.id = lineage.target_definition_id \
                  WHERE lineage.operation_id = $1",
             )
             .bind(operation_id.as_str())
@@ -2635,16 +2635,16 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 target_parameters_digest,
             );
             let consistent: bool = sqlx::query_scalar(
-                "SELECT EXISTS (SELECT 1 FROM oxide_batch.ob_job_execution target \\
-                 JOIN oxide_batch.ob_job_execution source ON source.id = $1 \\
-                 JOIN oxide_batch.ob_job_definition source_definition \\
-                   ON source_definition.id = source.definition_id \\
-                 JOIN oxide_batch.ob_job_definition target_definition \\
-                   ON target_definition.id = target.definition_id \\
-                 WHERE target.id = $2 AND target.job_instance_id = $3 \\
-                   AND target.attempt = 1 AND target.restart_of_execution_id IS NULL \\
-                   AND target.upgrade_from_definition_id IS NULL \\
-                   AND source_definition.manifest_digest = $4 \\
+                "SELECT EXISTS (SELECT 1 FROM oxide_batch.ob_job_execution target \
+                 JOIN oxide_batch.ob_job_execution source ON source.id = $1 \
+                 JOIN oxide_batch.ob_job_definition source_definition \
+                   ON source_definition.id = source.definition_id \
+                 JOIN oxide_batch.ob_job_definition target_definition \
+                   ON target_definition.id = target.definition_id \
+                 WHERE target.id = $2 AND target.job_instance_id = $3 \
+                   AND target.attempt = 1 AND target.restart_of_execution_id IS NULL \
+                   AND target.upgrade_from_definition_id IS NULL \
+                   AND source_definition.manifest_digest = $4 \
                    AND target_definition.manifest_digest = $5)",
             )
             .bind(database_id(lineage.source_execution_id().get(), IdentifierKind::JobExecution)?)
@@ -2689,8 +2689,8 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let source_execution_id =
                 database_id(lineage.source_execution_id().get(), IdentifierKind::JobExecution)?;
             let state = sqlx::query(
-                "SELECT job_instance_id, definition_id, attempt, restart_of_execution_id, \\
-                 upgrade_from_definition_id FROM oxide_batch.ob_job_execution \\
+                "SELECT job_instance_id, definition_id, attempt, restart_of_execution_id, \
+                 upgrade_from_definition_id FROM oxide_batch.ob_job_execution \
                  WHERE id = $1 FOR UPDATE",
             )
             .bind(target_execution_id)
@@ -2719,8 +2719,8 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let definition_id: i64 = state.try_get("definition_id")
                 .map_err(|_| RepositoryError::ForkStateCorrupt)?;
             let target = sqlx::query(
-                "SELECT job_name, definition_revision, manifest_format, manifest_digest, \\
-                 manifest, artifact_identity FROM oxide_batch.ob_job_definition \\
+                "SELECT job_name, definition_revision, manifest_format, manifest_digest, \
+                 manifest, artifact_identity FROM oxide_batch.ob_job_definition \
                  WHERE id = $1",
             )
             .bind(definition_id)
@@ -2733,9 +2733,9 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 return Err(RepositoryError::ForkStateCorrupt);
             }
             let source_digest: Vec<u8> = sqlx::query_scalar(
-                "SELECT definition.manifest_digest \\
-                 FROM oxide_batch.ob_job_execution execution \\
-                 JOIN oxide_batch.ob_job_definition definition \\
+                "SELECT definition.manifest_digest \
+                 FROM oxide_batch.ob_job_execution execution \
+                 JOIN oxide_batch.ob_job_definition definition \
                    ON definition.id = execution.definition_id WHERE execution.id = $1",
             )
             .bind(source_execution_id)
@@ -2746,10 +2746,10 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                 return Err(RepositoryError::ForkStateCorrupt);
             }
             sqlx::query(
-                "INSERT INTO oxide_batch.ob_job_fork_lineage \\
-                 (operation_id, source_job_execution_id, source_execution_version, \\
-                  source_definition_digest, source_state_digest, target_definition_id, \\
-                  target_job_instance_id, target_job_execution_id, target_parameters_digest) \\
+                "INSERT INTO oxide_batch.ob_job_fork_lineage \
+                 (operation_id, source_job_execution_id, source_execution_version, \
+                  source_definition_digest, source_state_digest, target_definition_id, \
+                  target_job_instance_id, target_job_execution_id, target_parameters_digest) \
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)",
             )
             .bind(lineage.operation_id().as_str())
