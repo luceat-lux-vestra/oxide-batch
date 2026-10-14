@@ -296,7 +296,7 @@ async fn run_phase(
         assert_eq!(status.signal(), Some(SIGKILL));
         assert_eq!(status.code(), None);
         blocker.release().await?;
-        verify_no_partial_fork(runtime, &fixture).await
+        verify_atomic_fork(runtime, &fixture, phase).await
     }
     .await;
     if observed.is_err() {
@@ -308,9 +308,10 @@ async fn run_phase(
     observed
 }
 
-async fn verify_no_partial_fork(
+async fn verify_atomic_fork(
     runtime: &str,
     fixture: &SourceFixture,
+    phase: Phase,
 ) -> Result<(), Box<dyn Error>> {
     let repository = PostgresJobRepository::connect(
         config(runtime.to_owned())?,
@@ -319,18 +320,66 @@ async fn verify_no_partial_fork(
     .await?;
     let request = request_for(&repository, &fixture.job).await?;
     let service = JobFork::new(repository.clone());
-    assert!(service.lineage(request.operation_id()).await?.is_none());
+    let observed = service.lineage(request.operation_id()).await?;
     let mut read = repository.begin().await?;
-    assert!(
-        read.find_job_instance(&request.target_key())
-            .await?
-            .is_none()
-    );
     assert_eq!(
         read.get_job_execution(fixture.source.id()).await?,
         Some(fixture.source.clone())
     );
-    read.rollback().await?;
+
+    if let Some(lineage) = observed {
+        // A client SIGKILL while PostgreSQL is inside COMMIT is ambiguous:
+        // durable all-or-nothing success is legitimate even without an ACK.
+        assert_eq!(phase, Phase::Commit);
+        assert_ne!(lineage.target_instance_id(), fixture.source.job_instance_id());
+        assert_eq!(lineage.context_transform(), request.context_transform());
+        let instance = read
+            .find_job_instance(&request.target_key())
+            .await?
+            .ok_or("committed fork has no target instance")?;
+        assert_eq!(instance.id(), lineage.target_instance_id());
+        let target = read
+            .get_job_execution(lineage.target_execution_id())
+            .await?
+            .ok_or("committed fork has no target execution")?;
+        assert_eq!(target.metadata().status(), BatchStatus::Starting);
+        assert_eq!(
+            read.job_executions(lineage.target_instance_id()).await?.len(),
+            1
+        );
+        assert!(read.step_executions(target.id()).await?.is_empty());
+        let context = read
+            .scope_job_execution_context(target.id())
+            .await?
+            .ok_or("committed fork has no transformed target context")?;
+        assert_eq!(context.schema_id(), &StateSchemaId::new("fork-kill-v2")?);
+        assert_eq!(context.schema_version(), StateSchemaVersion::new(2)?);
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&context.payload_json()?)?,
+            serde_json::json!({"value":8}),
+        );
+        read.rollback().await?;
+
+        let transformer = DefinitionStateTransformer::new(
+            DefinitionUpgradeRevision::new("fork-kill-transform-v1")?,
+            transform,
+        );
+        assert_eq!(
+            service.fork_transformed(&request, &transformer).await?,
+            lineage,
+        );
+        let mut count = repository.begin().await?;
+        assert_eq!(
+            count.job_executions(lineage.target_instance_id()).await?.len(),
+            1
+        );
+        count.rollback().await?;
+    } else {
+        // Before COMMIT, or after a rolled-back in-flight COMMIT, none of
+        // instance, execution, context or lineage can become visible.
+        assert!(read.find_job_instance(&request.target_key()).await?.is_none());
+        read.rollback().await?;
+    }
     repository.close().await?;
     Ok(())
 }
