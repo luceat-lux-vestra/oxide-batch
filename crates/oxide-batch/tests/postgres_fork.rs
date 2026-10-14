@@ -10,7 +10,7 @@ use oxide_batch::{
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, DefinitionStateKind,
     DefinitionStateTransform, DefinitionStateTransformError, DefinitionStateTransformId,
     DefinitionStateTransformer, DefinitionUpgradeRevision, ExecutionContext, ForkContextTransform,
-    ForkRequest, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
+    ForkLineage, ForkRequest, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
     LifecycleTransition, NodeId, OperationId, PostgresConfig, PostgresJobRepository, PostgresMigrator,
     RepositoryError, StateLimits, StateSchemaId, StateSchemaVersion, StepName, TlsMode,
 };
@@ -178,6 +178,48 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
                 DefinitionUpgradeRevision::new("pg-fork-transform-v1")?,
                 increment,
             );
+            // Diagnostic transaction: isolate repository failure boundaries.
+            // This entire candidate is rolled back before the real fork.
+            let mut probe = repository.begin().await?;
+            probe.fork_lineage(request.operation_id()).await?;
+            eprintln!("m7-fork-proof: lookup");
+            probe.lock_fork_source(stopped.id()).await?;
+            eprintln!("m7-fork-proof: source lock");
+            probe.job_executions(stopped.job_instance_id()).await?;
+            eprintln!("m7-fork-proof: source attempts");
+            let source_definition = probe.scope_execution_definition(stopped.id()).await?;
+            eprintln!("m7-fork-proof: definition scope");
+            probe.definition(
+                source_definition.job_name().ok_or(RepositoryError::ForkStateCorrupt)?,
+                source_definition.revision(),
+            ).await?;
+            eprintln!("m7-fork-proof: source registered");
+            probe.step_executions(stopped.id()).await?;
+            eprintln!("m7-fork-proof: step list");
+            probe.scope_step_state(step.id()).await?;
+            eprintln!("m7-fork-proof: step scope");
+            probe.definition(request.target().job_name(), request.target().revision()).await?;
+            eprintln!("m7-fork-proof: target registered");
+            let selected = probe.select_or_create_job_instance(&request.target_key()).await?;
+            eprintln!("m7-fork-proof: target key");
+            let target_execution = probe.create_job_execution_with_definition_and_parameters(
+                selected.instance().id(), request.target().definition(), request.parameters(),
+            ).await?;
+            eprintln!("m7-fork-proof: target execution");
+            let transformed = ExecutionContext::from_transformed_payload(
+                StateSchemaId::new("fork-pg-v2")?, StateSchemaVersion::new(2)?,
+                br#"{"value":12}"#, StateLimits::default(),
+            )?;
+            probe.stage_fork_job_context(target_execution.id(), &transformed).await?;
+            eprintln!("m7-fork-proof: target context");
+            let lineage_probe = ForkLineage::new(
+                &request, &source_definition, [9_u8; 32],
+                selected.instance().id(), target_execution.id(),
+            );
+            probe.append_fork_lineage(&lineage_probe).await?;
+            eprintln!("m7-fork-proof: lineage appended");
+            probe.rollback().await?;
+            eprintln!("m7-fork-proof: probe rolled back");
             eprintln!("m7-fork-proof: invoke fork");
             let lineage = JobFork::new(repository.clone())
                 .fork_transformed(&request, &transformer)
