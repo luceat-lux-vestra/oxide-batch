@@ -62,7 +62,7 @@ pub use flow::{
     FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
     FlowTransitionKind,
 };
-pub use fork::{ForkLineage, ForkRequest};
+pub use fork::{ForkContextTransform, ForkLineage, ForkRequest};
 pub use nested_job::{NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation};
 pub use operator::{
     OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequest,

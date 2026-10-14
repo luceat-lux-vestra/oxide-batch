@@ -782,6 +782,18 @@ pub trait RepositoryUnitOfWork: Send {
             })
         })
     }
+    /// Stages explicitly transformed target job context in the new-lineage `UoW`.
+    fn stage_fork_job_context<'a>(
+        &'a mut self,
+        _target_execution_id: JobExecutionId,
+        _context: &'a ExecutionContext,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
+    }
     /// Serializes source validation against durable mutation.
     fn lock_fork_source(
         &mut self,
@@ -1919,6 +1931,8 @@ pub enum RepositoryError {
     ForkSourceNotTerminal,
     /// Source durable state is invalid or exceeds the fork bound.
     ForkStateCorrupt,
+    /// An explicit fork context transform fails schema or revision validation.
+    ForkTransformRejected,
     /// A manifest was registered or launched under a different job name.
     DefinitionJobMismatch {
         /// Job name selected by the instance or registration call.
@@ -2174,6 +2188,9 @@ impl fmt::Display for RepositoryError {
             Self::ForkSourceNotTerminal => formatter.write_str("fork source is not terminal"),
             Self::ForkStateCorrupt => {
                 formatter.write_str("fork source state is corrupt or unbounded")
+            }
+            Self::ForkTransformRejected => {
+                formatter.write_str("fork context transform rejected")
             }
             Self::DefinitionJobMismatch { expected, actual } => write!(
                 formatter,

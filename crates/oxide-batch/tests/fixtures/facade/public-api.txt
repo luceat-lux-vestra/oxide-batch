@@ -192,6 +192,7 @@ oxide_batch::FlowStepState
 oxide_batch::FlowTarget
 oxide_batch::FlowTransition
 oxide_batch::FlowTransitionKind
+oxide_batch::ForkContextTransform
 oxide_batch::ForkLineage
 oxide_batch::ForkRequest
 oxide_batch::FrameworkParameterSource
