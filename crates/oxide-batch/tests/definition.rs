@@ -474,7 +474,6 @@ fn transformed_upgrade_execution_requires_exact_live_revision_set() -> Result<()
     Ok(())
 }
 
-
 fn two_node_upgrade_identity(
     job: &JobName,
     revision: &str,
