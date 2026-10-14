@@ -1,7 +1,7 @@
 # M7 Gate-D — Explicit fork lineage contract (#552)
 
-**Status:** implementation contract / evidence checklist; this document is not a claim that Gate-D has passed.  
-**Authoritative base:** `main@a6f98a3b8ae3d5a57c97170ce4fb770afa9b38af` (`#550` and `#551` are merged).  
+**Status:** implementation contract / evidence checklist; this document is not a claim that Gate-D has passed.
+**Authoritative base:** `main@a6f98a3b8ae3d5a57c97170ce4fb770afa9b38af` (`#550` and `#551` are merged).
 **Parent:** #198; **scope:** #552 only.
 
 ## Distinct operations
