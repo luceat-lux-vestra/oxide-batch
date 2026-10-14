@@ -2224,12 +2224,14 @@ fn context_from_upgrade_seed(seed: &Value) -> Result<Option<ExecutionContext>, R
 async fn validate_upgrade_seed_scope_sources(
     transaction: &mut PgConnection,
     job_execution_id: i64,
+    materializing_node: &NodeId,
     seed: &Value,
 ) -> Result<(), RepositoryError> {
     let valid: bool = sqlx::query_scalar(
         "SELECT NOT EXISTS ( \
            SELECT 1 FROM jsonb_array_elements($2::jsonb -> 'scope') entry \
            WHERE entry #>> '{source_step_mode}' = 'mapped_current' \
+             AND entry #>> '{source_node_id}' <> $3 \
              AND NOT EXISTS ( \
                SELECT 1 FROM oxide_batch.ob_step_execution source \
                WHERE source.job_execution_id = $1 \
@@ -2237,6 +2239,7 @@ async fn validate_upgrade_seed_scope_sources(
     )
     .bind(job_execution_id)
     .bind(Json(seed.clone()))
+    .bind(materializing_node.as_str())
     .fetch_one(transaction)
     .await
     .map_err(|_| RepositoryError::Unavailable)?;
@@ -3219,8 +3222,13 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             let (id, strict_source) = if upgraded {
                 let seed = upgrade_seed_node(&mut **self.transaction()?, job_id, &node_id).await?;
                 if let Some(seed) = seed.as_ref() {
-                    validate_upgrade_seed_scope_sources(&mut **self.transaction()?, job_id, seed)
-                        .await?;
+                    validate_upgrade_seed_scope_sources(
+                        &mut **self.transaction()?,
+                        job_id,
+                        &node_id,
+                        seed,
+                    )
+                    .await?;
                 }
                 let id = match seed.as_ref() {
                     Some(seed) => {
