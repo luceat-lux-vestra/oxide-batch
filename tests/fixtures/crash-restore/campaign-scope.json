@@ -177,6 +177,14 @@
       "protocol": "compatible definition upgrade",
       "milestone": "M7",
       "fixture": "postgres"
+    },
+    {
+      "package": "oxide-batch",
+      "target": "postgres_repository",
+      "name": "compatible_restart_transforms_cross_family_state_on_postgres",
+      "protocol": "compatible definition upgrade",
+      "milestone": "M7",
+      "fixture": "postgres"
     }
   ]
 }
