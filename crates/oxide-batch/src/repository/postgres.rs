@@ -2679,6 +2679,45 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
+    fn stage_fork_job_context<'a>(
+        &'a mut self,
+        target_execution_id: JobExecutionId,
+        context: &'a ExecutionContext,
+    ) -> BoxFuture<'a, Result<(), RepositoryError>> {
+        Box::pin(async move {
+            let payload: Value = serde_json::from_slice(
+                &context.payload_json().map_err(|_| RepositoryError::ForkTransformRejected)?,
+            )
+            .map_err(|_| RepositoryError::ForkTransformRejected)?;
+            let schema_version = i32::try_from(context.schema_version().get())
+                .map_err(|_| RepositoryError::ForkTransformRejected)?;
+            let affected = sqlx::query(
+                "UPDATE oxide_batch.ob_job_execution \
+                 SET context_format = $2, context_schema = $3, \
+                     context_schema_version = $4, context_payload = $5 \
+                 WHERE id = $1 AND attempt = 1 AND status = 'STARTING' \
+                   AND version = 0 AND restart_of_execution_id IS NULL \
+                   AND upgrade_from_definition_id IS NULL \
+                   AND context_schema = $6 AND context_payload = '{}'::jsonb",
+            )
+            .bind(database_id(target_execution_id.get(), IdentifierKind::JobExecution)?)
+            .bind(i16::try_from(context.format_version())
+                .map_err(|_| RepositoryError::ForkTransformRejected)?)
+            .bind(context.schema_id().as_str())
+            .bind(schema_version)
+            .bind(Json(payload))
+            .bind(DEFAULT_CONTEXT_SCHEMA)
+            .execute(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .rows_affected();
+            if affected != 1 {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            Ok(())
+        })
+    }
+
     fn lock_fork_source(
         &mut self,
         source_execution_id: JobExecutionId,
