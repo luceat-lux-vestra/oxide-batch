@@ -628,7 +628,7 @@ def self_test(
     assert result is not None and result["docs_only"] is False
 
     workflow_change = [
-        Change("modified", ".github/workflows/fast-branch.yml")
+        Change("modified", ".github/workflows/pr-ci.yml")
     ]
     result = classify(workflow_change, 1, policy, campaigns)
     assert result is not None and result["docs_only"] is False
