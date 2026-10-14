@@ -129,7 +129,7 @@ jobs:
     uses: ./.github/workflows/m5-conformance.yml
     permissions:
       contents: read
-      pull-requests: read
+      pull-requests: read # M5 trusted routing re-reads exact PR identity and changed-file metadata.
 
   direct-merge-gate:
     name: Direct Merge Gate
