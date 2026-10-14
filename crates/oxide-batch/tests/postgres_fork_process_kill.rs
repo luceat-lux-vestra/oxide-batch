@@ -241,7 +241,9 @@ fn fork_process_kill_preserves_transactional_source_and_target() -> Result<(), B
         return Ok(());
     };
     let Some(admin) = std::env::var("OXIDEBATCH_POSTGRES_ADMIN_TEST_URL")
-        .ok().filter(|value| !value.is_empty()) else {
+        .ok()
+        .filter(|value| !value.is_empty())
+    else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_ADMIN_TEST_URL not configured");
         return Ok(());
     };
@@ -336,7 +338,10 @@ async fn verify_atomic_fork(
         // A client SIGKILL while PostgreSQL is inside COMMIT is ambiguous:
         // durable all-or-nothing success is legitimate even without an ACK.
         assert_eq!(phase, Phase::Commit);
-        assert_ne!(lineage.target_instance_id(), fixture.source.job_instance_id());
+        assert_ne!(
+            lineage.target_instance_id(),
+            fixture.source.job_instance_id()
+        );
         assert_eq!(lineage.context_transform(), request.context_transform());
         let instance = read
             .find_job_instance(&request.target_key())
@@ -349,7 +354,9 @@ async fn verify_atomic_fork(
             .ok_or("committed fork has no target execution")?;
         assert_eq!(target.metadata().status(), BatchStatus::Starting);
         assert_eq!(
-            read.job_executions(lineage.target_instance_id()).await?.len(),
+            read.job_executions(lineage.target_instance_id())
+                .await?
+                .len(),
             1
         );
         assert!(read.step_executions(target.id()).await?.is_empty());
@@ -375,14 +382,21 @@ async fn verify_atomic_fork(
         );
         let mut count = repository.begin().await?;
         assert_eq!(
-            count.job_executions(lineage.target_instance_id()).await?.len(),
+            count
+                .job_executions(lineage.target_instance_id())
+                .await?
+                .len(),
             1
         );
         count.rollback().await?;
     } else {
         // Before COMMIT, or after a rolled-back in-flight COMMIT, none of
         // instance, execution, context or lineage can become visible.
-        assert!(read.find_job_instance(&request.target_key()).await?.is_none());
+        assert!(
+            read.find_job_instance(&request.target_key())
+                .await?
+                .is_none()
+        );
         read.rollback().await?;
     }
     repository.close().await?;
