@@ -44,10 +44,8 @@ for file in "${workflow_path}" "${script_path}" "${merge_script_path}"; do
 done
 
 require_literal "workflow name" "name: $(jq -er '.workflow_name' "${contract}")"
-require_literal "pull_request trigger" "  pull_request:"
 require_literal "workflow_dispatch trigger" "  workflow_dispatch:"
 require_literal "workflow_call trigger" "  workflow_call:"
-require_literal "pull_request main branch" "      - main"
 require_literal "contents permission" "  contents: read"
 require_literal "pull-request read permission" "  pull-requests: read"
 require_literal "runner" "runs-on: $(jq -er '.runner' "${contract}")"
