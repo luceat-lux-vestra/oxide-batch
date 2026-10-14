@@ -793,7 +793,7 @@ pub trait RepositoryUnitOfWork: Send {
             })
         })
     }
-    /// Appends immutable lineage within the target creation UoW.
+    /// Appends immutable lineage within the target creation `UoW`.
     fn append_fork_lineage<'a>(
         &'a mut self,
         _lineage: &'a ForkLineage,
@@ -1907,7 +1907,10 @@ pub enum RepositoryError {
     /// Durable definition-registry state is contradictory or cannot be decoded.
     DefinitionRegistryStateCorrupt,
     /// Normal identifying parameters already select a target instance.
-    ForkInstanceCollision { id: JobInstanceId },
+    ForkInstanceCollision {
+        /// Conflicting existing instance identity.
+        id: JobInstanceId,
+    },
     /// One operation ID was replayed with a divergent command.
     ForkOperationConflict,
     /// Source attempt or optimistic version is stale.
