@@ -906,6 +906,12 @@ fn compatible_repeat_state(version: u32, value: u64) -> Result<ExecutionContext,
     Ok(ExecutionContext::from_json(&bytes, StateLimits::default())?)
 }
 
+fn compatible_upgrade_failure(
+    _payload: &[u8],
+) -> Result<Vec<u8>, DefinitionStateTransformError> {
+    Err(DefinitionStateTransformError::TransformFailed)
+}
+
 fn compatible_cross_family_payload(
     payload: &[u8],
 ) -> Result<Vec<u8>, DefinitionStateTransformError> {
@@ -1174,6 +1180,13 @@ fn compatible_restart_transforms_cross_family_state_on_postgres() -> Result<(), 
                 ),
             ],
         )?;
+        let rejected_selected = DefinitionUpgradeExecution::new(
+            edge.clone(),
+            [DefinitionStateTransformer::new(
+                transform_revision.clone(),
+                compatible_upgrade_failure,
+            )],
+        )?;
         let selected = DefinitionUpgradeExecution::new(
             edge.clone(),
             [DefinitionStateTransformer::new(
@@ -1186,6 +1199,40 @@ fn compatible_restart_transforms_cross_family_state_on_postgres() -> Result<(), 
             .register_definition_upgrade(&job_name, &edge)
             .await?;
         register.commit().await?;
+
+        let mut rejected = repository.begin().await?;
+        assert_eq!(
+            rejected
+                .create_job_execution_with_upgrade(instance.id(), &rejected_selected)
+                .await,
+            Err(RepositoryError::DefinitionUpgradeFailed),
+        );
+        rejected.rollback().await?;
+
+        let mut unchanged = repository.begin().await?;
+        assert_eq!(
+            unchanged.job_executions(instance.id()).await?.len(),
+            1,
+            "a failed transform must not create a partial target attempt",
+        );
+        let repeat_before_success = unchanged
+            .latest_repeat_execution(instance.id(), &source_node, &RepeatId::new("window")?)
+            .await?
+            .ok_or("source repeat state disappeared after rejected upgrade")?;
+        assert_eq!(repeat_before_success.step_execution_id(), source_step.id());
+        assert_eq!(repeat_before_success.state().schema_version().get(), 1);
+        unchanged.rollback().await?;
+        let source_after_rejection = manager.load_committed_state(source_scope).await?;
+        assert_eq!(source_after_rejection.checkpoint().schema_version().get(), 1);
+        assert_eq!(
+            manager
+                .inherited_component_state(source_scope)
+                .await?
+                .first()
+                .ok_or("source component state disappeared after rejected upgrade")?
+                .decode(&compatible_component_codec(1)?)?,
+            41,
+        );
 
         let mut restart = repository.begin().await?;
         let target_job = restart
