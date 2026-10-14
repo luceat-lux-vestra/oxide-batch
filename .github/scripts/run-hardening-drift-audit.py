@@ -163,6 +163,15 @@ def ruleset_value(control_id, ruleset):
         return pr.get("require_extra_approval_for_unattributed_changes")
     if control_id.endswith(".strict_required_status_checks"):
         return status.get("strict_required_status_checks_policy")
+    if control_id.endswith(".required_status_contexts"):
+        checks = status.get("required_status_checks", [])
+        if not isinstance(checks, list):
+            raise KeyError(control_id)
+        return sorted(
+            check.get("context")
+            for check in checks
+            if isinstance(check, dict) and isinstance(check.get("context"), str)
+        )
     if control_id.endswith(".bypass_actors"):
         return ruleset.get("bypass_actors", [])
     if control_id.endswith(".update_protection"):
@@ -235,36 +244,11 @@ def run_live_policy_checks(client, policy):
     return findings, infrastructure
 
 
-def run_merge_gate_check(client, policy, run=command):
-    try:
-        ruleset = client.get(f"/rulesets/{policy['main_ruleset_id']}")
-    except ApiFailure as exc:
-        return [], [finding("merge-gate", str(exc))]
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
-        json.dump(ruleset, handle)
-        path = handle.name
-    try:
-        completed = run([
-            "ruby",
-            ".github/scripts/verify-merge-gates.rb",
-            ".github/merge-gate-policy.json",
-            path,
-        ])
-    finally:
-        Path(path).unlink(missing_ok=True)
-    if completed.returncode == 0:
-        return [], []
-    return [finding("merge-gate", completed.stdout.strip() or "merge gate verifier failed")], []
-
-
 def run_audit(client, run=command):
     policy = json.loads(POLICY_PATH.read_text(encoding="utf-8"))
     policy_findings, infrastructure = run_static_checks(run)
-    merge_findings, merge_infra = run_merge_gate_check(client, policy, run)
     live_findings, live_infra = run_live_policy_checks(client, policy)
-    policy_findings.extend(merge_findings)
     policy_findings.extend(live_findings)
-    infrastructure.extend(merge_infra)
     infrastructure.extend(live_infra)
     manual = manual_inventory(policy)
     return result(classify(policy_findings, infrastructure), policy_findings, infrastructure, manual)
