@@ -16,8 +16,8 @@ use std::time::{Duration, UNIX_EPOCH};
 
 use futures_executor::block_on;
 use oxide_batch::{
-    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade,
-    DefinitionRevision, DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
+    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade, DefinitionRevision,
+    DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
     DefinitionStateTransformId, DefinitionStateTransformer, DefinitionUpgrade,
     DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, DomainError,
     ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus, FailureCategory, FailureId,
@@ -288,7 +288,6 @@ where
     Ok(())
 }
 
-
 fn contract_tasklet_definition(
     job_name: &JobName,
     revision: &str,
@@ -363,8 +362,9 @@ where
             UNIX_EPOCH + Duration::from_secs(20),
             FailureSummary::new(
                 FailureCategory::UserComponent,
-                FailureId::new(20)
-                    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+                FailureId::new(20).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
             ),
         ),
     ))
@@ -381,15 +381,8 @@ where
         "target",
     )
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let stale = metadata_only_upgrade(
-        "stale-edge",
-        "edge-v2",
-        source,
-        target,
-        "source",
-        "target",
-    )
-    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let stale = metadata_only_upgrade("stale-edge", "edge-v2", source, target, "source", "target")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     let mut registration = block_on(repository.begin())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
@@ -484,8 +477,9 @@ where
             UNIX_EPOCH + Duration::from_secs(21),
             FailureSummary::new(
                 FailureCategory::UserComponent,
-                FailureId::new(21)
-                    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+                FailureId::new(21).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
             ),
         ),
     ))
@@ -493,24 +487,10 @@ where
     block_on(fail.commit())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let v1_v2 = metadata_only_upgrade(
-        "v1-v2",
-        "edge-12",
-        v1,
-        v2.clone(),
-        "step-v1",
-        "step-v2",
-    )
-    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let v2_v3 = metadata_only_upgrade(
-        "v2-v3",
-        "edge-23",
-        v2,
-        v3.clone(),
-        "step-v2",
-        "step-v3",
-    )
-    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let v1_v2 = metadata_only_upgrade("v1-v2", "edge-12", v1, v2.clone(), "step-v1", "step-v2")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
+    let v2_v3 = metadata_only_upgrade("v2-v3", "edge-23", v2, v3.clone(), "step-v2", "step-v3")
+        .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let mut register = block_on(repository.begin())
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     block_on(register.register_definition_upgrade(&job_name, &v1_v2))
@@ -614,8 +594,9 @@ where
             UNIX_EPOCH + Duration::from_secs(23),
             FailureSummary::new(
                 FailureCategory::UserComponent,
-                FailureId::new(23)
-                    .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+                FailureId::new(23).map_err(|error| {
+                    RepositoryContractFailure::new(backend, CASE, error.to_string())
+                })?,
             ),
         ),
     ))
@@ -640,16 +621,21 @@ where
             source_node,
             target_node,
             DefinitionStateKind::ExecutionContext,
-            DefinitionStateTransformId::new("context")
-                .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
-            StateSchemaId::new("contract.context")
-                .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
-            StateSchemaVersion::new(1)
-                .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
-            StateSchemaId::new("contract.context")
-                .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
-            StateSchemaVersion::new(2)
-                .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
+            DefinitionStateTransformId::new("context").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaId::new("contract.context").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaVersion::new(1).map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaId::new("contract.context").map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
+            StateSchemaVersion::new(2).map_err(|error| {
+                RepositoryContractFailure::new(backend, CASE, error.to_string())
+            })?,
             transform_revision.clone(),
         )],
     )
