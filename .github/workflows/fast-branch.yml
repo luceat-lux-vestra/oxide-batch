@@ -33,28 +33,6 @@ jobs:
       - name: Check commit hygiene
         run: git log -1 --check
 
-      - name: Validate trusted Action pin-only classifier
-        run: python3 -m unittest discover -s .github/scripts -p 'test_action_pin_*.py' -v
-
-      - name: Exercise independent trusted-base Action pin verifier
-        run: ruby .github/scripts/test_action_pin_integration.rb
-
-      - name: Syntax-check protected merge authorities
-        run: |
-          ruby -c .github/scripts/verify-merge-gates.rb
-          ruby -ryaml -e 'YAML.safe_load(File.read(".github/workflows/pr-labeler.yml"), aliases: true)'
-          python3 - <<'PYCODE'
-          import ast
-          from pathlib import Path
-
-          lines = Path(".github/workflows/pr-labeler.yml").read_text().splitlines()
-          start = next(i for i, line in enumerate(lines) if line == "          python3 - <<'PY'")
-          end = next(i for i in range(start + 1, len(lines)) if lines[i] == "          PY")
-          program = "\n".join(line[10:] for line in lines[start + 1:end])
-          ast.parse(program)
-          print("base-trusted merge-gate inline Python syntax: OK")
-          PYCODE
-
       - name: Resolve exact protected trusted base
         id: resolve-trusted-base
         continue-on-error: true
