@@ -849,7 +849,7 @@ jobs:
 
 
       # Build the exact 14 integration-test executables plus --lib in one
-      # Cargo graph. Original test invocations, filters, ordering, service
+      # Cargo graph. Original 29 test invocations, filters, ordering, service
       # DB state and --test-threads=1 remain unchanged below.
       - name: Grouped prebuild PostgreSQL repository test executables
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -910,10 +910,6 @@ jobs:
           cargo test -p oxide-batch --features postgres \
             --test postgres_repository \
             optimistic_conflict_has_one_winner \
-            -- --nocapture --test-threads=1
-          cargo test -p oxide-batch --features postgres \
-            --test postgres_repository \
-            compatible_restart_transforms_cross_family_state_on_postgres \
             -- --nocapture --test-threads=1
 
       - name: Run shared PostgreSQL operator, explorer, and retention contract

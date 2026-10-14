@@ -43,9 +43,9 @@ ALLOWED_SITES: dict[str, dict[int, str]] = {
         775: "actions/checkout",
         802: "actions/checkout",
         844: "actions/checkout",
-        1077: "actions/checkout",
-        1131: "actions/cache/restore",
-        1265: "actions/checkout",
+        1067: "actions/checkout",
+        1121: "actions/cache/restore",
+        1255: "actions/checkout",
     },
     ".github/workflows/dependency-review.yml": {
         48: "actions/dependency-review-action",
