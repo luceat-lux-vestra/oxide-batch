@@ -39,8 +39,8 @@ use oxide_batch::{
     RestartabilityDeclaration, RetryKey, RetryLimit, RetryOrdinal, RetryReservation,
     RetryStateLimit, ScopeKind, ScopedComponentId, SequentialIdGenerator, SkipCounts, SkipLimit,
     StartLimit, StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepComponents,
-    StepExecutionId, StepName, StepNode, StopSource, TerminalKind,
-    TerminalStatusSet, TlsMode, VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
+    StepExecutionId, StepName, StepNode, StopSource, TerminalKind, TerminalStatusSet, TlsMode,
+    VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 use oxide_batch_repository::{ScopeResolutionProvenance, ScopeResolutionSource};
 use sqlx::postgres::PgPoolOptions;
