@@ -1172,4 +1172,4 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql
+        run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql .github/aggregate-policy.json
