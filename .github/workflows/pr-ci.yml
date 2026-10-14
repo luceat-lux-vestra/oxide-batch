@@ -115,104 +115,116 @@ jobs:
             echo "evidence_impact=$evidence_impact"
           } >> "$GITHUB_OUTPUT"
 
-  dispatch-authorities:
-    name: dispatch-required-authorities
+  rust:
     needs: scope
-    if: ${{ always() && github.event.pull_request.draft == false }}
-    runs-on: ubuntu-slim
-    timeout-minutes: 5
+    if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+    uses: ./.github/workflows/ci.yml
     permissions:
-      actions: write # Dispatch only the protected-base authority workflows selected by trusted scope.
-      contents: read # Read the exact protected-base policy/runtime used for dispatch planning.
-    steps:
-      - name: Check out exact trusted base for dispatch planning
-        id: dispatch-trusted-base
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .dispatch-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
+      actions: read
+      contents: read
 
-      - name: Dispatch required authorities
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-          CALLER_RUN_ID: ${{ github.run_id }}
-          CALLER_RUN_ATTEMPT: ${{ github.run_attempt }}
-          SCOPE_RESULT: ${{ needs.scope.result }}
-          CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.classification_outcome }}
-          LEGACY_BASE: ${{ needs.scope.outputs.legacy_base }}
-          DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
-          EVIDENCE_IMPACT: ${{ needs.scope.outputs.evidence_impact }}
-          SUPPLY_IMPACT: ${{ needs.scope.outputs.supply_chain_impact }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          set -f
-          plan="$(
-            python3 .dispatch-trusted-base/.github/scripts/pr-authority-runtime.py plan               --policy .dispatch-trusted-base/.github/merge-gate-policy.json               --scope-result "$SCOPE_RESULT"               --classification-outcome "$CLASSIFICATION_OUTCOME"               --legacy-base "$LEGACY_BASE"               --docs-only "$DOCS_ONLY"               --evidence-impact "$EVIDENCE_IMPACT"               --supply-chain-impact "$SUPPLY_IMPACT"
-          )"
-          jq -e '
-            .schema == "trusted-scope-authorities-v1" and
-            (.required | type) == "array" and
-            all(.required[]; (.workflow | type) == "string")
-          ' <<<"$plan" >/dev/null
+  dependency:
+    needs: scope
+    if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
+    uses: ./.github/workflows/dependency-review.yml
+    permissions:
+      contents: read
 
-          while IFS= read -r workflow_path; do
-            workflow="${workflow_path##*/}"
-            test -n "$workflow"
-            # Globbing is disabled above with set -f; keep canonical nested gh-api field tokens literal.
-            # shellcheck disable=SC2102
-            gh api --method POST               "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow}/dispatches"               -f ref="$DEFAULT_BRANCH"               -f inputs[base_sha]="$BASE_SHA"               -f inputs[head_sha]="$HEAD_SHA"               -f inputs[head_repo]="$HEAD_REPO"               -f inputs[pr_number]="$PR_NUMBER"               -f inputs[caller_run_id]="$CALLER_RUN_ID"               -f inputs[caller_run_attempt]="$CALLER_RUN_ATTEMPT"
-          done < <(jq -r '.required[].workflow' <<<"$plan")
+  evidence:
+    needs: scope
+    if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
+    uses: ./.github/workflows/evidence.yml
+    permissions:
+      contents: read
+
+  supply:
+    needs: scope
+    if: ${{ needs.scope.outputs.legacy_base != 'true' && (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
+    uses: ./.github/workflows/supply-chain.yml
+    permissions:
+      contents: read
 
   pr-proof:
     name: pr-proof
-    needs: [scope, dispatch-authorities]
+    needs: [scope, rust, dependency, evidence, supply]
     if: ${{ always() }}
     runs-on: ubuntu-slim
-    timeout-minutes: 15
+    timeout-minutes: 5
     permissions:
-      actions: read # Poll and verify the exact correlated authority workflow runs.
-      contents: read # Read the exact protected-base policy/runtime used for proof verification.
+      contents: read
     steps:
-      - name: Draft placeholder
-        if: ${{ github.event.pull_request.draft }}
-        run: echo "authoritative PR proof is deferred until ready_for_review"
-
-      - name: Check out exact trusted base for proof verification
-        id: proof-trusted-base
-        if: ${{ github.event.pull_request.draft == false }}
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          path: .proof-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Verify dispatched authorities
-        if: ${{ github.event.pull_request.draft == false }}
+      - name: Aggregate direct PR authorities
         env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          CALLER_RUN_ID: ${{ github.run_id }}
-          CALLER_RUN_ATTEMPT: ${{ github.run_attempt }}
+          PR_DRAFT: ${{ github.event.pull_request.draft }}
           SCOPE_RESULT: ${{ needs.scope.result }}
           CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.classification_outcome }}
           LEGACY_BASE: ${{ needs.scope.outputs.legacy_base }}
           DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
           EVIDENCE_IMPACT: ${{ needs.scope.outputs.evidence_impact }}
           SUPPLY_IMPACT: ${{ needs.scope.outputs.supply_chain_impact }}
-          DISPATCH_RESULT: ${{ needs.dispatch-authorities.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency.result }}
+          CODEQL_RESULT: not-applicable
+          EVIDENCE_RESULT: ${{ needs.evidence.result }}
+          SUPPLY_RESULT: ${{ needs.supply.result }}
         shell: bash
         run: |
           set -euo pipefail
-          python3 .proof-trusted-base/.github/scripts/pr-authority-runtime.py verify             --policy .proof-trusted-base/.github/merge-gate-policy.json             --scope-result "$SCOPE_RESULT"             --classification-outcome "$CLASSIFICATION_OUTCOME"             --legacy-base "$LEGACY_BASE"             --docs-only "$DOCS_ONLY"             --evidence-impact "$EVIDENCE_IMPACT"             --supply-chain-impact "$SUPPLY_IMPACT"             --dispatch-result "$DISPATCH_RESULT"             --base-sha "$BASE_SHA"             --head-sha "$HEAD_SHA"             --head-repo "$HEAD_REPO"             --pr-number "$PR_NUMBER"             --caller-run-id "$CALLER_RUN_ID"             --caller-run-attempt "$CALLER_RUN_ATTEMPT"             --timeout-seconds 780             --poll-interval-seconds 5
+
+          if [ "$PR_DRAFT" = "true" ]; then
+            echo "authoritative PR gate is deferred until ready_for_review"
+            exit 0
+          fi
+
+          if [ "$LEGACY_BASE" = "true" ]; then
+            echo "trusted legacy base retains the historical compatibility shortcut"
+            exit 0
+          fi
+
+          require_success() {
+            local name="$1"
+            local result="$2"
+            if [ "$result" != "success" ]; then
+              echo "::error::$name authority must succeed; result=$result" >&2
+              return 1
+            fi
+          }
+
+          require_skipped() {
+            local name="$1"
+            local result="$2"
+            if [ "$result" != "skipped" ]; then
+              echo "::error::$name authority must be skipped by trusted routing; result=$result" >&2
+              return 1
+            fi
+          }
+
+          echo "scope=$SCOPE_RESULT classification=$CLASSIFICATION_OUTCOME docs_only=$DOCS_ONLY codeql=$CODEQL_RESULT"
+
+          if [ "$CLASSIFICATION_OUTCOME" != "success" ]; then
+            require_success rust "$RUST_RESULT"
+            require_success dependency "$DEPENDENCY_RESULT"
+            require_success evidence "$EVIDENCE_RESULT"
+            require_success supply "$SUPPLY_RESULT"
+            exit 0
+          fi
+
+          if [ "$DOCS_ONLY" = "true" ]; then
+            require_skipped rust "$RUST_RESULT"
+            require_skipped dependency "$DEPENDENCY_RESULT"
+          else
+            require_success rust "$RUST_RESULT"
+            require_success dependency "$DEPENDENCY_RESULT"
+          fi
+
+          if [ "$EVIDENCE_IMPACT" = "false" ]; then
+            require_skipped evidence "$EVIDENCE_RESULT"
+          else
+            require_success evidence "$EVIDENCE_RESULT"
+          fi
+
+          if [ "$SUPPLY_IMPACT" = "false" ]; then
+            require_skipped supply "$SUPPLY_RESULT"
+          else
+            require_success supply "$SUPPLY_RESULT"
+          fi
