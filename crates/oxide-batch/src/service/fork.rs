@@ -3,8 +3,9 @@
 //! Transformed fork is deliberately not inferred from compatible restart.
 
 use crate::{
-    ForkLineage, ForkRequest, JobInstanceSelection, JobRepository, RepositoryCapability,
-    RepositoryError,
+    DefinitionStateKind, DefinitionStateTransformer, ExecutionContext, ForkLineage,
+    ForkRequest, JobInstanceSelection, JobRepository, RepositoryCapability, RepositoryError,
+    StateLimits,
 };
 use sha2::{Digest, Sha256};
 
@@ -44,6 +45,30 @@ impl<R: JobRepository> JobFork<R> {
     /// Rejects stale/nonterminal sources, missing registrations, target key
     /// collisions, divergent replays, and incomplete transaction commits.
     pub async fn fork(&self, request: &ForkRequest) -> Result<ForkLineage, RepositoryError> {
+        self.fork_inner(request, None).await
+    }
+
+    /// Forks a terminal source with one explicit, deterministic context transform.
+    ///
+    /// # Errors
+    /// Rejects a missing descriptor, mismatched transformer revision, corrupt
+    /// source state or unsupported family before new target state is committed.
+    pub async fn fork_transformed(
+        &self,
+        request: &ForkRequest,
+        transformer: &DefinitionStateTransformer,
+    ) -> Result<ForkLineage, RepositoryError> {
+        self.fork_inner(request, Some(transformer)).await
+    }
+
+    async fn fork_inner(
+        &self,
+        request: &ForkRequest,
+        transformer: Option<&DefinitionStateTransformer>,
+    ) -> Result<ForkLineage, RepositoryError> {
+        if request.context_transform().is_some() != transformer.is_some() {
+            return Err(RepositoryError::ForkTransformRejected);
+        }
         self.repository
             .descriptor()
             .require(RepositoryCapability::DefinitionRegistry)?;
@@ -155,6 +180,47 @@ impl<R: JobRepository> JobFork<R> {
         }
         let source_state_digest: [u8; 32] = hash.finalize().into();
 
+        let transformed_context: Option<ExecutionContext> = if let Some(selected) =
+            request.context_transform()
+        {
+            let descriptor = selected.descriptor();
+            let live = transformer.ok_or(RepositoryError::ForkTransformRejected)?;
+            if descriptor.kind() != DefinitionStateKind::ExecutionContext
+                || descriptor.revision() != live.revision()
+            {
+                return Err(RepositoryError::ForkTransformRejected);
+            }
+            let source_step = unit.scope_step_state(selected.source_step_execution_id())
+                .await?
+                .ok_or(RepositoryError::ForkTransformRejected)?;
+            if source_step.execution().job_execution_id() != source.id()
+                || source_step.execution().version() != selected.source_step_version()
+                || source_step.node_id() != descriptor.source_node()
+            {
+                return Err(RepositoryError::ForkTransformRejected);
+            }
+            let context = source_step.context().ok_or(RepositoryError::ForkTransformRejected)?;
+            if context.schema_id() != descriptor.source_schema()
+                || context.schema_version() != descriptor.source_version()
+            {
+                return Err(RepositoryError::ForkTransformRejected);
+            }
+            let source_bytes = context.payload_json()
+                .map_err(|_| RepositoryError::ForkTransformRejected)?;
+            let output = live.apply(&source_bytes)
+                .map_err(|_| RepositoryError::ForkTransformRejected)?;
+            Some(
+                ExecutionContext::from_transformed_payload(
+                    descriptor.target_schema().clone(),
+                    descriptor.target_version(),
+                    &output,
+                    StateLimits::default(),
+                ).map_err(|_| RepositoryError::ForkTransformRejected)?,
+            )
+        } else {
+            None
+        };
+
         let key = request.target_key();
         let instance = match unit.select_or_create_job_instance(&key).await? {
             JobInstanceSelection::Created(created) => created,
@@ -177,6 +243,9 @@ impl<R: JobRepository> JobFork<R> {
                 request.parameters(),
             )
             .await?;
+        if let Some(context) = transformed_context.as_ref() {
+            unit.stage_fork_job_context(execution.id(), context).await?;
+        }
         let lineage = ForkLineage::new(
             request,
             &source_definition,
