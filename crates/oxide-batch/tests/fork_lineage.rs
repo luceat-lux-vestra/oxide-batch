@@ -194,3 +194,72 @@ fn stale_and_nonterminal_sources_leave_no_target_or_lineage() -> Result<(), Box<
         Ok::<_, Box<dyn Error>>(())
     })
 }
+
+#[test]
+fn ambiguous_fork_commit_uses_exact_operation_readback() -> Result<(), Box<dyn Error>> {
+    let (repository, request, source) = setup()?;
+    repository.inject_next_fork_commit_unknown();
+    block_on(async {
+        let service = JobFork::new(repository.clone());
+        let lineage = service.fork(&request).await?;
+        assert_eq!(lineage.source_execution_id(), source.id());
+        assert_eq!(service.lineage(request.operation_id()).await?, Some(lineage.clone()));
+        assert_eq!(service.fork(&request).await?, lineage);
+        let mut check = repository.begin().await?;
+        assert_eq!(check.job_executions(lineage.target_instance_id()).await?.len(), 1);
+        check.rollback().await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn abort_after_lineage_append_rolls_back_the_entire_target() -> Result<(), Box<dyn Error>> {
+    let (repository, request, source) = setup()?;
+    block_on(async {
+        let mut transaction = repository.begin().await?;
+        let instance = transaction
+            .select_or_create_job_instance(&request.target_key()).await?
+            .instance().clone();
+        let execution = transaction
+            .create_job_execution_with_definition_and_parameters(
+                instance.id(), request.target().definition(), request.parameters()
+            ).await?;
+        let source_definition = transaction.scope_execution_definition(source.id()).await?;
+        transaction.append_fork_lineage(&oxide_batch::ForkLineage::new(
+            &request, &source_definition, [7_u8; 32], instance.id(), execution.id()
+        )).await?;
+        transaction.rollback().await?;
+
+        let mut observe = repository.begin().await?;
+        assert!(observe.find_job_instance(&request.target_key()).await?.is_none());
+        assert_eq!(observe.get_job_execution(source.id()).await?, Some(source));
+        observe.rollback().await?;
+        assert!(JobFork::new(repository).lineage(request.operation_id()).await?.is_none());
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn unknown_target_registration_is_rejected_before_target_creation() -> Result<(), Box<dyn Error>> {
+    let (repository, request, source) = setup()?;
+    block_on(async {
+        let unregistered = registration("fork-unregistered")?;
+        let invalid = ForkRequest::new(
+            OperationId::new("fork-unregistered-target")?,
+            source.id(), source.version(), unregistered.clone(), JobParameters::new(),
+        );
+        assert_eq!(
+            JobFork::new(repository.clone()).fork(&invalid).await,
+            Err(RepositoryError::DefinitionNotRegistered {
+                job_name: unregistered.job_name().clone(),
+                revision: unregistered.revision().clone()
+            })
+        );
+        let mut unit = repository.begin().await?;
+        assert!(unit.find_job_instance(&invalid.target_key()).await?.is_none());
+        unit.rollback().await?;
+        assert!(JobFork::new(repository.clone()).lineage(invalid.operation_id()).await?.is_none());
+        assert!(JobFork::new(repository).lineage(request.operation_id()).await?.is_none());
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
