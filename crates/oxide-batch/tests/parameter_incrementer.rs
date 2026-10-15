@@ -203,3 +203,20 @@ fn detects_overflow_without_mutation_or_payload_diagnostics() -> Result<(), Box<
     );
     Ok(())
 }
+
+#[test]
+fn excessive_prior_parameter_set_is_rejected_before_callback() -> Result<(), Box<dyn Error>> {
+    let mut many = JobParameters::new();
+    for i in 0..129_u16 {
+        many.insert(
+            ParameterName::new(format!("field-{i}"))?,
+            JobParameter::new(ParameterValue::from(u64::from(i)), ParameterRole::NonIdentifying),
+        )?;
+    }
+    let selected = incrementer(next_run, ParameterRole::Identifying)?;
+    assert_eq!(
+        selected.increment(&definition()?, &many),
+        Err(IncrementerError::TooManyFields)
+    );
+    Ok(())
+}
