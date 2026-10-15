@@ -69,6 +69,23 @@ public runtime release.
 - Protected version tags prepare draft Releases. A maintainer publishes the
   reviewed draft; no tag workflow publishes a release automatically.
 
+### Workflow lifecycle
+
+Research, experiment, migration, and other temporary workflows should stay off
+the protected default branch where practical. Run bounded research automation
+from a non-default branch and remove the workflow source after the evidence is
+recorded.
+
+If an exceptional ephemeral workflow must land in `.github/workflows` on the
+default branch, filenames beginning with `research-`, `temporary-`, `tmp-`,
+or `experiment-` must declare non-empty `# lifecycle-owner:` and
+`# lifecycle-retire:` comments in the first 20 lines. The owner identifies the
+issue or campaign responsible for the workflow; the retirement field states the
+concrete condition for deleting or consolidating it.
+
+Historical Actions runs and artifacts are evidence. They are not a reason to
+keep, recreate, or retain obsolete workflow source solely for sidebar cosmetics.
+
 ## Review cadence
 
 Security and data-integrity issues take priority. Issues are not automatically
