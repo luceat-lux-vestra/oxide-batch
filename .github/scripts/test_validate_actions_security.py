@@ -400,7 +400,7 @@ for title, mutated, diagnostic in (
     (
         "weaken protected-main ancestry",
         activated_codeql.replace(".merge_base_commit.sha == $sha", ".merge_base_commit.sha != $sha", 1),
-        ".merge_base_commit.sha == $sha",
+        "candidate ancestry must be checked before and after CodeQL analysis",
     ),
     (
         "drop Rust full analysis",
