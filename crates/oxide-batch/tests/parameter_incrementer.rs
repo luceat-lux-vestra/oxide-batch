@@ -210,7 +210,10 @@ fn excessive_prior_parameter_set_is_rejected_before_callback() -> Result<(), Box
     for i in 0..129_u16 {
         many.insert(
             ParameterName::new(format!("field-{i}"))?,
-            JobParameter::new(ParameterValue::from(u64::from(i)), ParameterRole::NonIdentifying),
+            JobParameter::new(
+                ParameterValue::from(u64::from(i)),
+                ParameterRole::NonIdentifying,
+            ),
         )?;
     }
     let selected = incrementer(next_run, ParameterRole::Identifying)?;
