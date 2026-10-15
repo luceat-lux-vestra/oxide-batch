@@ -584,8 +584,9 @@ pub use scope_live::{
 };
 pub use scope_runtime::ScopeResolutionFailure;
 pub use service::{
-    DefinitionRegistry, JobExplorer, JobFork, JobOperator, OperatorError, OperatorOutcome,
-    RecoveryProposer, RetentionReport, RetentionService,
+    DefinitionRegistry, IncrementedParameters, IncrementerError, IncrementerField, JobExplorer,
+    JobFork, JobOperator, OperatorError, OperatorOutcome, ParameterIncrementer, RecoveryProposer,
+    RetentionReport, RetentionService,
 };
 pub use shutdown::{
     DEFAULT_SHUTDOWN_DEADLINE, DEFAULT_TELEMETRY_FLUSH_DEADLINE, DrainResult,
