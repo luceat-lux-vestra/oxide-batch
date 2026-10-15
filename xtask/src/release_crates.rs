@@ -206,7 +206,7 @@ fn check_release_workflow_text(release_text: &str) -> Result<Vec<String>, String
             "{RELEASE_WORKFLOW} must grant id-token: write only to the OIDC publication job"
         ));
     }
-    let immutable_tag_check = "git rev-parse \"\${RELEASE_TAG}^{commit}\"";
+    let immutable_tag_check = "git rev-parse \"${RELEASE_TAG}^{commit}\"";
     for job_name in ["verify", "codeql-preflight", "publish"] {
         let job = extract_job_block(release_text, job_name, RELEASE_WORKFLOW)?;
         if job.matches(immutable_tag_check).count() != 1 {
