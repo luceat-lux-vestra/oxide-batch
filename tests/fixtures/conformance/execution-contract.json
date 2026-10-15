@@ -1,6 +1,6 @@
 {
   "document": "How CI executes the M5 conformance campaign",
-  "note": "Canonical semantic execution contract for M5 conformance. Workflow/script byte identity is not merge authority; the checked-in contract and CI tests validate behavior directly.",
+  "note": "Canonical semantic execution contract for M5 conformance. Exact Git blob identity is retained only for the three execution surfaces that produce/define M5 conformance evidence; repository-wide CI authority no longer uses blob allowlists.",
   "workflow_path": ".github/workflows/m5-conformance.yml",
   "workflow_name": "M5 Conformance",
   "triggers": {
@@ -105,5 +105,10 @@
       "conformance-deep-18"
     ],
     "merge_timeout_minutes": 15
+  },
+  "git_blobs": {
+    "workflow": "a1aca935dfa4a1c2cc2cf1526edb6e6c35d527a9",
+    "script": "367726d79cf96f9a109261df313b9544e92d77de",
+    "merge_script": "be228e6adcd1ff9981985b5179e553c494457f46"
   }
 }
