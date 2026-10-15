@@ -395,7 +395,7 @@ for title, mutated, diagnostic in (
             '          if [[ "$GITHUB_EVENT_NAME" != schedule ]]; then\n',
             1,
         ),
-        'echo "should_scan=true"',
+        "manual dispatch must always enter the full CodeQL matrix",
     ),
     (
         "weaken protected-main ancestry",
