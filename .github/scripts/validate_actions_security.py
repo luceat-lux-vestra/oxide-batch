@@ -382,6 +382,10 @@ def check_codeql_weekly_manual_contract_text(
                 violations.append(f"{path}: full CodeQL {language} matrix entry missing")
         if analyze.count("build-mode: none") != 2:
             violations.append(f"{path}: Actions/Rust CodeQL must both use build-mode none")
+        if analyze.count(".merge_base_commit.sha == $sha") != 2:
+            violations.append(
+                f"{path}: candidate ancestry must be checked before and after CodeQL analysis"
+            )
         if analyze.count("retention-days: 30") != 2:
             violations.append(f"{path}: SARIF and source identity retention must both be 30 days")
         if any(token in analyze for token in ("pull_request", "head_repo", "run_rust=false")):
