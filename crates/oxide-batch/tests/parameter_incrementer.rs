@@ -52,13 +52,6 @@ fn next_run(
     Ok(result)
 }
 
-fn unchanged(
-    _target: &DefinitionIdentity,
-    previous: &JobParameters,
-) -> Result<JobParameters, IncrementerError> {
-    Ok(previous.clone())
-}
-
 fn role_drift(
     _target: &DefinitionIdentity,
     _previous: &JobParameters,
@@ -136,7 +129,10 @@ fn deterministic_identifying_increment_recomputes_key_without_mutating_prior()
 #[test]
 fn unchanged_identity_does_not_spin_or_invent_an_increment() -> Result<(), Box<dyn Error>> {
     let before = prior(4)?;
-    let selected = incrementer(unchanged, ParameterRole::Identifying)?;
+    let selected = incrementer(
+        |_target, previous| Ok(previous.clone()),
+        ParameterRole::Identifying,
+    )?;
     let proposal: IncrementedParameters = selected.increment(&definition()?, &before)?;
     assert!(!proposal.identifying_changed());
     assert_eq!(proposal.parameters(), &before);
