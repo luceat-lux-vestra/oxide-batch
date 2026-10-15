@@ -149,6 +149,13 @@
       "storage": "github-actions",
       "classification": "informational",
       "promotes_to": "m6"
+    },
+    {
+      "workflow": ".github/workflows/codeql.yml",
+      "campaign": "CodeQL release security",
+      "storage": "github-actions",
+      "classification": "release-security",
+      "expected_upload_invocations": 2
     }
   ]
 }
