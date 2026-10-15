@@ -54,7 +54,7 @@ jobs:
   prepare:
     name: prepare-release-draft
     needs: codeql-preflight
-    if: github.event_name == 'workflow_dispatch' || needs.codeql-preflight.result == 'success'
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.codeql-preflight.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
