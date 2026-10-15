@@ -332,8 +332,6 @@ def check_codeql_weekly_manual_contract_text(
             "runs-on: ubuntu-slim",
             "actions: read",
             "should_scan:",
-            'if [[ "$GITHUB_EVENT_NAME" != schedule ]]',
-            'echo "should_scan=true"',
             "event=schedule&status=success&branch=main",
             '.head_sha == $sha',
             '.head_branch == "main"',
@@ -342,6 +340,15 @@ def check_codeql_weekly_manual_contract_text(
         ):
             if fragment not in guard:
                 violations.append(f"{path}: scheduled no-op guard missing: {fragment}")
+        if not re.search(
+            r'(?m)if \[\[ "\$GITHUB_EVENT_NAME" != schedule \]\]; then\n'
+            r'\s+echo "should_scan=true" >> "\$GITHUB_OUTPUT"\n'
+            r'\s+exit 0',
+            guard,
+        ):
+            violations.append(
+                f"{path}: manual dispatch must always enter the full CodeQL matrix"
+            )
 
     analyze = _job_block(text, "analyze")
     if analyze is None:
