@@ -19,13 +19,46 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
+  codeql-preflight:
+    name: release-codeql-preflight
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Check out immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Check out trusted current-main release security policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: .release-security
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+
+      - name: Require exact-tag-SHA CodeQL evidence before new draft mutations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .release-security/.github/scripts/check_release_codeql.py \
+            --tag "$RELEASE_TAG" --sha "$(git rev-parse HEAD)"
+
   prepare:
     name: prepare-release-draft
+    needs: codeql-preflight
+    if: github.event_name == 'workflow_dispatch' || needs.codeql-preflight.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: write
-      actions: read # Authenticate CodeQL run/jobs and download original SARIF.
       id-token: write
       attestations: write
     steps:
@@ -52,30 +85,6 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
           persist-credentials: false
-
-      # New-tag publication requires exact-tag-SHA CodeQL proof before any
-      # new attestation, draft Release creation, or release asset mutation.
-      # Historical workflow_dispatch recovery is confined to an existing
-      # reviewed draft and its immutable manifest checks below; it neither
-      # creates release assets nor invents new provenance.
-      - name: Check out trusted release security policy
-        if: github.event_name == 'push'
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: main
-          path: .release-security
-          persist-credentials: false
-          sparse-checkout: |
-            .github/scripts
-
-      - name: Require exact-tag-SHA CodeQL evidence before new draft mutations
-        if: github.event_name == 'push'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          python3 .release-security/.github/scripts/check_release_codeql.py \
-            --tag "$RELEASE_TAG" --sha "$(git rev-parse HEAD)"
 
       # ADR-0010 releases the facade together with the internal crates it
       # requires, so every published crate carries its own archive, SBOM,
