@@ -196,6 +196,17 @@ def run_candidates(repo, sha, workflow, script):
     return found
 
 
+def exact_candidate_run(run, sha):
+    """Identify a trusted run that is actually scanning this candidate."""
+    if not isinstance(run, dict):
+        return False
+    if run.get("event") == "workflow_dispatch":
+        return run.get("display_title") == f"CodeQL source {sha}"
+    if run.get("event") == "schedule":
+        return run.get("head_sha") == sha
+    return False
+
+
 def verify_live(repo, sha, tag, script):
     if not os.environ.get("GH_TOKEN"):
         reject("missing GitHub API credential")
@@ -208,13 +219,14 @@ def verify_live(repo, sha, tag, script):
     for run in candidates:
         run_id = run["id"]
         exact_request = (run.get("event") == "workflow_dispatch"
-                         and run.get("display_title") == f"CodeQL source {sha}")
+                         and exact_candidate_run(run, sha))
+        exact_active = exact_candidate_run(run, sha)
+        if exact_active and run.get("status") != "completed" and run.get("run_attempt") != 1:
+            reject(f"ambiguous rerun attempt for exact candidate {run_id}")
         if exact_request and run.get("run_attempt") != 1:
             reject(f"ambiguous rerun attempt for exact candidate {run_id}")
         if run.get("status") != "completed":
-            # Exact candidate dispatch is signaled in GitHub's run-name.
-            if (run.get("event") == "workflow_dispatch"
-                and run.get("display_title") == f"CodeQL source {sha}"):
+            if exact_active:
                 active.append(run_id)
             continue
         if run.get("conclusion") != "success":
@@ -226,20 +238,21 @@ def verify_live(repo, sha, tag, script):
                 check_release_source(repo, sha, tag)
                 return
         except (ValueError, subprocess.CalledProcessError, OSError, KeyError, TypeError) as exc:
-            # A completed run with manifest/provenance or SARIF problems must
-            # not be turned into a fresh scan that masks a security failure.
-            if run.get("event") == "workflow_dispatch" and run.get("display_title") == f"CodeQL source {sha}":
+            # A release-specific completed scan must never be replaced by a
+            # fresh scan that could mask its failure. Scheduled historical
+            # runs may simply be ineligible (for example, pre-artifact runs).
+            if exact_request:
                 reject(f"invalid completed exact candidate scan {run_id}: {exc}")
-            # A run for a different candidate or a guard-only schedule is ineligible.
             continue
+
     if len(active) > 1:
         reject("ambiguous active exact-source CodeQL scans")
     if active:
         selected = active[0]
         print(f"Joining active exact-source CodeQL {selected}", flush=True)
     else:
-        # Never dispatch from tag or feature refs; the workflow file is selected
-        # from the trusted current default branch, candidate is an immutable SHA.
+        # Never dispatch from tag or feature refs; the workflow definition is
+        # selected from trusted current main while candidate_sha stays immutable.
         gh("api", "-X", "POST", f"repos/{repo}/actions/workflows/codeql.yml/dispatches",
            "-f", "ref=main", "-f", f"inputs[candidate_sha]={sha}")
         selected = None
@@ -249,25 +262,42 @@ def verify_live(repo, sha, tag, script):
     while time.monotonic() < deadline:
         check_release_source(repo, sha, tag)
         recent = run_candidates(repo, sha, workflow, script)
-        matches = [r for r in recent if r.get("event") == "workflow_dispatch"
-                   and r.get("display_title") == f"CodeQL source {sha}"
-                   and r.get("run_attempt") == 1]
+
+        # If we just dispatched, authenticate exactly one release-specific run.
         if selected is None:
-            if len(matches) > 1:
+            dispatch_matches = [
+                r for r in recent
+                if r.get("event") == "workflow_dispatch"
+                and exact_candidate_run(r, sha)
+                and r.get("run_attempt") == 1
+            ]
+            if len(dispatch_matches) > 1:
                 reject("ambiguous auto-dispatched CodeQL runs")
-            if matches:
-                selected = matches[0]["id"]
+            if dispatch_matches:
+                selected = dispatch_matches[0]["id"]
+
         if selected is not None:
-            matched = [r for r in matches if r["id"] == selected]
-            if matched:
-                state = matched[0]
-                if state.get("status") == "completed":
-                    if state.get("conclusion") != "success":
-                        reject(f"CodeQL run {selected} ended {state.get('conclusion')}")
-                    if inspect_run(repo, sha, workflow, selected, script):
-                        check_release_source(repo, sha, tag)
-                        return
-                    reject("CodeQL finished without complete language evidence")
+            matched = [r for r in recent if r.get("id") == selected]
+            if not matched:
+                reject(f"selected CodeQL run {selected} disappeared")
+            if len(matched) != 1:
+                reject(f"selected CodeQL run {selected} became ambiguous")
+            state = matched[0]
+            if not exact_candidate_run(state, sha):
+                reject(f"selected CodeQL run {selected} changed candidate identity")
+            if state.get("run_attempt") != 1:
+                reject(f"ambiguous rerun attempt for exact candidate {selected}")
+            if state.get("status") == "completed":
+                if state.get("conclusion") != "success":
+                    reject(f"CodeQL run {selected} ended {state.get('conclusion')}")
+                try:
+                    complete = inspect_run(repo, sha, workflow, selected, script)
+                except (ValueError, subprocess.CalledProcessError, OSError, KeyError, TypeError) as exc:
+                    reject(f"invalid completed selected CodeQL scan {selected}: {exc}")
+                if complete:
+                    check_release_source(repo, sha, tag)
+                    return
+                reject("CodeQL finished without complete language evidence")
         time.sleep(15)
     reject(f"timed out waiting for exact-source CodeQL run {selected}" if selected else
            "timed out discovering auto-dispatched CodeQL run")
@@ -369,10 +399,10 @@ def self_test():
                 raise AssertionError(f"accepted malformed source manifest {key}")
     # Offline preflight lifecycle: valid reuse, active join, automatic dispatch,
     # scanner failure and bounded timeout. No GitHub writes are performed.
-    def candidate(state, conclusion=None):
-        return {"id": 71, "workflow_id": 42,
+    def candidate(state, conclusion=None, *, event="workflow_dispatch", run_id=71):
+        return {"id": run_id, "workflow_id": 42,
                 "path": ".github/workflows/codeql.yml",
-                "event": "workflow_dispatch", "head_branch": "main",
+                "event": event, "head_branch": "main", "head_sha": sha,
                 "head_repository": {"full_name": repo},
                 "run_attempt": 1, "display_title": f"CodeQL source {sha}",
                 "status": state, "conclusion": conclusion,
@@ -380,7 +410,10 @@ def self_test():
 
     def exercise(initial, later, should_dispatch, error=None):
         sources = [initial, later] if later is not None else [initial]
-        source_sets = [[x] if x is not None else [] for x in sources]
+        source_sets = [
+            x if isinstance(x, list) else ([x] if x is not None else [])
+            for x in sources
+        ]
         with (mock.patch.dict(os.environ, {"GH_TOKEN": "offline-fixture"}),
               mock.patch.object(sys.modules[__name__], "check_release_source", return_value="d" * 40),
               mock.patch.object(sys.modules[__name__], "api", return_value={"id": 42}),
@@ -403,11 +436,30 @@ def self_test():
 
     exercise(candidate("completed", "success"), None, False)
     exercise(candidate("in_progress"), candidate("completed", "success"), False)
+    exercise(candidate("in_progress", event="schedule"),
+             candidate("completed", "success", event="schedule"), False)
     exercise(None, candidate("completed", "success"), True)
     exercise(candidate("in_progress"), candidate("completed", "failure"), False, "ended failure")
     exercise(candidate("completed", "failure"), None, False, "ended failure")
     exercise(dict(candidate("completed", "success"), run_attempt=2), None,
              False, "ambiguous rerun")
+    exercise([candidate("in_progress", run_id=71),
+              candidate("in_progress", event="schedule", run_id=72)],
+             None, False, "ambiguous active")
+    with (mock.patch.dict(os.environ, {"GH_TOKEN": "offline-fixture"}),
+          mock.patch.object(sys.modules[__name__], "check_release_source", return_value="d" * 40),
+          mock.patch.object(sys.modules[__name__], "api", return_value={"id": 42}),
+          mock.patch.object(sys.modules[__name__], "run_candidates",
+                            side_effect=[[candidate("in_progress")], []]),
+          mock.patch.object(sys.modules[__name__], "gh", return_value=""),
+          mock.patch.object(time, "sleep", return_value=None)):
+        try:
+            verify_live(repo, sha, "v1.2.3", Path("fake-verdict.py"))
+        except ValueError as exc:
+            assert "disappeared" in str(exc)
+        else:
+            raise AssertionError("disappeared joined scan did not fail closed")
+
     with (mock.patch.dict(os.environ, {"GH_TOKEN": "offline-fixture"}),
           mock.patch.object(sys.modules[__name__], "check_release_source", return_value="d" * 40),
           mock.patch.object(sys.modules[__name__], "api", return_value={"id": 42}),
