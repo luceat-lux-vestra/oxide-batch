@@ -713,19 +713,19 @@ fn diagnostic_bundle_excludes_every_prohibited_value_class() {
         .map(|name| host.file_text(&format!("incident-bundle/{name}")))
         .collect::<Vec<_>>()
         .join("\n");
-    for prohibited in [
-        secret,
-        "bundle-password",
-        "private.endpoint",
-        certificate,
-        "SELECT sentinel SQL",
-        "context-payload-sentinel",
-        "checkpoint-payload-sentinel",
-        "user-error-text-sentinel",
+    for (class, prohibited) in [
+        ("repository URL", secret),
+        ("repository password", "bundle-password"),
+        ("repository endpoint", "private.endpoint"),
+        ("CA certificate", certificate),
+        ("SQL text", "SELECT sentinel SQL"),
+        ("context payload", "context-payload-sentinel"),
+        ("checkpoint payload", "checkpoint-payload-sentinel"),
+        ("user error text", "user-error-text-sentinel"),
     ] {
         assert!(
             !contents.contains(prohibited),
-            "bundle leaked prohibited value class: {prohibited}"
+            "bundle leaked prohibited value class: {class}"
         );
     }
     let manifest: serde_json::Value =
