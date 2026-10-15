@@ -28,6 +28,19 @@ POSTGRES_MATRIX = re.compile(
     r'^\s*postgres:\s*\[\s*"15"\s*,\s*"18"\s*\]\s*(?:#.*)?$'
 )
 
+EPHEMERAL_WORKFLOW = re.compile(
+    r"^(?:research|temporary|tmp|experiment)(?:[-_].*)?\.ya?ml$",
+    re.IGNORECASE,
+)
+LIFECYCLE_OWNER = re.compile(
+    r"^\s*#\s*lifecycle-owner:\s*(\S.*)$",
+    re.IGNORECASE,
+)
+LIFECYCLE_RETIRE = re.compile(
+    r"^\s*#\s*lifecycle-retire:\s*(\S.*)$",
+    re.IGNORECASE,
+)
+
 UNTRUSTED_PREFIXES = (
     "github.event.pull_request.",
     "github.event.issue.",
@@ -128,9 +141,36 @@ def _is_allowed_image(lines: list[str], value: str) -> bool:
     )
 
 
+def check_ephemeral_workflow_lifecycle(path: Path, text: str) -> list[str]:
+    """Require explicit ownership and retirement conditions for ephemeral workflows."""
+    if not EPHEMERAL_WORKFLOW.fullmatch(path.name):
+        return []
+
+    header = text.splitlines()[:20]
+    owner = next(
+        (match.group(1).strip() for line in header if (match := LIFECYCLE_OWNER.match(line))),
+        "",
+    )
+    retire = next(
+        (match.group(1).strip() for line in header if (match := LIFECYCLE_RETIRE.match(line))),
+        "",
+    )
+
+    violations: list[str] = []
+    if not owner:
+        violations.append(
+            f"{path}: ephemeral workflow requires non-empty # lifecycle-owner: header metadata"
+        )
+    if not retire:
+        violations.append(
+            f"{path}: ephemeral workflow requires non-empty # lifecycle-retire: header metadata"
+        )
+    return violations
+
+
 def check_workflow(path: Path, text: str) -> list[str]:
     lines = text.splitlines()
-    violations: list[str] = []
+    violations = check_ephemeral_workflow_lifecycle(path, text)
 
     pull_request_target = any(
         re.match(r"^\s*pull_request_target\s*:", line)
