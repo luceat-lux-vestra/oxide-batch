@@ -35,6 +35,19 @@ one-time manual bootstrap and is never generalized by the workflow.
 - [ ] Complete required crash/restart, recovery, and rollback exercises.
 - [ ] Verify all examples and documentation against packaged crates.
 
+## Exact-SHA CodeQL release security (R2A #105 / #558)
+
+Before creating a **new** v* tag, public GitHub Release, or publishing crates:
+
+- [ ] Identify the exact reviewed protected-`main` commit SHA to tag. Never substitute a PR, fork, moving branch, or a prior release's scan.
+- [ ] Obtain a successful **full** Actions **and** Rust CodeQL analysis for **that same 40-hex commit** from the weekly protected-main run or manually:
+      `gh workflow run codeql.yml --ref main -f candidate_sha="$(gh api repos/luceat-lux-vestra/oxide-batch/commits/main --jq .sha)"`
+      (only valid when the returned SHA is the actual release candidate).
+- [ ] Verify the run succeeded on first attempt, with successful trusted source/Actions/Rust jobs, two original SARIF artifacts within the repository's 30-day retention ceiling for the same SHA, validated SHA-256 digests, correct CodeQL query packs (including at least 37 Rust rules), successful scan invocation, and **zero High/Critical findings**. The automated verifier checks these again before release-draft writes and registry publication.
+- [ ] If the SHA changed after scanning, **rescan the new candidate**. A green scan of a different revision is not evidence. If any scan/verification fails or is absent, **NO NEW RELEASE**.
+- [ ] The tag-push workflow can prevent new draft/attestation mutations but **cannot prevent tag creation itself**. Likewise, a `release: published` handler cannot undo a GitHub Release already made public via UI/API, and direct owner/admin or manual crates.io actions can bypass repository workflows. **The operator prepublication hold remains mandatory for these external actions**; do not claim a non-bypassable UI/API publication gate.
+- [ ] `release-draft.yml` historical `workflow_dispatch` recovery is intentionally limited to already-existing reviewed draft assets/immutable evidence manifest and may restore missing SBOM attestations. `release.yml` historical verification-only recovery does not publish. Neither exception authorizes first publication without exact-SHA CodeQL.
+
 ## Build evidence
 
 - [ ] Run required, deep, and release-candidate CI suites.
