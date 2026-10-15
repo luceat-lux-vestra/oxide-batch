@@ -21,7 +21,7 @@ require('cron: "47 18 * * 1"' in codeql and "candidate_sha:" in codeql,
         "weekly/manual CodeQL triggers missing")
 require("CodeQL schedule guard" in codeql and "should_scan=false" in codeql,
         "unchanged-main schedule guard missing")
-require("Candidate is not protected-main history" in codeql
+require("Not a protected-main ancestor" in codeql
         and "merge-base --is-ancestor" in codeql,
         "historical candidate ancestry proof missing")
 for language in ("actions", "rust"):
