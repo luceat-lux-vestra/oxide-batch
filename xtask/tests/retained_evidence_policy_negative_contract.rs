@@ -134,3 +134,18 @@ fn rejects_freshness_merge_policy_drift() {
         "retained-evidence freshness merge policy must remain semantic-impact",
     );
 }
+
+#[test]
+fn rejects_codeql_release_security_classification_downgrade() {
+    let fixture = Fixture::new();
+    fixture.replace_once(
+        "docs/engineering/retained-evidence-policy.json",
+        "\"classification\": \"release-security\"",
+        "\"classification\": \"informational\"",
+    );
+
+    rejected(
+        &fixture.run_policy_check(),
+        "must be classified release-security",
+    );
+}

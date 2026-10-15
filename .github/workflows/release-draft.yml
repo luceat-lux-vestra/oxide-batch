@@ -19,14 +19,48 @@ env:
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
 jobs:
+  codeql-preflight:
+    name: release-codeql-preflight
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      actions: write # Dispatch or join only the trusted current-main CodeQL workflow.
+      contents: read # Read immutable tag/main source identity; no publication authority.
+    steps:
+      - name: Check out immutable release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.RELEASE_TAG }}
+          persist-credentials: false
+
+      - name: Check out trusted current-main release security policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          path: .release-security
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+
+      - name: Require exact-tag-SHA CodeQL evidence before new draft mutations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .release-security/.github/scripts/check_release_codeql.py \
+            --tag "$RELEASE_TAG" --sha "$(git rev-parse HEAD)"
+
   prepare:
     name: prepare-release-draft
+    needs: codeql-preflight
+    if: always() && (github.event_name == 'workflow_dispatch' || needs.codeql-preflight.result == 'success')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: write # Create/update the managed draft Release and its assets.
+      id-token: write # Mint short-lived identity only for artifact attestations.
+      attestations: write # Record package/SBOM attestations before draft mutation.
     steps:
       # #212 recovery review, round 4: `workflow_dispatch` runs whichever
       # ref's own copy of this workflow file was selected at dispatch time
