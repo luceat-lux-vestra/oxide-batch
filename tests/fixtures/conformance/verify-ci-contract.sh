@@ -53,12 +53,28 @@ require_count() {
     fail "${label} count is ${actual}, expected ${expected}: ${literal}"
 }
 
+require_git_blob() {
+  local label="$1"
+  local file="$2"
+  local expected="$3"
+  local actual
+  [[ "${expected}" =~ ^[0-9a-f]{40}$ ]] ||
+    fail "${label} expected Git blob is malformed: ${expected}"
+  actual="$(git hash-object --no-filters "${file}")"
+  test "${actual}" = "${expected}" ||
+    fail "${label} Git blob drifted: expected ${expected}, observed ${actual}"
+}
+
 
 test "${workflow_path}" = "$(jq -er '.workflow_path' "${contract}")" ||
   fail "workflow path does not match the contract"
 for file in "${workflow_path}" "${script_path}" "${merge_script_path}"; do
   test -f "${file}" || fail "required execution file is missing: ${file}"
 done
+
+require_git_blob "workflow" "${workflow_path}" "$(jq -er '.git_blobs.workflow' "${contract}")"
+require_git_blob "campaign script" "${script_path}" "$(jq -er '.git_blobs.script' "${contract}")"
+require_git_blob "merge script" "${merge_script_path}" "$(jq -er '.git_blobs.merge_script' "${contract}")"
 
 require_literal "workflow name" "name: $(jq -er '.workflow_name' "${contract}")"
 require_literal "workflow_dispatch trigger" "  workflow_dispatch:"
