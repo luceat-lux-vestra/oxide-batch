@@ -70,7 +70,9 @@ fn identity(name: &str) -> ComponentStreamIdentity {
 }
 
 fn temp_path(name: &str, sequence: u64) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("oxide-batch-gate-h-throughput-{name}-{sequence}.csv"))
+    std::env::temp_dir().join(format!(
+        "oxide-batch-gate-h-throughput-{name}-{sequence}.csv"
+    ))
 }
 
 fn write_csv_fixture(path: &std::path::Path, rows: u32) {
