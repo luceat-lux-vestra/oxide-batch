@@ -289,7 +289,7 @@ jobs:
       # The release tag checkout only reads the immutable release tree.
       contents: read
       # crates.io Trusted Publishing exchanges this job's OIDC identity for a token.
-      id-token: write # Short-lived crates.io Trusted Publishing OIDC, only after two exact-SHA gates.
+      id-token: write # Short-lived crates.io Trusted Publishing OIDC, only after exact-SHA preflight.
     steps:
       - name: Check out release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
