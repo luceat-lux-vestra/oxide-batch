@@ -56,7 +56,7 @@ use oxide_batch::{
     PurgeBatchBound, PurgePlanRequest, ReasonCode, RetentionService, StepName, TerminalStatusSet,
 };
 use serde_json::{Value, json};
-use sqlx::Row;
+use sqlx::{Connection, PgConnection, Row};
 use sqlx::postgres::PgPoolOptions;
 
 use security::{
@@ -663,7 +663,7 @@ async fn run_report(admin: &str) -> Result<(), Box<dyn Error>> {
     // The policy is applied as an administrative identity, once, from the
     // committed script. Nothing below adds a grant.
     apply_script(&database, &fixtures().join("roles.sql")).await?;
-    let password = disposable_password();
+    let password = disposable_password(&database).await?;
     for class in CLASSES {
         // The password is generated for this run and is never retained. The
         // statement is built here rather than committed for that reason.
@@ -1172,11 +1172,13 @@ fn page() -> oxide_batch::PageRequest {
 /// credential in the repository. This one lives for the length of the report,
 /// is never written to the retained evidence, and is replaced the next time the
 /// report runs.
-fn disposable_password() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_nanos());
-    format!("m5s{:x}{:x}", std::process::id(), nanos)
+async fn disposable_password(database: &str) -> Result<String, Box<dyn Error>> {
+    let mut connection = PgConnection::connect(database).await?;
+    let password = sqlx::query_scalar("SELECT gen_random_uuid()::text")
+        .fetch_one(&mut connection)
+        .await?;
+    connection.close().await?;
+    Ok(password)
 }
 
 /// Reconciles this file's declared cells against the committed exact
