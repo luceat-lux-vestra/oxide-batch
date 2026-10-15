@@ -43,6 +43,15 @@ def require_pass(name: str, workflow: str) -> None:
     assert not observed, f"{name}: valid fixture rejected: {observed!r}"
 
 
+def lifecycle_violations(filename: str, workflow: str) -> list[str]:
+    with tempfile.TemporaryDirectory(prefix="oxide-batch-workflow-lifecycle-") as tmp:
+        root = Path(tmp)
+        workflows = root / ".github" / "workflows"
+        workflows.mkdir(parents=True)
+        (workflows / filename).write_text(textwrap.dedent(workflow).lstrip())
+        return MODULE.validate(root)
+
+
 PINNED_CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 PG15 = "926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561"
 PG18 = "4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
@@ -67,6 +76,47 @@ require_pass(
           - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
     """,
 )
+
+LIFECYCLE_FIXTURE = """
+# lifecycle-owner: issue #593
+# lifecycle-retire: delete after bounded workflow research is recorded
+name: Research lifecycle fixture
+on: workflow_dispatch
+permissions:
+  contents: read
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: echo safe
+"""
+
+assert not lifecycle_violations("research-fixture.yml", LIFECYCLE_FIXTURE), (
+    "ephemeral workflow with owner and retirement metadata must pass"
+)
+
+missing_lifecycle_owner = LIFECYCLE_FIXTURE.replace(
+    "# lifecycle-owner: issue #593\n",
+    "# lifecycle-owner: \n",
+)
+observed = lifecycle_violations("research-fixture.yml", missing_lifecycle_owner)
+assert any("non-empty # lifecycle-owner:" in item for item in observed), observed
+
+missing_lifecycle_retire = LIFECYCLE_FIXTURE.replace(
+    "# lifecycle-retire: delete after bounded workflow research is recorded\n",
+    "# lifecycle-retire: \n",
+)
+observed = lifecycle_violations("experiment-fixture.yaml", missing_lifecycle_retire)
+assert any("non-empty # lifecycle-retire:" in item for item in observed), observed
+
+assert not lifecycle_violations(
+    "ci-fixture.yml",
+    LIFECYCLE_FIXTURE.replace("# lifecycle-owner: issue #593\n", "").replace(
+        "# lifecycle-retire: delete after bounded workflow research is recorded\n", ""
+    ),
+), "maintained workflow filenames must not require ephemeral lifecycle metadata"
+
 
 require_rejection(
     "mutable action",
