@@ -25,8 +25,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
-      actions: write
-      contents: read
+      actions: write # Dispatch or join only the trusted current-main CodeQL workflow.
+      contents: read # Read immutable tag/main source identity; no publication authority.
     steps:
       - name: Check out immutable release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -58,9 +58,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      contents: write
-      id-token: write
-      attestations: write
+      contents: write # Create/update the managed draft Release and its assets.
+      id-token: write # Mint short-lived identity only for artifact attestations.
+      attestations: write # Record package/SBOM attestations before draft mutation.
     steps:
       # #212 recovery review, round 4: `workflow_dispatch` runs whichever
       # ref's own copy of this workflow file was selected at dispatch time
