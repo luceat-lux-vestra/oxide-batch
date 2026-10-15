@@ -69,8 +69,10 @@ fn identity(name: &str) -> ComponentStreamIdentity {
     ComponentStreamIdentity::new(name).expect("static identity is valid")
 }
 
-fn temp_path(name: &str, nonce: u64) -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("oxide-batch-gate-h-throughput-{name}-{nonce}.csv"))
+fn temp_path(name: &str, sequence: u64) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!(
+        "oxide-batch-gate-h-throughput-{name}-{sequence}.csv"
+    ))
 }
 
 fn write_csv_fixture(path: &std::path::Path, rows: u32) {
@@ -85,9 +87,9 @@ fn write_csv_fixture(path: &std::path::Path, rows: u32) {
 /// and returns the elapsed wall-clock time for `step.execute` alone (fixture
 /// setup/teardown is excluded, matching what a caller of the framework
 /// itself pays).
-async fn run_typed_once(nonce: u64) -> Duration {
-    let input = temp_path("typed-in", nonce);
-    let output = temp_path("typed-out", nonce);
+async fn run_typed_once(sequence: u64) -> Duration {
+    let input = temp_path("typed-in", sequence);
+    let output = temp_path("typed-out", sequence);
     write_csv_fixture(&input, ITEMS);
 
     let (reader, _reader_stream, _reader_contract) = delimited_file_reader::<DelimitedRecord>(
@@ -127,9 +129,9 @@ async fn run_typed_once(nonce: u64) -> Duration {
 
 /// Runs one timed pass of the same pipeline through the `Boxed*` erasure
 /// boundary.
-async fn run_erased_once(nonce: u64) -> Duration {
-    let input = temp_path("erased-in", nonce);
-    let output = temp_path("erased-out", nonce);
+async fn run_erased_once(sequence: u64) -> Duration {
+    let input = temp_path("erased-in", sequence);
+    let output = temp_path("erased-out", sequence);
     write_csv_fixture(&input, ITEMS);
 
     let (reader, _reader_stream, _reader_contract) = delimited_file_reader::<DelimitedRecord>(
@@ -197,22 +199,22 @@ fn throughput_items_per_sec(items: u32, elapsed: Duration) -> f64 {
 /// printed report self-contained.
 #[tokio::test(flavor = "current_thread")]
 async fn throughput_and_latency_recorded_without_an_invented_threshold() {
-    let mut nonce: u64 = 0;
-    let mut next_nonce = || {
-        nonce += 1;
-        nonce
+    let mut sequence: u64 = 0;
+    let mut next_sequence = || {
+        sequence += 1;
+        sequence
     };
 
     for _ in 0..WARMUP_REPETITIONS {
-        run_typed_once(next_nonce()).await;
-        run_erased_once(next_nonce()).await;
+        run_typed_once(next_sequence()).await;
+        run_erased_once(next_sequence()).await;
     }
 
     let mut typed_samples = Vec::with_capacity(MEASURED_REPETITIONS as usize);
     let mut erased_samples = Vec::with_capacity(MEASURED_REPETITIONS as usize);
     for _ in 0..MEASURED_REPETITIONS {
-        typed_samples.push(run_typed_once(next_nonce()).await);
-        erased_samples.push(run_erased_once(next_nonce()).await);
+        typed_samples.push(run_typed_once(next_sequence()).await);
+        erased_samples.push(run_erased_once(next_sequence()).await);
     }
 
     let typed = summarize(&typed_samples);
