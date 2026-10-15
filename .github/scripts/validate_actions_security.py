@@ -337,7 +337,7 @@ def _job_block(text: str, job_id: str) -> str | None:
 def check_codeql_weekly_manual_contract_text(
     text: str, path: Path = Path(".github/workflows/codeql.yml")
 ) -> list[str]:
-    """Require exact-main full scans and reject PR-derived CodeQL invocation."""
+    """Require weekly/manual full scans with bounded historical-main support."""
     violations: list[str] = []
     event_match = re.search(
         r"(?ms)^on:\n(?P<body>.*?)(?=^permissions:\n)",
@@ -347,9 +347,9 @@ def check_codeql_weekly_manual_contract_text(
         return [f"{path}: CodeQL must declare schedule/manual event block"]
     event_block = event_match.group("body")
     events = re.findall(r"(?m)^  ([a-z_]+):", event_block)
-    if events != ["schedule", "workflow_dispatch"]:
+    if len(events) != 2 or set(events) != {"schedule", "workflow_dispatch"}:
         violations.append(
-            f"{path}: scheduled-only CodeQL must have exactly schedule and workflow_dispatch events"
+            f"{path}: CodeQL must have exactly schedule and workflow_dispatch events"
         )
     for fragment in (
         'cron: "47 18 * * 1"',
@@ -363,63 +363,79 @@ def check_codeql_weekly_manual_contract_text(
         if forbidden in event_block:
             violations.append(f"{path}: PR/push-derived CodeQL event forbidden: {forbidden}")
 
-    verify = _job_block(text, "verify-source")
-    if verify is None:
-        violations.append(f"{path}: trusted exact-source verification job missing")
+    guard = _job_block(text, "scan-guard")
+    if guard is None:
+        violations.append(f"{path}: scheduled CodeQL guard job missing")
     else:
         for fragment in (
-            "name: Verify trusted CodeQL source identity",
+            "name: CodeQL schedule guard",
             "runs-on: ubuntu-slim",
-            "GH_TOKEN:",
-            "INPUT_SHA:",
-            'test "$GITHUB_REF" = "refs/heads/main"',
-            '[[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]',
-            '[[ "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]]',
-            'test "$INPUT_SHA" = "$GITHUB_SHA"',
-            'test "$live_sha" = "$INPUT_SHA"',
-            'echo "candidate_sha=$GITHUB_SHA"',
-            'case "$GITHUB_EVENT_NAME" in',
-            "workflow_dispatch)",
-            "schedule)",
+            "actions: read",
+            "should_scan:",
+            "event=schedule&status=success&branch=main",
+            '.head_sha == $sha',
+            '.head_branch == "main"',
+            '.path == ".github/workflows/codeql.yml"',
+            'echo "should_scan=false"',
         ):
-            if fragment not in verify:
-                violations.append(f"{path}: exact source guard missing: {fragment}")
-        api_path = "repos/" + "$" + "{GITHUB_REPOSITORY}/git/ref/heads/main"
-        if api_path not in verify or ("\\" + api_path) in verify:
-            violations.append(f"{path}: live protected main API URL malformed or escaped")
-        if "candidate_sha: ${{ steps.check.outputs.candidate_sha }}" not in verify:
-            violations.append(f"{path}: scanned SHA output is not bound")
+            if fragment not in guard:
+                violations.append(f"{path}: scheduled no-op guard missing: {fragment}")
+        if not re.search(
+            r'(?m)if \[\[ "\$GITHUB_EVENT_NAME" != schedule \]\]; then\n'
+            r'\s+echo "should_scan=true" >> "\$GITHUB_OUTPUT"\n'
+            r'\s+exit 0',
+            guard,
+        ):
+            violations.append(
+                f"{path}: manual dispatch must always enter the full CodeQL matrix"
+            )
 
-    if _job_block(text, "rust-impact") is not None:
-        violations.append(f"{path}: obsolete PR Rust-impact routing remains")
-    if _job_block(text, "orphan-codeql-live") is not None:
-        violations.append(f"{path}: obsolete PR orphan cancellation remains")
-
-    for job_id, language in (("analyze-actions", "actions"), ("analyze-rust", "rust")):
-        job = _job_block(text, job_id)
-        if job is None:
-            violations.append(f"{path}: full CodeQL {language} analysis job missing")
-            continue
+    analyze = _job_block(text, "analyze")
+    if analyze is None:
+        violations.append(f"{path}: full Actions/Rust CodeQL matrix missing")
+    else:
         for fragment in (
-            f"name: Analyze ({language})",
-            "needs: verify-source",
+            "needs: scan-guard",
+            "if: needs.scan-guard.outputs.should_scan == 'true'",
+            "name: Analyze (${{ matrix.language }})",
             "security-events: write",
-            "needs.verify-source.outputs.candidate_sha",
-            'test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"',
+            "EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}",
+            '[[ "$GITHUB_REF" == "refs/heads/main" ]]',
+            '[[ "$GITHUB_SHA" == "$EXPECTED_SHA" ]]',
+            '[[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]',
+            'compare/${EXPECTED_SHA}...${remote_main}',
+            '.base_commit.sha == $sha',
+            '.merge_base_commit.sha == $sha',
+            'ref: ${{ env.EXPECTED_SHA }}',
+            'git merge-base --is-ancestor "$EXPECTED_SHA" FETCH_HEAD',
+            "source-identity.json",
+            "release-codeql-source-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
             "github/codeql-action/init@",
             "github/codeql-action/analyze@",
-            f"languages: {language}",
-            "build-mode: none",
-            f"category: /language:{language}",
+            "release-codeql-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
+            ".github/scripts/check_codeql_sarif.py",
         ):
-            if fragment not in job:
-                violations.append(
-                    f"{path}: full CodeQL {language} analysis contract missing: {fragment}"
-                )
-        if any(token in job for token in ("pull_request", "head_repo", "run_rust=false")):
+            if fragment not in analyze:
+                violations.append(f"{path}: exact-source full matrix contract missing: {fragment}")
+        for language in ("actions", "rust"):
+            if f"- language: {language}" not in analyze:
+                violations.append(f"{path}: full CodeQL {language} matrix entry missing")
+        if analyze.count("build-mode: none") != 2:
+            violations.append(f"{path}: Actions/Rust CodeQL must both use build-mode none")
+        if analyze.count(".merge_base_commit.sha == $sha") != 2:
             violations.append(
-                f"{path}: full CodeQL {language} must not use PR source or conditional skip"
+                f"{path}: candidate ancestry must be checked before and after CodeQL analysis"
             )
+        if analyze.count("retention-days: 30") != 2:
+            violations.append(f"{path}: SARIF and source identity retention must both be 30 days")
+        if any(token in analyze for token in ("pull_request", "head_repo", "run_rust=false")):
+            violations.append(
+                f"{path}: full CodeQL matrix must not use PR source or PR-derived conditional routing"
+            )
+
+    for obsolete in ("verify-source", "analyze-actions", "analyze-rust", "rust-impact", "orphan-codeql-live"):
+        if _job_block(text, obsolete) is not None:
+            violations.append(f"{path}: obsolete CodeQL control-plane job remains: {obsolete}")
     return violations
 
 

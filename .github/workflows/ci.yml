@@ -30,6 +30,12 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: git diff --check "${BASE_SHA}...HEAD"
 
+      - name: Verify release CodeQL SARIF and provenance negative controls
+        run: |
+          python3 .github/scripts/check_codeql_sarif.py --self-test
+          python3 .github/scripts/check_release_codeql.py --self-test
+          python3 .github/scripts/test_release_codeql_policy.py
+
       - name: Resolve protected-main compiler cache identity
         id: fast-cache-id
         env:

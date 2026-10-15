@@ -680,6 +680,56 @@ fn verify_canonical_verdict(name: &str, report: &Value) -> Vec<String> {
     violations
 }
 
+fn verify_artifact_producer_classification(
+    workflow: &str,
+    campaign: &str,
+    producer: &Value,
+    retained_ids: &BTreeSet<String>,
+    campaigns: &mut BTreeSet<String>,
+) -> Vec<String> {
+    let mut violations = Vec::new();
+    if workflow == ".github/workflows/codeql.yml" {
+        if campaign != "CodeQL release security" {
+            violations.push(format!(
+                "CodeQL artifact producer {workflow} has unexpected campaign {campaign}"
+            ));
+        }
+        if string_at(producer, "/classification") != Some("release-security") {
+            violations.push(format!(
+                "CodeQL artifact producer {workflow} must be classified release-security"
+            ));
+        }
+        if producer.get("promotes_to").is_some() {
+            violations.push(
+                "CodeQL release-security artifacts must not claim Git campaign promotion"
+                    .to_owned(),
+            );
+        }
+        return violations;
+    }
+
+    if !campaigns.insert(campaign.to_owned()) {
+        violations.push(format!(
+            "campaign {campaign} is assigned to more than one external artifact producer"
+        ));
+    }
+    if string_at(producer, "/classification") != Some("informational") {
+        violations.push(format!(
+            "artifact producer {workflow} is not informational; raw producer artifacts must never be authoritative"
+        ));
+    }
+    match string_at(producer, "/promotes_to") {
+        Some(id) if retained_ids.contains(id) => {}
+        Some(id) => violations.push(format!(
+            "artifact producer {workflow} promotes to unknown retained set {id}"
+        )),
+        None => violations.push(format!(
+            "artifact producer {workflow} has no promotion target"
+        )),
+    }
+    violations
+}
+
 fn verify_artifact_producers(
     root: &Path,
     policy: &Value,
@@ -705,30 +755,20 @@ fn verify_artifact_producers(
             violations.push(format!("artifact producer {workflow} names no campaign"));
             continue;
         };
-        if !campaigns.insert(campaign.to_owned()) {
-            violations.push(format!(
-                "campaign {campaign} is assigned to more than one external artifact producer"
-            ));
-        }
         if string_at(producer, "/storage") != Some("github-actions") {
             violations.push(format!(
                 "artifact producer {workflow} is not GitHub Actions storage"
             ));
         }
-        if string_at(producer, "/classification") != Some("informational") {
-            violations.push(format!(
-                "artifact producer {workflow} is not informational; raw producer artifacts must never be authoritative"
-            ));
-        }
-        match string_at(producer, "/promotes_to") {
-            Some(id) if retained_ids.contains(id) => {}
-            Some(id) => violations.push(format!(
-                "artifact producer {workflow} promotes to unknown retained set {id}"
-            )),
-            None => violations.push(format!(
-                "artifact producer {workflow} has no promotion target"
-            )),
-        }
+        // Original CodeQL SARIF is a release-security input, not an
+        // informational M5/M6 campaign report awaiting Git promotion.
+        violations.extend(verify_artifact_producer_classification(
+            workflow,
+            campaign,
+            producer,
+            retained_ids,
+            &mut campaigns,
+        ));
 
         let path = root.join(workflow);
         let source = fs::read_to_string(&path)
@@ -752,6 +792,9 @@ fn verify_artifact_producers(
                 1
             }
         };
+        if workflow == ".github/workflows/codeql.yml" && expected_uploads != 2 {
+            violations.push("CodeQL must retain exactly two original SARIF uploads".to_owned());
+        }
         violations.extend(verify_upload_workflow(
             workflow,
             &source,

@@ -363,7 +363,19 @@ def discover_campaigns(repo_root: Path, policy: ScopePolicy) -> tuple[Campaign, 
             entry.get("workflow"),
             "retained-evidence artifact producer workflow",
         )
-        producer_workflows.append(workflow)
+        classification = entry.get("classification")
+        if classification == "informational":
+            producer_workflows.append(workflow)
+        elif classification == "release-security":
+            if workflow != ".github/workflows/codeql.yml":
+                raise ValueError(
+                    "release-security retained producer must be the canonical CodeQL workflow"
+                )
+        else:
+            raise ValueError(
+                f"retained-evidence producer {workflow} has unsupported classification "
+                f"{classification!r}"
+            )
     if len(set(producer_workflows)) != len(producer_workflows):
         raise ValueError(
             "retained-evidence artifact producer workflows contain duplicates"
@@ -547,6 +559,7 @@ def self_test(
     workflows = {campaign.workflow for campaign in campaigns}
     assert ".github/workflows/m5-conformance.yml" in workflows
     assert ".github/workflows/m6-conformance.yml" in workflows
+    assert ".github/workflows/codeql.yml" not in workflows
 
     docs = [Change("modified", "README.md")]
     result = classify(docs, 1, policy, campaigns)
