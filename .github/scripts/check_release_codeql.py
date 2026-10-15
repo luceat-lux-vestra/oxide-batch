@@ -223,6 +223,7 @@ def verify_live(repo, sha, tag, script):
             continue
         try:
             if inspect_run(repo, sha, workflow, run_id, script):
+                check_release_source(repo, sha, tag)
                 return
         except (ValueError, subprocess.CalledProcessError, OSError, KeyError, TypeError) as exc:
             # A completed run with manifest/provenance or SARIF problems must
@@ -264,6 +265,7 @@ def verify_live(repo, sha, tag, script):
                     if state.get("conclusion") != "success":
                         reject(f"CodeQL run {selected} ended {state.get('conclusion')}")
                     if inspect_run(repo, sha, workflow, selected, script):
+                        check_release_source(repo, sha, tag)
                         return
                     reject("CodeQL finished without complete language evidence")
         time.sleep(15)
@@ -316,7 +318,7 @@ def self_test():
     probe("future timestamp", lambda r, w, j, a: r.update(created_at="2026-10-15T00:00:00Z"))
     probe("language jobs", lambda r, w, j, a: j["jobs"][0].update(conclusion="failure"))
     probe("language jobs", lambda r, w, j, a: j["jobs"].pop())
-    probe("four SARIF plus four source-provenance", lambda r, w, j, a: a["artifacts"].pop())
+    probe("two SARIF plus two source-provenance", lambda r, w, j, a: a["artifacts"].pop())
     probe("wrong-SHA", lambda r, w, j, a: a["artifacts"][0]["workflow_run"].update(head_sha="b" * 40))
     probe("ambiguous", lambda r, w, j, a: a["artifacts"][1].update(expired=True))
     # Candidate ancestry: current main and a historical protected-main ancestor
