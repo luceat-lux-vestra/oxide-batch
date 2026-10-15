@@ -17,6 +17,31 @@ from pathlib import Path
 LANGUAGES = {"actions", "rust"}
 COMMIT = re.compile(r"[0-9a-f]{40}\Z")
 
+# These are the security-query descriptors emitted by the current default
+# CodeQL Rust query pack. Diagnostic queries that execute successfully with
+# zero findings are not all materialized as SARIF rule descriptors, so a raw
+# descriptor count is not a valid proxy for the 37-query execution observed
+# in CodeQL logs. Fail closed on this reviewed security surface instead.
+RUST_REQUIRED_SECURITY_RULES = (
+    "rust/insecure-cookie",
+    "rust/xss",
+    "rust/access-invalid-pointer",
+    "rust/cleartext-transmission",
+    "rust/weak-cryptographic-algorithm",
+    "rust/weak-sensitive-data-hashing",
+    "rust/uncontrolled-allocation-size",
+    "rust/sql-injection",
+    "rust/hard-coded-cryptographic-value",
+    "rust/request-forgery",
+    "rust/non-https-url",
+    "rust/command-line-injection",
+    "rust/disabled-certificate-check",
+    "rust/path-injection",
+    "rust/cleartext-logging",
+    "rust/cleartext-storage-database",
+    "rust/regex-injection",
+)
+
 
 EXTRACTION = {
     "actions": {
@@ -155,8 +180,12 @@ def check(directory: Path, language: str, candidate_sha: str) -> dict:
         if rule["id"] in by_id:
             raise ValueError("duplicate CodeQL rule ID")
         by_id[rule["id"]] = (index, rule)
-    if language == "rust" and len(rules) < 37:
-        raise ValueError("Rust 37-query security suite was reduced")
+    if language == "rust":
+        missing_security = sorted(set(RUST_REQUIRED_SECURITY_RULES) - set(by_id))
+        if missing_security:
+            raise ValueError(
+                "Rust security query rule set was reduced: " + ", ".join(missing_security)
+            )
     results = run.get("results")
     if not isinstance(results, list):
         raise ValueError("missing or malformed result set")
@@ -218,13 +247,26 @@ def check(directory: Path, language: str, candidate_sha: str) -> dict:
 def self_test() -> None:
     sha = "a" * 40
     def fixture(language="rust", score="5.0", results=True, security=True):
-        rule = {"id": "rust/test", "properties": {
-            "tags": ["security"] if security else ["correctness"]}}
-        if score is not None:
-            rule["properties"]["security-severity"] = score
+        if language == "rust":
+            query_pack = "codeql/rust-queries"
+            rule_ids = list(RUST_REQUIRED_SECURITY_RULES)
+        else:
+            query_pack = "codeql/actions-queries"
+            rule_ids = ["actions/test"]
+        result_rule_id = rule_ids[0]
+        rules = []
+        for rule_id in rule_ids:
+            properties = {"tags": ["security"], "security-severity": "5.0"}
+            if rule_id == result_rule_id:
+                properties["tags"] = ["security"] if security else ["correctness"]
+                if score is None:
+                    properties.pop("security-severity", None)
+                else:
+                    properties["security-severity"] = score
+            rules.append({"id": rule_id, "properties": properties})
         return {"version": "2.1.0", "runs": [{
             "tool": {"driver": {"name": "CodeQL"}, "extensions": [
-                {"name": "codeql/rust-queries", "rules": [rule] + [{"id": f"rust/additional-{i}", "properties": {"tags": ["security"], "security-severity": "5.0"}} for i in range(1, 37)]}]},
+                {"name": query_pack, "rules": rules}]},
             "automationDetails": {"id": "/language:" + language + "/"},
             "invocations": [{"executionSuccessful": True, "toolExecutionNotifications": [
                 {"descriptor": {"id": "actions/diagnostics/successfully-extracted-files" if language == "actions" else "rust/diagnostics/successfully-extracted-files"},
@@ -232,8 +274,8 @@ def self_test() -> None:
                 {"descriptor": {"id": "cli/expected-extracted-files/actions" if language == "actions" else "cli/expected-extracted-files/rust"},
                  "locations": [{"physicalLocation": {"artifactLocation": {"uri": ".github/workflows/ci.yml" if language == "actions" else "src/lib.rs"}}}]},
             ]}],
-            "results": [{"ruleId": "rust/test", "rule": {
-                "id": "rust/test", "index": 0, "toolComponent": {"index": 0}
+            "results": [{"ruleId": result_rule_id, "rule": {
+                "id": result_rule_id, "index": 0, "toolComponent": {"index": 0}
             }}] if results else []}]}
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -297,7 +339,7 @@ def self_test() -> None:
         probe(bad, "unknown rule")
         bad = fixture()
         bad["runs"][0]["tool"]["extensions"][0]["rules"].pop()
-        probe(bad, "Rust 37-query security suite was reduced")
+        probe(bad, "Rust security query rule set was reduced")
         bad = fixture()
         bad["runs"][0]["tool"]["extensions"][0]["rules"] = []
         probe(bad, "no CodeQL rule")

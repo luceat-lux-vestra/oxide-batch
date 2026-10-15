@@ -30,10 +30,13 @@ require("release-codeql-source-" in codeql and "source-identity.json" in codeql,
         "source provenance manifest missing")
 require(codeql.count("retention-days: 30") == 2,
         "SARIF/source evidence must use the repository 30-day retention ceiling")
-require("Rust 37-query security suite was reduced" in verdict
+require("Rust security query rule set was reduced" in verdict
+        and "RUST_REQUIRED_SECURITY_RULES" in verdict
         and "expected_source_files" in verdict
         and "extraction warning" in verdict,
         "Rust query/extraction fail-closed verdict missing")
+require("queries:" not in codeql,
+        "CodeQL workflow must not narrow the default query suite")
 for token in ("Dispatched trusted full CodeQL", "Joining active exact-source CodeQL",
               "timed out waiting", "ambiguous active exact-source CodeQL scans"):
     require(token in gate, f"release CodeQL state machine missing {token}")
