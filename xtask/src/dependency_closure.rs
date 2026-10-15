@@ -72,10 +72,10 @@ pub fn write_all(root: &Path) -> Result<Vec<PathBuf>, String> {
 
 /// Verifies one campaign's committed dependency closure.
 ///
-/// The retained-evidence freshness verifier calls this using the same semantics
-/// file the producer report names; the always-required integrity workflow uses
-/// [`check_all`] to keep current dependency-closure metadata deterministic.
-/// Both paths therefore stay anchored in the same checked-in declaration.
+/// The explicit retained-evidence freshness verifier calls this using the same
+/// semantics file the producer report names. `check_all` is a separate explicit
+/// current-HEAD check; the always-required report INTEGRITY workflow must not
+/// reject routine lockfile updates because historical closures are stale.
 ///
 /// # Errors
 ///

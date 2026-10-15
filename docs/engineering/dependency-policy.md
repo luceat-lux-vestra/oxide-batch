@@ -130,13 +130,24 @@ others:
 - Major updates receive an issue and compatibility review.
 - Dependency-update pull requests are never merged solely because CI is green;
   behavior, MSRV, features, changelog, and supply-chain impact are reviewed.
-- Retained campaign evidence binds a generated campaign-scoped resolved package
-  closure rather than the whole workspace lockfile object. `Cargo.lock` remains
-  the authoritative resolver input. A reviewed dependency update that changes a
-  campaign's reachable version/source/checksum invalidates that campaign's
-  retained evidence; unrelated lock movement must not. Closure refresh is
-  deliberate through `cargo xtask dependency-closures-write`, never an
-  automatic way to make a dependency PR green.
+- Historical retained campaign evidence binds the resolved package closure
+  exercised by its recorded producer run, not the workspace's *current* graph.
+  `Cargo.lock` remains the authoritative input for present builds/tests.
+  A dependency update changing a campaign's reachable version/source/checksum
+  may make historical evidence **stale for the new HEAD**, but does not corrupt
+  those original reports or require changing all eleven retained sidecars.
+- The required PR evidence-provenance gate verifies historical report integrity,
+  source/producer identities, execution manifests, and retention policy. It does
+  **not** require historical dependency closures to match current `Cargo.lock`.
+  The exact-HEAD Rust, dependency-review and supply-chain gates remain required.
+- Before a new campaign is promoted or existing evidence is claimed as current,
+  run `cargo xtask evidence-freshness` (which validates campaign closures) or
+  `cargo xtask dependency-closures` explicitly. A failed freshness check means
+  the old report is historical only; run the affected campaign again and promote
+  new verified evidence if a current-tree claim is needed.
+- `cargo xtask dependency-closures-write` must only accompany an independently
+  reviewed evidence refresh/promotion. Never rewrite historical closures merely
+  to turn a routine Dependabot PR green or assert old tests ran with new versions.
 
 Response objectives:
 
