@@ -20,7 +20,6 @@ HISTORICAL_SECONDS = {
     "item_components_json_allocation": 13.45,
     "item_components_flat_file_allocation": 9.54,
     "m4_exit_measurements": 5.87,
-    "merge_gate_policy": 3.97,
     "m5_resource_bounds_campaign": 1.36,
     "gate_h_allocation": 1.19,
     "postgres_performance": 0.98,

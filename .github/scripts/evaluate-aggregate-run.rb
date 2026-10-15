@@ -13,7 +13,7 @@ require 'uri'
 # failing on an older attempt. This evaluator instead reads every job
 # execution recorded for the current workflow run via the GitHub Actions
 # Jobs API (`filter=all`, paginated across all workflow attempts) and, for
-# each canonical member context declared in `.github/merge-gate-policy.json`,
+# each canonical member context declared in `.github/aggregate-policy.json`,
 # independently selects that member's own highest `run_attempt` and requires
 # that specific execution to be a completed success.
 module AggregateEvaluator
@@ -138,13 +138,11 @@ module AggregateEvaluator
     policy = JSON.parse(File.read(policy_path))
     raise EvaluationError, "#{policy_path}: not a JSON object" unless policy.is_a?(Hash)
 
-    schema_version = policy['schema_version']
-    gates_key = schema_version.is_a?(Integer) && schema_version >= 7 ? 'internal_aggregates' : 'aggregate_gates'
-    gates = policy[gates_key]
-    raise EvaluationError, "#{policy_path}: missing #{gates_key} array" unless gates.is_a?(Array)
+    gates = policy['internal_aggregates']
+    raise EvaluationError, "#{policy_path}: missing internal_aggregates array" unless gates.is_a?(Array)
 
     gate = gates.find { |candidate| candidate.is_a?(Hash) && candidate['context'] == context }
-    raise EvaluationError, "#{policy_path}: no #{gates_key} entry for context #{context.inspect}" unless gate
+    raise EvaluationError, "#{policy_path}: no internal_aggregates entry for context #{context.inspect}" unless gate
 
     members = gate['members']
     raise EvaluationError, "#{policy_path}: aggregate #{context.inspect} has no non-empty member list" unless members.is_a?(Array) && !members.empty?
@@ -230,7 +228,7 @@ end
 
 if __FILE__ == $PROGRAM_NAME
   aggregate_context = ARGV[0] || 'postgresql'
-  policy_path = ARGV[1] || '.github/merge-gate-policy.json'
+  policy_path = ARGV[1] || '.github/aggregate-policy.json'
 
   begin
     passed, diagnostics = AggregateEvaluator.run(aggregate_context: aggregate_context, policy_path: policy_path)

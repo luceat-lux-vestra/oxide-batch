@@ -1,10 +1,7 @@
 name: M5 Conformance
 
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    branches:
-      - main
+  workflow_call:
   workflow_dispatch:
 
 permissions:
@@ -67,7 +64,7 @@ jobs:
           classification="$(
             python3 .trusted-base/.github/scripts/pr-scope.py \
               --repo-root .trusted-base \
-              --policy .github/merge-gate-policy.json \
+              --policy .github/pr-scope-policy.json \
               --expected-count "$expected_count" \
               --trusted-base-sha "$BASE_SHA" \
               <"$changed_file_records"

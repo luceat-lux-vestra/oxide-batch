@@ -1,14 +1,10 @@
 {
   "document": "How CI executes the M5 conformance campaign",
-  "note": "This contract is the canonical execution description beside the shard/merge scripts. The dedicated workflow owns fail-closed pull-request routing, deterministic PostgreSQL 15/18 target sharding, canonical report merge, and lightweight required-context emission.",
-  "identity_note": "workflow_git_blob, script_git_blob, and merge_script_git_blob are the fail-closed authority. Each is the exact git hash-object identity of executable CI machinery; any byte-level drift makes retained evidence stale and must be deliberately re-proved. Literal fields remain readable diagnostics rather than the trust boundary.",
+  "note": "Canonical semantic execution contract for M5 conformance. Exact Git blob identity is retained only for the three execution surfaces that produce/define M5 conformance evidence; repository-wide CI authority no longer uses blob allowlists.",
   "workflow_path": ".github/workflows/m5-conformance.yml",
-  "workflow_git_blob": "0d590fdd1130f462d31f353ed4394822b3c424fa",
   "workflow_name": "M5 Conformance",
   "triggers": {
-    "pull_request": [
-      "main"
-    ],
+    "workflow_call": true,
     "workflow_dispatch": true
   },
   "permissions": {
@@ -17,7 +13,6 @@
   "runner": "ubuntu-24.04",
   "script": "./tests/fixtures/conformance/run-ci-campaign.sh {major} \"$SHARD_INDEX\" 2",
   "script_path": "tests/fixtures/conformance/run-ci-campaign.sh",
-  "script_git_blob": "367726d79cf96f9a109261df313b9544e92d77de",
   "supported_matrix": [
     "15",
     "18"
@@ -75,7 +70,7 @@
   "timeout_minutes": 55,
   "timeout_note": "Each shard keeps the prior 55-minute safety ceiling; the canonical merge job has a separate 15-minute ceiling. The optimization changes wall-clock topology, not the proof deadline semantics.",
   "pr_routing": {
-    "trusted_classifier": ".github/scripts/pr-scope.py from the exact pull request base SHA",
+    "trusted_classifier": ".github/scripts/pr-scope.py from the exact pull request base SHA, invoked through PR CI",
     "direct_set": "direct_proof_campaign_workflows",
     "route_job": "route",
     "deep_job": null,
@@ -92,7 +87,6 @@
     ]
   },
   "merge_script_path": "tests/fixtures/conformance/merge-ci-campaign.sh",
-  "merge_script_git_blob": "be228e6adcd1ff9981985b5179e553c494457f46",
   "merge_script": "bash ./tests/fixtures/conformance/merge-ci-campaign.sh {major} 2 target/m5-campaign-shards",
   "sharding": {
     "shard_count": 2,
@@ -111,5 +105,10 @@
       "conformance-deep-18"
     ],
     "merge_timeout_minutes": 15
+  },
+  "git_blobs": {
+    "workflow": "a1aca935dfa4a1c2cc2cf1526edb6e6c35d527a9",
+    "script": "367726d79cf96f9a109261df313b9544e92d77de",
+    "merge_script": "be228e6adcd1ff9981985b5179e553c494457f46"
   }
 }

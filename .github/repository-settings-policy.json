@@ -142,6 +142,15 @@
       "expected": true
     },
     {
+      "id": "main-ruleset.required_status_contexts",
+      "classification": "required",
+      "readback": "main-ruleset-api",
+      "expected": [
+        "Direct Merge Gate"
+      ],
+      "rationale": "Protected main requires exactly the final semantic PR DAG aggregate and no legacy compatibility gate."
+    },
+    {
       "id": "main-ruleset.bypass_actors",
       "classification": "required",
       "readback": "main-ruleset-api",

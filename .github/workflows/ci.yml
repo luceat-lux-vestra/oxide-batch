@@ -1,41 +1,13 @@
 name: Rust
-run-name: pr-authority/rust/pr-${{ inputs.pr_number }}/${{ inputs.head_sha }}/caller-${{ inputs.caller_run_id }}-${{ inputs.caller_run_attempt }}
-
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, ready_for_review]
-    branches:
-      - main
-    paths:
-      - .github/ci-topology-v7-migration
   workflow_call:
-  workflow_dispatch:
-    inputs:
-      base_sha:
-        required: true
-        type: string
-      head_sha:
-        required: true
-        type: string
-      head_repo:
-        required: true
-        type: string
-      pr_number:
-        required: true
-        type: string
-      caller_run_id:
-        required: true
-        type: string
-      caller_run_attempt:
-        required: true
-        type: string
 
 permissions:
   actions: read # Needed to inspect the canonical exact-SHA Fast workflow run.
   contents: read
 
 concurrency:
-  group: rust-${{ github.event_name }}-${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.caller_run_id || github.ref }}
+  group: rust-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -45,132 +17,93 @@ jobs:
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
-      - name: Resolve exact-SHA Fast evidence
-        id: fast-evidence
-        if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
-          EXPECTED_SHA: ${{ github.event.pull_request.head.sha }}
-          EXPECTED_JOB: fast
-          SAME_REPOSITORY: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
-        run: |
-          echo "mode=none" >> "$GITHUB_OUTPUT"
-          set -euo pipefail
-          if [ "$SAME_REPOSITORY" != "true" ]; then
-            echo "Fork PR has no trusted base-repository branch Fast run; Final will execute local Fast obligations when needed."
-            exit 0
-          fi
-
-          base_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$BASE_SHA" --jq '.sha')"
-          head_workflow_sha="$(gh api "repos/$GITHUB_REPOSITORY/contents/.github/workflows/fast-branch.yml?ref=$EXPECTED_SHA" --jq '.sha')"
-          if [ "$base_workflow_sha" != "$head_workflow_sha" ]; then
-            echo "Fast producer workflow changed on this PR; Final will execute local Fast obligations instead of trusting self-modified evidence."
-            exit 0
-          fi
-
-          for _ in $(seq 1 60); do
-            runs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/workflows/fast-branch.yml/runs?event=push&head_sha=$EXPECTED_SHA&per_page=100")"
-            latest="$(jq -c --arg sha "$EXPECTED_SHA" '
-              [.workflow_runs[]
-               | select(.head_sha == $sha and .event == "push")]
-              | if length == 0 then empty else max_by(.id) end
-            ' <<<"$runs")"
-            if [ -z "$latest" ]; then
-              sleep 5
-              continue
-            fi
-
-            status="$(jq -r '.status' <<<"$latest")"
-            conclusion="$(jq -r '.conclusion // ""' <<<"$latest")"
-            if [ "$status" != "completed" ]; then
-              sleep 5
-              continue
-            fi
-            if [ "$conclusion" != "success" ]; then
-              echo "::error::Canonical Fast workflow for exact HEAD $EXPECTED_SHA concluded '$conclusion'; classify/remediate it instead of overwriting it in Final."
-              exit 1
-            fi
-
-            run_id="$(jq -r '.id' <<<"$latest")"
-            jobs="$(gh api -H 'Accept: application/vnd.github+json' "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/jobs?filter=latest&per_page=100")"
-            matching_jobs="$(jq --arg name "$EXPECTED_JOB" '[.jobs[] | select(.name == $name)] | length' <<<"$jobs")"
-            if [ "$matching_jobs" != "1" ]; then
-              echo "::error::Canonical Fast run $run_id must contain exactly one '$EXPECTED_JOB' job; found $matching_jobs."
-              exit 1
-            fi
-            job="$(jq -c --arg name "$EXPECTED_JOB" '.jobs[] | select(.name == $name)' <<<"$jobs")"
-            job_status="$(jq -r '.status' <<<"$job")"
-            job_conclusion="$(jq -r '.conclusion // ""' <<<"$job")"
-            if [ "$job_status" != "completed" ] || [ "$job_conclusion" != "success" ]; then
-              echo "::error::Canonical Fast job for exact HEAD $EXPECTED_SHA is not completed/success (status=$job_status conclusion=$job_conclusion)."
-              exit 1
-            fi
-
-            step_conclusion() {
-              local name="$1"
-              local count
-              count="$(jq --arg name "$name" '[.steps[] | select(.name == $name)] | length' <<<"$job")"
-              if [ "$count" != "1" ]; then
-                echo "::error::Canonical Fast job must contain exactly one '$name' step; found $count." >&2
-                return 2
-              fi
-              jq -r --arg name "$name" '.steps[] | select(.name == $name) | (.conclusion // "")' <<<"$job"
-            }
-
-            docs_conclusion="$(step_conclusion 'Documentation-only fast path')"
-            fmt_conclusion="$(step_conclusion 'Check formatting')"
-            clippy_conclusion="$(step_conclusion 'Run Clippy')"
-            unit_conclusion="$(step_conclusion 'Run workspace unit tests')"
-
-            if [ "$fmt_conclusion" = "success" ] && [ "$clippy_conclusion" = "success" ] && [ "$unit_conclusion" = "success" ] && [ "$docs_conclusion" = "skipped" ]; then
-              echo "mode=full" >> "$GITHUB_OUTPUT"
-              echo "Reusing canonical full Fast evidence for exact HEAD $EXPECTED_SHA."
-              exit 0
-            fi
-            if [ "$docs_conclusion" = "success" ] && [ "$fmt_conclusion" = "skipped" ] && [ "$clippy_conclusion" = "skipped" ] && [ "$unit_conclusion" = "skipped" ]; then
-              echo "mode=docs-only" >> "$GITHUB_OUTPUT"
-              echo "Canonical Fast evidence for exact HEAD $EXPECTED_SHA is documentation-only; a routed Rust authority will execute its local full Fast obligations."
-              exit 0
-            fi
-
-            echo "::error::Canonical Fast job for exact HEAD $EXPECTED_SHA has an invalid mixed execution mode (docs=$docs_conclusion fmt=$fmt_conclusion clippy=$clippy_conclusion unit=$unit_conclusion)."
-            exit 1
-          done
-          echo "::error::Timed out waiting for canonical exact-SHA Fast evidence at $EXPECTED_SHA; refusing duplicate fallback on a same-repository PR."
-          exit 1
       - name: Check out repository
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
-
       - name: Check diff hygiene
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
-          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: git diff --check "${BASE_SHA}...HEAD"
+
+      - name: Resolve protected-main compiler cache identity
+        id: fast-cache-id
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        shell: bash
         run: |
-          if [ -n "${BASE_SHA}" ]; then
-            git diff --check "${BASE_SHA}...HEAD"
-          else
-            git log -1 --check
-          fi
+          set -euo pipefail
+          [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
+          [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
+          [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          lock_prefix="${family}-${lock_hash}-"
+          key="${lock_prefix}${BASE_SHA}"
+          {
+            echo "family=$family"
+            echo "lock_prefix=$lock_prefix"
+            echo "key=$key"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install verified sccache 0.18.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$RUNNER_ARCH" = ARM64
+          test "$(uname -m)" = aarch64
+          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+          curl --fail --location --retry 3 --retry-delay 2 \
+            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
+            --output "$archive"
+          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
+            | sha256sum --check --strict
+          mkdir -p "$install_dir"
+          tar -xzf "$archive" -C "$install_dir" --strip-components=1
+          test -x "$install_dir/sccache"
+          echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Restore protected-main compiler cache read-only
+        id: fast-restore-sccache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ runner.temp }}/oxide-fast-sccache
+          key: ${{ steps.fast-cache-id.outputs.key }}
+          restore-keys: |
+            ${{ steps.fast-cache-id.outputs.lock_prefix }}
+            ${{ steps.fast-cache-id.outputs.family }}-
+
+      - name: Enable restore-only sccache
+        id: fast-enable-sccache
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "CARGO_TERM_COLOR=never"
+            echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache"
+            echo "SCCACHE_CACHE_SIZE=768M"
+            echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+            echo "RUSTC_WRAPPER=sccache"
+            echo "CARGO_INCREMENTAL=0"
+          } >> "$GITHUB_ENV"
+          echo "protected-main cache hit: ${{ steps.fast-restore-sccache.outputs.cache-hit }}"
+
+      - name: Zero compiler cache stats
+        run: sccache --zero-stats
 
       - name: Show toolchain
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: rustup show
 
-
       - name: Check formatting
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full' }}
         run: cargo fmt --all -- --check
 
       - name: Run Clippy
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full' }}
         run: >-
           cargo clippy --workspace --all-targets --all-features --
           -D warnings
@@ -178,7 +111,6 @@ jobs:
           -A clippy::too_many_lines
 
       - name: Run workspace unit tests
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && steps.fast-evidence.outputs.mode != 'full' }}
         run: cargo test --workspace --all-features --lib
 
       - name: Verify narrow audit-shape Clippy exceptions
@@ -229,6 +161,10 @@ jobs:
               raise SystemExit(f'expected only {sorted(expected)}, observed {sorted(seen)}')
           PY
 
+      - name: Show compiler cache stats
+        if: ${{ always() && steps.fast-enable-sccache.outcome == 'success' }}
+        continue-on-error: true
+        run: sccache --show-stats --stats-format=json
 
   quality-integration-0:
     name: quality-integration-0-internal
@@ -239,15 +175,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
         env:
-          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -336,15 +272,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
         env:
-          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -433,15 +369,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
         env:
-          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -530,15 +466,15 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
         env:
-          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -627,8 +563,8 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
@@ -649,32 +585,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
-
-      - name: Check out exact trusted base for merge-gate verification
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
-          path: .merge-gate-trusted-base
-          fetch-depth: 1
-          persist-credentials: false
-
-      - name: Verify merge topology with trusted-base verifier
-        env:
-          RULESET_PATH: ${{ runner.temp }}/protect-main-ruleset.json
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          curl -fsSL --retry 3 --retry-all-errors \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "${GITHUB_API_URL}/repos/${GITHUB_REPOSITORY}/rulesets/19905142" \
-            -o "$RULESET_PATH"
-          ruby .merge-gate-trusted-base/.github/scripts/verify-merge-gates.rb \
-            .github/merge-gate-policy.json "$RULESET_PATH"
 
       - name: Check facade without optional adapters
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -711,8 +625,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Test trusted PR scope classifier
@@ -720,12 +634,8 @@ jobs:
         run: >-
           python3 .github/scripts/pr-scope.py
           --repo-root .
-          --policy .github/merge-gate-policy.json
+          --policy .github/pr-scope-policy.json
           --self-test
-
-      - name: Dispatch quality proof is workflow-wide
-        if: ${{ github.event_name == 'workflow_dispatch' }}
-        run: echo "dispatch-specific parallel quality jobs are authoritative for this workflow run"
 
       - name: Require all quality components
         if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
@@ -756,8 +666,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
@@ -774,8 +684,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
@@ -801,8 +711,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
@@ -843,8 +753,8 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
@@ -1066,15 +976,15 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
         env:
-          BASE_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.base_sha || github.event.pull_request.base.sha }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -1254,12 +1164,12 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: ${{ github.event_name == 'workflow_dispatch' && inputs.head_repo || github.repository }}
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.head_sha || github.sha }}
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
           persist-credentials: false
 
       - name: Evaluate selective-rerun-safe PostgreSQL aggregate
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         env:
           GITHUB_TOKEN: ${{ github.token }}
-        run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql
+        run: ruby .github/scripts/evaluate-aggregate-run.rb postgresql .github/aggregate-policy.json

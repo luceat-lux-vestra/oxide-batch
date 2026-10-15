@@ -38,8 +38,8 @@ large.
 
 The detector invokes existing sources of truth rather than copying their rules:
 
-- `.github/merge-gate-policy.json` +
-  `.github/scripts/verify-merge-gates.rb` for required producer/ruleset drift;
+- `.github/repository-settings-policy.json` plus live Ruleset API readback for
+  the exact required `Direct Merge Gate` context and branch-protection settings;
 - `cargo xtask release-crates` and the existing release negative-contract test
   for publishable-crate and release binding invariants;
 - `.github/scripts/validate_actions_security.py` for immutable action refs,
@@ -92,10 +92,10 @@ manual-readback inventory is explicit; and the owned issue lifecycle creates,
 updates, reopens, recovers/closes, and rejects duplicate ownership.
 
 The leaf rejection proofs remain owned by their canonical controls and run on the
-same PR HEAD: merge-gate tests mutate required-context/ruleset fixtures; the
-Actions-security and supply-chain validators have their own safe negative
-fixtures; `release_negative_contract` drives the real release verifier against
-mutated detached worktrees; and
+same PR HEAD: hardening tests mutate required-context/ruleset fixtures through
+the generic settings-policy readback; the Actions-security and supply-chain
+validators have their own safe negative fixtures; `release_negative_contract`
+drives the real release verifier against mutated detached worktrees; and
 `retained_evidence_policy_negative_contract` likewise mutates the canonical
 retained-evidence policy in a detached worktree and requires the real verifier to
 reject it. The audit acceptance proof is therefore the composition of real leaf
