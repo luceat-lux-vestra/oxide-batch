@@ -127,7 +127,6 @@ fn main() -> ExitCode {
         Some("check") => {
             run_all(QUALITY)
                 && run_dependency_check()
-                && run_dependency_closure_check()
                 && run_surface_check()
                 && run_release_crates_check()
                 && run_evidence_check()

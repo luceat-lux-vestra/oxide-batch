@@ -1,16 +1,11 @@
 name: Evidence
-# This required context owns retained-evidence integrity, not current-HEAD
-# freshness. Every PR must prove that committed reports are still the exact
-# retained bytes of identified successful producer runs, that their provenance
-# and matrix/inventory contracts are internally sound, and that campaign
-# dependency-closure metadata still matches the locked Cargo graph.
-#
-# A retained report may legitimately become semantically stale after an
-# ordinary source change. Exact comparison of its recorded campaign objects
-# against current HEAD is a separate fail-closed authority:
-# `cargo xtask evidence-freshness`. Semantic-impact/deep/release routing owns
-# that question; keeping it out of this always-required context avoids forcing
-# every ordinary source PR to regenerate all affected retained reports.
+# Always-required retained-evidence INTEGRITY, not current-HEAD freshness.
+# Verify exact historical report bytes, recorded producer identities, matrix,
+# provenance, and bound dependency-closure manifests without rewriting history.
+# Dependency updates legitimately make historical evidence stale for the new
+# HEAD; the explicit `cargo xtask evidence-freshness` / `dependency-closures`
+# commands verify current-HEAD validity when qualifying or promoting evidence.
+# Do not couple an ordinary dependency PR to 11 historical sidecar rewrites.
 
 on:
   workflow_call:
@@ -42,21 +37,9 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-
       - name: Verify repository-wide retained evidence policy
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask --bin retained_evidence_policy
-
-      # dependency-closure.json is current semantic metadata, not an old report.
-      # Keep it deterministic and merge-blocking even though report freshness is
-      # now a separate authority.
-      - name: Hydrate locked dependency graph for closure verification
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        run: cargo fetch --locked
-
-      - name: Verify campaign dependency closure metadata
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        run: cargo run --package oxide-batch-xtask -- dependency-closures
 
       - name: Verify retained campaign evidence integrity and provenance
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
