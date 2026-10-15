@@ -56,8 +56,8 @@ use oxide_batch::{
     PurgeBatchBound, PurgePlanRequest, ReasonCode, RetentionService, StepName, TerminalStatusSet,
 };
 use serde_json::{Value, json};
-use sqlx::{Connection, PgConnection, Row};
 use sqlx::postgres::PgPoolOptions;
+use sqlx::{Connection, PgConnection, Row};
 
 use security::{
     Failure, FixedClock, INSUFFICIENT_PRIVILEGE, StatementOutcome, admin_url, apply_script,
