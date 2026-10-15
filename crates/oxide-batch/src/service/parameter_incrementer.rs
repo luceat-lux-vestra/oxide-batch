@@ -89,7 +89,7 @@ impl fmt::Debug for ParameterIncrementer {
             .field("kind", &self.kind)
             .field("revision", &self.revision)
             .field("output_field_count", &self.output_shape.len())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 impl ParameterIncrementer {
@@ -145,6 +145,9 @@ impl ParameterIncrementer {
         let job_name = target
             .job_name()
             .ok_or(IncrementerError::InvalidDefinition)?;
+        if prior.len() > MAX_INCREMENTER_FIELDS {
+            return Err(IncrementerError::TooManyFields);
+        }
         let output = (self.apply)(target, prior)?;
         if output.len() != self.output_shape.len() {
             return Err(IncrementerError::InvalidOutputShape);
@@ -158,11 +161,11 @@ impl ParameterIncrementer {
             }
         }
         for (name, previous) in prior.iter() {
-            if let Some(next) = output.get(name) {
-                if previous.role() != next.role() || previous.value().kind() != next.value().kind()
-                {
-                    return Err(IncrementerError::InputRoleOrKindDrift);
-                }
+            if let Some(next) = output.get(name)
+                && (previous.role() != next.role()
+                    || previous.value().kind() != next.value().kind())
+            {
+                return Err(IncrementerError::InputRoleOrKindDrift);
             }
         }
         let before = JobInstanceKey::new(job_name.clone(), prior);
@@ -188,7 +191,7 @@ impl fmt::Debug for IncrementedParameters {
         f.debug_struct("IncrementedParameters")
             .field("parameter_count", &self.parameters.len())
             .field("identifying_changed", &self.identifying_changed)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 impl IncrementedParameters {
