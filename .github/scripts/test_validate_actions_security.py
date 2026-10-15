@@ -373,39 +373,51 @@ observed = MODULE.check_issue_labeler_contract_text(missing_default_branch_ref)
 assert any("issue reconciliation safety contract missing" in item for item in observed), observed
 
 
-# Current CodeQL security contract remains schedule/manual only. Historical M6
-# caller-provenance/orphan-cancellation fixtures were retired with the old PR
-# authority control plane.
+# Current CodeQL security contract remains schedule/manual only, with a
+# guard-only unchanged-main schedule and trusted historical protected-main
+# candidate support for release preflight.
 ACTIVE_CODEQL = ROOT / ".github/workflows/codeql.yml"
 activated_codeql = ACTIVE_CODEQL.read_text(encoding="utf-8")
 
-# Exercise the ACTUAL scheduled/manual CodeQL contract and prove the old
-# PR-derived execution surface cannot be reintroduced silently.
 assert MODULE.check_codeql_weekly_manual_contract_text(activated_codeql) == []
 
 for title, mutated, diagnostic in (
     (
         "re-enable pull_request",
-        activated_codeql.replace("  schedule:\n", "  pull_request:\n  schedule:\n", 1),
+        activated_codeql.replace("  workflow_dispatch:\n", "  pull_request:\n  workflow_dispatch:\n", 1),
         "exactly schedule and workflow_dispatch events",
     ),
     (
-        "remove exact input-to-run SHA binding",
-        activated_codeql.replace('              test "$INPUT_SHA" = "$GITHUB_SHA"\n', "", 1),
-        'test "$INPUT_SHA" = "$GITHUB_SHA"',
+        "remove explicit manual full-scan path",
+        activated_codeql.replace(
+            '          if [[ "$GITHUB_EVENT_NAME" != schedule ]]; then\n'
+            '            echo "should_scan=true" >> "$GITHUB_OUTPUT"\n',
+            '          if [[ "$GITHUB_EVENT_NAME" != schedule ]]; then\n',
+            1,
+        ),
+        'echo "should_scan=true"',
     ),
     (
-        "remove live protected-main binding",
-        activated_codeql.replace('              test "$live_sha" = "$INPUT_SHA"\n', "", 1),
-        'test "$live_sha" = "$INPUT_SHA"',
+        "weaken protected-main ancestry",
+        activated_codeql.replace(".merge_base_commit.sha == $sha", ".merge_base_commit.sha != $sha", 1),
+        ".merge_base_commit.sha == $sha",
     ),
     (
         "drop Rust full analysis",
-        activated_codeql.replace("  analyze-rust:\n", "  analyze-rust-disabled:\n", 1),
-        "full CodeQL rust analysis job missing",
+        activated_codeql.replace("          - language: rust\n", "          - language: other\n", 1),
+        "full CodeQL rust matrix entry missing",
+    ),
+    (
+        "drop source provenance artifact",
+        activated_codeql.replace(
+            "release-codeql-source-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
+            "removed-source-proof",
+            1,
+        ),
+        "release-codeql-source-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
     ),
 ):
-    assert mutated != activated_codeql, ("scheduled-only negative fixture ineffective", title)
+    assert mutated != activated_codeql, ("scheduled/manual negative fixture ineffective", title)
     errors = MODULE.check_codeql_weekly_manual_contract_text(mutated)
     assert any(diagnostic in error for error in errors), (title, errors)
 
