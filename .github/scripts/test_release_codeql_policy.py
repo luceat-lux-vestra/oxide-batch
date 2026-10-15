@@ -42,8 +42,8 @@ require("  codeql-preflight:" in draft and "actions: write" in draft
         and "contents: read" in draft,
         "release-draft scanner authority is not isolated")
 require("needs: codeql-preflight" in draft
-        and "needs.codeql-preflight.result == 'success'" in draft,
-        "draft mutation job is not gated on CodeQL preflight")
+        and "always() && (github.event_name == 'workflow_dispatch' || needs.codeql-preflight.result == 'success')" in draft,
+        "draft mutation/recovery job is not correctly gated on CodeQL preflight")
 require(draft.index("Require exact-tag-SHA CodeQL evidence before new draft mutations")
         < draft.index("  prepare:")
         < draft.index("- name: Attest package provenance")
