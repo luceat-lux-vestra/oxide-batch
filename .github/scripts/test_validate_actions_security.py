@@ -466,6 +466,15 @@ for title, mutated, diagnostic in (
         ),
         "release-codeql-source-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
     ),
+    (
+        "drop historical manifestless probe exclusion",
+        activated_codeql.replace(
+            "              - tests/fixtures/upgrade/schema-2-runtime/probe.rs\n",
+            "",
+            1,
+        ),
+        "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
+    ),
 ):
     assert mutated != activated_codeql, ("scheduled/manual negative fixture ineffective", title)
     errors = MODULE.check_codeql_weekly_manual_contract_text(mutated)

@@ -280,6 +280,19 @@ def self_test() -> None:
         bad["runs"][0]["invocations"][0]["executionSuccessful"] = False
         probe(bad, "unsuccessful invocation")
         bad = fixture()
+        bad["runs"][0]["invocations"][0]["toolExecutionNotifications"].append({
+            "descriptor": {"id": "rust/diagnostics/extraction-warnings"},
+            "locations": [{"physicalLocation": {"artifactLocation": {"uri": "tests/fixtures/bad.rs"}}}],
+            "message": {"text": "semantic analyzer unavailable"},
+        })
+        probe(bad, "CodeQL extraction warning")
+        bad = fixture()
+        bad["runs"][0]["invocations"][0]["toolExecutionNotifications"].append({
+            "descriptor": {"id": "cli/expected-extracted-files/rust"},
+            "locations": [{"physicalLocation": {"artifactLocation": {"uri": "src/missing.rs"}}}],
+        })
+        probe(bad, "did not extract")
+        bad = fixture()
         bad["runs"][0]["results"][0]["ruleId"] = "missing"
         probe(bad, "unknown rule")
         bad = fixture()

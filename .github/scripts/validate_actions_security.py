@@ -412,6 +412,10 @@ def check_codeql_weekly_manual_contract_text(
             "release-codeql-source-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
             "github/codeql-action/init@",
             "github/codeql-action/analyze@",
+            "config: |",
+            "paths-ignore:",
+            "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
+            "tests/fixtures/upgrade/schema-3-runtime/probe.rs",
             "release-codeql-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
             ".github/scripts/check_codeql_sarif.py",
         ):
