@@ -81,8 +81,7 @@ use oxide_batch_core::{
     ChunkComponentRevisions, ChunkSize, ComponentRevision, DefinitionError, DefinitionIdentity,
     DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget, InFlightPolicy,
     JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, ParameterIncrementerIdentity,
-    ParameterName, StartControls,
-    StepName, TerminalKind, definition_token, validate_token,
+    ParameterName, StartControls, StepName, TerminalKind, definition_token, validate_token,
 };
 
 /// The maximum number of transitions leaving one node.
