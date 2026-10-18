@@ -1531,6 +1531,8 @@ impl FlowLaunchReport {
 pub enum FlowRuntimeError {
     /// The executable assembly is incomplete or mismatched.
     Job(FlowJobError),
+    /// Parameter incrementer declaration or application failed before launch.
+    Incrementer(crate::IncrementerError),
     /// A repository transaction failed.
     Repository(RepositoryError),
     /// The decision sequence exceeded `u64`.
@@ -1589,6 +1591,9 @@ impl fmt::Display for FlowRuntimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Job(error) => write!(formatter, "flow job is invalid: {error}"),
+            Self::Incrementer(error) => {
+                write!(formatter, "flow parameter increment failed: {error}")
+            }
             Self::Repository(error) => {
                 write!(formatter, "flow repository operation failed: {error}")
             }
@@ -1659,6 +1664,7 @@ impl Error for FlowRuntimeError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
             Self::Job(error) => Some(error),
+            Self::Incrementer(error) => Some(error),
             Self::Repository(error) => Some(error),
             Self::DecisionSequenceExhausted
             | Self::CountExhausted
@@ -1719,6 +1725,12 @@ impl From<RepositoryError> for FlowRuntimeError {
 impl From<FlowJobError> for FlowRuntimeError {
     fn from(error: FlowJobError) -> Self {
         Self::Job(error)
+    }
+}
+
+impl From<crate::IncrementerError> for FlowRuntimeError {
+    fn from(error: crate::IncrementerError) -> Self {
+        Self::Incrementer(error)
     }
 }
 
@@ -1825,6 +1837,38 @@ impl<'a> FlowLauncher<'a> {
         )
         .await?;
         self.launch(job, parameters, stop_token).await
+    }
+
+    /// Derives exactly one next typed parameter set and launches it.
+    ///
+    /// The compiled format-4 definition must declare the same incrementer kind
+    /// and revision as the supplied callback. The caller supplies the exact
+    /// prior parameters; this method performs no repository search, retry loop,
+    /// sequence inference, or ambient input lookup.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`FlowRuntimeError::Incrementer`] before application callback or
+    /// lifecycle creation when the definition has no matching incrementer
+    /// identity. Callback/shape failures are likewise returned before launch.
+    pub async fn increment_and_launch(
+        &self,
+        job: &FlowJob,
+        incrementer: &crate::ParameterIncrementer,
+        prior: &JobParameters,
+        stop_token: &StopToken,
+    ) -> Result<FlowLaunchReport, FlowRuntimeError> {
+        self.ensure_accepting()?;
+        job.validate()?;
+        let declared = job
+            .compiled_plan()
+            .parameter_incrementer_identity()
+            .ok_or(crate::IncrementerError::IdentityMismatch)?;
+        if declared != incrementer.identity() {
+            return Err(crate::IncrementerError::IdentityMismatch.into());
+        }
+        let proposal = incrementer.increment(job.compiled_plan().definition_identity(), prior)?;
+        self.launch(job, proposal.parameters(), stop_token).await
     }
 
     /// Executes one durable sequential, conditional, or bounded split attempt.

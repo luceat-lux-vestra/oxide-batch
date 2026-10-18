@@ -45,7 +45,7 @@ pub use definition::{
     DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
     DefinitionStateTransformId, DefinitionStateTransformer, DefinitionTokenKind, DefinitionUpgrade,
     DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, InFlightPolicy,
-    ManifestError, RepeatId, StepDefinitionUpgrade,
+    ManifestError, ParameterIncrementerIdentity, RepeatId, StepDefinitionUpgrade,
 };
 pub use definition::{
     MANIFEST_FORMAT_ADVANCED_FLOW, MANIFEST_FORMAT_FLOW, MANIFEST_FORMAT_LOCAL_SCALE,

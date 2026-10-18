@@ -3,8 +3,9 @@ use super::{
     DefinitionIdentity, DefinitionRevision, ExitCode, FlowGraph, FlowNode, FlowTarget,
     FlowTransition, JobName, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES,
     MAX_OUTGOING_TRANSITIONS, MAX_SCOPED_COMPONENTS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS,
-    NestedFlow, NodeId, PlanError, RepeatId, ScopeKind, ScopedComponentDefinition,
-    ScopedComponentId, StepNode, TerminalKind, Value, check_unambiguous, json,
+    NestedFlow, NodeId, ParameterIncrementerIdentity, PlanError, RepeatId, ScopeKind,
+    ScopedComponentDefinition, ScopedComponentId, StepNode, TerminalKind, Value, check_unambiguous,
+    json,
 };
 
 #[derive(Clone, Debug)]
@@ -29,10 +30,16 @@ pub(super) fn compile(
     job_name: &JobName,
     revision: DefinitionRevision,
 ) -> Result<CompiledExecutionPlan, PlanError> {
+    let parameter_incrementer = graph.parameter_incrementer.clone();
     let mut compiler = AdvancedCompiler::default();
     let root_scope = compiler.compile_scope(graph, 1)?;
     let decision_sequences = compiler.assign_decision_sequences()?;
-    let manifest = compiler.manifest(job_name, &root_scope, &decision_sequences);
+    let manifest = compiler.manifest(
+        job_name,
+        &root_scope,
+        &decision_sequences,
+        parameter_incrementer.as_ref(),
+    );
     let canonical = serde_json::to_vec(&manifest)
         .map_err(|_| PlanError::Manifest(DefinitionError::ManifestEncoding))?;
     let definition = DefinitionIdentity::from_flow_manifest(job_name, revision, &canonical)
@@ -40,6 +47,7 @@ pub(super) fn compile(
 
     Ok(CompiledExecutionPlan {
         definition,
+        parameter_incrementer,
         scoped_components: compiler.scoped_components,
         entry: root_scope.entry().clone(),
         root_scope,
@@ -626,6 +634,7 @@ impl AdvancedCompiler {
         job_name: &JobName,
         root_scope: &CompiledFlowScope,
         decision_sequences: &BTreeMap<NodeId, u64>,
+        parameter_incrementer: Option<&ParameterIncrementerIdentity>,
     ) -> Value {
         let mut node_values: BTreeMap<NodeId, Value> = self
             .nodes
@@ -656,6 +665,17 @@ impl AdvancedCompiler {
             "nodes": node_values.into_values().collect::<Vec<_>>(),
             "transitions": transitions
         });
+        if let Some(identity) = parameter_incrementer
+            && let Some(object) = manifest.as_object_mut()
+        {
+            object.insert(
+                "parameter_incrementer".to_owned(),
+                json!({
+                    "kind": identity.kind().as_str(),
+                    "revision": identity.revision().as_str()
+                }),
+            );
+        }
         if !self.scoped_components.is_empty()
             && let Some(object) = manifest.as_object_mut()
         {

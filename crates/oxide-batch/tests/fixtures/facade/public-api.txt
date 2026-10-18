@@ -344,6 +344,7 @@ oxide_batch::PageSize
 oxide_batch::ParameterCoercion
 oxide_batch::ParameterDescriptor
 oxide_batch::ParameterIncrementer
+oxide_batch::ParameterIncrementerIdentity
 oxide_batch::ParameterName
 oxide_batch::ParameterRole
 oxide_batch::ParameterValue

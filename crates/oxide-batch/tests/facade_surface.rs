@@ -36,6 +36,7 @@ const OPTIONAL_FEATURE: &str = "postgres";
 /// item into an extracted crate, the facade must re-export it under the same
 /// path or this module stops compiling.
 mod resolves {
+    pub use oxide_batch::ParameterIncrementerIdentity;
     pub use oxide_batch::{
         ActorRef, AdaptiveBounds, AdaptiveCompletionPolicy, AuthorizationClass, BackoffKind,
         BackoffOutcome, BackoffPolicy, BackoffSleeper, BatchStatus, BeforeCallbackOutcome,
@@ -153,7 +154,6 @@ mod resolves {
         WriteListener, WriteOutcome, WriterError, aggregate_step_partitions,
         completion_policy_revision,
     };
-
     pub use oxide_batch::{
         LateBindingDefinitionError, LateBoundInput, LateBoundSource, MAX_LATE_BOUND_INPUTS,
         MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH, MAX_REPEAT_SECONDARY_FAILURES,
