@@ -12,12 +12,13 @@ use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DeciderError, DeciderRevision, DecisionInput,
     DecisionInputVersion, DecisionNode, DefinitionRevision, ExecutionContext, ExitCode,
     ExitPattern, ExitStatus, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher,
-    FlowNode, FlowTarget, FlowTransition, FlowTransitionKind, JobExecutionDecider, JobName,
-    JobParameters, JobRepository, NodeId, PostgresConfig, PostgresJobRepository,
+    FlowNode, FlowRuntimeError, FlowTarget, FlowTransition, FlowTransitionKind, JobExecutionDecider,
+    JobName, JobParameters, JobRepository, NodeId, PostgresConfig, PostgresJobRepository,
     RepeatCallbackError, RepeatContext, RepeatDecision, RepeatDefinition, RepeatId, RepeatPolicy,
     RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind, RepeatPolicyOutcome,
-    RepeatPolicyRegistration, RepeatRuntimeRegistration, RepeatStateSchema, SequentialIdGenerator,
-    StartControls, StartLimit, StateLimits, StateSchemaId, StateSchemaVersion, StepComponents,
+    RepeatPolicyRegistration, RepeatRuntimeRegistration, RepeatStateSchema, RestartPolicy,
+    SequentialIdGenerator, StartControls, StartLimit, StateLimits, StateSchemaId, StateSchemaVersion,
+    StepComponents,
     StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome,
     TaskletStep, TerminalKind, TlsMode,
 };
@@ -624,6 +625,70 @@ fn postgres_failed_start_consumes_limit() -> Result<(), Box<dyn Error>> {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         repository.close().await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+
+#[test]
+fn postgres_nonrestartable_job_rejects_restart_before_user_work()
+-> Result<(), Box<dyn Error>> {
+    const JOB: &str = "postgres_m7_nonrestartable_job";
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        remove_job(&url, JOB).await?;
+        let clock = Arc::new(FixedClock(SystemTime::UNIX_EPOCH + Duration::from_mins(55)));
+        let repository = PostgresJobRepository::connect(
+            PostgresConfig::new(url.clone())?.with_tls_mode(TlsMode::Plaintext),
+            clock.clone(),
+        )
+        .await?;
+        let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+        let only = NodeId::new("only")?;
+        let plan = FlowGraph::new(only.clone())
+            .with_job_restart_policy(RestartPolicy::NotRestartable)
+            .with_node(node("only")?)
+            .with_transition(FlowTransition::new(
+                only.clone(),
+                ExitPattern::new("*")?,
+                FlowTarget::Terminal(TerminalKind::Fail),
+            ))
+            .compile(&JobName::new(JOB)?, DefinitionRevision::new("v1")?)?;
+        let calls = Arc::new(AtomicUsize::new(0));
+        let job = FlowJob::new(JobName::new(JOB)?, plan)?.with_tasklet_step(
+            only,
+            step("only", calls.clone(), TaskletKind::Complete)?,
+        )?;
+        let (_, stop) = StopSource::new();
+        let parameters = JobParameters::new();
+        let launcher = FlowLauncher::new(&repository, clock.as_ref(), &ids);
+
+        let first = launcher.launch(&job, &parameters, &stop).await?;
+        assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        assert!(matches!(
+            launcher.launch(&job, &parameters, &stop).await,
+            Err(FlowRuntimeError::NonRestartableJob { instance_id })
+                if instance_id == first.instance().id()
+        ));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let mut inspect = repository.begin().await?;
+        assert_eq!(
+            inspect.job_executions(first.instance().id()).await?.len(),
+            1
+        );
+        inspect.rollback().await?;
+
+        repository.close().await?;
+        remove_job(&url, JOB).await?;
         Ok::<(), Box<dyn Error>>(())
     })
 }
