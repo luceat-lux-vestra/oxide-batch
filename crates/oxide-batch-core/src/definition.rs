@@ -1619,6 +1619,9 @@ impl DefinitionManifest {
             .and_then(|format| u16::try_from(format).ok())
             .ok_or(ManifestError::MissingFormat)?;
         check_manifest_format(format)?;
+        if format != MANIFEST_FORMAT_ADVANCED_FLOW && members.contains_key("parameter_incrementer") {
+            return Err(ManifestError::MalformedGraph);
+        }
         let job_name = members
             .get("job")
             .and_then(serde_json::Value::as_str)
