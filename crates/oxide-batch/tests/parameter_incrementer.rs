@@ -227,7 +227,6 @@ fn excessive_prior_parameter_set_is_rejected_before_callback() -> Result<(), Box
     Ok(())
 }
 
-
 static MATCH_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
 static REJECTED_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
 
@@ -258,9 +257,7 @@ impl Tasklet for CompleteTasklet {
     }
 }
 
-fn incrementer_identity(
-    revision: &str,
-) -> Result<ParameterIncrementerIdentity, Box<dyn Error>> {
+fn incrementer_identity(revision: &str) -> Result<ParameterIncrementerIdentity, Box<dyn Error>> {
     Ok(ParameterIncrementerIdentity::new(
         DefinitionRevision::new("run-id")?,
         DefinitionRevision::new(revision)?,
@@ -289,10 +286,12 @@ fn flow_job(
     name: &JobName,
     identity: Option<ParameterIncrementerIdentity>,
 ) -> Result<FlowJob, Box<dyn Error>> {
-    Ok(FlowJob::new(name.clone(), flow_plan(name, identity)?)?.with_tasklet_step(
-        NodeId::new("only")?,
-        TaskletStep::new(StepName::new("only")?, Arc::new(CompleteTasklet)),
-    )?)
+    Ok(
+        FlowJob::new(name.clone(), flow_plan(name, identity)?)?.with_tasklet_step(
+            NodeId::new("only")?,
+            TaskletStep::new(StepName::new("only")?, Arc::new(CompleteTasklet)),
+        )?,
+    )
 }
 
 #[test]
@@ -315,7 +314,9 @@ fn incrementer_identity_is_restart_relevant_only_when_explicitly_declared()
     assert_ne!(v1.fingerprint(), v2.fingerprint());
 
     let encoded = String::from_utf8(v1.definition_identity().canonical_manifest().to_vec())?;
-    assert!(encoded.contains(r#""parameter_incrementer":{"kind":"run-id","revision":"run-id-v1"}"#));
+    assert!(
+        encoded.contains(r#""parameter_incrementer":{"kind":"run-id","revision":"run-id-v1"}"#)
+    );
     Ok(())
 }
 
@@ -373,10 +374,7 @@ async fn mismatched_or_undeclared_incrementer_fails_before_callback_and_lifecycl
 -> Result<(), Box<dyn Error>> {
     REJECTED_CALLBACKS.store(0, Ordering::SeqCst);
     let declared_name = JobName::new("incrementer-mismatch")?;
-    let declared_job = flow_job(
-        &declared_name,
-        Some(incrementer_identity("run-id-v1")?),
-    )?;
+    let declared_job = flow_job(&declared_name, Some(incrementer_identity("run-id-v1")?))?;
     let mismatched = ParameterIncrementer::new(
         DefinitionRevision::new("run-id")?,
         DefinitionRevision::new("run-id-v2")?,
