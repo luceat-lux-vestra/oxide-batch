@@ -81,7 +81,8 @@ use oxide_batch_core::{
     ChunkComponentRevisions, ChunkSize, ComponentRevision, DefinitionError, DefinitionIdentity,
     DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget, InFlightPolicy,
     JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, ParameterIncrementerIdentity,
-    ParameterName, StartControls, StepName, TerminalKind, definition_token, validate_token,
+    ParameterName, RestartPolicy, StartControls, StepName, TerminalKind, definition_token,
+    validate_token,
 };
 
 /// The maximum number of transitions leaving one node.
@@ -1069,6 +1070,28 @@ pub enum FlowNode {
 }
 
 impl FlowNode {
+    fn has_nonrestartable_step(&self) -> bool {
+        match self {
+            Self::Step(step) => step.start_controls().restart_policy() == RestartPolicy::NotRestartable,
+            Self::CustomLeaf(custom) => {
+                custom.start_controls().restart_policy() == RestartPolicy::NotRestartable
+            }
+            Self::PartitionedStep(partitioned) => {
+                partitioned.start_controls().restart_policy() == RestartPolicy::NotRestartable
+                    || partitioned.worker().start_controls().restart_policy()
+                        == RestartPolicy::NotRestartable
+            }
+            Self::Split(split) => split
+                .branches()
+                .iter()
+                .flat_map(SplitBranch::steps)
+                .any(|step| {
+                    step.start_controls().restart_policy() == RestartPolicy::NotRestartable
+                }),
+            _ => false,
+        }
+    }
+
     fn has_repeat_definition(&self) -> bool {
         match self {
             Self::Step(step) => step.repeat_definition().is_some(),
@@ -1211,6 +1234,7 @@ pub struct FlowGraph {
     nested_flows: Vec<NestedFlow>,
     scoped_components: Vec<ScopedComponentDefinition>,
     parameter_incrementer: Option<ParameterIncrementerIdentity>,
+    job_restart_policy: RestartPolicy,
 }
 
 impl FlowGraph {
@@ -1224,6 +1248,7 @@ impl FlowGraph {
             nested_flows: Vec::new(),
             scoped_components: Vec::new(),
             parameter_incrementer: None,
+            job_restart_policy: RestartPolicy::Restartable,
         }
     }
 
@@ -1264,6 +1289,23 @@ impl FlowGraph {
         self
     }
 
+    /// Applies the execution-definition restart policy for this job.
+    ///
+    /// A non-restartable declaration opts the definition into manifest format 4.
+    /// Nested flow declarations may only narrow the enclosing job to
+    /// non-restartable; they can never reset a non-restartable parent.
+    #[must_use]
+    pub const fn with_job_restart_policy(mut self, policy: RestartPolicy) -> Self {
+        self.job_restart_policy = policy;
+        self
+    }
+
+    /// Returns the declared job restart policy.
+    #[must_use]
+    pub const fn job_restart_policy(&self) -> RestartPolicy {
+        self.job_restart_policy
+    }
+
     /// Borrows the declared entry reference.
     #[must_use]
     pub const fn entry(&self) -> Option<&NodeId> {
@@ -1271,11 +1313,13 @@ impl FlowGraph {
     }
 
     fn requires_advanced_format(&self) -> bool {
-        self.parameter_incrementer.is_some()
+        self.job_restart_policy == RestartPolicy::NotRestartable
+            || self.parameter_incrementer.is_some()
             || !self.scoped_components.is_empty()
             || !self.nested_flows.is_empty()
             || self.nodes.iter().any(|node| {
-                node.has_repeat_definition()
+                node.has_nonrestartable_step()
+                    || node.has_repeat_definition()
                     || match node {
                         FlowNode::NestedJob(_) | FlowNode::CustomLeaf(_) => true,
                         FlowNode::Split(split) => {
@@ -1424,6 +1468,7 @@ impl FlowGraph {
             .map_err(PlanError::Manifest)?;
         Ok(CompiledExecutionPlan {
             definition,
+            job_restart_policy: RestartPolicy::Restartable,
             parameter_incrementer: None,
             scoped_components: BTreeMap::new(),
             root_scope: CompiledFlowScope::new(entry.clone(), nodes.keys().cloned().collect()),
@@ -1591,10 +1636,19 @@ fn visit(
 /// serializer out of the core's public signatures, and out of the facade that
 /// re-exports them.
 fn start_controls_manifest(controls: StartControls) -> Value {
-    json!({
+    let mut value = json!({
         "allow_start_if_complete": controls.allow_start_if_complete(),
         "start_limit": controls.start_limit().get()
-    })
+    });
+    if controls.restart_policy() == RestartPolicy::NotRestartable
+        && let Some(object) = value.as_object_mut()
+    {
+        object.insert(
+            "restart_policy".to_owned(),
+            Value::String("not_restartable".to_owned()),
+        );
+    }
+    value
 }
 
 /// Projects one transition target into its manifest member.
@@ -1716,6 +1770,7 @@ fn flow_manifest(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledExecutionPlan {
     definition: DefinitionIdentity,
+    job_restart_policy: RestartPolicy,
     parameter_incrementer: Option<ParameterIncrementerIdentity>,
     scoped_components: BTreeMap<(ScopeKind, ScopedComponentId), ScopedComponentDefinition>,
     entry: NodeId,
@@ -1759,6 +1814,7 @@ impl CompiledExecutionPlan {
         transitions.insert(entry.clone(), edges);
         Ok(Self {
             definition,
+            job_restart_policy: RestartPolicy::Restartable,
             parameter_incrementer: None,
             scoped_components: BTreeMap::new(),
             root_scope: CompiledFlowScope::new(entry.clone(), nodes.keys().cloned().collect()),
@@ -1775,6 +1831,12 @@ impl CompiledExecutionPlan {
     #[must_use]
     pub const fn definition_identity(&self) -> &DefinitionIdentity {
         &self.definition
+    }
+
+    /// Returns the execution-definition restart policy for this job.
+    #[must_use]
+    pub const fn job_restart_policy(&self) -> RestartPolicy {
+        self.job_restart_policy
     }
 
     /// Borrows the restart-relevant parameter-incrementer identity, when declared.
