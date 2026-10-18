@@ -321,6 +321,27 @@ fn incrementer_identity_is_restart_relevant_only_when_explicitly_declared()
 }
 
 #[test]
+fn legacy_manifest_cannot_smuggle_incrementer_identity() -> Result<(), Box<dyn Error>> {
+    let name = JobName::new("incrementer-legacy-reader")?;
+    let plan = flow_plan(&name, None)?;
+    let mut document: serde_json::Value =
+        serde_json::from_slice(plan.definition_identity().canonical_manifest())?;
+    document
+        .as_object_mut()
+        .ok_or("legacy manifest is not an object")?
+        .insert(
+            "parameter_incrementer".to_owned(),
+            serde_json::json!({"kind":"run-id","revision":"run-id-v1"}),
+        );
+    let malformed = serde_json::to_vec(&document)?;
+    assert!(matches!(
+        DefinitionManifest::read(&malformed),
+        Err(ManifestError::MalformedGraph)
+    ));
+    Ok(())
+}
+
+#[test]
 fn malformed_format4_incrementer_identity_fails_closed() -> Result<(), Box<dyn Error>> {
     let name = JobName::new("incrementer-manifest-reader")?;
     let plan = flow_plan(&name, Some(incrementer_identity("run-id-v1")?))?;
