@@ -9,8 +9,8 @@ use oxide_batch::{
     BoxFuture, ComponentRevision, DefinitionManifest, DefinitionRevision, ExitPattern, FlowGraph,
     FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
     InMemoryJobRepository, JobName, JobParameters, JobRepository, ManifestError,
-    NestedFlow, NodeId, RestartPolicy, SequentialIdGenerator, StartControls, StartLimit,
-    StepComponents, StepName, StepNode, StopSource, SystemClock, Tasklet, TaskletContext,
+    NestedFlow, NodeId, RepositoryError, RestartPolicy, SequentialIdGenerator, StartControls,
+    StartLimit, StepComponents, StepName, StepNode, StopSource, SystemClock, Tasklet, TaskletContext,
     TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
@@ -239,6 +239,49 @@ async fn m7_nonrestartable_job_rejects_restart_before_user_work()
     let mut inspection = repository.begin().await?;
     assert_eq!(inspection.job_executions(instance_id).await?.len(), 1);
     inspection.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn completed_instance_guard_remains_authoritative_for_nonrestartable_job()
+-> Result<(), Box<dyn Error>> {
+    let name = JobName::new("m7-nonrestartable-completed-job")?;
+    let only = NodeId::new("only")?;
+    let plan = FlowGraph::new(only.clone())
+        .with_job_restart_policy(RestartPolicy::NotRestartable)
+        .with_node(FlowNode::step(step_node(
+            &only,
+            RestartPolicy::Restartable,
+            false,
+        )?))
+        .with_sequence(only.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(name.clone(), plan)?.with_tasklet_step(
+        only,
+        TaskletStep::new(
+            StepName::new("only")?,
+            Arc::new(CountingTasklet(Arc::clone(&calls))),
+        ),
+    )?;
+    let clock = Arc::new(SystemClock);
+    let ids = Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN));
+    let repository = InMemoryJobRepository::new(clock.clone(), ids.clone());
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let parameters = JobParameters::new();
+    let (_, stop) = StopSource::new();
+
+    let first = launcher.launch(&job, &parameters, &stop).await?;
+    let instance_id = first.instance().id();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    assert!(matches!(
+        launcher.launch(&job, &parameters, &stop).await,
+        Err(FlowRuntimeError::Repository(
+            RepositoryError::CompletedInstance { id }
+        )) if id == instance_id
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     Ok(())
 }
 
