@@ -499,3 +499,12 @@ Four bounded names have been added as an initial pure incrementer application co
 One bounded durable value, `ParameterIncrementerIdentity`, is added to the shared core re-export group. It contains only the already-bounded reviewed kind and revision tokens and carries no callback, parameter value, repository handle, runtime, credential, or implementation pointer. The core group therefore increases from 120 to 121 names and the total reviewed facade from 568 to 569; the service group remains 13 and the optional PostgreSQL surface is unchanged.
 
 The accompanying `FlowGraph::with_parameter_incrementer_identity`, `CompiledExecutionPlan::parameter_incrementer_identity`, `ParameterIncrementer::identity`, and `FlowLauncher::increment_and_launch` methods add no new exported paths. The launcher accepts only an existing facade-owned `ParameterIncrementer`, validates its identity before callback/lifecycle work, and reuses the existing flow launch path after producing one bounded typed candidate. `FlowRuntimeError::Incrementer` and `IncrementerError::IdentityMismatch` are value-redacted non-exhaustive error variants rather than new implementation types. This remains a Gate-E integration slice, not operator/explorer/restart-control or release acceptance.
+
+
+## M7 #606 Gate-E restart-policy facade review (2026-10-19)
+
+One bounded durable value, `RestartPolicy`, is added to the shared core re-export group. It is the execution-definition policy for job/step re-entry and is intentionally distinct from the existing M6 `RestartabilityDeclaration`, which remains the component-state capability declaration. The core group therefore increases from 121 to 122 names and the total reviewed facade from 569 to 570; the service and optional PostgreSQL surfaces are unchanged.
+
+`FlowGraph::with_job_restart_policy`, `CompiledExecutionPlan::job_restart_policy`, and `StartControls::with_restart_policy` add no implementation, runtime, repository, credential, or payload types to the facade. The non-default policy is restart-relevant format-4 definition data, while the default remains omitted so legacy definition bytes and fingerprints are preserved. `FlowRuntimeError::NonRestartableJob` and `NonRestartableStep` expose only opaque framework IDs needed to classify the rejection and carry no parameter, context, checkpoint, component-state, SQL, or application-error payload.
+
+This review is bounded to #606 / `LIFE-NORESTART-001`. It does not promote `STEP-STARTLIMIT-001`, operator actions, explorer projections, or final #199/#200 acceptance.
