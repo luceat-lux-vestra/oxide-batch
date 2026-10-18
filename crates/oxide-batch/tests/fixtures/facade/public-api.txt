@@ -205,6 +205,9 @@ oxide_batch::InMemoryFaultState
 oxide_batch::InMemoryJobRepository
 oxide_batch::IncidentBufferConfigurationError
 oxide_batch::IncidentEventBuffer
+oxide_batch::IncrementedParameters
+oxide_batch::IncrementerError
+oxide_batch::IncrementerField
 oxide_batch::InheritedStepProgress
 oxide_batch::ItemCountCompletionPolicy
 oxide_batch::ItemListenerContext
@@ -340,6 +343,7 @@ oxide_batch::PageRequest
 oxide_batch::PageSize
 oxide_batch::ParameterCoercion
 oxide_batch::ParameterDescriptor
+oxide_batch::ParameterIncrementer
 oxide_batch::ParameterName
 oxide_batch::ParameterRole
 oxide_batch::ParameterValue
