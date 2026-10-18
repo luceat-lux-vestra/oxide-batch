@@ -492,3 +492,10 @@ The explicit fork boundary contributes four reviewed facade names: `ForkRequest`
 ## M7 #594 Gate-E incrementer facade review (2026-10-16)
 
 Four bounded names have been added as an initial pure incrementer application contract: `IncrementerField`, `IncrementerError`, `ParameterIncrementer` and `IncrementedParameters`. The service group increases from 9 to 13 names, total facade from 564 to 568. The optional PostgreSQL surface is unchanged. The callback receives exactly an immutable definition and explicitly supplied prior typed parameters; output names, kinds, roles and key identity are validated and diagnostics contain no values. This is an E1 foundation, not yet #199 launcher/operator integration or accepted Gate-E closure.
+
+
+## M7 #604 Gate-E incrementer identity/launcher facade review (2026-10-18)
+
+One bounded durable value, `ParameterIncrementerIdentity`, is added to the shared core re-export group. It contains only the already-bounded reviewed kind and revision tokens and carries no callback, parameter value, repository handle, runtime, credential, or implementation pointer. The core group therefore increases from 120 to 121 names and the total reviewed facade from 568 to 569; the service group remains 13 and the optional PostgreSQL surface is unchanged.
+
+The accompanying `FlowGraph::with_parameter_incrementer_identity`, `CompiledExecutionPlan::parameter_incrementer_identity`, `ParameterIncrementer::identity`, and `FlowLauncher::increment_and_launch` methods add no new exported paths. The launcher accepts only an existing facade-owned `ParameterIncrementer`, validates its identity before callback/lifecycle work, and reuses the existing flow launch path after producing one bounded typed candidate. `FlowRuntimeError::Incrementer` and `IncrementerError::IdentityMismatch` are value-redacted non-exhaustive error variants rather than new implementation types. This remains a Gate-E integration slice, not operator/explorer/restart-control or release acceptance.
