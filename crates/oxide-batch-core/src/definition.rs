@@ -112,6 +112,36 @@ definition_token!(
     DefinitionTokenKind::Revision,
     "An application-owned audit label for one restart-relevant definition."
 );
+
+/// Restart-relevant identity of one deterministic parameter incrementer.
+///
+/// The executable callback remains process-local. Only its reviewed kind and
+/// revision enter a format-4 definition fingerprint.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ParameterIncrementerIdentity {
+    kind: DefinitionRevision,
+    revision: DefinitionRevision,
+}
+
+impl ParameterIncrementerIdentity {
+    /// Constructs an identity from already validated definition tokens.
+    #[must_use]
+    pub const fn new(kind: DefinitionRevision, revision: DefinitionRevision) -> Self {
+        Self { kind, revision }
+    }
+
+    /// Borrows the reviewed incrementer kind.
+    #[must_use]
+    pub const fn kind(&self) -> &DefinitionRevision {
+        &self.kind
+    }
+
+    /// Borrows the reviewed implementation revision.
+    #[must_use]
+    pub const fn revision(&self) -> &DefinitionRevision {
+        &self.revision
+    }
+}
 definition_token!(
     DefinitionArtifactId,
     DefinitionTokenKind::Artifact,
@@ -1607,6 +1637,7 @@ impl DefinitionManifest {
                 (Some(nodes), Some(transitions))
             }
             MANIFEST_FORMAT_ADVANCED_FLOW => {
+                validate_parameter_incrementer_manifest(members)?;
                 let (nodes, transitions) = advanced_graph_counts(members)?;
                 ensure_graph_bounds(nodes, transitions)?;
                 if let Some(scoped) = members.get("scoped_components") {
@@ -1702,6 +1733,32 @@ fn contains_object_key(value: &serde_json::Value, key: &str) -> bool {
         }
         _ => false,
     }
+}
+
+fn validate_parameter_incrementer_manifest(
+    members: &serde_json::Map<String, serde_json::Value>,
+) -> Result<(), ManifestError> {
+    let Some(value) = members.get("parameter_incrementer") else {
+        return Ok(());
+    };
+    let object = value.as_object().ok_or(ManifestError::MalformedGraph)?;
+    let required = ["kind", "revision"];
+    if object.len() != required.len()
+        || object.keys().any(|key| !required.contains(&key.as_str()))
+    {
+        return Err(ManifestError::MalformedGraph);
+    }
+    let kind = object
+        .get("kind")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    let revision = object
+        .get("revision")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(ManifestError::MalformedGraph)?;
+    DefinitionRevision::new(kind).map_err(|_| ManifestError::MalformedGraph)?;
+    DefinitionRevision::new(revision).map_err(|_| ManifestError::MalformedGraph)?;
+    Ok(())
 }
 
 fn ensure_graph_bounds(nodes: usize, transitions: usize) -> Result<(), ManifestError> {
