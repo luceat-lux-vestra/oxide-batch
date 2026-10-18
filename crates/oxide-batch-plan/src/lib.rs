@@ -80,7 +80,8 @@ use serde_json::{Value, json};
 use oxide_batch_core::{
     ChunkComponentRevisions, ChunkSize, ComponentRevision, DefinitionError, DefinitionIdentity,
     DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget, InFlightPolicy,
-    JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, ParameterName, StartControls,
+    JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, ParameterIncrementerIdentity,
+    ParameterName, StartControls,
     StepName, TerminalKind, definition_token, validate_token,
 };
 
@@ -1210,6 +1211,7 @@ pub struct FlowGraph {
     transitions: Vec<FlowTransition>,
     nested_flows: Vec<NestedFlow>,
     scoped_components: Vec<ScopedComponentDefinition>,
+    parameter_incrementer: Option<ParameterIncrementerIdentity>,
 }
 
 impl FlowGraph {
@@ -1222,6 +1224,7 @@ impl FlowGraph {
             transitions: Vec::new(),
             nested_flows: Vec::new(),
             scoped_components: Vec::new(),
+            parameter_incrementer: None,
         }
     }
 
@@ -1249,6 +1252,19 @@ impl FlowGraph {
         self
     }
 
+    /// Declares the restart-relevant identity of the parameter incrementer
+    /// authorized for this definition.
+    ///
+    /// Declaring an incrementer identity opts the graph into manifest format 4.
+    #[must_use]
+    pub fn with_parameter_incrementer_identity(
+        mut self,
+        identity: ParameterIncrementerIdentity,
+    ) -> Self {
+        self.parameter_incrementer = Some(identity);
+        self
+    }
+
     /// Borrows the declared entry reference.
     #[must_use]
     pub const fn entry(&self) -> Option<&NodeId> {
@@ -1256,7 +1272,8 @@ impl FlowGraph {
     }
 
     fn requires_advanced_format(&self) -> bool {
-        !self.scoped_components.is_empty()
+        self.parameter_incrementer.is_some()
+            || !self.scoped_components.is_empty()
             || !self.nested_flows.is_empty()
             || self.nodes.iter().any(|node| {
                 node.has_repeat_definition()
@@ -1408,6 +1425,7 @@ impl FlowGraph {
             .map_err(PlanError::Manifest)?;
         Ok(CompiledExecutionPlan {
             definition,
+            parameter_incrementer: None,
             scoped_components: BTreeMap::new(),
             root_scope: CompiledFlowScope::new(entry.clone(), nodes.keys().cloned().collect()),
             entry,
@@ -1699,6 +1717,7 @@ fn flow_manifest(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledExecutionPlan {
     definition: DefinitionIdentity,
+    parameter_incrementer: Option<ParameterIncrementerIdentity>,
     scoped_components: BTreeMap<(ScopeKind, ScopedComponentId), ScopedComponentDefinition>,
     entry: NodeId,
     root_scope: CompiledFlowScope,
@@ -1741,6 +1760,7 @@ impl CompiledExecutionPlan {
         transitions.insert(entry.clone(), edges);
         Ok(Self {
             definition,
+            parameter_incrementer: None,
             scoped_components: BTreeMap::new(),
             root_scope: CompiledFlowScope::new(entry.clone(), nodes.keys().cloned().collect()),
             entry,
@@ -1756,6 +1776,12 @@ impl CompiledExecutionPlan {
     #[must_use]
     pub const fn definition_identity(&self) -> &DefinitionIdentity {
         &self.definition
+    }
+
+    /// Borrows the restart-relevant parameter-incrementer identity, when declared.
+    #[must_use]
+    pub const fn parameter_incrementer_identity(&self) -> Option<&ParameterIncrementerIdentity> {
+        self.parameter_incrementer.as_ref()
     }
 
     /// Iterates scoped component definitions in canonical scope/ID order.
