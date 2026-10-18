@@ -4127,6 +4127,13 @@ impl<'a> FlowLauncher<'a> {
                 instance_id: instance.id(),
             });
         }
+        if let Err(error) = self
+            .ensure_plan_restart_allowed(&mut *unit, instance.id(), plan)
+            .await
+        {
+            unit.rollback().await?;
+            return Err(error);
+        }
         let execution = match (upgrade, plan.scoped_components().len() != 0) {
             (Some(upgrade), true) => {
                 unit.create_job_execution_with_upgrade_and_parameters(
@@ -4186,6 +4193,81 @@ impl<'a> FlowLauncher<'a> {
             Err(error) => return Err(error.into()),
         }
         Ok((instance, execution, attempt))
+    }
+
+    async fn ensure_plan_restart_allowed(
+        &self,
+        unit: &mut dyn crate::RepositoryUnitOfWork,
+        instance_id: JobInstanceId,
+        plan: &crate::CompiledExecutionPlan,
+    ) -> Result<(), FlowRuntimeError> {
+        for (_, node) in plan.nodes() {
+            match node {
+                FlowNode::Step(step) => {
+                    self.ensure_prior_step_can_be_reused(
+                        unit,
+                        instance_id,
+                        step.id(),
+                        step.start_controls(),
+                    )
+                    .await?;
+                }
+                FlowNode::CustomLeaf(custom) => {
+                    self.ensure_prior_step_can_be_reused(
+                        unit,
+                        instance_id,
+                        custom.id(),
+                        custom.start_controls(),
+                    )
+                    .await?;
+                }
+                FlowNode::PartitionedStep(partitioned) => {
+                    self.ensure_prior_step_can_be_reused(
+                        unit,
+                        instance_id,
+                        partitioned.id(),
+                        partitioned.start_controls(),
+                    )
+                    .await?;
+                }
+                FlowNode::Split(split) => {
+                    for step in split.branches().iter().flat_map(crate::SplitBranch::steps) {
+                        self.ensure_prior_step_can_be_reused(
+                            unit,
+                            instance_id,
+                            step.id(),
+                            step.start_controls(),
+                        )
+                        .await?;
+                    }
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    async fn ensure_prior_step_can_be_reused(
+        &self,
+        unit: &mut dyn crate::RepositoryUnitOfWork,
+        instance_id: JobInstanceId,
+        node_id: &NodeId,
+        controls: crate::StartControls,
+    ) -> Result<(), FlowRuntimeError> {
+        if controls.restart_policy() != crate::RestartPolicy::NotRestartable {
+            return Ok(());
+        }
+        let Some(history) = unit.latest_flow_step(instance_id, node_id).await? else {
+            return Ok(());
+        };
+        let completed = history.execution().metadata().status() == BatchStatus::Completed;
+        if completed && !controls.allow_start_if_complete() {
+            return Ok(());
+        }
+        Err(FlowRuntimeError::NonRestartableStep {
+            instance_id,
+            node_id: node_id.clone(),
+        })
     }
 
     async fn start_job(&self, execution: &JobExecution) -> Result<JobExecution, FlowRuntimeError> {
