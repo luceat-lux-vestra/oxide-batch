@@ -428,7 +428,10 @@ async fn mismatched_or_undeclared_incrementer_fails_before_callback_and_lifecycl
     let mut inspection = repository.begin().await?;
     assert!(
         inspection
-            .find_job_instance(&JobInstanceKey::new(declared_name.clone(), &prior_parameters))
+            .find_job_instance(&JobInstanceKey::new(
+                declared_name.clone(),
+                &prior_parameters,
+            ))
             .await?
             .is_none()
     );
