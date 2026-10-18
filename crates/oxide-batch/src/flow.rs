@@ -1867,8 +1867,7 @@ impl<'a> FlowLauncher<'a> {
         if declared != incrementer.identity() {
             return Err(crate::IncrementerError::IdentityMismatch.into());
         }
-        let proposal =
-            incrementer.increment(job.compiled_plan().definition_identity(), prior)?;
+        let proposal = incrementer.increment(job.compiled_plan().definition_identity(), prior)?;
         self.launch(job, proposal.parameters(), stop_token).await
     }
 
