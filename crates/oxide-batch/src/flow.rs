@@ -4119,20 +4119,27 @@ impl<'a> FlowLauncher<'a> {
             .await?
             .instance()
             .clone();
-        if plan.job_restart_policy() == crate::RestartPolicy::NotRestartable
-            && !unit.job_executions(instance.id()).await?.is_empty()
-        {
-            unit.rollback().await?;
-            return Err(FlowRuntimeError::NonRestartableJob {
-                instance_id: instance.id(),
-            });
-        }
-        if let Err(error) = self
-            .ensure_plan_restart_allowed(&mut *unit, instance.id(), plan)
-            .await
-        {
-            unit.rollback().await?;
-            return Err(error);
+        let prior_attempts = unit.job_executions(instance.id()).await?;
+        let restart_eligible = prior_attempts.last().is_some_and(|execution| {
+            matches!(
+                execution.metadata().status(),
+                BatchStatus::Failed | BatchStatus::Stopped
+            )
+        });
+        if restart_eligible {
+            if plan.job_restart_policy() == crate::RestartPolicy::NotRestartable {
+                unit.rollback().await?;
+                return Err(FlowRuntimeError::NonRestartableJob {
+                    instance_id: instance.id(),
+                });
+            }
+            if let Err(error) = self
+                .ensure_plan_restart_allowed(&mut *unit, instance.id(), plan)
+                .await
+            {
+                unit.rollback().await?;
+                return Err(error);
+            }
         }
         let execution = match (upgrade, plan.scoped_components().len() != 0) {
             (Some(upgrade), true) => {
