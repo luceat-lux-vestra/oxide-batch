@@ -442,6 +442,7 @@ oxide_batch::RepositoryUnitOfWork
 oxide_batch::RequestDigest
 oxide_batch::RequestField
 oxide_batch::RequestFieldError
+oxide_batch::RestartPolicy
 oxide_batch::RestartabilityDeclaration
 oxide_batch::RetentionAction
 oxide_batch::RetentionActionId
