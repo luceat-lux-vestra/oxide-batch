@@ -353,12 +353,12 @@ async fn matching_incrementer_identity_launches_exactly_one_derived_instance()
     let ids = Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN));
     let repository = InMemoryJobRepository::new(clock.clone(), ids.clone());
     let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
-    let prior = prior(6)?;
+    let prior_parameters = prior(6)?;
     let expected = prior(7)?;
     let (_, stop) = StopSource::new();
 
     let report = launcher
-        .increment_and_launch(&job, &incrementer, &prior, &stop)
+        .increment_and_launch(&job, &incrementer, &prior_parameters, &stop)
         .await?;
 
     assert_eq!(MATCH_CALLBACKS.load(Ordering::SeqCst), 1);
@@ -390,13 +390,13 @@ async fn mismatched_or_undeclared_incrementer_fails_before_callback_and_lifecycl
     let ids = Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN));
     let repository = InMemoryJobRepository::new(clock.clone(), ids.clone());
     let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
-    let prior = prior(3)?;
+    let prior_parameters = prior(3)?;
     let expected = prior(4)?;
     let (_, stop) = StopSource::new();
 
     assert_eq!(
         launcher
-            .increment_and_launch(&declared_job, &mismatched, &prior, &stop)
+            .increment_and_launch(&declared_job, &mismatched, &prior_parameters, &stop)
             .await,
         Err(FlowRuntimeError::Incrementer(
             IncrementerError::IdentityMismatch
@@ -407,7 +407,7 @@ async fn mismatched_or_undeclared_incrementer_fails_before_callback_and_lifecycl
     let mut inspection = repository.begin().await?;
     assert!(
         inspection
-            .find_job_instance(&JobInstanceKey::new(declared_name.clone(), &prior))
+            .find_job_instance(&JobInstanceKey::new(declared_name.clone(), &prior_parameters))
             .await?
             .is_none()
     );
@@ -423,7 +423,7 @@ async fn mismatched_or_undeclared_incrementer_fails_before_callback_and_lifecycl
     let undeclared_job = flow_job(&undeclared_name, None)?;
     assert_eq!(
         launcher
-            .increment_and_launch(&undeclared_job, &mismatched, &prior, &stop)
+            .increment_and_launch(&undeclared_job, &mismatched, &prior_parameters, &stop)
             .await,
         Err(FlowRuntimeError::Incrementer(
             IncrementerError::IdentityMismatch
@@ -434,7 +434,7 @@ async fn mismatched_or_undeclared_incrementer_fails_before_callback_and_lifecycl
     let mut inspection = repository.begin().await?;
     assert!(
         inspection
-            .find_job_instance(&JobInstanceKey::new(undeclared_name, &prior))
+            .find_job_instance(&JobInstanceKey::new(undeclared_name, &prior_parameters))
             .await?
             .is_none()
     );
