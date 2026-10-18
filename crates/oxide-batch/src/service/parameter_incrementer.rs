@@ -1,7 +1,7 @@
 //! Bounded typed M7 parameter-incrementer application boundary.
 use crate::{
-    DefinitionIdentity, DefinitionRevision, JobInstanceKey, JobParameters, ParameterName,
-    ParameterRole, ParameterValueKind,
+    DefinitionIdentity, DefinitionRevision, JobInstanceKey, JobParameters, ParameterIncrementerIdentity,
+    ParameterName, ParameterRole, ParameterValueKind,
 };
 use std::error::Error;
 use std::fmt;
@@ -51,6 +51,8 @@ pub enum IncrementerError {
     InvalidOutputShape,
     /// Existing input parameter silently changed role or kind.
     InputRoleOrKindDrift,
+    /// Supplied callback identity does not match the target definition.
+    IdentityMismatch,
     /// Application explicitly rejected the input.
     ApplicationRejected,
 }
@@ -64,6 +66,7 @@ impl fmt::Display for IncrementerError {
             Self::InputRoleOrKindDrift => {
                 f.write_str("incrementer changed a previous role or kind")
             }
+            Self::IdentityMismatch => f.write_str("incrementer identity does not match definition"),
             Self::ApplicationRejected => f.write_str("incrementer application rejected the input"),
         }
     }
@@ -78,16 +81,15 @@ impl Error for IncrementerError {}
 /// No repository query, launch or implicit retry occurs here.
 #[derive(Clone)]
 pub struct ParameterIncrementer {
-    kind: DefinitionRevision,
-    revision: DefinitionRevision,
+    identity: ParameterIncrementerIdentity,
     output_shape: Vec<IncrementerField>,
     apply: fn(&DefinitionIdentity, &JobParameters) -> Result<JobParameters, IncrementerError>,
 }
 impl fmt::Debug for ParameterIncrementer {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("ParameterIncrementer")
-            .field("kind", &self.kind)
-            .field("revision", &self.revision)
+            .field("kind", self.identity.kind())
+            .field("revision", self.identity.revision())
             .field("output_field_count", &self.output_shape.len())
             .finish_non_exhaustive()
     }
@@ -114,8 +116,7 @@ impl ParameterIncrementer {
             return Err(IncrementerError::DuplicateField);
         }
         Ok(Self {
-            kind,
-            revision,
+            identity: ParameterIncrementerIdentity::new(kind, revision),
             output_shape,
             apply,
         })
@@ -123,12 +124,17 @@ impl ParameterIncrementer {
     /// Borrows the reviewed kind.
     #[must_use]
     pub const fn kind(&self) -> &DefinitionRevision {
-        &self.kind
+        self.identity.kind()
     }
     /// Borrows the reviewed revision.
     #[must_use]
     pub const fn revision(&self) -> &DefinitionRevision {
-        &self.revision
+        self.identity.revision()
+    }
+    /// Borrows the restart-relevant callback identity.
+    #[must_use]
+    pub const fn identity(&self) -> &ParameterIncrementerIdentity {
+        &self.identity
     }
     /// Computes exactly one candidate from explicit prior parameters.
     ///
