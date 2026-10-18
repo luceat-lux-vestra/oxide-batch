@@ -1,7 +1,7 @@
 //! Bounded typed M7 parameter-incrementer application boundary.
 use crate::{
-    DefinitionIdentity, DefinitionRevision, JobInstanceKey, JobParameters, ParameterIncrementerIdentity,
-    ParameterName, ParameterRole, ParameterValueKind,
+    DefinitionIdentity, DefinitionRevision, JobInstanceKey, JobParameters,
+    ParameterIncrementerIdentity, ParameterName, ParameterRole, ParameterValueKind,
 };
 use std::error::Error;
 use std::fmt;
