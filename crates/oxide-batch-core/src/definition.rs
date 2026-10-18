@@ -1743,8 +1743,7 @@ fn validate_parameter_incrementer_manifest(
     };
     let object = value.as_object().ok_or(ManifestError::MalformedGraph)?;
     let required = ["kind", "revision"];
-    if object.len() != required.len()
-        || object.keys().any(|key| !required.contains(&key.as_str()))
+    if object.len() != required.len() || object.keys().any(|key| !required.contains(&key.as_str()))
     {
         return Err(ManifestError::MalformedGraph);
     }
