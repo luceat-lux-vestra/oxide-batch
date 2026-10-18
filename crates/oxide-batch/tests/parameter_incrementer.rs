@@ -1,11 +1,18 @@
 //! #594: pure M7 parameter incrementing never supplies hidden instance identity.
 use std::error::Error;
+use std::num::NonZeroU64;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use oxide_batch::{
-    ComponentRevision, DefinitionIdentity, DefinitionRevision, IncrementedParameters,
-    IncrementerError, IncrementerField, JobInstanceKey, JobName, JobParameter, JobParameters,
-    ParameterIncrementer, ParameterName, ParameterRole, ParameterValue, ParameterValueKind,
-    StepName,
+    BoxFuture, ComponentRevision, DefinitionIdentity, DefinitionManifest, DefinitionRevision,
+    FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget,
+    InMemoryJobRepository, IncrementedParameters, IncrementerError, IncrementerField,
+    JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, ManifestError, NodeId,
+    ParameterIncrementer, ParameterIncrementerIdentity, ParameterName, ParameterRole,
+    ParameterValue, ParameterValueKind, SequentialIdGenerator, StepComponents, StepName, StepNode,
+    StopSource, SystemClock, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
+    TerminalKind,
 };
 
 fn definition() -> Result<DefinitionIdentity, Box<dyn Error>> {
@@ -217,5 +224,222 @@ fn excessive_prior_parameter_set_is_rejected_before_callback() -> Result<(), Box
         selected.increment(&definition()?, &many),
         Err(IncrementerError::TooManyFields)
     );
+    Ok(())
+}
+
+
+static MATCH_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
+static REJECTED_CALLBACKS: AtomicUsize = AtomicUsize::new(0);
+
+fn counted_next_run(
+    target: &DefinitionIdentity,
+    previous: &JobParameters,
+) -> Result<JobParameters, IncrementerError> {
+    MATCH_CALLBACKS.fetch_add(1, Ordering::SeqCst);
+    next_run(target, previous)
+}
+
+fn should_not_run(
+    target: &DefinitionIdentity,
+    previous: &JobParameters,
+) -> Result<JobParameters, IncrementerError> {
+    REJECTED_CALLBACKS.fetch_add(1, Ordering::SeqCst);
+    next_run(target, previous)
+}
+
+struct CompleteTasklet;
+
+impl Tasklet for CompleteTasklet {
+    fn execute<'a>(
+        &'a self,
+        _context: TaskletContext<'a>,
+    ) -> BoxFuture<'a, Result<TaskletOutcome, TaskletError>> {
+        Box::pin(async { Ok(TaskletOutcome::Completed) })
+    }
+}
+
+fn incrementer_identity(
+    revision: &str,
+) -> Result<ParameterIncrementerIdentity, Box<dyn Error>> {
+    Ok(ParameterIncrementerIdentity::new(
+        DefinitionRevision::new("run-id")?,
+        DefinitionRevision::new(revision)?,
+    ))
+}
+
+fn flow_plan(
+    name: &JobName,
+    identity: Option<ParameterIncrementerIdentity>,
+) -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
+    let only = NodeId::new("only")?;
+    let mut graph = FlowGraph::new(only.clone()).with_node(FlowNode::step(StepNode::new(
+        only.clone(),
+        StepName::new("only")?,
+        StepComponents::Tasklet(ComponentRevision::new("only-v1")?),
+    )));
+    if let Some(identity) = identity {
+        graph = graph.with_parameter_incrementer_identity(identity);
+    }
+    Ok(graph
+        .with_sequence(only, FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(name, DefinitionRevision::new("flow-v1")?)?)
+}
+
+fn flow_job(
+    name: &JobName,
+    identity: Option<ParameterIncrementerIdentity>,
+) -> Result<FlowJob, Box<dyn Error>> {
+    Ok(FlowJob::new(name.clone(), flow_plan(name, identity)?)?.with_tasklet_step(
+        NodeId::new("only")?,
+        TaskletStep::new(StepName::new("only")?, Arc::new(CompleteTasklet)),
+    )?)
+}
+
+#[test]
+fn incrementer_identity_is_restart_relevant_only_when_explicitly_declared()
+-> Result<(), Box<dyn Error>> {
+    let name = JobName::new("incrementer-fingerprint")?;
+    let legacy = flow_plan(&name, None)?;
+    assert_eq!(legacy.manifest_format(), 2);
+    assert!(legacy.parameter_incrementer_identity().is_none());
+
+    let v1_identity = incrementer_identity("run-id-v1")?;
+    let v1 = flow_plan(&name, Some(v1_identity.clone()))?;
+    assert_eq!(v1.manifest_format(), 4);
+    assert_eq!(v1.parameter_incrementer_identity(), Some(&v1_identity));
+    assert_ne!(legacy.fingerprint(), v1.fingerprint());
+
+    let v2_identity = incrementer_identity("run-id-v2")?;
+    let v2 = flow_plan(&name, Some(v2_identity.clone()))?;
+    assert_eq!(v2.parameter_incrementer_identity(), Some(&v2_identity));
+    assert_ne!(v1.fingerprint(), v2.fingerprint());
+
+    let encoded = String::from_utf8(v1.definition_identity().canonical_manifest().to_vec())?;
+    assert!(encoded.contains(r#""parameter_incrementer":{"kind":"run-id","revision":"run-id-v1"}"#));
+    Ok(())
+}
+
+#[test]
+fn malformed_format4_incrementer_identity_fails_closed() -> Result<(), Box<dyn Error>> {
+    let name = JobName::new("incrementer-manifest-reader")?;
+    let plan = flow_plan(&name, Some(incrementer_identity("run-id-v1")?))?;
+    let mut document: serde_json::Value =
+        serde_json::from_slice(plan.definition_identity().canonical_manifest())?;
+    document
+        .get_mut("parameter_incrementer")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("missing incrementer identity")?
+        .insert("unexpected".to_owned(), serde_json::json!(true));
+    let malformed = serde_json::to_vec(&document)?;
+    assert!(matches!(
+        DefinitionManifest::read(&malformed),
+        Err(ManifestError::MalformedGraph)
+    ));
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn matching_incrementer_identity_launches_exactly_one_derived_instance()
+-> Result<(), Box<dyn Error>> {
+    MATCH_CALLBACKS.store(0, Ordering::SeqCst);
+    let name = JobName::new("incrementer-launch")?;
+    let identity = incrementer_identity("run-id-v1")?;
+    let job = flow_job(&name, Some(identity.clone()))?;
+    let incrementer = incrementer(counted_next_run, ParameterRole::Identifying)?;
+    assert_eq!(incrementer.identity(), &identity);
+
+    let clock = Arc::new(SystemClock);
+    let ids = Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN));
+    let repository = InMemoryJobRepository::new(clock.clone(), ids.clone());
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let prior = prior(6)?;
+    let expected = prior(7)?;
+    let (_, stop) = StopSource::new();
+
+    let report = launcher
+        .increment_and_launch(&job, &incrementer, &prior, &stop)
+        .await?;
+
+    assert_eq!(MATCH_CALLBACKS.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        report.instance().key(),
+        &JobInstanceKey::new(name, &expected)
+    );
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn mismatched_or_undeclared_incrementer_fails_before_callback_and_lifecycle_write()
+-> Result<(), Box<dyn Error>> {
+    REJECTED_CALLBACKS.store(0, Ordering::SeqCst);
+    let declared_name = JobName::new("incrementer-mismatch")?;
+    let declared_job = flow_job(
+        &declared_name,
+        Some(incrementer_identity("run-id-v1")?),
+    )?;
+    let mismatched = ParameterIncrementer::new(
+        DefinitionRevision::new("run-id")?,
+        DefinitionRevision::new("run-id-v2")?,
+        vec![IncrementerField::new(
+            ParameterName::new("run.id")?,
+            ParameterValueKind::U64,
+            ParameterRole::Identifying,
+        )],
+        should_not_run,
+    )?;
+
+    let clock = Arc::new(SystemClock);
+    let ids = Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN));
+    let repository = InMemoryJobRepository::new(clock.clone(), ids.clone());
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let prior = prior(3)?;
+    let expected = prior(4)?;
+    let (_, stop) = StopSource::new();
+
+    assert_eq!(
+        launcher
+            .increment_and_launch(&declared_job, &mismatched, &prior, &stop)
+            .await,
+        Err(FlowRuntimeError::Incrementer(
+            IncrementerError::IdentityMismatch
+        ))
+    );
+    assert_eq!(REJECTED_CALLBACKS.load(Ordering::SeqCst), 0);
+
+    let mut inspection = repository.begin().await?;
+    assert!(
+        inspection
+            .find_job_instance(&JobInstanceKey::new(declared_name.clone(), &prior))
+            .await?
+            .is_none()
+    );
+    assert!(
+        inspection
+            .find_job_instance(&JobInstanceKey::new(declared_name, &expected))
+            .await?
+            .is_none()
+    );
+    inspection.rollback().await?;
+
+    let undeclared_name = JobName::new("incrementer-undeclared")?;
+    let undeclared_job = flow_job(&undeclared_name, None)?;
+    assert_eq!(
+        launcher
+            .increment_and_launch(&undeclared_job, &mismatched, &prior, &stop)
+            .await,
+        Err(FlowRuntimeError::Incrementer(
+            IncrementerError::IdentityMismatch
+        ))
+    );
+    assert_eq!(REJECTED_CALLBACKS.load(Ordering::SeqCst), 0);
+
+    let mut inspection = repository.begin().await?;
+    assert!(
+        inspection
+            .find_job_instance(&JobInstanceKey::new(undeclared_name, &prior))
+            .await?
+            .is_none()
+    );
+    inspection.rollback().await?;
     Ok(())
 }
