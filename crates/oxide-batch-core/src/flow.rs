@@ -54,11 +54,36 @@ impl Default for StartLimit {
     }
 }
 
+/// Whether a job or logical step may be entered by a later execution attempt.
+///
+/// This M7 execution-definition policy is distinct from
+/// `RestartabilityDeclaration`, which describes whether component state can be
+/// reconstructed. The default preserves every pre-M7 definition's restart
+/// behavior and manifest identity.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum RestartPolicy {
+    /// Later failed/stopped execution attempts may re-enter this definition.
+    #[default]
+    Restartable,
+    /// A later execution attempt must fail closed before re-entering this definition.
+    NotRestartable,
+}
+
+impl RestartPolicy {
+    /// Returns whether a later execution attempt may re-enter this definition.
+    #[must_use]
+    pub const fn is_restartable(self) -> bool {
+        matches!(self, Self::Restartable)
+    }
+}
+
 /// Restart-relevant start controls for one logical step.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct StartControls {
     start_limit: StartLimit,
     allow_start_if_complete: bool,
+    restart_policy: RestartPolicy,
 }
 
 impl StartControls {
@@ -68,7 +93,15 @@ impl StartControls {
         Self {
             start_limit,
             allow_start_if_complete,
+            restart_policy: RestartPolicy::Restartable,
         }
+    }
+
+    /// Applies the explicit execution-definition restart policy.
+    #[must_use]
+    pub const fn with_restart_policy(mut self, restart_policy: RestartPolicy) -> Self {
+        self.restart_policy = restart_policy;
+        self
     }
 
     /// Returns the maximum number of starts for one job instance.
@@ -81,6 +114,12 @@ impl StartControls {
     #[must_use]
     pub const fn allow_start_if_complete(&self) -> bool {
         self.allow_start_if_complete
+    }
+
+    /// Returns the execution-definition restart policy for this logical step.
+    #[must_use]
+    pub const fn restart_policy(&self) -> RestartPolicy {
+        self.restart_policy
     }
 }
 
