@@ -3,7 +3,7 @@ use super::{
     DefinitionIdentity, DefinitionRevision, ExitCode, FlowGraph, FlowNode, FlowTarget,
     FlowTransition, JobName, MAX_BRANCH_STEPS, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES,
     MAX_OUTGOING_TRANSITIONS, MAX_SCOPED_COMPONENTS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS,
-    NestedFlow, NodeId, ParameterIncrementerIdentity, PlanError, RepeatId, ScopeKind,
+    NestedFlow, NodeId, ParameterIncrementerIdentity, PlanError, RepeatId, RestartPolicy, ScopeKind,
     ScopedComponentDefinition, ScopedComponentId, StepNode, TerminalKind, Value, check_unambiguous,
     json,
 };
@@ -47,6 +47,7 @@ pub(super) fn compile(
 
     Ok(CompiledExecutionPlan {
         definition,
+        job_restart_policy: compiler.job_restart_policy,
         parameter_incrementer,
         scoped_components: compiler.scoped_components,
         entry: root_scope.entry().clone(),
@@ -74,6 +75,7 @@ struct AdvancedCompiler {
     declared_transitions: usize,
     scoped_components: BTreeMap<(ScopeKind, ScopedComponentId), ScopedComponentDefinition>,
     repeat_ids: BTreeSet<RepeatId>,
+    job_restart_policy: RestartPolicy,
 }
 
 impl AdvancedCompiler {
@@ -117,6 +119,9 @@ impl AdvancedCompiler {
             return Err(PlanError::CompositionDepthExceeded {
                 max: MAX_FLOW_COMPOSITION_DEPTH,
             });
+        }
+        if graph.job_restart_policy == RestartPolicy::NotRestartable {
+            self.job_restart_policy = RestartPolicy::NotRestartable;
         }
         for component in graph.scoped_components {
             self.install_scoped_component(component)?;
@@ -665,6 +670,14 @@ impl AdvancedCompiler {
             "nodes": node_values.into_values().collect::<Vec<_>>(),
             "transitions": transitions
         });
+        if self.job_restart_policy == RestartPolicy::NotRestartable
+            && let Some(object) = manifest.as_object_mut()
+        {
+            object.insert(
+                "restart_policy".to_owned(),
+                Value::String("not_restartable".to_owned()),
+            );
+        }
         if let Some(identity) = parameter_incrementer
             && let Some(object) = manifest.as_object_mut()
         {
