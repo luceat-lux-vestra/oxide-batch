@@ -120,7 +120,8 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // resolution execution remains internal and feeds #277's live-scope runtime.
     ("scope_runtime", 1),
     // #550 adds the public exact-revision DefinitionRegistry facade.
-    ("service", 9),
+    // #594 adds typed bounded incrementer kind/revision, output-shape, error and result.
+    ("service", 13),
     ("shutdown", 20),
     ("telemetry", 38),
 ];
