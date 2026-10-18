@@ -1591,7 +1591,9 @@ impl fmt::Display for FlowRuntimeError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Job(error) => write!(formatter, "flow job is invalid: {error}"),
-            Self::Incrementer(error) => write!(formatter, "flow parameter increment failed: {error}"),
+            Self::Incrementer(error) => {
+                write!(formatter, "flow parameter increment failed: {error}")
+            }
             Self::Repository(error) => {
                 write!(formatter, "flow repository operation failed: {error}")
             }
