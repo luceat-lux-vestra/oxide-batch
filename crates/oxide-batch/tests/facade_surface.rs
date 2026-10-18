@@ -113,8 +113,7 @@ mod resolves {
         OTHER_LABEL_VALUE, OperationId, OperatorAction, OperatorError, OperatorOutcome,
         OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
         OperatorRequest, OperatorRequestId, OwnerObservation, OwnerToken, Page, PageRequest,
-        PageSize, ParameterCoercion, ParameterDescriptor, ParameterIncrementer,
-        ParameterIncrementerIdentity, ParameterName,
+        PageSize, ParameterCoercion, ParameterDescriptor, ParameterIncrementer, ParameterName,
         ParameterRole, ParameterValue, ParameterValueKind, PartitionAggregate,
         PartitionAggregationError, PartitionBudget, PartitionCount, PartitionFactoryError,
         PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionPlanRequest,
@@ -154,6 +153,7 @@ mod resolves {
         WriteListener, WriteOutcome, WriterError, aggregate_step_partitions,
         completion_policy_revision,
     };
+    pub use oxide_batch::ParameterIncrementerIdentity;
 
     pub use oxide_batch::{
         LateBindingDefinitionError, LateBoundInput, LateBoundSource, MAX_LATE_BOUND_INPUTS,
