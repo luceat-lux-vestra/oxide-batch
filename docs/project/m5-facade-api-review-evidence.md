@@ -488,3 +488,7 @@ sensitive-payload sweep are feature-gated and were run locally under
 ## M7 #552 fork public facade review (2026-10-14)
 
 The explicit fork boundary contributes four reviewed facade names: `ForkRequest`, `ForkLineage`, and `ForkContextTransform` from the repository re-export group (+3), and `JobFork` from the service group (+1). The reviewed export count is now 564; the additional types preserve new-instance identity and do not expose raw application context or hidden mutable repository handles. Optional feature-gated adapter counts remain unchanged. This review is conditional on Gate-D integration and durability evidence and does not approve release or merging PR #555.
+
+## M7 #594 Gate-E incrementer facade review (2026-10-16)
+
+Four bounded names have been added as an initial pure incrementer application contract: `IncrementerField`, `IncrementerError`, `ParameterIncrementer` and `IncrementedParameters`. The service group increases from 9 to 13 names, total facade from 564 to 568. The optional PostgreSQL surface is unchanged. The callback receives exactly an immutable definition and explicitly supplied prior typed parameters; output names, kinds, roles and key identity are validated and diagnostics contain no values. This is an E1 foundation, not yet #199 launcher/operator integration or accepted Gate-E closure.
