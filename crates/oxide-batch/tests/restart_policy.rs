@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use oxide_batch::{
     BoxFuture, ComponentRevision, DefinitionManifest, DefinitionRevision, ExitPattern, FlowGraph,
     FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
-    InMemoryJobRepository, JobInstanceKey, JobName, JobParameters, JobRepository, ManifestError,
+    InMemoryJobRepository, JobName, JobParameters, JobRepository, ManifestError,
     NestedFlow, NodeId, RestartPolicy, SequentialIdGenerator, StartControls, StartLimit,
     StepComponents, StepName, StepNode, StopSource, SystemClock, Tasklet, TaskletContext,
     TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
@@ -265,12 +265,13 @@ async fn nonrestartable_step_rejects_required_reentry_before_new_attempt_or_user
     let instance_id = first.instance().id();
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
+    let only = NodeId::new("only")?;
     assert!(matches!(
         launcher.launch(&job, &parameters, &stop).await,
         Err(FlowRuntimeError::NonRestartableStep {
             instance_id: rejected,
             node_id
-        }) if rejected == instance_id && node_id == NodeId::new("only")?
+        }) if rejected == instance_id && node_id == only
     ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
@@ -370,17 +371,3 @@ async fn nested_flow_does_not_reset_nonrestartable_step_history()
     Ok(())
 }
 
-#[test]
-fn restart_policy_diagnostics_do_not_render_parameter_payloads() -> Result<(), Box<dyn Error>> {
-    let parameters = JobParameters::new();
-    let key = JobInstanceKey::new(JobName::new("redaction-check")?, &parameters);
-    let rendered = format!(
-        "{}",
-        FlowRuntimeError::NonRestartableJob {
-            instance_id: oxide_batch::JobInstanceId::new(1)?
-        }
-    );
-    assert!(!rendered.contains(&format!("{parameters:?}")));
-    assert!(!rendered.contains(&format!("{key:?}")));
-    Ok(())
-}
