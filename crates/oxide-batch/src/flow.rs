@@ -1867,9 +1867,9 @@ impl<'a> FlowLauncher<'a> {
         if declared != incrementer.identity() {
             return Err(crate::IncrementerError::IdentityMismatch.into());
         }
-        let incremented =
+        let proposal =
             incrementer.increment(job.compiled_plan().definition_identity(), prior)?;
-        self.launch(job, incremented.parameters(), stop_token).await
+        self.launch(job, proposal.parameters(), stop_token).await
     }
 
     /// Executes one durable sequential, conditional, or bounded split attempt.
