@@ -1541,6 +1541,18 @@ pub enum FlowRuntimeError {
     CountExhausted,
     /// Process shutdown stopped intake before this launch was accepted.
     ShuttingDown,
+    /// The job definition forbids creating a later execution attempt.
+    NonRestartableJob {
+        /// Logical instance whose prior committed attempt blocks restart.
+        instance_id: JobInstanceId,
+    },
+    /// The logical step definition forbids re-entry from a later job attempt.
+    NonRestartableStep {
+        /// Logical instance whose step history blocks re-entry.
+        instance_id: JobInstanceId,
+        /// Stable logical step identity whose policy rejected restart.
+        node_id: NodeId,
+    },
     /// The connected repository does not declare a capability the plan needs.
     UndeclaredCapability {
         /// The requirement the plan carries.
@@ -1602,6 +1614,18 @@ impl fmt::Display for FlowRuntimeError {
             }
             Self::CountExhausted => formatter.write_str("flow execution count is exhausted"),
             Self::ShuttingDown => formatter.write_str("runtime intake is shutting down"),
+            Self::NonRestartableJob { instance_id } => write!(
+                formatter,
+                "job instance {instance_id} is declared non-restartable"
+            ),
+            Self::NonRestartableStep {
+                instance_id,
+                node_id,
+            } => write!(
+                formatter,
+                "logical step {} in job instance {instance_id} is declared non-restartable",
+                node_id.as_str()
+            ),
             Self::UndeclaredCapability { capability, .. } => write!(
                 formatter,
                 "flow requires {capability}, which the connected repository does not declare"
@@ -1669,6 +1693,8 @@ impl Error for FlowRuntimeError {
             Self::DecisionSequenceExhausted
             | Self::CountExhausted
             | Self::ShuttingDown
+            | Self::NonRestartableJob { .. }
+            | Self::NonRestartableStep { .. }
             | Self::UndeclaredCapability { .. }
             | Self::InsufficientPoolCapacity { .. }
             | Self::UnresolvedPartitionOutcome { .. }
@@ -2142,6 +2168,7 @@ impl<'a> FlowLauncher<'a> {
                                     compiled.step_name(),
                                     &node_id,
                                     compiled.start_controls().start_limit(),
+                                    compiled.start_controls().restart_policy(),
                                 )
                                 .await
                             {
@@ -2303,6 +2330,7 @@ impl<'a> FlowLauncher<'a> {
                                     compiled.step_name(),
                                     &node_id,
                                     compiled.start_controls().start_limit(),
+                                    compiled.start_controls().restart_policy(),
                                 )
                                 .await
                             {
@@ -3324,6 +3352,7 @@ impl<'a> FlowLauncher<'a> {
                     compiled.step_name(),
                     compiled.id(),
                     compiled.start_controls().start_limit(),
+                                    compiled.start_controls().restart_policy(),
                 )
                 .await
             {
@@ -3424,6 +3453,7 @@ impl<'a> FlowLauncher<'a> {
                 compiled.step_name(),
                 compiled.id(),
                 compiled.start_controls().start_limit(),
+                                    compiled.start_controls().restart_policy(),
             )
             .await?;
         let parent = self.start_step(&created).await?;
@@ -3757,6 +3787,18 @@ impl<'a> FlowLauncher<'a> {
     ) -> Result<(StepExecution, StepPartition, NodeId), FlowRuntimeError> {
         let (worker_name, worker_node_id) = partition_worker_identity(compiled, partition)?;
         let mut unit = self.repository.begin().await?;
+        if let Err(error) = self
+            .ensure_step_restart_allowed(
+                &mut *unit,
+                execution_id,
+                &worker_node_id,
+                compiled.worker().start_controls().restart_policy(),
+            )
+            .await
+        {
+            unit.rollback().await?;
+            return Err(error);
+        }
         let worker = unit
             .create_flow_step_execution(
                 execution_id,
@@ -4077,6 +4119,14 @@ impl<'a> FlowLauncher<'a> {
             .await?
             .instance()
             .clone();
+        if plan.job_restart_policy() == crate::RestartPolicy::NotRestartable
+            && !unit.job_executions(instance.id()).await?.is_empty()
+        {
+            unit.rollback().await?;
+            return Err(FlowRuntimeError::NonRestartableJob {
+                instance_id: instance.id(),
+            });
+        }
         let execution = match (upgrade, plan.scoped_components().len() != 0) {
             (Some(upgrade), true) => {
                 unit.create_job_execution_with_upgrade_and_parameters(
@@ -4183,13 +4233,49 @@ impl<'a> FlowLauncher<'a> {
         step_name: &StepName,
         node_id: &NodeId,
         limit: StartLimit,
+        restart_policy: crate::RestartPolicy,
     ) -> Result<StepExecution, FlowRuntimeError> {
         let mut unit = self.repository.begin().await?;
+        if let Err(error) = self
+            .ensure_step_restart_allowed(&mut *unit, job_execution_id, node_id, restart_policy)
+            .await
+        {
+            unit.rollback().await?;
+            return Err(error);
+        }
         let step = unit
             .create_flow_step_execution(job_execution_id, step_name, node_id, limit)
             .await?;
         unit.commit().await?;
         Ok(step)
+    }
+
+    async fn ensure_step_restart_allowed(
+        &self,
+        unit: &mut dyn crate::RepositoryUnitOfWork,
+        job_execution_id: JobExecutionId,
+        node_id: &NodeId,
+        restart_policy: crate::RestartPolicy,
+    ) -> Result<(), FlowRuntimeError> {
+        if restart_policy != crate::RestartPolicy::NotRestartable {
+            return Ok(());
+        }
+        let current = unit
+            .get_job_execution(job_execution_id)
+            .await?
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: job_execution_id,
+            })?;
+        let instance_id = current.job_instance_id();
+        if let Some(previous) = unit.latest_flow_step(instance_id, node_id).await?
+            && previous.execution().job_execution_id() != job_execution_id
+        {
+            return Err(FlowRuntimeError::NonRestartableStep {
+                instance_id,
+                node_id: node_id.clone(),
+            });
+        }
+        Ok(())
     }
 
     async fn latest_step(
