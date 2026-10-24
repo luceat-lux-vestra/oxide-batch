@@ -1774,9 +1774,7 @@ fn validate_restart_policy_manifest(document: &serde_json::Value) -> Result<(), 
                 if let Some(policy) = object.get("restart_policy") {
                     let is_start_controls = object.contains_key("start_limit")
                         && object.contains_key("allow_start_if_complete");
-                    if (!root && !is_start_controls)
-                        || policy.as_str() != Some("not_restartable")
-                    {
+                    if (!root && !is_start_controls) || policy.as_str() != Some("not_restartable") {
                         return Err(ManifestError::MalformedGraph);
                     }
                 }

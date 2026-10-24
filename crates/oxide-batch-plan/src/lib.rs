@@ -1072,7 +1072,9 @@ pub enum FlowNode {
 impl FlowNode {
     fn has_nonrestartable_step(&self) -> bool {
         match self {
-            Self::Step(step) => step.start_controls().restart_policy() == RestartPolicy::NotRestartable,
+            Self::Step(step) => {
+                step.start_controls().restart_policy() == RestartPolicy::NotRestartable
+            }
             Self::CustomLeaf(custom) => {
                 custom.start_controls().restart_policy() == RestartPolicy::NotRestartable
             }
@@ -1081,13 +1083,15 @@ impl FlowNode {
                     || partitioned.worker().start_controls().restart_policy()
                         == RestartPolicy::NotRestartable
             }
-            Self::Split(split) => split
-                .branches()
-                .iter()
-                .flat_map(SplitBranch::steps)
-                .any(|step| {
-                    step.start_controls().restart_policy() == RestartPolicy::NotRestartable
-                }),
+            Self::Split(split) => {
+                split
+                    .branches()
+                    .iter()
+                    .flat_map(SplitBranch::steps)
+                    .any(|step| {
+                        step.start_controls().restart_policy() == RestartPolicy::NotRestartable
+                    })
+            }
             _ => false,
         }
     }

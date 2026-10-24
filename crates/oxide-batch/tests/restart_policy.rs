@@ -8,9 +8,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use oxide_batch::{
     BoxFuture, ComponentRevision, DefinitionManifest, DefinitionRevision, ExitPattern, FlowGraph,
     FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
-    InMemoryJobRepository, JobName, JobParameters, JobRepository, ManifestError,
-    NestedFlow, NodeId, RepositoryError, RestartPolicy, SequentialIdGenerator, StartControls,
-    StartLimit, StepComponents, StepName, StepNode, StopSource, SystemClock, Tasklet, TaskletContext,
+    InMemoryJobRepository, JobName, JobParameters, JobRepository, ManifestError, NestedFlow,
+    NodeId, RepositoryError, RestartPolicy, SequentialIdGenerator, StartControls, StartLimit,
+    StepComponents, StepName, StepNode, StopSource, SystemClock, Tasklet, TaskletContext,
     TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
@@ -33,17 +33,15 @@ fn step_node(
     policy: RestartPolicy,
     allow_start_if_complete: bool,
 ) -> Result<StepNode, Box<dyn Error>> {
-    Ok(
-        StepNode::new(
-            id.clone(),
-            StepName::new(id.as_str())?,
-            StepComponents::Tasklet(ComponentRevision::new("tasklet-v1")?),
-        )
-        .with_start_controls(
-            StartControls::new(StartLimit::UNRESTRICTED, allow_start_if_complete)
-                .with_restart_policy(policy),
-        ),
+    Ok(StepNode::new(
+        id.clone(),
+        StepName::new(id.as_str())?,
+        StepComponents::Tasklet(ComponentRevision::new("tasklet-v1")?),
     )
+    .with_start_controls(
+        StartControls::new(StartLimit::UNRESTRICTED, allow_start_if_complete)
+            .with_restart_policy(policy),
+    ))
 }
 
 fn failing_plan(
@@ -95,12 +93,7 @@ fn flow_job(
 ) -> Result<FlowJob, Box<dyn Error>> {
     Ok(FlowJob::new(
         name.clone(),
-        failing_plan(
-            name,
-            job_policy,
-            step_policy,
-            allow_start_if_complete,
-        )?,
+        failing_plan(name, job_policy, step_policy, allow_start_if_complete)?,
     )?
     .with_tasklet_step(
         NodeId::new("only")?,
@@ -145,14 +138,22 @@ fn restart_policy_is_format4_only_and_default_preserves_legacy_identity()
     assert_eq!(step_nonrestartable.manifest_format(), 4);
     assert_ne!(legacy.fingerprint(), step_nonrestartable.fingerprint());
 
-    let job_manifest: serde_json::Value =
-        serde_json::from_slice(job_nonrestartable.definition_identity().canonical_manifest())?;
+    let job_manifest: serde_json::Value = serde_json::from_slice(
+        job_nonrestartable
+            .definition_identity()
+            .canonical_manifest(),
+    )?;
     assert_eq!(
-        job_manifest.get("restart_policy").and_then(serde_json::Value::as_str),
+        job_manifest
+            .get("restart_policy")
+            .and_then(serde_json::Value::as_str),
         Some("not_restartable")
     );
-    let step_manifest: serde_json::Value =
-        serde_json::from_slice(step_nonrestartable.definition_identity().canonical_manifest())?;
+    let step_manifest: serde_json::Value = serde_json::from_slice(
+        step_nonrestartable
+            .definition_identity()
+            .canonical_manifest(),
+    )?;
     assert_eq!(
         step_manifest
             .get("nodes")
@@ -207,8 +208,7 @@ fn restart_policy_manifest_validation_fails_closed() -> Result<(), Box<dyn Error
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn m7_nonrestartable_job_rejects_restart_before_user_work()
--> Result<(), Box<dyn Error>> {
+async fn m7_nonrestartable_job_rejects_restart_before_user_work() -> Result<(), Box<dyn Error>> {
     let name = JobName::new("m7-nonrestartable-job")?;
     let calls = Arc::new(AtomicUsize::new(0));
     let job = flow_job(
@@ -361,8 +361,7 @@ async fn completed_nonrestartable_step_is_still_reused_when_reentry_is_not_reque
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn nested_flow_does_not_reset_nonrestartable_step_history()
--> Result<(), Box<dyn Error>> {
+async fn nested_flow_does_not_reset_nonrestartable_step_history() -> Result<(), Box<dyn Error>> {
     let name = JobName::new("m7-nested-nonrestartable-step")?;
     let owner = NodeId::new("nested")?;
     let inner = NodeId::new("inner")?;

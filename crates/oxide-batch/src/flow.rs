@@ -3352,7 +3352,7 @@ impl<'a> FlowLauncher<'a> {
                     compiled.step_name(),
                     compiled.id(),
                     compiled.start_controls().start_limit(),
-                                    compiled.start_controls().restart_policy(),
+                    compiled.start_controls().restart_policy(),
                 )
                 .await
             {
@@ -3453,7 +3453,7 @@ impl<'a> FlowLauncher<'a> {
                 compiled.step_name(),
                 compiled.id(),
                 compiled.start_controls().start_limit(),
-                                    compiled.start_controls().restart_policy(),
+                compiled.start_controls().restart_policy(),
             )
             .await?;
         let parent = self.start_step(&created).await?;
@@ -4349,12 +4349,11 @@ impl<'a> FlowLauncher<'a> {
         if restart_policy != crate::RestartPolicy::NotRestartable {
             return Ok(());
         }
-        let current = unit
-            .get_job_execution(job_execution_id)
-            .await?
-            .ok_or(RepositoryError::JobExecutionNotFound {
+        let current = unit.get_job_execution(job_execution_id).await?.ok_or(
+            RepositoryError::JobExecutionNotFound {
                 id: job_execution_id,
-            })?;
+            },
+        )?;
         let instance_id = current.job_instance_id();
         if let Some(previous) = unit.latest_flow_step(instance_id, node_id).await?
             && previous.execution().job_execution_id() != job_execution_id
