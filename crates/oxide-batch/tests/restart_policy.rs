@@ -413,4 +413,3 @@ async fn nested_flow_does_not_reset_nonrestartable_step_history()
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     Ok(())
 }
-
