@@ -170,7 +170,10 @@ fn schema11_operator_action_migration_accepts_explicit_fork() -> Result<(), Box<
             PostgresMigrator::migrate(&config(url.clone())?).await?;
             assert_eq!(schema_version(&url).await?, Some(TARGET_VERSION));
 
-            let pool = PgPoolOptions::new().max_connections(1).connect(&url).await?;
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&url)
+                .await?;
             sqlx::query(
                 "INSERT INTO oxide_batch.ob_operator_request \
                  (action, authorization_class, operation_id, actor_ref, request_digest, \
