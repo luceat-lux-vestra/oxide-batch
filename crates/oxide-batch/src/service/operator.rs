@@ -240,7 +240,7 @@ impl<R: JobRepository> JobOperator<R> {
 
         let upgrade = match (request.definition_upgrade(), upgrade) {
             (Some(requested), Some(live)) if requested == live.upgrade() => Some(live),
-            (Some(_), Some(_)) | (None, Some(_)) => {
+            (Some(_) | None, Some(_)) => {
                 return Err(OperatorError::DefinitionUpgradeExecutionMismatch);
             }
             (Some(_), None) => return Err(OperatorError::DefinitionUpgradeExecutionRequired),
