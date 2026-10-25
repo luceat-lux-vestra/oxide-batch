@@ -14,9 +14,9 @@ use oxide_batch_core::{
 };
 
 use crate::{
-    ActorRef, AuthorizationClass, OperationId, OperatorAction, ReasonCode, RecoveryDisposition,
-    RecoveryProposal, RecoveryRequest, RecoveryRequestError, RepositoryError, RequestArguments,
-    RequestDigest, hex_digest, request_digest,
+    ActorRef, AuthorizationClass, ForkRequest, OperationId, OperatorAction, ReasonCode,
+    RecoveryDisposition, RecoveryProposal, RecoveryRequest, RecoveryRequestError, RepositoryError,
+    RequestArguments, RequestDigest, hex_digest, request_digest,
 };
 
 /// One validated mutating operator request.
@@ -150,6 +150,27 @@ impl OperatorRequest {
             OperatorTarget::Instance(job_instance_id),
             None,
             RequestArguments::DefinitionUpgrade(Box::new(upgrade)),
+        )
+    }
+
+    /// Requests one explicit new-lineage fork from an exact terminal source.
+    ///
+    /// The fork request owns the idempotency key and exact source version. Raw
+    /// parameter values remain inside the command only; the canonical operator
+    /// digest binds their value-free flow-input digest.
+    #[must_use]
+    pub fn fork(actor: ActorRef, request: ForkRequest) -> Self {
+        let operation_id = request.operation_id().clone();
+        let source_execution_id = request.source_execution_id();
+        let source_version = request.source_version();
+        Self::build(
+            OperatorAction::Fork,
+            operation_id,
+            actor,
+            None,
+            OperatorTarget::Execution(source_execution_id),
+            Some(source_version),
+            RequestArguments::Fork(Box::new(request)),
         )
     }
 
@@ -335,6 +356,16 @@ impl OperatorRequest {
     pub fn definition_upgrade(&self) -> Option<&DefinitionUpgrade> {
         match &self.arguments {
             RequestArguments::DefinitionUpgrade(upgrade) => Some(upgrade),
+            _ => None,
+        }
+    }
+
+    /// Borrows the exact fork command carried by this operator request.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn fork_request(&self) -> Option<&ForkRequest> {
+        match &self.arguments {
+            RequestArguments::Fork(request) => Some(request),
             _ => None,
         }
     }

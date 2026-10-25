@@ -63,8 +63,9 @@ use std::time::UNIX_EPOCH;
 
 use oxide_batch::{PostgresJobRepository, PostgresMigrator};
 use serde_json::{Value, json};
-use sqlx::Row;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::migrate::Migrator;
+use sqlx::postgres::{PgConnection, PgPoolOptions};
+use sqlx::{Connection, Row};
 
 use upgrade::{
     DurableDigest, FixedClock, SourceColumns, admin_url, apply_seed, assert_historical_shape,
@@ -78,9 +79,10 @@ use upgrade::{
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade must reach: the current installed schema
-/// (9, since M7 `#550`'s definition-registry migration), not the schema-3 target
+/// (12, including M7 `#615`'s explicit operator-fork action migration), not the schema-3 target
 /// the M5 preview named when it was current.
-const TARGET_VERSION: u32 = 11;
+const TARGET_VERSION: u32 = 12;
+static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
 
 #[test]
 fn schema8_definition_registry_migration_preserves_existing_rows() -> Result<(), Box<dyn Error>> {
@@ -103,7 +105,10 @@ fn schema8_definition_registry_migration_preserves_existing_rows() -> Result<(),
             install_historical_schema(&url, 8).await?;
             assert_historical_shape(&url, 8).await?;
 
-            let pool = PgPoolOptions::new().max_connections(1).connect(&url).await?;
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&url)
+                .await?;
             sqlx::query(
                 "INSERT INTO oxide_batch.ob_job_definition                  (job_name, definition_revision, manifest_format, manifest_digest, manifest, registered_at)                  VALUES ('registry-seed', 'v8', 1, decode(repeat('11', 32), 'hex'),                          '{\"source\":\"schema8\"}'::jsonb, to_timestamp(1))",
             )
@@ -135,6 +140,57 @@ fn schema8_definition_registry_migration_preserves_existing_rows() -> Result<(),
                 after.5.is_none(),
                 "schema 9 must not invent an artifact identity for a pre-registry definition"
             );
+            Ok::<(), Box<dyn Error>>(())
+        })
+}
+
+#[test]
+fn schema11_operator_action_migration_accepts_explicit_fork() -> Result<(), Box<dyn Error>> {
+    let Some(migrator) = migrator_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(admin) = admin_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_BACKUP_TEST_URL is not set");
+        return Ok(());
+    };
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            const DATABASE: &str = "oxide_batch_m7_operator_fork_upgrade_from_11";
+            let url = with_database(&migrator, DATABASE)?;
+            recreate_database(&admin, DATABASE).await?;
+            let mut connection = PgConnection::connect(&url).await?;
+            MIGRATIONS.run_to(12, &mut connection).await?;
+            connection.close().await?;
+            assert_eq!(schema_version(&url).await?, Some(11));
+
+            PostgresMigrator::migrate(&config(url.clone())?).await?;
+            assert_eq!(schema_version(&url).await?, Some(TARGET_VERSION));
+
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&url)
+                .await?;
+            sqlx::query(
+                "INSERT INTO oxide_batch.ob_operator_request \
+                 (action, authorization_class, operation_id, actor_ref, request_digest, \
+                  outcome_class, requested_at) \
+                 VALUES ('FORK', 'LIFECYCLE', 'schema12-fork-action', 'migration:test', \
+                         decode(repeat('12', 32), 'hex'), 'APPLIED', CURRENT_TIMESTAMP)",
+            )
+            .execute(&pool)
+            .await?;
+            let action: String = sqlx::query_scalar(
+                "SELECT action FROM oxide_batch.ob_operator_request \
+                 WHERE operation_id = 'schema12-fork-action'",
+            )
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(action, "FORK");
+            pool.close().await;
             Ok::<(), Box<dyn Error>>(())
         })
 }

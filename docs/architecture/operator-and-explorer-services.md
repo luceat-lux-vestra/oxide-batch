@@ -40,7 +40,7 @@ separately:
 | Class | Actions |
 | --- | --- |
 | `Read` | every `JobExplorer` query and every retention plan |
-| `Lifecycle` | `launch`, `restart`, `stop` |
+| `Lifecycle` | `launch`, `restart`, `fork`, `stop` |
 | `Destructive` | `abandon`, `recover`, `hold`, `release_hold`, `apply_purge` |
 
 ## `JobExplorer`
@@ -181,6 +181,7 @@ timing, request similarity, or client retry behavior.
 | --- | --- | --- | --- |
 | `launch` | Definition resolves to one manifest and fingerprint; instance is absent or has no unresolved execution; instance is not `COMPLETED` or `ABANDONED` | Creates instance when required and one `STARTING` execution | By operation ID |
 | `restart` | Prior latest execution is `FAILED` or `STOPPED`; fingerprint is `Strict` or has exactly one directed `Compatible` edge; start controls permit the attempt | Creates a new execution attempt from the committed checkpoint | By operation ID |
+| `fork` | Exact latest source execution is terminal at the requested version; target definition/artifact is registered; target logical instance does not already exist | Creates one new logical instance, first `STARTING` execution, immutable fork lineage, and operator audit in one repository transaction | By operation ID; fork is never encoded as restart |
 | `stop` | Execution is `STARTING` or `STARTED` | Durably records the stop request and moves the execution to `STOPPING` when this process owns it | Repeat request on a `STOPPING` or terminal execution succeeds and changes nothing |
 | `abandon` | Execution is `STOPPED` or `FAILED`, or is `UNKNOWN` with an applied recovery decision | Terminal `ABANDONED` | Repeat on an already `ABANDONED` execution succeeds and changes nothing |
 | `recover` | Execution is `UNKNOWN` or a stale candidate with valid evidence | Appends one recovery decision and applies `FAILED` or `ABANDONED` | Only for the same observed execution version |
