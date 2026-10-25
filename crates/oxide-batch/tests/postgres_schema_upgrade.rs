@@ -140,6 +140,52 @@ fn schema8_definition_registry_migration_preserves_existing_rows() -> Result<(),
 }
 
 #[test]
+fn schema11_operator_action_migration_accepts_explicit_fork() -> Result<(), Box<dyn Error>> {
+    let Some(migrator) = migrator_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
+        return Ok(());
+    };
+    let Some(admin) = admin_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_BACKUP_TEST_URL is not set");
+        return Ok(());
+    };
+
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(async {
+            const DATABASE: &str = "oxide_batch_m7_operator_fork_upgrade_from_11";
+            let url = with_database(&migrator, DATABASE)?;
+            recreate_database(&admin, DATABASE).await?;
+            install_historical_schema(&url, 11).await?;
+            assert_eq!(schema_version(&url).await?, Some(11));
+
+            PostgresMigrator::migrate(&config(url.clone())?).await?;
+            assert_eq!(schema_version(&url).await?, Some(TARGET_VERSION));
+
+            let pool = PgPoolOptions::new().max_connections(1).connect(&url).await?;
+            sqlx::query(
+                "INSERT INTO oxide_batch.ob_operator_request \
+                 (action, authorization_class, operation_id, actor_ref, request_digest, \
+                  outcome_class, requested_at) \
+                 VALUES ('FORK', 'LIFECYCLE', 'schema12-fork-action', 'migration:test', \
+                         decode(repeat('12', 32), 'hex'), 'APPLIED', CURRENT_TIMESTAMP)",
+            )
+            .execute(&pool)
+            .await?;
+            let action: String = sqlx::query_scalar(
+                "SELECT action FROM oxide_batch.ob_operator_request \
+                 WHERE operation_id = 'schema12-fork-action'",
+            )
+            .fetch_one(&pool)
+            .await?;
+            assert_eq!(action, "FORK");
+            pool.close().await;
+            Ok::<(), Box<dyn Error>>(())
+        })
+}
+
+#[test]
 fn schema1_and_schema2_upgrade_directly_to_schema3() -> Result<(), Box<dyn Error>> {
     let Some(migrator) = migrator_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_MIGRATOR_TEST_URL is not set");
