@@ -11,8 +11,11 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::SystemTime;
 
+use super::fork::{ForkStage, ForkStageError, stage_fork_in_unit};
+
 use crate::{
-    BatchStatus, Clock, DefinitionUpgradeExecution, ExecutionVersion, JobExecution, JobExecutionId,
+    BatchStatus, Clock, DefinitionStateTransformer, DefinitionUpgradeExecution, ExecutionVersion,
+    JobExecution, JobExecutionId,
     JobInstanceId, JobRepository, LifecycleTransition, OperationId, OperatorAction,
     OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequest,
     ReasonCode, RecoveryDirective, RecoveryRequestError, RepositoryError, RepositoryUnitOfWork,
@@ -99,6 +102,10 @@ pub enum OperatorError {
     DefinitionUpgradeExecutionRequired,
     /// The supplied live transformer execution does not match the request's durable edge.
     DefinitionUpgradeExecutionMismatch,
+    /// A transformed fork was invoked without its exact live transformer.
+    ForkTransformRequired,
+    /// The supplied live transformer does not match the fork transform descriptor.
+    ForkTransformMismatch,
     /// The recovery arguments could not produce a valid audited request.
     InvalidRecoveryRequest(RecoveryRequestError),
     /// The repository failed for a reason that is not a guard rejection.
@@ -123,6 +130,12 @@ impl fmt::Display for OperatorError {
             ),
             Self::DefinitionUpgradeExecutionMismatch => formatter.write_str(
                 "the live definition-upgrade execution does not match the requested durable edge",
+            ),
+            Self::ForkTransformRequired => {
+                formatter.write_str("transformed fork requires the exact live state transformer")
+            }
+            Self::ForkTransformMismatch => formatter.write_str(
+                "the live fork transformer does not match the requested durable transform",
             ),
             Self::InvalidRecoveryRequest(error) => error.fmt(formatter),
             Self::Repository(error) => error.fmt(formatter),
@@ -206,7 +219,7 @@ impl<R: JobRepository> JobOperator<R> {
         &self,
         request: &OperatorRequest,
     ) -> Result<OperatorOutcome, OperatorError> {
-        self.execute_inner(request, None).await
+        self.execute_inner(request, None, None).await
     }
 
     /// Applies one compatible restart with the exact process-local transform execution.
@@ -225,13 +238,32 @@ impl<R: JobRepository> JobOperator<R> {
         request: &OperatorRequest,
         upgrade: &DefinitionUpgradeExecution,
     ) -> Result<OperatorOutcome, OperatorError> {
-        self.execute_inner(request, Some(upgrade)).await
+        self.execute_inner(request, Some(upgrade), None).await
+    }
+
+    /// Applies one transformed fork with the exact process-local transformer.
+    ///
+    /// Replay is resolved before the live transformer is inspected, so an
+    /// already recorded fork remains replayable without transformer code.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperatorError::ForkTransformRequired`] or
+    /// [`OperatorError::ForkTransformMismatch`] when first application lacks
+    /// the exact transformer selected by the durable fork descriptor.
+    pub async fn execute_with_fork_transform(
+        &self,
+        request: &OperatorRequest,
+        transformer: &DefinitionStateTransformer,
+    ) -> Result<OperatorOutcome, OperatorError> {
+        self.execute_inner(request, None, Some(transformer)).await
     }
 
     async fn execute_inner(
         &self,
         request: &OperatorRequest,
         upgrade: Option<&DefinitionUpgradeExecution>,
+        fork_transform: Option<&DefinitionStateTransformer>,
     ) -> Result<OperatorOutcome, OperatorError> {
         if let Some(recorded) = self.replay(request).await? {
             self.emit_outcome(request, &recorded);
@@ -247,9 +279,26 @@ impl<R: JobRepository> JobOperator<R> {
             (None, None) => None,
         };
 
+        let fork_transform = match (
+            request
+                .fork_request()
+                .and_then(crate::ForkRequest::context_transform),
+            fork_transform,
+        ) {
+            (Some(selected), Some(live)) if selected.descriptor().revision() == live.revision() => {
+                Some(live)
+            }
+            (Some(_), None) => return Err(OperatorError::ForkTransformRequired),
+            (Some(_) | None, Some(_)) => return Err(OperatorError::ForkTransformMismatch),
+            (None, None) => None,
+        };
+
         let requested_at = self.clock.now();
         let mut unit = self.repository.begin().await?;
-        let effect = match self.apply(unit.as_mut(), request, upgrade).await {
+        let effect = match self
+            .apply(unit.as_mut(), request, upgrade, fork_transform)
+            .await
+        {
             Ok(effect) => effect,
             Err(EffectFailure::Rejected(rejection)) => {
                 // A rejection must still be audited, so the rollback is
@@ -262,6 +311,12 @@ impl<R: JobRepository> JobOperator<R> {
                     .await?;
                 self.emit_outcome(request, &outcome);
                 return Ok(outcome);
+            }
+            Err(EffectFailure::ForkReplay(id)) => {
+                let _ = unit.rollback().await;
+                return self.replay(request).await?.ok_or(OperatorError::Repository(
+                    RepositoryError::ForkInstanceCollision { id },
+                ));
             }
             Err(EffectFailure::Failed(error)) => {
                 // The applied effect is already lost; the failure that caused
@@ -411,10 +466,12 @@ impl<R: JobRepository> JobOperator<R> {
         unit: &mut dyn RepositoryUnitOfWork,
         request: &OperatorRequest,
         upgrade: Option<&DefinitionUpgradeExecution>,
+        fork_transform: Option<&DefinitionStateTransformer>,
     ) -> Result<AppliedEffect, EffectFailure> {
         match request.action() {
             OperatorAction::Launch => self.launch(unit, request).await,
             OperatorAction::Restart => self.restart(unit, request, upgrade).await,
+            OperatorAction::Fork => self.fork(unit, request, fork_transform).await,
             OperatorAction::Stop => self.stop(unit, request).await,
             OperatorAction::Abandon => self.abandon(unit, request).await,
             OperatorAction::Recover => self.recover(unit, request).await,
@@ -491,6 +548,36 @@ impl<R: JobRepository> JobOperator<R> {
             ));
         };
         Ok(AppliedEffect::created(instance_id, execution).with_prior(prior_status))
+    }
+
+    async fn fork(
+        &self,
+        unit: &mut dyn RepositoryUnitOfWork,
+        request: &OperatorRequest,
+        transformer: Option<&DefinitionStateTransformer>,
+    ) -> Result<AppliedEffect, EffectFailure> {
+        let fork_request = request.fork_request().ok_or(EffectFailure::Rejected(
+            OperatorRejection::UnsupportedAction,
+        ))?;
+        self.repository
+            .descriptor()
+            .require(crate::RepositoryCapability::DefinitionRegistry)
+            .map_err(EffectFailure::classify)?;
+        self.repository
+            .descriptor()
+            .require(crate::RepositoryCapability::ScopeResolution)
+            .map_err(EffectFailure::classify)?;
+
+        match stage_fork_in_unit(unit, fork_request, transformer).await {
+            Ok(ForkStage::Created { execution, .. }) => {
+                Ok(AppliedEffect::created(execution.job_instance_id(), execution))
+            }
+            Ok(ForkStage::Existing(_)) => Err(EffectFailure::Failed(
+                OperatorError::Repository(RepositoryError::ForkOperationConflict),
+            )),
+            Err(ForkStageError::TargetCollision(id)) => Err(EffectFailure::ForkReplay(id)),
+            Err(ForkStageError::Repository(error)) => Err(EffectFailure::classify(error)),
+        }
     }
 
     async fn stop(
@@ -684,6 +771,7 @@ impl AppliedEffect {
 
 enum EffectFailure {
     Rejected(OperatorRejection),
+    ForkReplay(JobInstanceId),
     Failed(OperatorError),
 }
 
