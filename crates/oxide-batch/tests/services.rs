@@ -17,14 +17,16 @@ use contract::{ContractClock, ServiceBackend, run_service_contract};
 use futures_executor::block_on;
 use ids::DeterministicIds;
 use oxide_batch::{
-    ActorRef, BatchStatus, Clock, ComponentRevision, DefinitionIdentity, DefinitionRevision,
+    ActorRef, BatchStatus, Clock, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade,
+    DefinitionRevision, DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformId,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
     ExecutionVersion, FailureCategory, FailureId, FailureSummary, InMemoryExplorer,
-    InMemoryJobRepository, JobInstanceKey, JobName, JobOperator, JobParameter, JobParameters,
-    JobRepository, LifecycleTransition, MonotonicClock, MonotonicInstant, OperationId,
-    OperatorAction, OperatorError, OperatorOutcomeClass, OperatorRecordDraft, OperatorRejection,
-    OperatorRequest, OwnerToken, ParameterName, ParameterRole, ParameterValue, ReasonCode,
-    RecoveryDirective, RecoveryProposer, RepositoryError, RequestField, RequestFieldError,
-    StepName,
+    InMemoryJobRepository, JobInstanceId, JobInstanceKey, JobName, JobOperator, JobParameter,
+    JobParameters, JobRepository, LifecycleTransition, MonotonicClock, MonotonicInstant, NodeId,
+    OperationId, OperatorAction, OperatorError, OperatorOutcomeClass, OperatorRecordDraft,
+    OperatorRejection, OperatorRequest, OwnerToken, ParameterName, ParameterRole, ParameterValue,
+    ReasonCode, RecoveryDirective, RecoveryProposer, RepositoryError, RequestField,
+    RequestFieldError, StateSchemaId, StateSchemaVersion, StepDefinitionUpgrade, StepName,
 };
 
 #[derive(Debug)]
@@ -155,6 +157,286 @@ fn request_digest_covers_the_target_and_arguments_but_not_the_actor() -> Result<
     assert_eq!(first.digest(), other_actor.digest());
     assert_ne!(first.digest(), other_target.digest());
     assert_eq!(first.digest().to_hex().len(), 64);
+    Ok(())
+}
+
+#[test]
+fn compatible_restart_digest_binds_the_exact_durable_edge() -> Result<(), Box<dyn Error>> {
+    let job = JobName::new("digest-upgrade")?;
+    let from = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("source")?,
+        DefinitionRevision::new("v1")?,
+        &ComponentRevision::new("tasklet-v1")?,
+    )?;
+    let to = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("target")?,
+        DefinitionRevision::new("v2")?,
+        &ComponentRevision::new("tasklet-v2")?,
+    )?;
+    let source = NodeId::new("source")?;
+    let target = NodeId::new("target")?;
+    let base = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from.clone(),
+        to.clone(),
+        [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
+        [],
+    )?;
+    let instance_id = JobInstanceId::new(7)?;
+    let strict = OperatorRequest::restart(
+        OperationId::new("restart-digest")?,
+        ActorRef::new("operator:one")?,
+        instance_id,
+        from.clone(),
+    );
+    let compatible = OperatorRequest::restart_compatible(
+        OperationId::new("restart-digest")?,
+        ActorRef::new("operator:one")?,
+        instance_id,
+        base.clone(),
+    );
+    assert_ne!(strict.digest(), compatible.digest());
+
+    let changed_key = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2-other")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from.clone(),
+        to.clone(),
+        [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
+        [],
+    )?;
+    let changed_revision = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v2")?,
+        from.clone(),
+        to.clone(),
+        [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
+        [],
+    )?;
+    let to_v3 = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("target-v3")?,
+        DefinitionRevision::new("v3")?,
+        &ComponentRevision::new("tasklet-v3")?,
+    )?;
+    let changed_target = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from.clone(),
+        to_v3,
+        [DefinitionNodeUpgrade::new(
+            source.clone(),
+            NodeId::new("target-v3")?,
+        )],
+        [],
+    )?;
+    for edge in [changed_key, changed_revision, changed_target] {
+        let changed = OperatorRequest::restart_compatible(
+            OperationId::new("restart-digest")?,
+            ActorRef::new("operator:one")?,
+            instance_id,
+            edge,
+        );
+        assert_ne!(compatible.digest(), changed.digest());
+    }
+
+    let legacy_mapping_a = DefinitionUpgrade::new(
+        DefinitionUpgradeKey::new("legacy")?,
+        from.clone(),
+        to.clone(),
+        [StepDefinitionUpgrade::new(
+            StepName::new("source")?,
+            StepName::new("target")?,
+        )],
+    )?;
+    let legacy_mapping_b = DefinitionUpgrade::new(
+        DefinitionUpgradeKey::new("legacy")?,
+        from.clone(),
+        to.clone(),
+        [StepDefinitionUpgrade::new(
+            StepName::new("source")?,
+            StepName::new("target-other")?,
+        )],
+    )?;
+    let mapping_a = OperatorRequest::restart_compatible(
+        OperationId::new("restart-digest")?,
+        ActorRef::new("operator:one")?,
+        instance_id,
+        legacy_mapping_a,
+    );
+    let mapping_b = OperatorRequest::restart_compatible(
+        OperationId::new("restart-digest")?,
+        ActorRef::new("operator:one")?,
+        instance_id,
+        legacy_mapping_b,
+    );
+    assert_ne!(mapping_a.digest(), mapping_b.digest());
+
+    let transform = |revision: &str| -> Result<DefinitionStateTransform, Box<dyn Error>> {
+        Ok(DefinitionStateTransform::new(
+            source.clone(),
+            target.clone(),
+            DefinitionStateKind::Checkpoint,
+            DefinitionStateTransformId::new("reader-checkpoint")?,
+            StateSchemaId::new("reader.position")?,
+            StateSchemaVersion::new(1)?,
+            StateSchemaId::new("reader.position")?,
+            StateSchemaVersion::new(2)?,
+            DefinitionUpgradeRevision::new(revision)?,
+        ))
+    };
+    let transformed_a = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("with-transform")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from.clone(),
+        to.clone(),
+        [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
+        [transform("transform-v1")?],
+    )?;
+    let transformed_b = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("with-transform")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from,
+        to,
+        [DefinitionNodeUpgrade::new(source, target)],
+        [transform("transform-v2")?],
+    )?;
+    let transformed_a = OperatorRequest::restart_compatible(
+        OperationId::new("restart-digest")?,
+        ActorRef::new("operator:one")?,
+        instance_id,
+        transformed_a,
+    );
+    let transformed_b = OperatorRequest::restart_compatible(
+        OperationId::new("restart-digest")?,
+        ActorRef::new("operator:one")?,
+        instance_id,
+        transformed_b,
+    );
+    assert_ne!(transformed_a.digest(), transformed_b.digest());
+    Ok(())
+}
+
+#[test]
+fn compatible_restart_requires_exact_live_execution_and_replays_without_code()
+-> Result<(), Box<dyn Error>> {
+    let clock = Arc::new(ContractClock::new(1_700_000_000_000));
+    let first_id = NonZeroU64::new(1).ok_or(RepositoryError::Unavailable)?;
+    let repository = InMemoryJobRepository::new(
+        Arc::clone(&clock) as _,
+        Arc::new(DeterministicIds::new(first_id)),
+    );
+    let job = JobName::new("operator_upgrade")?;
+    let key = key_named(job.as_str(), "compatible")?;
+    let from = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("source")?,
+        DefinitionRevision::new("v1")?,
+        &ComponentRevision::new("tasklet-v1")?,
+    )?;
+    let to = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("target")?,
+        DefinitionRevision::new("v2")?,
+        &ComponentRevision::new("tasklet-v2")?,
+    )?;
+    let upgrade = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from.clone(),
+        to.clone(),
+        [DefinitionNodeUpgrade::new(
+            NodeId::new("source")?,
+            NodeId::new("target")?,
+        )],
+        [],
+    )?;
+    let live = DefinitionUpgradeExecution::new(upgrade.clone(), [])?;
+
+    let mut setup = block_on(repository.begin())?;
+    block_on(setup.register_definition_upgrade(&job, &upgrade))?;
+    let instance = block_on(setup.select_or_create_job_instance(&key))?
+        .instance()
+        .clone();
+    let first = block_on(setup.create_job_execution_with_definition(instance.id(), &from))?;
+    block_on(setup.commit())?;
+
+    let mut fail = block_on(repository.begin())?;
+    block_on(fail.transition_job_execution(
+        first.id(),
+        first.version(),
+        LifecycleTransition::failed(
+            clock.now(),
+            FailureSummary::new(FailureCategory::UserComponent, FailureId::new(81)?),
+        ),
+    ))?;
+    block_on(fail.commit())?;
+
+    let request = OperatorRequest::restart_compatible(
+        OperationId::new("compatible-restart")?,
+        ActorRef::new("operator:one")?,
+        instance.id(),
+        upgrade.clone(),
+    );
+    let operator = JobOperator::new(repository.clone(), Arc::clone(&clock) as _);
+
+    assert_eq!(
+        block_on(operator.execute(&request)),
+        Err(OperatorError::DefinitionUpgradeExecutionRequired)
+    );
+    let mismatched = DefinitionUpgradeExecution::new(
+        DefinitionUpgrade::transformed(
+            DefinitionUpgradeKey::new("different-edge")?,
+            DefinitionUpgradeRevision::new("edge-v1")?,
+            from,
+            to,
+            [DefinitionNodeUpgrade::new(
+                NodeId::new("source")?,
+                NodeId::new("target")?,
+            )],
+            [],
+        )?,
+        [],
+    )?;
+    assert_eq!(
+        block_on(operator.execute_with_upgrade(&request, &mismatched)),
+        Err(OperatorError::DefinitionUpgradeExecutionMismatch)
+    );
+
+    let mut untouched = block_on(repository.begin())?;
+    assert_eq!(block_on(untouched.job_executions(instance.id()))?.len(), 1);
+    assert!(
+        block_on(untouched.find_operator_request(
+            OperatorAction::Restart,
+            request.operation_id(),
+        ))?
+        .is_none()
+    );
+    block_on(untouched.rollback())?;
+
+    let applied = block_on(operator.execute_with_upgrade(&request, &live))?;
+    assert_eq!(applied.class(), OperatorOutcomeClass::Applied);
+    assert_eq!(applied.record().prior_status(), Some(BatchStatus::Failed));
+    assert_eq!(applied.record().result_status(), Some(BatchStatus::Starting));
+    assert!(applied.execution().is_some());
+
+    let replayed = block_on(operator.execute(&request))?;
+    assert_eq!(replayed.class(), OperatorOutcomeClass::Replayed);
+    assert!(replayed.execution().is_none());
+
+    let mut inspect = block_on(repository.begin())?;
+    assert_eq!(block_on(inspect.job_executions(instance.id()))?.len(), 2);
+    assert!(
+        block_on(inspect.find_operator_request(
+            OperatorAction::Restart,
+            request.operation_id(),
+        ))?
+        .is_some()
+    );
+    block_on(inspect.rollback())?;
     Ok(())
 }
 
