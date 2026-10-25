@@ -120,7 +120,7 @@ fn decode_fork_context_transform(value: &Value) -> Result<ForkContextTransform, 
     ))
 }
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 11;
+const SUPPORTED_SCHEMA_VERSION: u32 = 12;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_SHORT_TIMEOUT: Duration = Duration::from_mins(5);
@@ -8997,6 +8997,7 @@ fn decode_operator_action(value: &str) -> Result<OperatorAction, RepositoryError
     Ok(match value {
         "LAUNCH" => OperatorAction::Launch,
         "RESTART" => OperatorAction::Restart,
+        "FORK" => OperatorAction::Fork,
         "STOP" => OperatorAction::Stop,
         "ABANDON" => OperatorAction::Abandon,
         "RECOVER" => OperatorAction::Recover,
