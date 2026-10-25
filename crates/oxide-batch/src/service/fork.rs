@@ -103,8 +103,7 @@ impl<R: JobRepository> JobFork<R> {
             Ok(ForkStage::Created { lineage, .. }) => match unit.commit().await {
                 Ok(()) => Ok(lineage),
                 Err(
-                    RepositoryError::CommitOutcomeUnknown
-                    | RepositoryError::ConcurrentModification,
+                    RepositoryError::CommitOutcomeUnknown | RepositoryError::ConcurrentModification,
                 ) => match self.lineage(request.operation_id()).await? {
                     Some(stored) if stored.matches_request(request) => Ok(stored),
                     Some(_) => Err(RepositoryError::ForkOperationConflict),
@@ -144,180 +143,180 @@ pub(crate) async fn stage_fork_in_unit(
         };
     }
 
-        let source = unit
-            .lock_fork_source(request.source_execution_id())
+    let source = unit
+        .lock_fork_source(request.source_execution_id())
+        .await?
+        .ok_or(RepositoryError::ForkSourceStale)?;
+    if source.version() != request.source_version() {
+        return Err(RepositoryError::ForkSourceStale.into());
+    }
+    if !source.metadata().status().is_finished() {
+        return Err(RepositoryError::ForkSourceNotTerminal.into());
+    }
+    let attempts = unit.job_executions(source.job_instance_id()).await?;
+    if attempts.last().map(crate::JobExecution::id) != Some(source.id()) {
+        return Err(RepositoryError::ForkSourceStale.into());
+    }
+    let source_definition = unit
+        .scope_execution_definition(source.id())
+        .await
+        .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+    let source_name = source_definition
+        .job_name()
+        .ok_or(RepositoryError::ForkStateCorrupt)?;
+    let registered_source = unit
+        .definition(source_name, source_definition.revision())
+        .await?
+        .ok_or_else(|| RepositoryError::DefinitionNotRegistered {
+            job_name: source_name.clone(),
+            revision: source_definition.revision().clone(),
+        })?;
+    if registered_source.definition() != &source_definition {
+        return Err(RepositoryError::ForkStateCorrupt.into());
+    }
+
+    let target = request.target();
+    let registered_target = unit
+        .definition(target.job_name(), target.revision())
+        .await?
+        .ok_or_else(|| RepositoryError::DefinitionNotRegistered {
+            job_name: target.job_name().clone(),
+            revision: target.revision().clone(),
+        })?;
+    if registered_target.definition() != target.definition() {
+        return Err(RepositoryError::DefinitionDrift {
+            job_name: target.job_name().clone(),
+            revision: target.revision().clone(),
+        }
+        .into());
+    }
+    if registered_target.artifact() != target.artifact() {
+        return Err(RepositoryError::DefinitionArtifactDrift {
+            job_name: target.job_name().clone(),
+            revision: target.revision().clone(),
+        }
+        .into());
+    }
+
+    let mut steps = unit.step_executions(source.id()).await?;
+    if steps.len() > 1024 {
+        return Err(RepositoryError::ForkStateCorrupt.into());
+    }
+    steps.sort_by_key(crate::StepExecution::id);
+    let mut hash = Sha256::new();
+    hash.update(b"oxide-batch.fork-source-committed-state.v2\0");
+    hash.update(source.id().get().to_be_bytes());
+    hash.update(source.version().get().to_be_bytes());
+    hash.update(source.metadata().status().as_str().as_bytes());
+    for step in steps {
+        let committed = unit
+            .scope_step_state(step.id())
             .await?
-            .ok_or(RepositoryError::ForkSourceStale)?;
-        if source.version() != request.source_version() {
-            return Err(RepositoryError::ForkSourceStale.into());
-        }
-        if !source.metadata().status().is_finished() {
-            return Err(RepositoryError::ForkSourceNotTerminal.into());
-        }
-        let attempts = unit.job_executions(source.job_instance_id()).await?;
-        if attempts.last().map(crate::JobExecution::id) != Some(source.id()) {
-            return Err(RepositoryError::ForkSourceStale.into());
-        }
-        let source_definition = unit
-            .scope_execution_definition(source.id())
-            .await
-            .map_err(|_| RepositoryError::ForkStateCorrupt)?;
-        let source_name = source_definition
-            .job_name()
             .ok_or(RepositoryError::ForkStateCorrupt)?;
-        let registered_source = unit
-            .definition(source_name, source_definition.revision())
-            .await?
-            .ok_or_else(|| RepositoryError::DefinitionNotRegistered {
-                job_name: source_name.clone(),
-                revision: source_definition.revision().clone(),
-            })?;
-        if registered_source.definition() != &source_definition {
+        if committed.execution() != &step
+            || committed.execution().job_execution_id() != source.id()
+        {
             return Err(RepositoryError::ForkStateCorrupt.into());
         }
+        hash.update(step.id().get().to_be_bytes());
+        hash.update(step.version().get().to_be_bytes());
+        hash.update(step.metadata().status().as_str().as_bytes());
+        hash.update(committed.node_id().as_str().as_bytes());
+        if let Some(context) = committed.context() {
+            let data = context
+                .to_json()
+                .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+            hash.update([1_u8]);
+            hash.update(
+                u64::try_from(data.len())
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?
+                    .to_be_bytes(),
+            );
+            hash.update(&data);
+        } else {
+            hash.update([0_u8]);
+        }
+    }
+    let source_state_digest: [u8; 32] = hash.finalize().into();
 
-        let target = request.target();
-        let registered_target = unit
-            .definition(target.job_name(), target.revision())
-            .await?
-            .ok_or_else(|| RepositoryError::DefinitionNotRegistered {
-                job_name: target.job_name().clone(),
-                revision: target.revision().clone(),
-            })?;
-        if registered_target.definition() != target.definition() {
-            return Err(RepositoryError::DefinitionDrift {
-                job_name: target.job_name().clone(),
-                revision: target.revision().clone(),
-            }
-            .into());
-        }
-        if registered_target.artifact() != target.artifact() {
-            return Err(RepositoryError::DefinitionArtifactDrift {
-                job_name: target.job_name().clone(),
-                revision: target.revision().clone(),
-            }
-            .into());
-        }
-
-        let mut steps = unit.step_executions(source.id()).await?;
-        if steps.len() > 1024 {
-            return Err(RepositoryError::ForkStateCorrupt.into());
-        }
-        steps.sort_by_key(crate::StepExecution::id);
-        let mut hash = Sha256::new();
-        hash.update(b"oxide-batch.fork-source-committed-state.v2\0");
-        hash.update(source.id().get().to_be_bytes());
-        hash.update(source.version().get().to_be_bytes());
-        hash.update(source.metadata().status().as_str().as_bytes());
-        for step in steps {
-            let committed = unit
-                .scope_step_state(step.id())
-                .await?
-                .ok_or(RepositoryError::ForkStateCorrupt)?;
-            if committed.execution() != &step
-                || committed.execution().job_execution_id() != source.id()
+    let transformed_context: Option<ExecutionContext> =
+        if let Some(selected) = request.context_transform() {
+            let descriptor = selected.descriptor();
+            let live = transformer.ok_or(RepositoryError::ForkTransformRejected)?;
+            if descriptor.kind() != DefinitionStateKind::ExecutionContext
+                || descriptor.revision() != live.revision()
             {
-                return Err(RepositoryError::ForkStateCorrupt.into());
+                return Err(RepositoryError::ForkTransformRejected.into());
             }
-            hash.update(step.id().get().to_be_bytes());
-            hash.update(step.version().get().to_be_bytes());
-            hash.update(step.metadata().status().as_str().as_bytes());
-            hash.update(committed.node_id().as_str().as_bytes());
-            if let Some(context) = committed.context() {
-                let data = context
-                    .to_json()
-                    .map_err(|_| RepositoryError::ForkStateCorrupt)?;
-                hash.update([1_u8]);
-                hash.update(
-                    u64::try_from(data.len())
-                        .map_err(|_| RepositoryError::ForkStateCorrupt)?
-                        .to_be_bytes(),
-                );
-                hash.update(&data);
-            } else {
-                hash.update([0_u8]);
+            if !definition_contains_node(&source_definition, descriptor.source_node())
+                || !definition_contains_node(target.definition(), descriptor.target_node())
+            {
+                return Err(RepositoryError::ForkTransformRejected.into());
             }
-        }
-        let source_state_digest: [u8; 32] = hash.finalize().into();
-
-        let transformed_context: Option<ExecutionContext> =
-            if let Some(selected) = request.context_transform() {
-                let descriptor = selected.descriptor();
-                let live = transformer.ok_or(RepositoryError::ForkTransformRejected)?;
-                if descriptor.kind() != DefinitionStateKind::ExecutionContext
-                    || descriptor.revision() != live.revision()
-                {
-                    return Err(RepositoryError::ForkTransformRejected.into());
-                }
-                if !definition_contains_node(&source_definition, descriptor.source_node())
-                    || !definition_contains_node(target.definition(), descriptor.target_node())
-                {
-                    return Err(RepositoryError::ForkTransformRejected.into());
-                }
-                let source_step = unit
-                    .scope_step_state(selected.source_step_execution_id())
-                    .await?
-                    .ok_or(RepositoryError::ForkTransformRejected)?;
-                if source_step.execution().job_execution_id() != source.id()
-                    || source_step.execution().version() != selected.source_step_version()
-                    || source_step.node_id() != descriptor.source_node()
-                {
-                    return Err(RepositoryError::ForkTransformRejected.into());
-                }
-                let context = source_step
-                    .context()
-                    .ok_or(RepositoryError::ForkTransformRejected)?;
-                if context.schema_id() != descriptor.source_schema()
-                    || context.schema_version() != descriptor.source_version()
-                {
-                    return Err(RepositoryError::ForkTransformRejected.into());
-                }
-                let source_bytes = context
-                    .payload_json()
-                    .map_err(|_| RepositoryError::ForkTransformRejected)?;
-                let output = live
-                    .apply(&source_bytes)
-                    .map_err(|_| RepositoryError::ForkTransformRejected)?;
-                Some(
-                    ExecutionContext::from_transformed_payload(
-                        descriptor.target_schema().clone(),
-                        descriptor.target_version(),
-                        &output,
-                        StateLimits::default(),
-                    )
-                    .map_err(|_| RepositoryError::ForkTransformRejected)?,
+            let source_step = unit
+                .scope_step_state(selected.source_step_execution_id())
+                .await?
+                .ok_or(RepositoryError::ForkTransformRejected)?;
+            if source_step.execution().job_execution_id() != source.id()
+                || source_step.execution().version() != selected.source_step_version()
+                || source_step.node_id() != descriptor.source_node()
+            {
+                return Err(RepositoryError::ForkTransformRejected.into());
+            }
+            let context = source_step
+                .context()
+                .ok_or(RepositoryError::ForkTransformRejected)?;
+            if context.schema_id() != descriptor.source_schema()
+                || context.schema_version() != descriptor.source_version()
+            {
+                return Err(RepositoryError::ForkTransformRejected.into());
+            }
+            let source_bytes = context
+                .payload_json()
+                .map_err(|_| RepositoryError::ForkTransformRejected)?;
+            let output = live
+                .apply(&source_bytes)
+                .map_err(|_| RepositoryError::ForkTransformRejected)?;
+            Some(
+                ExecutionContext::from_transformed_payload(
+                    descriptor.target_schema().clone(),
+                    descriptor.target_version(),
+                    &output,
+                    StateLimits::default(),
                 )
-            } else {
-                None
-            };
-
-        let key = request.target_key();
-        let instance = match unit.select_or_create_job_instance(&key).await? {
-            JobInstanceSelection::Created(created) => created,
-            JobInstanceSelection::Existing(existing) => {
-                return Err(ForkStageError::TargetCollision(existing.id()));
-            }
-            _ => return Err(RepositoryError::ForkStateCorrupt.into()),
-        };
-        let execution = unit
-            .create_job_execution_with_definition_and_parameters(
-                instance.id(),
-                target.definition(),
-                request.parameters(),
+                .map_err(|_| RepositoryError::ForkTransformRejected)?,
             )
-            .await?;
-        if let Some(context) = transformed_context.as_ref() {
-            unit.stage_fork_job_context(execution.id(), context).await?;
+        } else {
+            None
+        };
+
+    let key = request.target_key();
+    let instance = match unit.select_or_create_job_instance(&key).await? {
+        JobInstanceSelection::Created(created) => created,
+        JobInstanceSelection::Existing(existing) => {
+            return Err(ForkStageError::TargetCollision(existing.id()));
         }
-        let lineage = ForkLineage::new(
-            request,
-            &source_definition,
-            source_state_digest,
+        _ => return Err(RepositoryError::ForkStateCorrupt.into()),
+    };
+    let execution = unit
+        .create_job_execution_with_definition_and_parameters(
             instance.id(),
-            execution.id(),
-        );
-        unit.append_fork_lineage(&lineage).await?;
-        Ok(ForkStage::Created { lineage, execution })
+            target.definition(),
+            request.parameters(),
+        )
+        .await?;
+    if let Some(context) = transformed_context.as_ref() {
+        unit.stage_fork_job_context(execution.id(), context).await?;
+    }
+    let lineage = ForkLineage::new(
+        request,
+        &source_definition,
+        source_state_digest,
+        instance.id(),
+        execution.id(),
+    );
+    unit.append_fork_lineage(&lineage).await?;
+    Ok(ForkStage::Created { lineage, execution })
 }
 
 /// Checks a declared node against the exact immutable definition manifest.
