@@ -312,6 +312,12 @@ impl<R: JobRepository> JobOperator<R> {
                 self.emit_outcome(request, &outcome);
                 return Ok(outcome);
             }
+            Err(EffectFailure::ForkExisting) => {
+                let _ = unit.rollback().await;
+                return self.replay(request).await?.ok_or(OperatorError::Repository(
+                    RepositoryError::ForkOperationConflict,
+                ));
+            }
             Err(EffectFailure::ForkReplay(id)) => {
                 let _ = unit.rollback().await;
                 return self.replay(request).await?.ok_or(OperatorError::Repository(
@@ -572,9 +578,7 @@ impl<R: JobRepository> JobOperator<R> {
             Ok(ForkStage::Created { execution, .. }) => {
                 Ok(AppliedEffect::created(execution.job_instance_id(), execution))
             }
-            Ok(ForkStage::Existing(_)) => Err(EffectFailure::Failed(
-                OperatorError::Repository(RepositoryError::ForkOperationConflict),
-            )),
+            Ok(ForkStage::Existing(_)) => Err(EffectFailure::ForkExisting),
             Err(ForkStageError::TargetCollision(id)) => Err(EffectFailure::ForkReplay(id)),
             Err(ForkStageError::Repository(error)) => Err(EffectFailure::classify(error)),
         }
@@ -771,6 +775,7 @@ impl AppliedEffect {
 
 enum EffectFailure {
     Rejected(OperatorRejection),
+    ForkExisting,
     ForkReplay(JobInstanceId),
     Failed(OperatorError),
 }
