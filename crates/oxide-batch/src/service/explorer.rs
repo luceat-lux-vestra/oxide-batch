@@ -10,9 +10,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::{
-    ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, JobExecutionId,
+    DefinitionRevisionProjection, DefinitionUpgradeProjection, ExplorerError, ExplorerQuery,
+    ExplorerRepository, FlowDecision, ForkLineageProjection, JobExecutionId,
     JobExecutionProjection, JobInstanceId, JobInstanceProjection, JobName, MIN_UNRESOLVED_AGE,
-    OperatorRecord, Page, PageRequest, QueryWindow, RecoveryDecision, StepExecutionId,
+    NestedJobLinkProjection, OperatorRecord, Page, PageRequest, QueryWindow, RecoveryDecision,
+    RepeatId, RepeatStateProjection, ScopeResolutionProjection, StepExecutionId,
     StepExecutionProjection, StepPartitionProjection, TelemetryEventSink, TelemetryRecord,
 };
 use oxide_batch_repository::{page, resume_window, start_window};
@@ -249,6 +251,122 @@ impl<S: ExplorerRepository> JobExplorer<S> {
             Some(job_execution_id),
             page(&query, request, window.ceiling(), rows),
         )
+    }
+
+    /// Lists registered definition revisions of one job.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed cursor, bound, timeout, unsupported-capability, or repository failure.
+    pub async fn list_definition_revisions(
+        &self,
+        job_name: &JobName,
+        request: &PageRequest,
+    ) -> Result<Page<DefinitionRevisionProjection>, ExplorerError> {
+        let query = ExplorerQuery::DefinitionRevisions {
+            job_name: job_name.clone(),
+        };
+        let window = self.window(&query, request).await?;
+        let rows = self.source.definition_revisions(job_name, &window).await?;
+        self.finish_page(None, page(&query, request, window.ceiling(), rows))
+    }
+
+    /// Lists explicit compatible-upgrade edges of one job.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed cursor, bound, timeout, unsupported-capability, or repository failure.
+    pub async fn list_definition_upgrades(
+        &self,
+        job_name: &JobName,
+        request: &PageRequest,
+    ) -> Result<Page<DefinitionUpgradeProjection>, ExplorerError> {
+        let query = ExplorerQuery::DefinitionUpgrades {
+            job_name: job_name.clone(),
+        };
+        let window = self.window(&query, request).await?;
+        let rows = self.source.definition_upgrades(job_name, &window).await?;
+        self.finish_page(None, page(&query, request, window.ceiling(), rows))
+    }
+
+    /// Lists explicit fork lineages from one source execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed cursor, bound, timeout, unsupported-capability, or repository failure.
+    pub async fn list_fork_lineages(
+        &self,
+        source_execution_id: JobExecutionId,
+        request: &PageRequest,
+    ) -> Result<Page<ForkLineageProjection>, ExplorerError> {
+        let query = ExplorerQuery::ForkLineages {
+            source_execution_id,
+        };
+        let window = self.window(&query, request).await?;
+        let rows = self
+            .source
+            .fork_lineages(source_execution_id, &window)
+            .await?;
+        self.finish_page(None, page(&query, request, window.ceiling(), rows))
+    }
+
+    /// Lists nested-job links owned by one parent execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed cursor, bound, timeout, unsupported-capability, or repository failure.
+    pub async fn list_nested_job_links(
+        &self,
+        parent_job_execution_id: JobExecutionId,
+        request: &PageRequest,
+    ) -> Result<Page<NestedJobLinkProjection>, ExplorerError> {
+        let query = ExplorerQuery::NestedJobLinks {
+            parent_job_execution_id,
+        };
+        let window = self.window(&query, request).await?;
+        let rows = self
+            .source
+            .nested_job_links(parent_job_execution_id, &window)
+            .await?;
+        self.finish_page(
+            Some(parent_job_execution_id),
+            page(&query, request, window.ceiling(), rows),
+        )
+    }
+
+    /// Lists value-free scope-resolution provenance owned by one job execution.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed cursor, bound, timeout, unsupported-capability, or repository failure.
+    pub async fn list_scope_resolutions(
+        &self,
+        job_execution_id: JobExecutionId,
+        request: &PageRequest,
+    ) -> Result<Page<ScopeResolutionProjection>, ExplorerError> {
+        let query = ExplorerQuery::ScopeResolutions { job_execution_id };
+        let window = self.window(&query, request).await?;
+        let rows = self
+            .source
+            .scope_resolutions(job_execution_id, &window)
+            .await?;
+        self.finish_page(
+            Some(job_execution_id),
+            page(&query, request, window.ceiling(), rows),
+        )
+    }
+
+    /// Reads one exact current repeat-state projection.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed timeout, unsupported-capability, or repository failure.
+    pub async fn get_repeat_state(
+        &self,
+        step_execution_id: StepExecutionId,
+        repeat_id: &RepeatId,
+    ) -> Result<Option<RepeatStateProjection>, ExplorerError> {
+        self.source.repeat_state(step_execution_id, repeat_id).await
     }
 
     fn finish_page<T>(
