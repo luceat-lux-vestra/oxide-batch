@@ -1,8 +1,8 @@
 # M7 Start-Control Completion Evidence
 
-**Issue:** #611  
-**Parent:** #199  
-**Ledger row:** `STEP-STARTLIMIT-001`  
+**Issue:** #611
+**Parent:** #199
+**Ledger row:** `STEP-STARTLIMIT-001`
 **Scope:** M7 completion of the accepted M3 `StartLimit` and `allow_start_if_complete` semantics.
 
 ## Authority preserved

@@ -81,10 +81,13 @@ use serde_json::Value;
 /// in #277 after the accepted #276/#277 Gate-B durable-resolution/live-lifecycle
 /// split is delivered. They remain outside the frozen M5 scope document; only
 /// the current whole-ledger aggregate changes here.
+/// `STEP-STARTLIMIT-001` moves `Partial` to `Implemented` in #611 after the
+/// bounded M7 start-control completion evidence is delivered. It likewise
+/// remains outside the frozen M5 campaign scope; only this aggregate moves.
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 15),
-    ("Partial", 14),
+    ("Implemented", 16),
+    ("Partial", 13),
     ("Planned", 24),
     ("Unknown", 2),
 ];
