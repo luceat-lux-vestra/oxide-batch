@@ -297,7 +297,7 @@ pub(crate) async fn stage_fork_in_unit(
             JobInstanceSelection::Existing(existing) => {
                 return Err(ForkStageError::TargetCollision(existing.id()));
             }
-            _ => return Err(RepositoryError::ForkStateCorrupt),
+            _ => return Err(RepositoryError::ForkStateCorrupt.into()),
         };
         let execution = unit
             .create_job_execution_with_definition_and_parameters(
