@@ -20,7 +20,7 @@ struct ForkOperatorClock;
 
 impl Clock for ForkOperatorClock {
     fn now(&self) -> SystemTime {
-        UNIX_EPOCH + Duration::from_secs(120)
+        UNIX_EPOCH + Duration::from_mins(2)
     }
 }
 
