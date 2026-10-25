@@ -16,8 +16,7 @@ use oxide_batch_core::{
 use crate::{
     ActorRef, AuthorizationClass, ForkRequest, OperationId, OperatorAction, ReasonCode,
     RecoveryDisposition, RecoveryProposal, RecoveryRequest, RecoveryRequestError, RepositoryError,
-    RequestArguments,
-    RequestDigest, hex_digest, request_digest,
+    RequestArguments, RequestDigest, hex_digest, request_digest,
 };
 
 /// One validated mutating operator request.
