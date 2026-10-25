@@ -11,7 +11,7 @@ use std::fmt;
 
 use sha2::{Digest, Sha256};
 
-use oxide_batch_core::{DefinitionIdentity, ExecutionVersion};
+use oxide_batch_core::{DefinitionIdentity, DefinitionUpgrade, ExecutionVersion};
 
 use crate::RecoveryDirective;
 
@@ -361,12 +361,55 @@ impl CanonicalWriter {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RequestArguments {
     Definition(Box<DefinitionIdentity>),
+    DefinitionUpgrade(Box<DefinitionUpgrade>),
     None,
     Recovery {
         directive: RecoveryDirective,
         evidence_digest: [u8; 32],
         unknown_commit: bool,
     },
+}
+
+fn push_definition_identity(writer: &mut CanonicalWriter, definition: &DefinitionIdentity) {
+    writer.push_str(definition.revision().as_str());
+    writer.push_u64(u64::from(definition.manifest_format()));
+    writer.push_bytes(definition.manifest_digest());
+}
+
+fn push_definition_upgrade(writer: &mut CanonicalWriter, upgrade: &DefinitionUpgrade) {
+    writer.push_str(upgrade.key().as_str());
+    writer.push_str(
+        upgrade
+            .revision()
+            .map_or("", oxide_batch_core::DefinitionUpgradeRevision::as_str),
+    );
+    push_definition_identity(writer, upgrade.from());
+    push_definition_identity(writer, upgrade.to());
+
+    writer.push_u64(u64::try_from(upgrade.step_mapping().len()).unwrap_or(u64::MAX));
+    for (source, target) in upgrade.step_mapping() {
+        writer.push_str(source.as_str());
+        writer.push_str(target.as_str());
+    }
+
+    writer.push_u64(u64::try_from(upgrade.node_mapping().len()).unwrap_or(u64::MAX));
+    for (source, target) in upgrade.node_mapping() {
+        writer.push_str(source.as_str());
+        writer.push_str(target.as_str());
+    }
+
+    writer.push_u64(u64::try_from(upgrade.transforms().len()).unwrap_or(u64::MAX));
+    for transform in upgrade.transforms() {
+        writer.push_str(transform.source_node().as_str());
+        writer.push_str(transform.target_node().as_str());
+        writer.push_str(transform.kind().as_str());
+        writer.push_str(transform.state_id().as_str());
+        writer.push_str(transform.source_schema().as_str());
+        writer.push_u64(u64::from(transform.source_version().get()));
+        writer.push_str(transform.target_schema().as_str());
+        writer.push_u64(u64::from(transform.target_version().get()));
+        writer.push_str(transform.revision().as_str());
+    }
 }
 
 pub(crate) fn request_digest(
@@ -387,6 +430,10 @@ pub(crate) fn request_digest(
             writer.push_str("DEFINITION");
             writer.push_str(definition.revision().as_str());
             writer.push_bytes(definition.manifest_digest());
+        }
+        RequestArguments::DefinitionUpgrade(upgrade) => {
+            writer.push_str("DEFINITION_UPGRADE");
+            push_definition_upgrade(&mut writer, upgrade);
         }
         RequestArguments::Recovery {
             directive,

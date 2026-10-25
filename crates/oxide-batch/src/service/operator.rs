@@ -12,10 +12,10 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use crate::{
-    BatchStatus, Clock, ExecutionVersion, JobExecution, JobExecutionId, JobInstanceId,
-    JobRepository, LifecycleTransition, OperationId, OperatorAction, OperatorOutcomeClass,
-    OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequest, ReasonCode,
-    RecoveryDirective, RecoveryRequestError, RepositoryError, RepositoryUnitOfWork,
+    BatchStatus, Clock, DefinitionUpgradeExecution, ExecutionVersion, JobExecution, JobExecutionId,
+    JobInstanceId, JobRepository, LifecycleTransition, OperationId, OperatorAction,
+    OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequest,
+    ReasonCode, RecoveryDirective, RecoveryRequestError, RepositoryError, RepositoryUnitOfWork,
     TelemetryEventKind, TelemetryEventSink, TelemetryRecord,
 };
 
@@ -95,6 +95,10 @@ pub enum OperatorError {
     /// identifier, which either returns the recorded outcome or re-attempts the
     /// effect exactly once.
     OperationOutcomeUnknown,
+    /// A first compatible restart was invoked without its live transformer execution.
+    DefinitionUpgradeExecutionRequired,
+    /// The supplied live transformer execution does not match the request's durable edge.
+    DefinitionUpgradeExecutionMismatch,
     /// The recovery arguments could not produce a valid audited request.
     InvalidRecoveryRequest(RecoveryRequestError),
     /// The repository failed for a reason that is not a guard rejection.
@@ -114,6 +118,12 @@ impl fmt::Display for OperatorError {
             Self::OperationOutcomeUnknown => {
                 formatter.write_str("the operator commit outcome is unknown")
             }
+            Self::DefinitionUpgradeExecutionRequired => formatter.write_str(
+                "compatible restart requires the exact live definition-upgrade execution",
+            ),
+            Self::DefinitionUpgradeExecutionMismatch => formatter.write_str(
+                "the live definition-upgrade execution does not match the requested durable edge",
+            ),
             Self::InvalidRecoveryRequest(error) => error.fmt(formatter),
             Self::Repository(error) => error.fmt(formatter),
         }
@@ -196,13 +206,50 @@ impl<R: JobRepository> JobOperator<R> {
         &self,
         request: &OperatorRequest,
     ) -> Result<OperatorOutcome, OperatorError> {
+        self.execute_inner(request, None).await
+    }
+
+    /// Applies one compatible restart with the exact process-local transform execution.
+    ///
+    /// Replay is resolved before this live value is inspected, so an already
+    /// recorded compatible restart remains readable without re-running or even
+    /// supplying transformer code.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`OperatorError::DefinitionUpgradeExecutionMismatch`] when the
+    /// live execution does not exactly match the durable edge selected by the
+    /// request. A strict restart supplied on first application is also a mismatch.
+    pub async fn execute_with_upgrade(
+        &self,
+        request: &OperatorRequest,
+        upgrade: &DefinitionUpgradeExecution,
+    ) -> Result<OperatorOutcome, OperatorError> {
+        self.execute_inner(request, Some(upgrade)).await
+    }
+
+    async fn execute_inner(
+        &self,
+        request: &OperatorRequest,
+        upgrade: Option<&DefinitionUpgradeExecution>,
+    ) -> Result<OperatorOutcome, OperatorError> {
         if let Some(recorded) = self.replay(request).await? {
             self.emit_outcome(request, &recorded);
             return Ok(recorded);
         }
+
+        let upgrade = match (request.definition_upgrade(), upgrade) {
+            (Some(requested), Some(live)) if requested == live.upgrade() => Some(live),
+            (Some(_) | None, Some(_)) => {
+                return Err(OperatorError::DefinitionUpgradeExecutionMismatch);
+            }
+            (Some(_), None) => return Err(OperatorError::DefinitionUpgradeExecutionRequired),
+            (None, None) => None,
+        };
+
         let requested_at = self.clock.now();
         let mut unit = self.repository.begin().await?;
-        let effect = match self.apply(unit.as_mut(), request).await {
+        let effect = match self.apply(unit.as_mut(), request, upgrade).await {
             Ok(effect) => effect,
             Err(EffectFailure::Rejected(rejection)) => {
                 // A rejection must still be audited, so the rollback is
@@ -363,10 +410,11 @@ impl<R: JobRepository> JobOperator<R> {
         &self,
         unit: &mut dyn RepositoryUnitOfWork,
         request: &OperatorRequest,
+        upgrade: Option<&DefinitionUpgradeExecution>,
     ) -> Result<AppliedEffect, EffectFailure> {
         match request.action() {
             OperatorAction::Launch => self.launch(unit, request).await,
-            OperatorAction::Restart => self.restart(unit, request).await,
+            OperatorAction::Restart => self.restart(unit, request, upgrade).await,
             OperatorAction::Stop => self.stop(unit, request).await,
             OperatorAction::Abandon => self.abandon(unit, request).await,
             OperatorAction::Recover => self.recover(unit, request).await,
@@ -408,16 +456,11 @@ impl<R: JobRepository> JobOperator<R> {
         &self,
         unit: &mut dyn RepositoryUnitOfWork,
         request: &OperatorRequest,
+        upgrade: Option<&DefinitionUpgradeExecution>,
     ) -> Result<AppliedEffect, EffectFailure> {
         let Some(instance_id) = request.job_instance_id() else {
             return Err(EffectFailure::Rejected(OperatorRejection::InstanceNotFound));
         };
-        let definition = request
-            .definition()
-            .ok_or(EffectFailure::Rejected(
-                OperatorRejection::IncompatibleDefinition,
-            ))?
-            .clone();
         let prior = unit
             .job_executions(instance_id)
             .await
@@ -431,10 +474,22 @@ impl<R: JobRepository> JobOperator<R> {
                 status: prior_status,
             }));
         }
-        let execution = unit
-            .create_job_execution_with_definition(instance_id, &definition)
-            .await
-            .map_err(EffectFailure::classify)?;
+        let execution = if let Some(definition) = request.definition() {
+            unit.create_job_execution_with_definition(instance_id, definition)
+                .await
+                .map_err(EffectFailure::classify)?
+        } else if request.definition_upgrade().is_some() {
+            let upgrade = upgrade.ok_or(EffectFailure::Failed(
+                OperatorError::DefinitionUpgradeExecutionRequired,
+            ))?;
+            unit.create_job_execution_with_upgrade(instance_id, upgrade)
+                .await
+                .map_err(EffectFailure::classify)?
+        } else {
+            return Err(EffectFailure::Rejected(
+                OperatorRejection::IncompatibleDefinition,
+            ));
+        };
         Ok(AppliedEffect::created(instance_id, execution).with_prior(prior_status))
     }
 

@@ -9,8 +9,8 @@ use std::fmt;
 use std::time::SystemTime;
 
 use oxide_batch_core::{
-    BatchStatus, DefinitionIdentity, ExecutionVersion, FailureSummary, JobExecutionId,
-    JobInstanceId, JobInstanceKey, LifecycleError, OperatorRequestId,
+    BatchStatus, DefinitionIdentity, DefinitionUpgrade, ExecutionVersion, FailureSummary,
+    JobExecutionId, JobInstanceId, JobInstanceKey, LifecycleError, OperatorRequestId,
 };
 
 use crate::{
@@ -127,6 +127,29 @@ impl OperatorRequest {
             OperatorTarget::Instance(job_instance_id),
             None,
             RequestArguments::Definition(Box::new(definition)),
+        )
+    }
+
+    /// Requests one compatible restart through one exact durable upgrade edge.
+    ///
+    /// The request stores and hashes only the durable edge descriptor. The
+    /// process-local transformer implementation is supplied separately to the
+    /// application service when the operation is first applied.
+    #[must_use]
+    pub fn restart_compatible(
+        operation_id: OperationId,
+        actor: ActorRef,
+        job_instance_id: JobInstanceId,
+        upgrade: DefinitionUpgrade,
+    ) -> Self {
+        Self::build(
+            OperatorAction::Restart,
+            operation_id,
+            actor,
+            None,
+            OperatorTarget::Instance(job_instance_id),
+            None,
+            RequestArguments::DefinitionUpgrade(Box::new(upgrade)),
         )
     }
 
@@ -302,6 +325,16 @@ impl OperatorRequest {
     pub fn definition(&self) -> Option<&DefinitionIdentity> {
         match &self.arguments {
             RequestArguments::Definition(definition) => Some(definition),
+            _ => None,
+        }
+    }
+
+    /// Borrows the exact durable compatible-upgrade edge selected by restart.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn definition_upgrade(&self) -> Option<&DefinitionUpgrade> {
+        match &self.arguments {
+            RequestArguments::DefinitionUpgrade(upgrade) => Some(upgrade),
             _ => None,
         }
     }
