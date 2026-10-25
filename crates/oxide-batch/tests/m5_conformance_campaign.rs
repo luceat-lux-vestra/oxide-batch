@@ -176,8 +176,7 @@ fn accepted_scope_matches_the_ledger_disposition() -> Result<(), Box<dyn Error>>
             Some(status) => {
                 status == row.status
                     || (row.status == "Implemented" && status == "Verified")
-                    || (row.status == "Partial"
-                        && matches!(status, "Implemented" | "Verified"))
+                    || (row.status == "Partial" && matches!(status, "Implemented" | "Verified"))
             }
             None => false,
         };
