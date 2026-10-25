@@ -15,11 +15,10 @@ use super::fork::{ForkStage, ForkStageError, stage_fork_in_unit};
 
 use crate::{
     BatchStatus, Clock, DefinitionStateTransformer, DefinitionUpgradeExecution, ExecutionVersion,
-    JobExecution, JobExecutionId,
-    JobInstanceId, JobRepository, LifecycleTransition, OperationId, OperatorAction,
-    OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequest,
-    ReasonCode, RecoveryDirective, RecoveryRequestError, RepositoryError, RepositoryUnitOfWork,
-    TelemetryEventKind, TelemetryEventSink, TelemetryRecord,
+    JobExecution, JobExecutionId, JobInstanceId, JobRepository, LifecycleTransition, OperationId,
+    OperatorAction, OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
+    OperatorRequest, ReasonCode, RecoveryDirective, RecoveryRequestError, RepositoryError,
+    RepositoryUnitOfWork, TelemetryEventKind, TelemetryEventSink, TelemetryRecord,
 };
 
 /// The result of one guarded operator call.
@@ -575,9 +574,10 @@ impl<R: JobRepository> JobOperator<R> {
             .map_err(EffectFailure::classify)?;
 
         match stage_fork_in_unit(unit, fork_request, transformer).await {
-            Ok(ForkStage::Created { execution, .. }) => {
-                Ok(AppliedEffect::created(execution.job_instance_id(), execution))
-            }
+            Ok(ForkStage::Created { execution, .. }) => Ok(AppliedEffect::created(
+                execution.job_instance_id(),
+                execution,
+            )),
             Ok(ForkStage::Existing(_)) => Err(EffectFailure::ForkExisting),
             Err(ForkStageError::TargetCollision(id)) => Err(EffectFailure::ForkReplay(id)),
             Err(ForkStageError::Repository(error)) => Err(EffectFailure::classify(error)),
