@@ -161,6 +161,10 @@ fn request_digest_covers_the_target_and_arguments_but_not_the_actor() -> Result<
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the digest proof keeps every durable compatible-edge identity axis in one named scenario"
+)]
 fn compatible_restart_digest_binds_the_exact_durable_edge() -> Result<(), Box<dyn Error>> {
     let job = JobName::new("digest-upgrade")?;
     let from = DefinitionIdentity::tasklet(
@@ -280,19 +284,19 @@ fn compatible_restart_digest_binds_the_exact_durable_edge() -> Result<(), Box<dy
             StepName::new("target-other")?,
         )],
     )?;
-    let mapping_a = OperatorRequest::restart_compatible(
+    let original_mapping = OperatorRequest::restart_compatible(
         OperationId::new("restart-digest")?,
         ActorRef::new("operator:one")?,
         instance_id,
         legacy_mapping_a,
     );
-    let mapping_b = OperatorRequest::restart_compatible(
+    let changed_mapping = OperatorRequest::restart_compatible(
         OperationId::new("restart-digest")?,
         ActorRef::new("operator:one")?,
         instance_id,
         legacy_mapping_b,
     );
-    assert_ne!(mapping_a.digest(), mapping_b.digest());
+    assert_ne!(original_mapping.digest(), changed_mapping.digest());
 
     let transform = |revision: &str| -> Result<DefinitionStateTransform, Box<dyn Error>> {
         Ok(DefinitionStateTransform::new(
@@ -307,7 +311,7 @@ fn compatible_restart_digest_binds_the_exact_durable_edge() -> Result<(), Box<dy
             DefinitionUpgradeRevision::new(revision)?,
         ))
     };
-    let transformed_a = DefinitionUpgrade::transformed(
+    let transform_edge = DefinitionUpgrade::transformed(
         DefinitionUpgradeKey::new("with-transform")?,
         DefinitionUpgradeRevision::new("edge-v1")?,
         from.clone(),
@@ -315,7 +319,7 @@ fn compatible_restart_digest_binds_the_exact_durable_edge() -> Result<(), Box<dy
         [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
         [transform("transform-v1")?],
     )?;
-    let transformed_b = DefinitionUpgrade::transformed(
+    let changed_transform_edge = DefinitionUpgrade::transformed(
         DefinitionUpgradeKey::new("with-transform")?,
         DefinitionUpgradeRevision::new("edge-v1")?,
         from,
@@ -323,23 +327,30 @@ fn compatible_restart_digest_binds_the_exact_durable_edge() -> Result<(), Box<dy
         [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
         [transform("transform-v2")?],
     )?;
-    let transformed_a = OperatorRequest::restart_compatible(
+    let transform_request = OperatorRequest::restart_compatible(
         OperationId::new("restart-digest")?,
         ActorRef::new("operator:one")?,
         instance_id,
-        transformed_a,
+        transform_edge,
     );
-    let transformed_b = OperatorRequest::restart_compatible(
+    let changed_transform_request = OperatorRequest::restart_compatible(
         OperationId::new("restart-digest")?,
         ActorRef::new("operator:one")?,
         instance_id,
-        transformed_b,
+        changed_transform_edge,
     );
-    assert_ne!(transformed_a.digest(), transformed_b.digest());
+    assert_ne!(
+        transform_request.digest(),
+        changed_transform_request.digest()
+    );
     Ok(())
 }
 
 #[test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "the first-apply, no-mutation rejection, exact upgrade, and replay observations form one operator scenario"
+)]
 fn compatible_restart_requires_exact_live_execution_and_replays_without_code()
 -> Result<(), Box<dyn Error>> {
     let clock = Arc::new(ContractClock::new(1_700_000_000_000));

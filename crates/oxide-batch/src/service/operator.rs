@@ -218,9 +218,9 @@ impl<R: JobRepository> JobOperator<R> {
     ///
     /// # Errors
     ///
-    /// Returns DefinitionUpgradeExecutionMismatch when the live execution does
-    /// not exactly match the durable edge selected by the request. A strict
-    /// restart supplied to this method is also a mismatch.
+    /// Returns [`OperatorError::DefinitionUpgradeExecutionMismatch`] when the
+    /// live execution does not exactly match the durable edge selected by the
+    /// request. A strict restart supplied on first application is also a mismatch.
     pub async fn execute_with_upgrade(
         &self,
         request: &OperatorRequest,
