@@ -216,6 +216,20 @@ fn compatible_restart_digest_binds_the_exact_durable_edge() -> Result<(), Box<dy
         [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
         [],
     )?;
+    let from_v0 = DefinitionIdentity::tasklet(
+        &job,
+        &StepName::new("source")?,
+        DefinitionRevision::new("v0")?,
+        &ComponentRevision::new("tasklet-v0")?,
+    )?;
+    let changed_source = DefinitionUpgrade::transformed(
+        DefinitionUpgradeKey::new("v1-to-v2")?,
+        DefinitionUpgradeRevision::new("edge-v1")?,
+        from_v0,
+        to.clone(),
+        [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
+        [],
+    )?;
     let to_v3 = DefinitionIdentity::tasklet(
         &job,
         &StepName::new("target-v3")?,
@@ -233,7 +247,12 @@ fn compatible_restart_digest_binds_the_exact_durable_edge() -> Result<(), Box<dy
         )],
         [],
     )?;
-    for edge in [changed_key, changed_revision, changed_target] {
+    for edge in [
+        changed_key,
+        changed_revision,
+        changed_source,
+        changed_target,
+    ] {
         let changed = OperatorRequest::restart_compatible(
             OperationId::new("restart-digest")?,
             ActorRef::new("operator:one")?,
@@ -301,7 +320,7 @@ fn compatible_restart_digest_binds_the_exact_durable_edge() -> Result<(), Box<dy
         DefinitionUpgradeRevision::new("edge-v1")?,
         from,
         to,
-        [DefinitionNodeUpgrade::new(source, target)],
+        [DefinitionNodeUpgrade::new(source.clone(), target.clone())],
         [transform("transform-v2")?],
     )?;
     let transformed_a = OperatorRequest::restart_compatible(

@@ -13,8 +13,8 @@ use std::time::SystemTime;
 
 use crate::{
     BatchStatus, Clock, DefinitionUpgradeExecution, ExecutionVersion, JobExecution,
-    JobExecutionId, JobInstanceId,
-    JobRepository, LifecycleTransition, OperationId, OperatorAction, OperatorOutcomeClass,
+    JobExecutionId, JobInstanceId, JobRepository, LifecycleTransition, OperationId, OperatorAction,
+    OperatorOutcomeClass,
     OperatorRecord, OperatorRecordDraft, OperatorRejection, OperatorRequest, ReasonCode,
     RecoveryDirective, RecoveryRequestError, RepositoryError, RepositoryUnitOfWork,
     TelemetryEventKind, TelemetryEventSink, TelemetryRecord,

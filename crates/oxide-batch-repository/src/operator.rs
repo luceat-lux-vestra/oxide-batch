@@ -10,8 +10,7 @@ use std::time::SystemTime;
 
 use oxide_batch_core::{
     BatchStatus, DefinitionIdentity, DefinitionUpgrade, ExecutionVersion, FailureSummary,
-    JobExecutionId,
-    JobInstanceId, JobInstanceKey, LifecycleError, OperatorRequestId,
+    JobExecutionId, JobInstanceId, JobInstanceKey, LifecycleError, OperatorRequestId,
 };
 
 use crate::{
