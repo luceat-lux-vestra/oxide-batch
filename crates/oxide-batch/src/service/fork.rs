@@ -149,14 +149,14 @@ pub(crate) async fn stage_fork_in_unit(
             .await?
             .ok_or(RepositoryError::ForkSourceStale)?;
         if source.version() != request.source_version() {
-            return Err(RepositoryError::ForkSourceStale);
+            return Err(RepositoryError::ForkSourceStale.into());
         }
         if !source.metadata().status().is_finished() {
-            return Err(RepositoryError::ForkSourceNotTerminal);
+            return Err(RepositoryError::ForkSourceNotTerminal.into());
         }
         let attempts = unit.job_executions(source.job_instance_id()).await?;
         if attempts.last().map(crate::JobExecution::id) != Some(source.id()) {
-            return Err(RepositoryError::ForkSourceStale);
+            return Err(RepositoryError::ForkSourceStale.into());
         }
         let source_definition = unit
             .scope_execution_definition(source.id())
@@ -173,7 +173,7 @@ pub(crate) async fn stage_fork_in_unit(
                 revision: source_definition.revision().clone(),
             })?;
         if registered_source.definition() != &source_definition {
-            return Err(RepositoryError::ForkStateCorrupt);
+            return Err(RepositoryError::ForkStateCorrupt.into());
         }
 
         let target = request.target();
@@ -188,18 +188,20 @@ pub(crate) async fn stage_fork_in_unit(
             return Err(RepositoryError::DefinitionDrift {
                 job_name: target.job_name().clone(),
                 revision: target.revision().clone(),
-            });
+            }
+            .into());
         }
         if registered_target.artifact() != target.artifact() {
             return Err(RepositoryError::DefinitionArtifactDrift {
                 job_name: target.job_name().clone(),
                 revision: target.revision().clone(),
-            });
+            }
+            .into());
         }
 
         let mut steps = unit.step_executions(source.id()).await?;
         if steps.len() > 1024 {
-            return Err(RepositoryError::ForkStateCorrupt);
+            return Err(RepositoryError::ForkStateCorrupt.into());
         }
         steps.sort_by_key(crate::StepExecution::id);
         let mut hash = Sha256::new();
@@ -215,7 +217,7 @@ pub(crate) async fn stage_fork_in_unit(
             if committed.execution() != &step
                 || committed.execution().job_execution_id() != source.id()
             {
-                return Err(RepositoryError::ForkStateCorrupt);
+                return Err(RepositoryError::ForkStateCorrupt.into());
             }
             hash.update(step.id().get().to_be_bytes());
             hash.update(step.version().get().to_be_bytes());
@@ -245,12 +247,12 @@ pub(crate) async fn stage_fork_in_unit(
                 if descriptor.kind() != DefinitionStateKind::ExecutionContext
                     || descriptor.revision() != live.revision()
                 {
-                    return Err(RepositoryError::ForkTransformRejected);
+                    return Err(RepositoryError::ForkTransformRejected.into());
                 }
                 if !definition_contains_node(&source_definition, descriptor.source_node())
                     || !definition_contains_node(target.definition(), descriptor.target_node())
                 {
-                    return Err(RepositoryError::ForkTransformRejected);
+                    return Err(RepositoryError::ForkTransformRejected.into());
                 }
                 let source_step = unit
                     .scope_step_state(selected.source_step_execution_id())
@@ -260,7 +262,7 @@ pub(crate) async fn stage_fork_in_unit(
                     || source_step.execution().version() != selected.source_step_version()
                     || source_step.node_id() != descriptor.source_node()
                 {
-                    return Err(RepositoryError::ForkTransformRejected);
+                    return Err(RepositoryError::ForkTransformRejected.into());
                 }
                 let context = source_step
                     .context()
@@ -268,7 +270,7 @@ pub(crate) async fn stage_fork_in_unit(
                 if context.schema_id() != descriptor.source_schema()
                     || context.schema_version() != descriptor.source_version()
                 {
-                    return Err(RepositoryError::ForkTransformRejected);
+                    return Err(RepositoryError::ForkTransformRejected.into());
                 }
                 let source_bytes = context
                     .payload_json()
