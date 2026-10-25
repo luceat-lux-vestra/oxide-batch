@@ -4,9 +4,29 @@
 
 use crate::{
     DefinitionStateKind, DefinitionStateTransformer, ExecutionContext, ForkLineage, ForkRequest,
-    JobInstanceSelection, JobRepository, RepositoryCapability, RepositoryError, StateLimits,
+    JobExecution, JobInstanceId, JobInstanceSelection, JobRepository, RepositoryCapability,
+    RepositoryError, RepositoryUnitOfWork, StateLimits,
 };
 use sha2::{Digest, Sha256};
+
+pub(crate) enum ForkStage {
+    Existing(ForkLineage),
+    Created {
+        lineage: ForkLineage,
+        execution: JobExecution,
+    },
+}
+
+pub(crate) enum ForkStageError {
+    Repository(RepositoryError),
+    TargetCollision(JobInstanceId),
+}
+
+impl From<RepositoryError> for ForkStageError {
+    fn from(value: RepositoryError) -> Self {
+        Self::Repository(value)
+    }
+}
 
 /// Starts an explicit new instance and publishes its immutable lineage.
 #[derive(Clone, Debug)]
@@ -75,15 +95,54 @@ impl<R: JobRepository> JobFork<R> {
             .descriptor()
             .require(RepositoryCapability::ScopeResolution)?;
         let mut unit = self.repository.begin().await?;
-
-        if let Some(existing) = unit.fork_lineage(request.operation_id()).await? {
-            unit.rollback().await?;
-            return if existing.matches_request(request) {
+        match stage_fork_in_unit(unit.as_mut(), request, transformer).await {
+            Ok(ForkStage::Existing(existing)) => {
+                unit.rollback().await?;
                 Ok(existing)
-            } else {
-                Err(RepositoryError::ForkOperationConflict)
-            };
+            }
+            Ok(ForkStage::Created { lineage, .. }) => match unit.commit().await {
+                Ok(()) => Ok(lineage),
+                Err(
+                    RepositoryError::CommitOutcomeUnknown
+                    | RepositoryError::ConcurrentModification,
+                ) => match self.lineage(request.operation_id()).await? {
+                    Some(stored) if stored.matches_request(request) => Ok(stored),
+                    Some(_) => Err(RepositoryError::ForkOperationConflict),
+                    None => Err(RepositoryError::CommitOutcomeUnknown),
+                },
+                Err(error) => Err(error),
+            },
+            Err(ForkStageError::TargetCollision(id)) => {
+                unit.rollback().await?;
+                match self.lineage(request.operation_id()).await? {
+                    Some(stored) if stored.matches_request(request) => Ok(stored),
+                    Some(_) => Err(RepositoryError::ForkOperationConflict),
+                    None => Err(RepositoryError::ForkInstanceCollision { id }),
+                }
+            }
+            Err(ForkStageError::Repository(error)) => {
+                let _ = unit.rollback().await;
+                Err(error)
+            }
         }
+    }
+}
+
+pub(crate) async fn stage_fork_in_unit(
+    unit: &mut dyn RepositoryUnitOfWork,
+    request: &ForkRequest,
+    transformer: Option<&DefinitionStateTransformer>,
+) -> Result<ForkStage, ForkStageError> {
+    if request.context_transform().is_some() != transformer.is_some() {
+        return Err(RepositoryError::ForkTransformRejected.into());
+    }
+    if let Some(existing) = unit.fork_lineage(request.operation_id()).await? {
+        return if existing.matches_request(request) {
+            Ok(ForkStage::Existing(existing))
+        } else {
+            Err(RepositoryError::ForkOperationConflict.into())
+        };
+    }
 
         let source = unit
             .lock_fork_source(request.source_execution_id())
@@ -234,14 +293,7 @@ impl<R: JobRepository> JobFork<R> {
         let instance = match unit.select_or_create_job_instance(&key).await? {
             JobInstanceSelection::Created(created) => created,
             JobInstanceSelection::Existing(existing) => {
-                // The unique target key can race with a concurrent request.
-                // Reconcile the exact immutable operation before declaring a collision.
-                unit.rollback().await?;
-                return match self.lineage(request.operation_id()).await? {
-                    Some(stored) if stored.matches_request(request) => Ok(stored),
-                    Some(_) => Err(RepositoryError::ForkOperationConflict),
-                    None => Err(RepositoryError::ForkInstanceCollision { id: existing.id() }),
-                };
+                return Err(ForkStageError::TargetCollision(existing.id()));
             }
             _ => return Err(RepositoryError::ForkStateCorrupt),
         };
@@ -263,21 +315,7 @@ impl<R: JobRepository> JobFork<R> {
             execution.id(),
         );
         unit.append_fork_lineage(&lineage).await?;
-        match unit.commit().await {
-            Ok(()) => Ok(lineage),
-            Err(
-                RepositoryError::CommitOutcomeUnknown | RepositoryError::ConcurrentModification,
-            ) => {
-                // A new transaction, never a blind retry of instance creation.
-                match self.lineage(request.operation_id()).await? {
-                    Some(stored) if stored.matches_request(request) => Ok(stored),
-                    Some(_) => Err(RepositoryError::ForkOperationConflict),
-                    None => Err(RepositoryError::CommitOutcomeUnknown),
-                }
-            }
-            Err(error) => Err(error),
-        }
-    }
+        Ok(ForkStage::Created { lineage, execution })
 }
 
 /// Checks a declared node against the exact immutable definition manifest.
