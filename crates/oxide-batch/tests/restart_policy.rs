@@ -8,11 +8,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use oxide_batch::{
     BoxFuture, ComponentRevision, DefinitionManifest, DefinitionRevision, ExitPattern,
     FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode,
-    FlowRuntimeError, FlowTarget, FlowTransition,
-    InMemoryJobRepository, JobName, JobParameters, JobRepository, ManifestError, NestedFlow,
-    NodeId, RepositoryError, RestartPolicy, SequentialIdGenerator, StartControls, StartLimit,
-    StepComponents, StepName, StepNode, StopSource, SystemClock, Tasklet, TaskletContext,
-    TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    FlowRuntimeError, FlowTarget, FlowTransition, InMemoryJobRepository, JobName, JobParameters,
+    JobRepository, ManifestError, NestedFlow, NodeId, RepositoryError, RestartPolicy,
+    SequentialIdGenerator, StartControls, StartLimit, StepComponents, StepName, StepNode,
+    StopSource, SystemClock, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
+    TerminalKind,
 };
 
 struct CountingTasklet(Arc<AtomicUsize>);
@@ -469,12 +469,8 @@ async fn nested_flow_completed_step_reuse_does_not_consume_start() -> Result<(),
     let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
     let (_, stop) = StopSource::new();
 
-    let first = launcher
-        .launch(&job, &JobParameters::new(), &stop)
-        .await?;
-    let second = launcher
-        .launch(&job, &JobParameters::new(), &stop)
-        .await?;
+    let first = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    let second = launcher.launch(&job, &JobParameters::new(), &stop).await?;
     assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
     assert!(matches!(second.outcome(), FlowExecutionOutcome::Failed(_)));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -522,21 +518,14 @@ async fn nested_flow_required_reentry_uses_same_start_counter() -> Result<(), Bo
     let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
     let (_, stop) = StopSource::new();
 
-    let first = launcher
-        .launch(&job, &JobParameters::new(), &stop)
-        .await?;
+    let first = launcher.launch(&job, &JobParameters::new(), &stop).await?;
     assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-    let second = launcher
-        .launch(&job, &JobParameters::new(), &stop)
-        .await?;
+    let second = launcher.launch(&job, &JobParameters::new(), &stop).await?;
     assert_eq!(
         second.outcome(),
-        &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded {
-            node: inner,
-            limit,
-        })
+        &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded { node: inner, limit })
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     Ok(())

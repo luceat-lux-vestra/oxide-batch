@@ -15,14 +15,14 @@ use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DeciderError, DeciderRevision, DecisionInput,
     DecisionInputVersion, DecisionNode, DefinitionManifest, DefinitionNodeUpgrade,
     DefinitionRevision, DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey,
-    DefinitionUpgradeRevision, ExitCode, ExitPattern, ExitStatus, FlowExecutionOutcome, FlowFailure,
-    FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
-    FlowTransitionKind, InMemoryExplorer, InMemoryJobRepository, JobExecutionDecider, JobExplorer,
-    JobName, JobParameters, JobRepository, JoinNode, LocalFailurePolicy, MAX_FLOW_COMPOSITION_DEPTH,
-    MAX_NODES, MAX_OUTGOING_TRANSITIONS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, ManifestError,
-    NestedFlow, NodeId, PageRequest, PageSize, PlanError, RepositoryError, SequentialIdGenerator,
-    SplitBranch, SplitBudget, SplitNode, StartControls, StartLimit, StepComponents, StepName,
-    StepNode, StopSource, Tasklet,
+    DefinitionUpgradeRevision, ExitCode, ExitPattern, ExitStatus, FlowExecutionOutcome,
+    FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget,
+    FlowTransition, FlowTransitionKind, InMemoryExplorer, InMemoryJobRepository,
+    JobExecutionDecider, JobExplorer, JobName, JobParameters, JobRepository, JoinNode,
+    LocalFailurePolicy, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES, MAX_OUTGOING_TRANSITIONS,
+    MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, ManifestError, NestedFlow, NodeId, PageRequest, PageSize,
+    PlanError, RepositoryError, SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode,
+    StartControls, StartLimit, StepComponents, StepName, StepNode, StopSource, Tasklet,
     TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
@@ -83,7 +83,9 @@ fn complete_graph_with_controls(
 ) -> Result<FlowGraph, Box<dyn Error>> {
     let id = NodeId::new(id)?;
     Ok(FlowGraph::new(id.clone())
-        .with_node(FlowNode::step(step(id.as_str())?.with_start_controls(controls)))
+        .with_node(FlowNode::step(
+            step(id.as_str())?.with_start_controls(controls),
+        ))
         .with_sequence(id, FlowTarget::Terminal(TerminalKind::Complete))?)
 }
 
@@ -639,17 +641,16 @@ async fn split_subflow_reentry_obeys_embedded_start_limit() -> Result<(), Box<dy
     let (_, stop) = StopSource::new();
     let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
 
-    let first_report = launcher
-        .launch(&job, &JobParameters::new(), &stop)
-        .await?;
-    assert!(matches!(first_report.outcome(), FlowExecutionOutcome::Failed(_)));
+    let first_report = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert!(matches!(
+        first_report.outcome(),
+        FlowExecutionOutcome::Failed(_)
+    ));
     assert_eq!(prepare.load(Ordering::SeqCst), 1);
     assert_eq!(first.load(Ordering::SeqCst), 1);
     assert_eq!(second.load(Ordering::SeqCst), 1);
 
-    let second_report = launcher
-        .launch(&job, &JobParameters::new(), &stop)
-        .await?;
+    let second_report = launcher.launch(&job, &JobParameters::new(), &stop).await?;
     assert_eq!(
         second_report.outcome(),
         &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded {

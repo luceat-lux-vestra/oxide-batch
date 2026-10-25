@@ -18,8 +18,7 @@ use oxide_batch::{
     JobRepository, ListenerContext, ListenerError, RetryLimit, RetryStateLimit,
     SequentialIdGenerator, SkipLimit, StartControls, StartLimit, StateLimits, StateSchemaId,
     StateSchemaVersion, StepExecutionListener, StepName, StopSource, StopToken, TaskletError,
-    TaskletExecutionOutcome,
-    TaskletFailure, TaskletOutcome, TerminalKind,
+    TaskletExecutionOutcome, TaskletFailure, TaskletOutcome, TerminalKind,
 };
 
 #[derive(Debug)]
@@ -242,21 +241,14 @@ async fn custom_leaf_required_reentry_obeys_start_limit_before_handler()
     let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
     let (_, stop) = StopSource::new();
 
-    let first = launcher
-        .launch(&job, &JobParameters::new(), &stop)
-        .await?;
+    let first = launcher.launch(&job, &JobParameters::new(), &stop).await?;
     assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
-    let second = launcher
-        .launch(&job, &JobParameters::new(), &stop)
-        .await?;
+    let second = launcher.launch(&job, &JobParameters::new(), &stop).await?;
     assert_eq!(
         second.outcome(),
-        &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded {
-            node: id,
-            limit,
-        })
+        &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded { node: id, limit })
     );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     assert_eq!(

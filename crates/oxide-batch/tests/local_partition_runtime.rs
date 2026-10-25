@@ -10,14 +10,13 @@ use std::time::{Duration, SystemTime};
 
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, ExecutionContext,
-    ExecutionCounts, ExitStatus, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher,
-    FlowNode, FlowRuntimeError, FlowTarget, InMemoryJobRepository, JobName, JobParameters,
-    JobRepository,
-    NodeId, PartitionBudget, PartitionCount, PartitionFactoryError, PartitionKey,
-    PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory, RepositoryDescriptor,
-    RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, StartControls, StartLimit,
-    StateLimits, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
-    TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    ExecutionCounts, ExitStatus, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob,
+    FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, InMemoryJobRepository, JobName,
+    JobParameters, JobRepository, NodeId, PartitionBudget, PartitionCount, PartitionFactoryError,
+    PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
+    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator,
+    StartControls, StartLimit, StateLimits, StepComponents, StepName, StepNode, StopSource,
+    Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 use tokio::sync::{Barrier, Notify};
 
@@ -429,8 +428,7 @@ async fn partition_manager_start_limit_rejects_restart_before_worker_work()
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn partition_worker_retry_obeys_stable_partition_start_limit()
--> Result<(), Box<dyn Error>> {
+async fn partition_worker_retry_obeys_stable_partition_start_limit() -> Result<(), Box<dyn Error>> {
     let name = JobName::new("partition-worker-start-limit")?;
     let limit = StartLimit::new(1)?;
     let calls = Arc::new(AtomicUsize::new(0));
