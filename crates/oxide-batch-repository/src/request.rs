@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 
 use oxide_batch_core::{DefinitionIdentity, DefinitionUpgrade, ExecutionVersion};
 
-use crate::RecoveryDirective;
+use crate::{ForkRequest, RecoveryDirective};
 
 /// Maximum accepted UTF-8 bytes of an opaque actor reference.
 pub const MAX_ACTOR_REF_BYTES: usize = 128;
@@ -30,6 +30,8 @@ pub enum OperatorAction {
     Launch,
     /// Create another execution attempt from the committed checkpoint.
     Restart,
+    /// Create a new logical instance from one exact terminal source snapshot.
+    Fork,
     /// Durably record a cooperative stop request.
     Stop,
     /// Make a stopped, failed, or recovered execution permanently terminal.
@@ -45,6 +47,7 @@ impl OperatorAction {
         match self {
             Self::Launch => "LAUNCH",
             Self::Restart => "RESTART",
+            Self::Fork => "FORK",
             Self::Stop => "STOP",
             Self::Abandon => "ABANDON",
             Self::Recover => "RECOVER",
@@ -55,7 +58,7 @@ impl OperatorAction {
     #[must_use]
     pub const fn authorization_class(self) -> AuthorizationClass {
         match self {
-            Self::Launch | Self::Restart | Self::Stop => AuthorizationClass::Lifecycle,
+            Self::Launch | Self::Restart | Self::Fork | Self::Stop => AuthorizationClass::Lifecycle,
             Self::Abandon | Self::Recover => AuthorizationClass::Destructive,
         }
     }
@@ -73,7 +76,7 @@ impl fmt::Display for OperatorAction {
 pub enum AuthorizationClass {
     /// Every explorer query and every retention plan.
     Read,
-    /// Launch, restart, and stop.
+    /// Launch, restart, fork, and stop.
     Lifecycle,
     /// Abandon, recover, hold, hold release, and purge application.
     Destructive,
@@ -362,6 +365,7 @@ impl CanonicalWriter {
 pub(crate) enum RequestArguments {
     Definition(Box<DefinitionIdentity>),
     DefinitionUpgrade(Box<DefinitionUpgrade>),
+    Fork(Box<ForkRequest>),
     None,
     Recovery {
         directive: RecoveryDirective,
@@ -374,6 +378,34 @@ fn push_definition_identity(writer: &mut CanonicalWriter, definition: &Definitio
     writer.push_str(definition.revision().as_str());
     writer.push_u64(u64::from(definition.manifest_format()));
     writer.push_bytes(definition.manifest_digest());
+}
+
+fn push_fork_request(writer: &mut CanonicalWriter, request: &ForkRequest) {
+    writer.push_u64(request.source_execution_id().get());
+    writer.push_u64(request.source_version().get());
+    writer.push_str(request.target().job_name().as_str());
+    push_definition_identity(writer, request.target().definition());
+    writer.push_str(request.target().artifact().as_str());
+    writer.push_bytes(&request.parameters().flow_input_digest());
+
+    match request.context_transform() {
+        Some(selected) => {
+            writer.push_u64(1);
+            writer.push_u64(selected.source_step_execution_id().get());
+            writer.push_u64(selected.source_step_version().get());
+            let descriptor = selected.descriptor();
+            writer.push_str(descriptor.source_node().as_str());
+            writer.push_str(descriptor.target_node().as_str());
+            writer.push_str(descriptor.kind().as_str());
+            writer.push_str(descriptor.state_id().as_str());
+            writer.push_str(descriptor.source_schema().as_str());
+            writer.push_u64(u64::from(descriptor.source_version().get()));
+            writer.push_str(descriptor.target_schema().as_str());
+            writer.push_u64(u64::from(descriptor.target_version().get()));
+            writer.push_str(descriptor.revision().as_str());
+        }
+        None => writer.push_u64(0),
+    }
 }
 
 fn push_definition_upgrade(writer: &mut CanonicalWriter, upgrade: &DefinitionUpgrade) {
@@ -434,6 +466,10 @@ pub(crate) fn request_digest(
         RequestArguments::DefinitionUpgrade(upgrade) => {
             writer.push_str("DEFINITION_UPGRADE");
             push_definition_upgrade(&mut writer, upgrade);
+        }
+        RequestArguments::Fork(request) => {
+            writer.push_str("FORK");
+            push_fork_request(&mut writer, request);
         }
         RequestArguments::Recovery {
             directive,
