@@ -248,16 +248,21 @@ themselves. M5's 28 released `Verified` rows remain verified against
 `0.5.0`; they are not retroactively reclassified as M6 evidence.
 
 **Rows that stay `Partial`.** `LIFE-STOP-001`, `LIFE-RECOVER-001`,
-`STEP-STARTLIMIT-001`, `FT-RETRY-001`, `FT-SKIP-001`, `FT-ROLLBACK-001`,
-`LISTENER-ITEM-001`, `FLOW-SEQUENCE-001`, `FLOW-DECIDER-001`,
-`REPO-COMMAND-001`, `REPO-RETENTION-001`, `SCALE-PARSTEP-001`,
-`SCALE-LOCALPART-001`, and `REPEAT-POLICY-001` are implemented at a bounded
-M0-M6 boundary and retain their reviewed `Partial` disposition. Rows with an
-explicit later milestone continue there; rows without one receive their later
-disposition owner in the [M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md)
+`FT-RETRY-001`, `FT-SKIP-001`, `FT-ROLLBACK-001`, `LISTENER-ITEM-001`,
+`FLOW-SEQUENCE-001`, `FLOW-DECIDER-001`, `REPO-COMMAND-001`,
+`REPO-RETENTION-001`, `SCALE-PARSTEP-001`, `SCALE-LOCALPART-001`, and
+`REPEAT-POLICY-001` are implemented at a bounded M0-M6 boundary and retain
+their reviewed `Partial` disposition. Rows with an explicit later milestone
+continue there; rows without one receive their later disposition owner in the
+[M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md)
 rather than implying speculative M7-M11 implementation. They are not
 advertised as verified capability, and the preview limitations record names
 each one and its bound.
+
+**`STEP-STARTLIMIT-001`** moved from `Partial` to `Implemented` in #611
+when the bounded M7 logical-step/composition completion evidence was added.
+It remains unreleased candidate capability; #200 owns final M7-wide evidence
+aggregation and any later release-verification decision.
 
 **`ITEM-STREAM-001`** moved from `Planned` to `Implemented` when
 [#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144) landed the
@@ -274,12 +279,14 @@ named. Promotion to `Verified` is still deferred to the next named release
 that links this evidence, following the ledger's own promotion rule.
 
 **Current candidate population and unreviewed rows.** After the M6 dispositions
-above and #277's M7 Gate-B live-scope delivery, the current 83-row population is
-`28` `Verified`, `15` `Implemented`, `14` `Partial`, `24` `Planned`, and
-`2` `Unknown`. The two additional `Implemented` rows are `SCOPE-JOB-001`
-and `SCOPE-STEP-001`; they are unreleased candidate capabilities and therefore
-are not promoted to `Verified`. The `24` `Planned` rows keep their accepted
-milestone. The `2` `Unknown` rows, `DB-MONGO-001` and
+above, #277's M7 Gate-B live-scope delivery, and #611's M7 start-control
+completion, the current 83-row population is `28` `Verified`, `16`
+`Implemented`, `13` `Partial`, `24` `Planned`, and `2` `Unknown`.
+The later-milestone `Implemented` set includes `SCOPE-JOB-001`,
+`SCOPE-STEP-001`, and `STEP-STARTLIMIT-001`; these remain unreleased
+candidate capabilities and therefore are not promoted to `Verified`. The
+`24` `Planned` rows keep their accepted milestone. The `2` `Unknown` rows,
+`DB-MONGO-001` and
 `IO-MAILLDAP-001`, remain visible until their reviewed decision gates in the
 [M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md);
 they cannot be silently dropped or treated as compatibility passes.
