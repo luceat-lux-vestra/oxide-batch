@@ -439,10 +439,9 @@ fn compatible_restart_requires_exact_live_execution_and_replays_without_code()
     let mut untouched = block_on(repository.begin())?;
     assert_eq!(block_on(untouched.job_executions(instance.id()))?.len(), 1);
     assert!(
-        block_on(untouched.find_operator_request(
-            OperatorAction::Restart,
-            request.operation_id(),
-        ))?
+        block_on(
+            untouched.find_operator_request(OperatorAction::Restart, request.operation_id(),)
+        )?
         .is_none()
     );
     block_on(untouched.rollback())?;
@@ -450,7 +449,10 @@ fn compatible_restart_requires_exact_live_execution_and_replays_without_code()
     let applied = block_on(operator.execute_with_upgrade(&request, &live))?;
     assert_eq!(applied.class(), OperatorOutcomeClass::Applied);
     assert_eq!(applied.record().prior_status(), Some(BatchStatus::Failed));
-    assert_eq!(applied.record().result_status(), Some(BatchStatus::Starting));
+    assert_eq!(
+        applied.record().result_status(),
+        Some(BatchStatus::Starting)
+    );
     assert!(applied.execution().is_some());
 
     let replayed = block_on(operator.execute(&request))?;
@@ -460,11 +462,8 @@ fn compatible_restart_requires_exact_live_execution_and_replays_without_code()
     let mut inspect = block_on(repository.begin())?;
     assert_eq!(block_on(inspect.job_executions(instance.id()))?.len(), 2);
     assert!(
-        block_on(inspect.find_operator_request(
-            OperatorAction::Restart,
-            request.operation_id(),
-        ))?
-        .is_some()
+        block_on(inspect.find_operator_request(OperatorAction::Restart, request.operation_id(),))?
+            .is_some()
     );
     block_on(inspect.rollback())?;
     Ok(())
