@@ -12,21 +12,24 @@ use oxide_batch_repository::{
 
 use crate::{
     ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity,
-    DefinitionRegistration, DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
-    DefinitionUpgrade, DefinitionUpgradeExecution, DurableStateKind, ExecutionAttempt,
+    DefinitionRegistration, DefinitionRevision, DefinitionRevisionProjection, DefinitionStateKind,
+    DefinitionStateTransform, DefinitionUpgrade, DefinitionUpgradeExecution,
+    DefinitionUpgradeProjection, DurableStateKind, ExecutionAttempt,
     ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
     ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowStepState, FlowTransitionKind, ForkLineage, IdentifierKind,
-    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
+    FlowDecisionRequest, FlowStepState, FlowTransitionKind, ForkLineage, ForkLineageProjection,
+    IdentifierKind, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
     JobInstanceKey, JobInstanceProjection, JobName, JobParameters, LifecycleError,
-    LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest,
-    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorRecord,
+    LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkProjection,
+    NestedJobLinkRequest, NestedJobTerminalObservation, NodeId, OperationId, OperatorAction,
+    OperatorRecord,
     OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
     ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan,
     PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository,
     RecoverySnapshot, RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution,
-    RepeatId, RepeatLineage, RepeatOrdinal, RetentionAction, RetentionActionId, RetentionHold,
-    RetentionRecord, RetentionRecordDraft, ScopeKind, ScopedComponentId, StartLimit,
+    RepeatId, RepeatLineage, RepeatOrdinal, RepeatStateProjection, RestartControlDescriptor,
+    RestartPolicy, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
+    RetentionRecordDraft, ScopeKind, ScopeResolutionProjection, ScopedComponentId, StartLimit,
     StateEnvelopeDescriptor, StateLimits, StepExecution, StepExecutionId, StepExecutionProjection,
     StepName, StepPartition, StepPartitionId, StepPartitionProjection,
 };
@@ -178,6 +181,16 @@ struct MemoryState {
         ),
         ScopeResolutionProvenance,
     >,
+    scope_explorer_order: BTreeMap<
+        (
+            ScopeKind,
+            ScopedComponentId,
+            ParameterName,
+            JobExecutionId,
+            Option<StepExecutionId>,
+        ),
+        u64,
+    >,
     nested_job_links: BTreeMap<(JobExecutionId, NodeId), NestedJobLink>,
     nested_job_links_by_instance: BTreeMap<(JobInstanceId, NodeId), Vec<JobExecutionId>>,
     step_executions: BTreeMap<StepExecutionId, StepExecution>,
@@ -192,6 +205,7 @@ struct MemoryState {
     recovery_decisions: BTreeMap<JobExecutionId, Vec<RecoveryDecision>>,
     definitions: BTreeMap<(JobName, DefinitionRevision), DefinitionIdentity>,
     definition_registry: BTreeMap<(JobName, DefinitionRevision), DefinitionRegistration>,
+    definition_explorer_order: BTreeMap<(JobName, DefinitionRevision), u64>,
     execution_definitions: BTreeMap<JobExecutionId, DefinitionIdentity>,
     definition_upgrades: BTreeMap<(JobName, [u8; 32], [u8; 32]), DefinitionUpgrade>,
     fork_lineages: BTreeMap<OperationId, ForkLineage>,
@@ -235,6 +249,202 @@ impl MemoryState {
         self.instances_by_id
             .get(&instance_id)
             .map(|instance| instance.key().job_name().clone())
+    }
+
+    fn next_definition_explorer_order(&self) -> u64 {
+        self.definition_explorer_order
+            .values()
+            .copied()
+            .max()
+            .map_or(1, |value| value.saturating_add(1))
+    }
+
+    fn next_scope_explorer_order(&self) -> u64 {
+        self.scope_explorer_order
+            .values()
+            .copied()
+            .max()
+            .map_or(1, |value| value.saturating_add(1))
+    }
+
+    fn definition_descriptor(definition: &DefinitionIdentity) -> DefinitionDescriptor {
+        DefinitionDescriptor::new(
+            definition.revision().clone(),
+            definition.manifest_format(),
+            *definition.manifest_digest(),
+        )
+    }
+
+    fn definition_restart_controls(
+        definition: &DefinitionIdentity,
+    ) -> Result<(RestartPolicy, Vec<RestartControlDescriptor>), ExplorerError> {
+        fn policy(value: Option<&serde_json::Value>) -> Result<RestartPolicy, ExplorerError> {
+            match value {
+                None => Ok(RestartPolicy::Restartable),
+                Some(serde_json::Value::String(value)) if value == "not_restartable" => {
+                    Ok(RestartPolicy::NotRestartable)
+                }
+                _ => Err(ExplorerError::Repository(RepositoryError::FlowStateCorrupt)),
+            }
+        }
+
+        fn visit(
+            value: &serde_json::Value,
+            controls: &mut BTreeMap<NodeId, RestartControlDescriptor>,
+        ) -> Result<(), ExplorerError> {
+            match value {
+                serde_json::Value::Object(object) => {
+                    if let (Some(id), Some(start)) = (
+                        object.get("id").and_then(serde_json::Value::as_str),
+                        object.get("start").and_then(serde_json::Value::as_object),
+                    ) {
+                        let node = NodeId::new(id)
+                            .map_err(|_| ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
+                        let limit = start
+                            .get("start_limit")
+                            .and_then(serde_json::Value::as_u64)
+                            .and_then(|value| u32::try_from(value).ok())
+                            .ok_or(ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
+                        let allow = start
+                            .get("allow_start_if_complete")
+                            .and_then(serde_json::Value::as_bool)
+                            .ok_or(ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
+                        let restart = policy(start.get("restart_policy"))?;
+                        if controls
+                            .insert(
+                                node.clone(),
+                                RestartControlDescriptor::new(node, limit, allow, restart),
+                            )
+                            .is_some()
+                        {
+                            return Err(ExplorerError::Repository(RepositoryError::FlowStateCorrupt));
+                        }
+                    }
+                    for child in object.values() {
+                        visit(child, controls)?;
+                    }
+                }
+                serde_json::Value::Array(values) => {
+                    for child in values {
+                        visit(child, controls)?;
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        }
+
+        let document = serde_json::from_slice::<serde_json::Value>(definition.canonical_manifest())
+            .map_err(|_| ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
+        let object = document
+            .as_object()
+            .ok_or(ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
+        let job_policy = policy(object.get("restart_policy"))?;
+        let mut controls = BTreeMap::new();
+        visit(&document, &mut controls)?;
+        Ok((job_policy, controls.into_values().collect()))
+    }
+
+    fn definition_revision_projection(
+        &self,
+        key: &(JobName, DefinitionRevision),
+        registration: &DefinitionRegistration,
+    ) -> Result<DefinitionRevisionProjection, ExplorerError> {
+        let order = self
+            .definition_explorer_order
+            .get(key)
+            .copied()
+            .ok_or(ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
+        let (restart_policy, restart_controls) =
+            Self::definition_restart_controls(registration.definition())?;
+        Ok(DefinitionRevisionProjection::new(
+            order,
+            registration.job_name().clone(),
+            registration.artifact().clone(),
+            Self::definition_descriptor(registration.definition()),
+            restart_policy,
+            restart_controls,
+        ))
+    }
+
+    fn definition_upgrade_projection(
+        &self,
+        job_name: &JobName,
+        upgrade: &DefinitionUpgrade,
+    ) -> Result<DefinitionUpgradeProjection, ExplorerError> {
+        let source_key = (job_name.clone(), upgrade.from().revision().clone());
+        let target_key = (job_name.clone(), upgrade.to().revision().clone());
+        let source_order = self
+            .definition_explorer_order
+            .get(&source_key)
+            .copied()
+            .ok_or(ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
+        let target_order = self
+            .definition_explorer_order
+            .get(&target_key)
+            .copied()
+            .ok_or(ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
+        Ok(DefinitionUpgradeProjection::new(
+            source_order,
+            target_order,
+            job_name.clone(),
+            upgrade.key().clone(),
+            upgrade.revision().cloned(),
+            Self::definition_descriptor(upgrade.from()),
+            Self::definition_descriptor(upgrade.to()),
+            upgrade.step_mapping().len(),
+            upgrade.node_mapping().len(),
+            upgrade.transforms().len(),
+        ))
+    }
+
+    fn fork_lineage_projection(lineage: &ForkLineage) -> ForkLineageProjection {
+        ForkLineageProjection::new(
+            lineage.source_execution_id(),
+            lineage.source_version(),
+            *lineage.source_definition_digest(),
+            *lineage.source_state_digest(),
+            Self::definition_descriptor(lineage.target().definition()),
+            lineage.target().artifact().clone(),
+            lineage.target_instance_id(),
+            lineage.target_execution_id(),
+            *lineage.target_parameters_digest(),
+            lineage.context_transform().is_some(),
+        )
+    }
+
+    fn nested_job_link_projection(link: &NestedJobLink) -> NestedJobLinkProjection {
+        NestedJobLinkProjection::new(
+            link.parent_job_instance_id(),
+            link.parent_job_execution_id(),
+            link.node_id().clone(),
+            Self::definition_descriptor(link.child_definition()),
+            link.child_job_instance_id(),
+            link.child_job_execution_id(),
+            link.linked_at(),
+            link.terminal().cloned(),
+        )
+    }
+
+    fn repeat_state_projection(repeat: &RepeatExecution) -> RepeatStateProjection {
+        RepeatStateProjection::new(
+            repeat.job_instance_id(),
+            repeat.node_id().clone(),
+            repeat.definition_node_id().clone(),
+            repeat.step_execution_id(),
+            repeat.repeat_id().clone(),
+            repeat.lineage().clone(),
+            repeat.ordinal().get(),
+            StateEnvelopeDescriptor::new(
+                DurableStateKind::ExecutionContext,
+                repeat.state().format_version(),
+                repeat.state().schema_id().clone(),
+                repeat.state().schema_version(),
+                repeat.state().encoded_len(),
+            ),
+            repeat.decision(),
+            *repeat.plan_fingerprint(),
+        )
     }
 
     fn job_execution_projection(
@@ -1556,6 +1766,10 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 }
                 return Ok(existing.clone());
             }
+            let order = self.staged.next_definition_explorer_order();
+            self.staged
+                .definition_explorer_order
+                .insert(key.clone(), order);
             self.staged
                 .definition_registry
                 .insert(key, registration.clone());
@@ -1967,6 +2181,8 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                     }
                     Some(_) => {}
                     None => {
+                        let order = self.staged.next_scope_explorer_order();
+                        self.staged.scope_explorer_order.insert(key.clone(), order);
                         self.staged
                             .scope_resolution_provenance
                             .insert(key, entry.clone());
@@ -3980,6 +4196,35 @@ impl ExplorerRepository for InMemoryExplorer {
                     .keys()
                     .next_back()
                     .map(|id| id.get()),
+                ExplorerQuery::DefinitionRevisions { job_name }
+                | ExplorerQuery::DefinitionUpgrades { job_name } => state
+                    .definition_explorer_order
+                    .iter()
+                    .filter(|((name, _), _)| name == job_name)
+                    .map(|(_, order)| *order)
+                    .max(),
+                ExplorerQuery::ForkLineages {
+                    source_execution_id,
+                } => state
+                    .fork_lineages
+                    .values()
+                    .filter(|lineage| lineage.source_execution_id() == *source_execution_id)
+                    .map(|lineage| lineage.target_execution_id().get())
+                    .max(),
+                ExplorerQuery::NestedJobLinks {
+                    parent_job_execution_id,
+                } => state
+                    .nested_job_links
+                    .values()
+                    .filter(|link| link.parent_job_execution_id() == *parent_job_execution_id)
+                    .map(|link| link.child_job_execution_id().get())
+                    .max(),
+                ExplorerQuery::ScopeResolutions { job_execution_id } => state
+                    .scope_explorer_order
+                    .iter()
+                    .filter(|((_, _, _, owner, _), _)| owner == job_execution_id)
+                    .map(|(_, order)| *order)
+                    .max(),
                 // Absorbs any query added later: this adapter cannot bound a
                 // traversal it does not know, so it reports the missing
                 // capability instead of paging from a guessed ceiling.
@@ -4251,6 +4496,153 @@ impl ExplorerRepository for InMemoryExplorer {
                 .take(limit_of(window))
                 .cloned()
                 .collect())
+        })
+    }
+
+    fn definition_revisions<'a>(
+        &'a self,
+        job_name: &'a JobName,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<DefinitionRevisionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = identity_after(window);
+            let mut rows = state
+                .definition_registry
+                .iter()
+                .filter(|((name, _), _)| name == job_name)
+                .filter_map(|(key, registration)| {
+                    state
+                        .definition_explorer_order
+                        .get(key)
+                        .copied()
+                        .map(|order| (order, key, registration))
+                })
+                .filter(|(order, _, _)| *order <= window.ceiling())
+                .filter(|(order, _, _)| after.is_none_or(|after| *order < after))
+                .collect::<Vec<_>>();
+            rows.sort_by_key(|(order, _, _)| std::cmp::Reverse(*order));
+            rows.into_iter()
+                .take(limit_of(window))
+                .map(|(_, key, registration)| {
+                    state.definition_revision_projection(key, registration)
+                })
+                .collect()
+        })
+    }
+
+    fn definition_upgrades<'a>(
+        &'a self,
+        job_name: &'a JobName,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<DefinitionUpgradeProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = ordered_after(window);
+            let mut rows = state
+                .definition_upgrades
+                .iter()
+                .filter(|((name, _, _), _)| name == job_name)
+                .map(|(_, upgrade)| state.definition_upgrade_projection(job_name, upgrade))
+                .collect::<Result<Vec<_>, _>>()?;
+            rows.retain(|row| {
+                row.source_order <= window.ceiling()
+                    && row.target_order <= window.ceiling()
+                    && after.is_none_or(|after| (row.source_order, row.target_order) > after)
+            });
+            rows.sort_by_key(|row| (row.source_order, row.target_order));
+            Ok(rows.into_iter().take(limit_of(window)).collect())
+        })
+    }
+
+    fn fork_lineages<'a>(
+        &'a self,
+        source_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<ForkLineageProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = identity_after(window);
+            let mut rows = state
+                .fork_lineages
+                .values()
+                .filter(|lineage| lineage.source_execution_id() == source_execution_id)
+                .filter(|lineage| lineage.target_execution_id().get() <= window.ceiling())
+                .filter(|lineage| {
+                    after.is_none_or(|after| lineage.target_execution_id().get() > after)
+                })
+                .map(MemoryState::fork_lineage_projection)
+                .collect::<Vec<_>>();
+            rows.sort_by_key(ForkLineageProjection::target_execution_id);
+            Ok(rows.into_iter().take(limit_of(window)).collect())
+        })
+    }
+
+    fn nested_job_links<'a>(
+        &'a self,
+        parent_job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<NestedJobLinkProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = identity_after(window);
+            let mut rows = state
+                .nested_job_links
+                .values()
+                .filter(|link| link.parent_job_execution_id() == parent_job_execution_id)
+                .filter(|link| link.child_job_execution_id().get() <= window.ceiling())
+                .filter(|link| {
+                    after.is_none_or(|after| link.child_job_execution_id().get() > after)
+                })
+                .map(MemoryState::nested_job_link_projection)
+                .collect::<Vec<_>>();
+            rows.sort_by_key(NestedJobLinkProjection::child_execution_id);
+            Ok(rows.into_iter().take(limit_of(window)).collect())
+        })
+    }
+
+    fn scope_resolutions<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<ScopeResolutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            let after = identity_after(window);
+            let mut rows = state
+                .scope_resolution_provenance
+                .iter()
+                .filter(|((_, _, _, owner, _), _)| *owner == job_execution_id)
+                .filter_map(|(key, provenance)| {
+                    state
+                        .scope_explorer_order
+                        .get(key)
+                        .copied()
+                        .map(|order| (order, provenance.clone()))
+                })
+                .filter(|(order, _)| *order <= window.ceiling())
+                .filter(|(order, _)| after.is_none_or(|after| *order > after))
+                .collect::<Vec<_>>();
+            rows.sort_by_key(|(order, _)| *order);
+            Ok(rows
+                .into_iter()
+                .take(limit_of(window))
+                .map(|(order, provenance)| ScopeResolutionProjection::new(order, provenance))
+                .collect())
+        })
+    }
+
+    fn repeat_state<'a>(
+        &'a self,
+        step_execution_id: StepExecutionId,
+        repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatStateProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let state = self.snapshot()?;
+            Ok(state
+                .repeat_executions
+                .get(&(step_execution_id, repeat_id.clone()))
+                .map(MemoryState::repeat_state_projection))
         })
     }
 }
