@@ -11,7 +11,8 @@ use oxide_batch::{
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, ExecutionVersion, ForkRequest,
     InMemoryJobRepository, JobInstanceKey, JobName, JobOperator, JobParameter, JobParameters,
     JobRepository, LifecycleTransition, OperationId, OperatorAction, OperatorOutcomeClass,
-    OperatorRequest, ParameterName, ParameterRole, ParameterValue, SequentialIdGenerator, StepName,
+    OperatorRequest, ParameterName, ParameterRole, ParameterValue, RepositoryError,
+    SequentialIdGenerator, StepName,
 };
 
 #[derive(Clone, Copy)]
@@ -126,14 +127,16 @@ fn operator_fork_applies_once_and_replays_as_fork() -> Result<(), Box<dyn Error>
         assert!(applied.changed_state());
         assert_eq!(applied.record().action(), OperatorAction::Fork);
         assert_eq!(applied.record().observed_version(), Some(source.version()));
-        let target_execution = applied.execution().ok_or("fork produced no execution")?;
+        let target_execution = applied
+            .execution()
+            .ok_or(RepositoryError::ForkStateCorrupt)?;
         assert_eq!(target_execution.metadata().status(), BatchStatus::Starting);
 
         let mut inspect = repository.begin().await?;
         let lineage = inspect
             .fork_lineage(fork.operation_id())
             .await?
-            .ok_or("fork lineage missing")?;
+            .ok_or(RepositoryError::ForkStateCorrupt)?;
         assert_eq!(lineage.source_execution_id(), source.id());
         assert_eq!(lineage.target_execution_id(), target_execution.id());
         assert_eq!(
