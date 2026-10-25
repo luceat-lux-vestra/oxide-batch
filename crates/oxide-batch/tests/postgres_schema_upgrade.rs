@@ -63,8 +63,9 @@ use std::time::UNIX_EPOCH;
 
 use oxide_batch::{PostgresJobRepository, PostgresMigrator};
 use serde_json::{Value, json};
-use sqlx::Row;
-use sqlx::postgres::PgPoolOptions;
+use sqlx::migrate::Migrator;
+use sqlx::postgres::{PgConnection, PgPoolOptions};
+use sqlx::{Connection, Row};
 
 use upgrade::{
     DurableDigest, FixedClock, SourceColumns, admin_url, apply_seed, assert_historical_shape,
@@ -81,6 +82,7 @@ const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 /// (9, since M7 `#550`'s definition-registry migration), not the schema-3 target
 /// the M5 preview named when it was current.
 const TARGET_VERSION: u32 = 12;
+static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
 
 #[test]
 fn schema8_definition_registry_migration_preserves_existing_rows() -> Result<(), Box<dyn Error>> {
@@ -157,7 +159,9 @@ fn schema11_operator_action_migration_accepts_explicit_fork() -> Result<(), Box<
             const DATABASE: &str = "oxide_batch_m7_operator_fork_upgrade_from_11";
             let url = with_database(&migrator, DATABASE)?;
             recreate_database(&admin, DATABASE).await?;
-            install_historical_schema(&url, 11).await?;
+            let mut connection = PgConnection::connect(&url).await?;
+            MIGRATIONS.run_to(12, &mut connection).await?;
+            connection.close().await?;
             assert_eq!(schema_version(&url).await?, Some(11));
 
             PostgresMigrator::migrate(&config(url.clone())?).await?;
