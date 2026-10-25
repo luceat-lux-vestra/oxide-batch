@@ -105,7 +105,10 @@ fn schema8_definition_registry_migration_preserves_existing_rows() -> Result<(),
             install_historical_schema(&url, 8).await?;
             assert_historical_shape(&url, 8).await?;
 
-            let pool = PgPoolOptions::new().max_connections(1).connect(&url).await?;
+            let pool = PgPoolOptions::new()
+                .max_connections(1)
+                .connect(&url)
+                .await?;
             sqlx::query(
                 "INSERT INTO oxide_batch.ob_job_definition                  (job_name, definition_revision, manifest_format, manifest_digest, manifest, registered_at)                  VALUES ('registry-seed', 'v8', 1, decode(repeat('11', 32), 'hex'),                          '{\"source\":\"schema8\"}'::jsonb, to_timestamp(1))",
             )
