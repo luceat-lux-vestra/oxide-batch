@@ -83,7 +83,7 @@ the [compatibility contract](spring-batch.md).
 | STEP-CHUNK-001 | 6.0.4 [chunk] | Chunk lifecycle | Read/process/write repeats and commits at completion boundary | Typed bounded chunk engine | Behavioral | Verified | M2/M6 | Rust component API | R/R/R/R/R/R | [Runtime](../project/m2-chunk-runtime-evidence.md), [PostgreSQL atomicity](../project/m2-postgres-chunk-transaction-evidence.md), Gate B (`crates/oxide-batch/tests/gate_b_01_normal_commit.rs`–`gate_b_08_representation_transparent_identity.rs`), Gate H (`gate_h_allocation.rs`, `gate_h_dispatch.rs`, `gate_h_throughput.rs`) | [Item model](../architecture/item-processing-model.md) | `Verified` is the M2 chunk-lifecycle claim carried by released `oxide-batch` 0.5.0; the M6 typed component model and Gate B/Gate H evidence are candidate-HEAD evidence and are not retroactively promoted by this row. See [M6 exit evidence](../project/m6-exit-evidence.md) |
 | STEP-CUSTOM-001 | 6.0.4 [api] | Custom step | User can supply a step implementation under lifecycle rules | Registered custom plan node | Feature/native | Planned | M7 | No Java interface compatibility | R/R/R/R/J/R | — | [Execution plan](../architecture/execution-plan.md) | Static/erased boundary |
 | STEP-JOB-001 | 6.0.4 [step] | Nested job/JobStep | A step launches a nested job and maps its result | Nested-job plan node and lineage | Behavioral | Planned | M7 | Rust operator/definition API | R/R/R/R/R/J | — | [Execution plan](../architecture/execution-plan.md) | — |
-| STEP-STARTLIMIT-001 | 6.0.4 [step-restart] | Start controls | Start limit and allow-start-if-complete affect repeat execution | Typed step restart controls | Behavioral | Partial | M3/M7 | Rust definition/repository API | R/R/R/R/R/N | [M3 flow runtime](../project/m3-flow-runtime-evidence.md), [M3 exit evidence](../project/m3-exit-evidence.md) | [Basic flow](../architecture/basic-flow.md) | Basic sequential-flow controls implemented; complete M7 coverage remains |
+| STEP-STARTLIMIT-001 | 6.0.4 [step-restart] | Start controls | Start limit and allow-start-if-complete affect repeat execution | Typed step restart controls | Behavioral | Implemented | M3/M7 | Rust definition/repository API | R/R/R/R/R/N | [M3 flow runtime](../project/m3-flow-runtime-evidence.md), [M3 exit evidence](../project/m3-exit-evidence.md), [M7 start-control completion](../project/m7-start-controls-evidence.md) | [Basic flow](../architecture/basic-flow.md) | M3 sequential controls plus M7 logical-step/composition paths are implemented through #611; release verification remains pending and #200 owns final M7-wide evidence aggregation |
 | ITEM-READER-001 | 6.0.4 [item] | Reader | Reader returns ordered items/end and may persist state | Generic `ItemReader<I>` | Feature/behavioral | Verified | M2/M6 | M5 release carried the generic contract; M6 adds the typed/static representation and concrete catalog | R/R/R/R/R/R | [M2 component evidence](../project/m2-component-contract-evidence.md), Gate B typed/`Boxed*` equivalence (`crates/oxide-batch/tests/gate_b_01_normal_commit.rs`–`gate_b_08_representation_transparent_identity.rs`) | [Item model](../architecture/item-processing-model.md) | `Verified` covers the generic reader behavior present in released 0.5.0. M6 typed/`Boxed*` crash/restart equivalence is candidate-HEAD evidence and remains unpromoted until a named release carries it; #153 is not a retroactive M5 promotion |
 | ITEM-PROCESSOR-001 | 6.0.4 [item] | Processor | Processor transforms or filters an item | Generic `ItemProcessor<I,O>` | Feature/behavioral | Verified | M2/M6 | M5 release carried the generic contract; M6 adds the typed/static hot path and concrete catalog | R/R/R/R/J/R | [M2 component evidence](../project/m2-component-contract-evidence.md), Gate H structural dispatch/allocation proof (`crates/oxide-batch/tests/gate_h_dispatch.rs`, `gate_h_allocation.rs`) | [Item model](../architecture/item-processing-model.md) | `Verified` covers the generic processor behavior present in released 0.5.0. M6 typed hot-path invariants and real-component measurements are candidate-HEAD evidence and remain unpromoted until a named release carries them |
 | ITEM-WRITER-001 | 6.0.4 [item] | Writer | Writer consumes one bounded chunk under transaction rules | Generic `ItemWriter<O>` and write context | Feature/behavioral | Verified | M2/M6 | M5 release carried the generic enlisted-writer contract; M6 adds the typed/static representation and concrete catalog | R/R/R/R/R/R | [M2 component evidence](../project/m2-component-contract-evidence.md), Gate B atomic-boundary evidence (`crates/oxide-batch/tests/gate_b_03_atomic_boundary.rs`) | [Item model](../architecture/item-processing-model.md) | `Verified` covers the generic writer behavior present in released 0.5.0. M6 typed/`Boxed*` atomicity and crash/restart evidence are candidate-HEAD evidence and remain unpromoted until a named release carries them; the harness defect and correction are recorded in [M6 exit evidence](../project/m6-exit-evidence.md) |
@@ -248,16 +248,21 @@ themselves. M5's 28 released `Verified` rows remain verified against
 `0.5.0`; they are not retroactively reclassified as M6 evidence.
 
 **Rows that stay `Partial`.** `LIFE-STOP-001`, `LIFE-RECOVER-001`,
-`STEP-STARTLIMIT-001`, `FT-RETRY-001`, `FT-SKIP-001`, `FT-ROLLBACK-001`,
-`LISTENER-ITEM-001`, `FLOW-SEQUENCE-001`, `FLOW-DECIDER-001`,
-`REPO-COMMAND-001`, `REPO-RETENTION-001`, `SCALE-PARSTEP-001`,
-`SCALE-LOCALPART-001`, and `REPEAT-POLICY-001` are implemented at a bounded
-M0-M6 boundary and retain their reviewed `Partial` disposition. Rows with an
-explicit later milestone continue there; rows without one receive their later
-disposition owner in the [M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md)
+`FT-RETRY-001`, `FT-SKIP-001`, `FT-ROLLBACK-001`, `LISTENER-ITEM-001`,
+`FLOW-SEQUENCE-001`, `FLOW-DECIDER-001`, `REPO-COMMAND-001`,
+`REPO-RETENTION-001`, `SCALE-PARSTEP-001`, `SCALE-LOCALPART-001`, and
+`REPEAT-POLICY-001` are implemented at a bounded M0-M6 boundary and retain
+their reviewed `Partial` disposition. Rows with an explicit later milestone
+continue there; rows without one receive their later disposition owner in the
+[M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md)
 rather than implying speculative M7-M11 implementation. They are not
 advertised as verified capability, and the preview limitations record names
 each one and its bound.
+
+**`STEP-STARTLIMIT-001`** moved from `Partial` to `Implemented` in #611
+when the bounded M7 logical-step/composition completion evidence was added.
+It remains unreleased candidate capability; #200 owns final M7-wide evidence
+aggregation and any later release-verification decision.
 
 **`ITEM-STREAM-001`** moved from `Planned` to `Implemented` when
 [#144](https://github.com/luceat-lux-vestra/oxide-batch/issues/144) landed the
@@ -274,12 +279,14 @@ named. Promotion to `Verified` is still deferred to the next named release
 that links this evidence, following the ledger's own promotion rule.
 
 **Current candidate population and unreviewed rows.** After the M6 dispositions
-above and #277's M7 Gate-B live-scope delivery, the current 83-row population is
-`28` `Verified`, `15` `Implemented`, `14` `Partial`, `24` `Planned`, and
-`2` `Unknown`. The two additional `Implemented` rows are `SCOPE-JOB-001`
-and `SCOPE-STEP-001`; they are unreleased candidate capabilities and therefore
-are not promoted to `Verified`. The `24` `Planned` rows keep their accepted
-milestone. The `2` `Unknown` rows, `DB-MONGO-001` and
+above, #277's M7 Gate-B live-scope delivery, and #611's M7 start-control
+completion, the current 83-row population is `28` `Verified`, `16`
+`Implemented`, `13` `Partial`, `24` `Planned`, and `2` `Unknown`.
+The later-milestone `Implemented` set includes `SCOPE-JOB-001`,
+`SCOPE-STEP-001`, and `STEP-STARTLIMIT-001`; these remain unreleased
+candidate capabilities and therefore are not promoted to `Verified`. The
+`24` `Planned` rows keep their accepted milestone. The `2` `Unknown` rows,
+`DB-MONGO-001` and
 `IO-MAILLDAP-001`, remain visible until their reviewed decision gates in the
 [M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md);
 they cannot be silently dropped or treated as compatibility passes.

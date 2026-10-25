@@ -16,9 +16,9 @@ use oxide_batch::{
     FaultRule, FaultRuntime, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher,
     FlowNode, FlowTarget, InMemoryFaultState, InMemoryJobRepository, JobName, JobParameters,
     JobRepository, ListenerContext, ListenerError, RetryLimit, RetryStateLimit,
-    SequentialIdGenerator, SkipLimit, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepExecutionListener, StepName, StopSource, StopToken, TaskletError, TaskletExecutionOutcome,
-    TaskletFailure, TaskletOutcome, TerminalKind,
+    SequentialIdGenerator, SkipLimit, StartControls, StartLimit, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepExecutionListener, StepName, StopSource, StopToken, TaskletError,
+    TaskletExecutionOutcome, TaskletFailure, TaskletOutcome, TerminalKind,
 };
 
 #[derive(Debug)]
@@ -201,6 +201,62 @@ async fn committed_custom_state_is_reused_on_restart() -> Result<(), Box<dyn Err
         "the second committed custom state must remain authoritative"
     );
     unit.rollback().await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn custom_leaf_required_reentry_obeys_start_limit_before_handler()
+-> Result<(), Box<dyn Error>> {
+    let name = JobName::new("custom-leaf-start-limit")?;
+    let id = oxide_batch::NodeId::new("custom")?;
+    let limit = StartLimit::new(1)?;
+    let custom = CustomLeafNode::new(
+        id.clone(),
+        StepName::new("custom-step")?,
+        CustomLeafKind::new("example.handler")?,
+        ComponentRevision::new("handler-v1")?,
+        StateSchemaId::new("example.state")?,
+        StateSchemaVersion::new(1)?,
+    )
+    .with_start_controls(StartControls::new(limit, true));
+    let plan = FlowGraph::new(id.clone())
+        .with_node(FlowNode::custom_leaf(custom))
+        .with_sequence(id.clone(), FlowTarget::Terminal(TerminalKind::Fail))?
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let calls = Arc::new(AtomicUsize::new(0));
+    let registration = CustomLeafRegistration::new(
+        CustomLeafKind::new("example.handler")?,
+        ComponentRevision::new("handler-v1")?,
+        StateSchemaId::new("example.state")?,
+        StateSchemaVersion::new(1)?,
+        Arc::new(StatefulHandler {
+            seen: Arc::clone(&seen),
+            next: Arc::clone(&calls),
+        }),
+    );
+    let job = FlowJob::new(name, plan)?.with_custom_leaf_registration(id.clone(), registration)?;
+    let (clock, ids, repository) = infrastructure();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let (_, stop) = StopSource::new();
+
+    let first = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let second = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert_eq!(
+        second.outcome(),
+        &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded { node: id, limit })
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        *seen
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner),
+        vec![None]
+    );
     Ok(())
 }
 

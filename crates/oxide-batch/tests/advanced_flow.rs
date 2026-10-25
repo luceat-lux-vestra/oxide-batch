@@ -15,13 +15,14 @@ use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DeciderError, DeciderRevision, DecisionInput,
     DecisionInputVersion, DecisionNode, DefinitionManifest, DefinitionNodeUpgrade,
     DefinitionRevision, DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey,
-    DefinitionUpgradeRevision, ExitCode, ExitPattern, ExitStatus, FlowExecutionOutcome, FlowGraph,
-    FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
-    FlowTransitionKind, InMemoryExplorer, InMemoryJobRepository, JobExecutionDecider, JobExplorer,
-    JobName, JobParameters, JobRepository, JoinNode, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES,
-    MAX_OUTGOING_TRANSITIONS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, ManifestError, NestedFlow,
-    NodeId, PageRequest, PageSize, PlanError, RepositoryError, SequentialIdGenerator, SplitBranch,
-    SplitBudget, SplitNode, StepComponents, StepName, StepNode, StopSource, Tasklet,
+    DefinitionUpgradeRevision, ExitCode, ExitPattern, ExitStatus, FlowExecutionOutcome,
+    FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget,
+    FlowTransition, FlowTransitionKind, InMemoryExplorer, InMemoryJobRepository,
+    JobExecutionDecider, JobExplorer, JobName, JobParameters, JobRepository, JoinNode,
+    LocalFailurePolicy, MAX_FLOW_COMPOSITION_DEPTH, MAX_NODES, MAX_OUTGOING_TRANSITIONS,
+    MAX_SPLIT_BRANCHES, MAX_TRANSITIONS, ManifestError, NestedFlow, NodeId, PageRequest, PageSize,
+    PlanError, RepositoryError, SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode,
+    StartControls, StartLimit, StepComponents, StepName, StepNode, StopSource, Tasklet,
     TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
@@ -73,9 +74,18 @@ fn step_node(id: &str) -> Result<FlowNode, Box<dyn Error>> {
 }
 
 fn complete_graph(id: &str) -> Result<FlowGraph, Box<dyn Error>> {
+    complete_graph_with_controls(id, StartControls::default())
+}
+
+fn complete_graph_with_controls(
+    id: &str,
+    controls: StartControls,
+) -> Result<FlowGraph, Box<dyn Error>> {
     let id = NodeId::new(id)?;
     Ok(FlowGraph::new(id.clone())
-        .with_node(step_node(id.as_str())?)
+        .with_node(FlowNode::step(
+            step(id.as_str())?.with_start_controls(controls),
+        ))
         .with_sequence(id, FlowTarget::Terminal(TerminalKind::Complete))?)
 }
 
@@ -575,6 +585,82 @@ async fn nested_flow_executes_through_the_root_runtime_once() -> Result<(), Box<
     assert_eq!(inner.load(Ordering::SeqCst), 1);
     assert_eq!(after.load(Ordering::SeqCst), 1);
     assert_eq!(report.step_executions().len(), 3);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn split_subflow_reentry_obeys_embedded_start_limit() -> Result<(), Box<dyn Error>> {
+    let name = JobName::new("split-subflow-start-limit")?;
+    let prepare_id = NodeId::new("prepare")?;
+    let split_id = NodeId::new("parallel")?;
+    let join_id = NodeId::new("joined")?;
+    let first_id = NodeId::new("first")?;
+    let second_id = NodeId::new("second")?;
+    let limit = StartLimit::new(1)?;
+
+    let plan = FlowGraph::new(prepare_id.clone())
+        .with_node(step_node("prepare")?)
+        .with_node(FlowNode::split(
+            SplitNode::new(
+                split_id.clone(),
+                vec![
+                    SplitBranch::flow(complete_graph_with_controls(
+                        "first",
+                        StartControls::new(limit, true),
+                    )?),
+                    SplitBranch::flow(complete_graph("second")?),
+                ],
+                join_id.clone(),
+                SplitBudget::new(2, 3)?,
+            )
+            .with_failure_policy(LocalFailurePolicy::DrainSiblings),
+        ))
+        .with_node(FlowNode::join(JoinNode::new(join_id.clone())))
+        .with_sequence(prepare_id.clone(), FlowTarget::Node(split_id))?
+        .with_sequence(join_id, FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+
+    let prepare = Arc::new(AtomicUsize::new(0));
+    let first = Arc::new(AtomicUsize::new(0));
+    let second = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(name, plan)?
+        .with_tasklet_step(
+            prepare_id,
+            tasklet("prepare", Arc::clone(&prepare), Outcome::Complete)?,
+        )?
+        .with_tasklet_step(
+            first_id.clone(),
+            tasklet("first", Arc::clone(&first), Outcome::Complete)?,
+        )?
+        .with_tasklet_step(
+            second_id,
+            tasklet("second", Arc::clone(&second), Outcome::FailOnce)?,
+        )?;
+
+    let (clock, ids, repository) = infrastructure();
+    let (_, stop) = StopSource::new();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+
+    let first_report = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert!(matches!(
+        first_report.outcome(),
+        FlowExecutionOutcome::Failed(_)
+    ));
+    assert_eq!(prepare.load(Ordering::SeqCst), 1);
+    assert_eq!(first.load(Ordering::SeqCst), 1);
+    assert_eq!(second.load(Ordering::SeqCst), 1);
+
+    let second_report = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert_eq!(
+        second_report.outcome(),
+        &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded {
+            node: first_id,
+            limit,
+        })
+    );
+    assert_eq!(prepare.load(Ordering::SeqCst), 1);
+    assert_eq!(first.load(Ordering::SeqCst), 1);
+    assert_eq!(second.load(Ordering::SeqCst), 2);
     Ok(())
 }
 

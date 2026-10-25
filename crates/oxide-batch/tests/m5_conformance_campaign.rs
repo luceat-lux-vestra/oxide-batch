@@ -81,10 +81,13 @@ use serde_json::Value;
 /// in #277 after the accepted #276/#277 Gate-B durable-resolution/live-lifecycle
 /// split is delivered. They remain outside the frozen M5 scope document; only
 /// the current whole-ledger aggregate changes here.
+/// `STEP-STARTLIMIT-001` moves `Partial` to `Implemented` in #611 after the
+/// bounded M7 start-control completion evidence is delivered. It likewise
+/// remains outside the frozen M5 campaign scope; only this aggregate moves.
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 15),
-    ("Partial", 14),
+    ("Implemented", 16),
+    ("Partial", 13),
     ("Planned", 24),
     ("Unknown", 2),
 ];
@@ -163,14 +166,17 @@ fn accepted_scope_matches_the_ledger_disposition() -> Result<(), Box<dyn Error>>
     for (id, row) in &scope.rows {
         let ledger_status = ledger.rows.get(id).map(String::as_str);
         // The scope document records the pre-release status a retained
-        // report's provenance is bound to; editing it to say `Verified`
-        // would change its git blob and invalidate that retained evidence
-        // for no behavioral reason. A ledger promotion from `Implemented`
-        // to `Verified` is therefore an accepted refinement here: the same
-        // scope row, the same scenarios, a stronger released disposition.
+        // report's provenance is bound to; editing it after a later milestone
+        // would change its git blob and invalidate that retained evidence for
+        // no behavioral reason. Later evidence may strengthen a frozen
+        // `Partial` row to `Implemented` (and eventually `Verified`), or
+        // an `Implemented` row to `Verified`, while preserving the same
+        // scope row and scenarios.
         let compatible = match ledger_status {
             Some(status) => {
-                status == row.status || (row.status == "Implemented" && status == "Verified")
+                status == row.status
+                    || (row.status == "Implemented" && status == "Verified")
+                    || (row.status == "Partial" && matches!(status, "Implemented" | "Verified"))
             }
             None => false,
         };

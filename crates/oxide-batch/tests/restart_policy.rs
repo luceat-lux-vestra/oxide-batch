@@ -6,12 +6,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use oxide_batch::{
-    BoxFuture, ComponentRevision, DefinitionManifest, DefinitionRevision, ExitPattern, FlowGraph,
-    FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
-    InMemoryJobRepository, JobName, JobParameters, JobRepository, ManifestError, NestedFlow,
-    NodeId, RepositoryError, RestartPolicy, SequentialIdGenerator, StartControls, StartLimit,
-    StepComponents, StepName, StepNode, StopSource, SystemClock, Tasklet, TaskletContext,
-    TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    BoxFuture, ComponentRevision, DefinitionManifest, DefinitionRevision, ExitPattern,
+    FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher, FlowNode,
+    FlowRuntimeError, FlowTarget, FlowTransition, InMemoryJobRepository, JobName, JobParameters,
+    JobRepository, ManifestError, NestedFlow, NodeId, RepositoryError, RestartPolicy,
+    SequentialIdGenerator, StartControls, StartLimit, StepComponents, StepName, StepNode,
+    StopSource, SystemClock, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
+    TerminalKind,
 };
 
 struct CountingTasklet(Arc<AtomicUsize>);
@@ -33,14 +34,27 @@ fn step_node(
     policy: RestartPolicy,
     allow_start_if_complete: bool,
 ) -> Result<StepNode, Box<dyn Error>> {
+    step_node_with_limit(
+        id,
+        policy,
+        allow_start_if_complete,
+        StartLimit::UNRESTRICTED,
+    )
+}
+
+fn step_node_with_limit(
+    id: &NodeId,
+    policy: RestartPolicy,
+    allow_start_if_complete: bool,
+    start_limit: StartLimit,
+) -> Result<StepNode, Box<dyn Error>> {
     Ok(StepNode::new(
         id.clone(),
         StepName::new(id.as_str())?,
         StepComponents::Tasklet(ComponentRevision::new("tasklet-v1")?),
     )
     .with_start_controls(
-        StartControls::new(StartLimit::UNRESTRICTED, allow_start_if_complete)
-            .with_restart_policy(policy),
+        StartControls::new(start_limit, allow_start_if_complete).with_restart_policy(policy),
     ))
 }
 
@@ -366,10 +380,11 @@ async fn nested_flow_does_not_reset_nonrestartable_step_history() -> Result<(), 
     let owner = NodeId::new("nested")?;
     let inner = NodeId::new("inner")?;
     let nested = FlowGraph::new(inner.clone())
-        .with_node(FlowNode::step(step_node(
+        .with_node(FlowNode::step(step_node_with_limit(
             &inner,
             RestartPolicy::NotRestartable,
             true,
+            StartLimit::new(1)?,
         )?))
         .with_transition(FlowTransition::new(
             inner.clone(),
@@ -409,6 +424,109 @@ async fn nested_flow_does_not_reset_nonrestartable_step_history() -> Result<(), 
             node_id
         }) if instance_id == first.instance().id() && node_id == inner
     ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn nested_flow_completed_step_reuse_does_not_consume_start() -> Result<(), Box<dyn Error>> {
+    let name = JobName::new("m7-nested-start-control-reuse")?;
+    let owner = NodeId::new("nested")?;
+    let inner = NodeId::new("inner")?;
+    let limit = StartLimit::new(1)?;
+    let nested = FlowGraph::new(inner.clone())
+        .with_node(FlowNode::step(step_node_with_limit(
+            &inner,
+            RestartPolicy::Restartable,
+            false,
+            limit,
+        )?))
+        .with_transition(FlowTransition::new(
+            inner.clone(),
+            ExitPattern::new("*")?,
+            FlowTarget::Terminal(TerminalKind::Fail),
+        ));
+    let plan = FlowGraph::new(owner.clone())
+        .with_nested_flow(NestedFlow::new(owner.clone(), nested))
+        .with_transition(FlowTransition::new(
+            owner,
+            ExitPattern::new("*")?,
+            FlowTarget::Terminal(TerminalKind::Fail),
+        ))
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(name, plan)?.with_tasklet_step(
+        inner,
+        TaskletStep::new(
+            StepName::new("inner")?,
+            Arc::new(CountingTasklet(Arc::clone(&calls))),
+        ),
+    )?;
+
+    let clock = Arc::new(SystemClock);
+    let ids = Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN));
+    let repository = InMemoryJobRepository::new(clock.clone(), ids.clone());
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let (_, stop) = StopSource::new();
+
+    let first = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    let second = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert!(matches!(second.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn nested_flow_required_reentry_uses_same_start_counter() -> Result<(), Box<dyn Error>> {
+    let name = JobName::new("m7-nested-start-control-reentry")?;
+    let owner = NodeId::new("nested")?;
+    let inner = NodeId::new("inner")?;
+    let limit = StartLimit::new(1)?;
+    let nested = FlowGraph::new(inner.clone())
+        .with_node(FlowNode::step(step_node_with_limit(
+            &inner,
+            RestartPolicy::Restartable,
+            true,
+            limit,
+        )?))
+        .with_transition(FlowTransition::new(
+            inner.clone(),
+            ExitPattern::new("*")?,
+            FlowTarget::Terminal(TerminalKind::Fail),
+        ));
+    let plan = FlowGraph::new(owner.clone())
+        .with_nested_flow(NestedFlow::new(owner.clone(), nested))
+        .with_transition(FlowTransition::new(
+            owner,
+            ExitPattern::new("*")?,
+            FlowTarget::Terminal(TerminalKind::Fail),
+        ))
+        .compile(&name, DefinitionRevision::new("v1")?)?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(name, plan)?.with_tasklet_step(
+        inner.clone(),
+        TaskletStep::new(
+            StepName::new("inner")?,
+            Arc::new(CountingTasklet(Arc::clone(&calls))),
+        ),
+    )?;
+
+    let clock = Arc::new(SystemClock);
+    let ids = Arc::new(SequentialIdGenerator::new(NonZeroU64::MIN));
+    let repository = InMemoryJobRepository::new(clock.clone(), ids.clone());
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+    let (_, stop) = StopSource::new();
+
+    let first = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let second = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert_eq!(
+        second.outcome(),
+        &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded { node: inner, limit })
+    );
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     Ok(())
 }

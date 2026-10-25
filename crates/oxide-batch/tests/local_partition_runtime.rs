@@ -10,13 +10,13 @@ use std::time::{Duration, SystemTime};
 
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, ExecutionContext,
-    ExecutionCounts, ExitStatus, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode,
-    FlowRuntimeError, FlowTarget, InMemoryJobRepository, JobName, JobParameters, JobRepository,
-    NodeId, PartitionBudget, PartitionCount, PartitionFactoryError, PartitionKey,
-    PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory, RepositoryDescriptor,
-    RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, StateLimits, StepComponents,
-    StepName, StepNode, StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome,
-    TaskletStep, TerminalKind,
+    ExecutionCounts, ExitStatus, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob,
+    FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, InMemoryJobRepository, JobName,
+    JobParameters, JobRepository, NodeId, PartitionBudget, PartitionCount, PartitionFactoryError,
+    PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
+    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator,
+    StartControls, StartLimit, StateLimits, StepComponents, StepName, StepNode, StopSource,
+    Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 use tokio::sync::{Barrier, Notify};
 
@@ -202,12 +202,29 @@ fn plan(
     partitions: u16,
     concurrency: u8,
 ) -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
+    plan_with_start_controls(
+        name,
+        partitions,
+        concurrency,
+        StartControls::default(),
+        StartControls::default(),
+    )
+}
+
+fn plan_with_start_controls(
+    name: &JobName,
+    partitions: u16,
+    concurrency: u8,
+    manager_controls: StartControls,
+    worker_controls: StartControls,
+) -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
     let manager = NodeId::new("partitioned")?;
     let worker = StepNode::new(
         NodeId::new("worker")?,
         StepName::new("worker")?,
         StepComponents::Tasklet(ComponentRevision::new("worker-v1")?),
-    );
+    )
+    .with_start_controls(worker_controls);
     Ok(FlowGraph::new(manager.clone())
         .with_node(FlowNode::partitioned_step(
             oxide_batch::PartitionedStepNode::new(
@@ -218,7 +235,8 @@ fn plan(
                 ComponentRevision::new("canonical-v1")?,
                 PartitionCount::new(partitions)?,
                 PartitionBudget::new(concurrency, u32::from(concurrency) + 1)?,
-            ),
+            )
+            .with_start_controls(manager_controls),
         ))
         .with_sequence(manager, FlowTarget::Terminal(TerminalKind::Complete))?
         .compile(name, DefinitionRevision::new("v1")?)?)
@@ -364,6 +382,88 @@ async fn completed_partition_is_not_rerun_on_restart() -> Result<(), Box<dyn Err
     assert_eq!(second.outcome(), &FlowExecutionOutcome::Completed);
     assert_eq!(alpha_calls.load(Ordering::SeqCst), 1);
     assert_eq!(beta_calls.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn partition_manager_start_limit_rejects_restart_before_worker_work()
+-> Result<(), Box<dyn Error>> {
+    let name = JobName::new("partition-manager-start-limit")?;
+    let manager = NodeId::new("partitioned")?;
+    let limit = StartLimit::new(1)?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(
+        name.clone(),
+        plan_with_start_controls(
+            &name,
+            1,
+            1,
+            StartControls::new(limit, false),
+            StartControls::default(),
+        )?,
+    )?
+    .with_partitioned_tasklet(
+        manager.clone(),
+        partition_plan_factory(&["alpha"])?,
+        worker_factory(Arc::clone(&calls), |_| WorkerOutcome::Fail)?,
+    )?;
+    let (clock, ids, repository) = infrastructure();
+    let (_, stop) = StopSource::new();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+
+    let first = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let second = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert_eq!(
+        second.outcome(),
+        &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded {
+            node: manager,
+            limit,
+        })
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+async fn partition_worker_retry_obeys_stable_partition_start_limit() -> Result<(), Box<dyn Error>> {
+    let name = JobName::new("partition-worker-start-limit")?;
+    let limit = StartLimit::new(1)?;
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(
+        name.clone(),
+        plan_with_start_controls(
+            &name,
+            1,
+            1,
+            StartControls::default(),
+            StartControls::new(limit, false),
+        )?,
+    )?
+    .with_partitioned_tasklet(
+        NodeId::new("partitioned")?,
+        partition_plan_factory(&["alpha"])?,
+        worker_factory(Arc::clone(&calls), |_| WorkerOutcome::Fail)?,
+    )?;
+    let (clock, ids, repository) = infrastructure();
+    let (_, stop) = StopSource::new();
+    let launcher = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref());
+
+    let first = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert!(matches!(first.outcome(), FlowExecutionOutcome::Failed(_)));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+    let second = launcher.launch(&job, &JobParameters::new(), &stop).await?;
+    assert!(matches!(
+        second.outcome(),
+        FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded {
+            node,
+            limit: exhausted,
+        }) if node.as_str().starts_with("__ob_partition_worker_") && *exhausted == limit
+    ));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
     Ok(())
 }
 
