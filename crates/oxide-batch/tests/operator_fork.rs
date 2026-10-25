@@ -40,10 +40,7 @@ fn registration(job_name: &str, artifact: &str) -> Result<DefinitionRegistration
 fn parameters(value: &str) -> Result<JobParameters, Box<dyn Error>> {
     Ok(JobParameters::try_from_iter([(
         ParameterName::new("business_date")?,
-        JobParameter::new(
-            ParameterValue::string(value)?,
-            ParameterRole::Identifying,
-        ),
+        JobParameter::new(ParameterValue::string(value)?, ParameterRole::Identifying),
     )])?)
 }
 
@@ -147,7 +144,10 @@ fn operator_fork_applies_once_and_replays_as_fork() -> Result<(), Box<dyn Error>
             Some(OperatorAction::Fork)
         );
         assert_eq!(
-            inspect.job_executions(lineage.target_instance_id()).await?.len(),
+            inspect
+                .job_executions(lineage.target_instance_id())
+                .await?
+                .len(),
             1
         );
         inspect.rollback().await?;
