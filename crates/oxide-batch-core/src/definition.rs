@@ -1619,7 +1619,9 @@ impl DefinitionManifest {
             .and_then(|format| u16::try_from(format).ok())
             .ok_or(ManifestError::MissingFormat)?;
         check_manifest_format(format)?;
-        if format != MANIFEST_FORMAT_ADVANCED_FLOW && members.contains_key("parameter_incrementer")
+        if format != MANIFEST_FORMAT_ADVANCED_FLOW
+            && (members.contains_key("parameter_incrementer")
+                || contains_object_key(&document, "restart_policy"))
         {
             return Err(ManifestError::MalformedGraph);
         }
@@ -1642,6 +1644,7 @@ impl DefinitionManifest {
             }
             MANIFEST_FORMAT_ADVANCED_FLOW => {
                 validate_parameter_incrementer_manifest(members)?;
+                validate_restart_policy_manifest(&document)?;
                 let (nodes, transitions) = advanced_graph_counts(members)?;
                 ensure_graph_bounds(nodes, transitions)?;
                 if let Some(scoped) = members.get("scoped_components") {
@@ -1762,6 +1765,34 @@ fn validate_parameter_incrementer_manifest(
     DefinitionRevision::new(kind).map_err(|_| ManifestError::MalformedGraph)?;
     DefinitionRevision::new(revision).map_err(|_| ManifestError::MalformedGraph)?;
     Ok(())
+}
+
+fn validate_restart_policy_manifest(document: &serde_json::Value) -> Result<(), ManifestError> {
+    fn visit(value: &serde_json::Value, root: bool) -> Result<(), ManifestError> {
+        match value {
+            serde_json::Value::Object(object) => {
+                if let Some(policy) = object.get("restart_policy") {
+                    let is_start_controls = object.contains_key("start_limit")
+                        && object.contains_key("allow_start_if_complete");
+                    if (!root && !is_start_controls) || policy.as_str() != Some("not_restartable") {
+                        return Err(ManifestError::MalformedGraph);
+                    }
+                }
+                for child in object.values() {
+                    visit(child, false)?;
+                }
+            }
+            serde_json::Value::Array(values) => {
+                for child in values {
+                    visit(child, false)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    visit(document, true)
 }
 
 fn ensure_graph_bounds(nodes: usize, transitions: usize) -> Result<(), ManifestError> {

@@ -67,7 +67,9 @@ pub use fault::{
     FaultEvidence, FaultPhase, FaultPolicy, FaultPolicyError, FaultRule, RetryLimit, RetryOrdinal,
     RetryStateLimit, RollbackDisposition, SkipCounts, SkipLimit,
 };
-pub use flow::{FlowTarget, MAX_PARTITIONS, NodeId, StartControls, StartLimit, TerminalKind};
+pub use flow::{
+    FlowTarget, MAX_PARTITIONS, NodeId, RestartPolicy, StartControls, StartLimit, TerminalKind,
+};
 pub use scope::{
     MAX_LATE_BOUND_INPUTS, MAX_SCOPED_COMPONENTS, MAX_SELECTOR_PATH_BYTES,
     MAX_SELECTOR_PATH_SEGMENTS, ScopeFrameworkSource, ScopeKind, ScopedComponentId,
