@@ -2718,7 +2718,7 @@ impl<'a> FlowLauncher<'a> {
                                         node: node_id.clone(),
                                     })
                                 })?;
-                            let run = self
+                            let run = match self
                                 .run_partitioned_step(
                                     job,
                                     compiled,
@@ -2731,7 +2731,45 @@ impl<'a> FlowLauncher<'a> {
                                     stop_token,
                                     job_scope,
                                 )
-                                .await?;
+                                .await
+                            {
+                                Ok(run) => run,
+                                Err(FlowRuntimeError::Repository(
+                                    RepositoryError::StartLimitExceeded {
+                                        node_id: exhausted_node,
+                                        limit,
+                                        ..
+                                    },
+                                )) => {
+                                    self.emit_flow_event(&FlowEvent::new(
+                                        FlowEventKind::StartLimitExceeded,
+                                        job.name.clone(),
+                                        instance_id,
+                                        execution_id,
+                                        attempt,
+                                        exhausted_node.clone(),
+                                        None,
+                                        None,
+                                        self.clock.now(),
+                                    ));
+                                    let failure = self
+                                        .next_failure_summary(FailureCategory::IllegalTransition)?;
+                                    return Ok(ScopeRun::terminal(
+                                        BatchStatus::Failed,
+                                        ExitStatus::failed(),
+                                        Some(failure),
+                                        Some(FlowFailure::StartLimitExceeded {
+                                            node: exhausted_node,
+                                            limit,
+                                        }),
+                                        steps,
+                                        decisions,
+                                        states,
+                                        listener_failures,
+                                    ));
+                                }
+                                Err(error) => return Err(error),
+                            };
                             listener_failures.extend(run.listener_failures);
                             steps.extend(run.worker_executions);
                             steps.push(run.parent.clone());
@@ -3563,6 +3601,7 @@ impl<'a> FlowLauncher<'a> {
 
         let mut joined = Vec::new();
         let mut first_error = None;
+        let mut start_limit_failure: Option<(NodeId, StartLimit)> = None;
         let mut parent_stop_observed = parent_stop.is_stop_requested();
         loop {
             tokio::select! {
@@ -3576,6 +3615,21 @@ impl<'a> FlowLauncher<'a> {
                                 partition_stop_source.request_stop();
                             }
                             joined.push(worker);
+                        }
+                        Err(FlowRuntimeError::Repository(
+                            RepositoryError::StartLimitExceeded {
+                                node_id,
+                                limit,
+                                ..
+                            },
+                        )) => {
+                            partition_stop_source.request_stop();
+                            let replace = start_limit_failure
+                                .as_ref()
+                                .is_none_or(|(current, _)| node_id.as_str() < current.as_str());
+                            if replace {
+                                start_limit_failure = Some((node_id, limit));
+                            }
                         }
                         Err(error) => {
                             partition_stop_source.request_stop();
@@ -3593,6 +3647,55 @@ impl<'a> FlowLauncher<'a> {
         }
         if let Some(error) = first_error {
             return Err(error);
+        }
+        if let Some((node, limit)) = start_limit_failure {
+            self.emit_flow_event(&FlowEvent::new(
+                FlowEventKind::StartLimitExceeded,
+                job.name.clone(),
+                instance_id,
+                execution_id,
+                attempt,
+                node.clone(),
+                None,
+                None,
+                self.clock.now(),
+            ));
+            let failure = self.next_failure_summary(FailureCategory::IllegalTransition)?;
+            let parent = self
+                .finish_step(
+                    &parent,
+                    TaskletExecutionOutcome::Failed(TaskletFailure::Error),
+                    &ExitStatus::failed(),
+                    Some(failure),
+                    false,
+                )
+                .await?;
+            self.emit_flow_event(&FlowEvent::new(
+                FlowEventKind::StepResultCommitted,
+                job.name.clone(),
+                instance_id,
+                execution_id,
+                attempt,
+                compiled.id().clone(),
+                Some(parent.id()),
+                None,
+                self.clock.now(),
+            ));
+            joined.sort_by(|left, right| left.partition.key().cmp(right.partition.key()));
+            let mut worker_executions = Vec::with_capacity(joined.len());
+            let mut listener_failures = Vec::new();
+            for worker in joined {
+                worker_executions.push(worker.execution);
+                listener_failures.extend(worker.listener_failures);
+            }
+            return Ok(PartitionRun {
+                status: BatchStatus::Failed,
+                exit_status: ExitStatus::failed(),
+                parent,
+                flow_failure: Some(FlowFailure::StartLimitExceeded { node, limit }),
+                worker_executions,
+                listener_failures,
+            });
         }
 
         let durable = self.partition_plan(parent.id()).await?;
