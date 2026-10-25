@@ -79,7 +79,7 @@ use upgrade::{
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade must reach: the current installed schema
-/// (9, since M7 `#550`'s definition-registry migration), not the schema-3 target
+/// (12, including M7 `#615`'s explicit operator-fork action migration), not the schema-3 target
 /// the M5 preview named when it was current.
 const TARGET_VERSION: u32 = 12;
 static MIGRATIONS: Migrator = sqlx::migrate!("./migrations");
