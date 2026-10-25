@@ -213,8 +213,7 @@ pub(crate) async fn stage_fork_in_unit(
             .scope_step_state(step.id())
             .await?
             .ok_or(RepositoryError::ForkStateCorrupt)?;
-        if committed.execution() != &step
-            || committed.execution().job_execution_id() != source.id()
+        if committed.execution() != &step || committed.execution().job_execution_id() != source.id()
         {
             return Err(RepositoryError::ForkStateCorrupt.into());
         }
