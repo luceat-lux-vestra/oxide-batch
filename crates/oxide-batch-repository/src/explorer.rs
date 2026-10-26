@@ -20,14 +20,15 @@ use oxide_batch_core::{
     BatchStatus, DefinitionArtifactId, DefinitionRevision, DefinitionUpgradeKey,
     DefinitionUpgradeRevision, DurableStateKind, ExecutionCounts, ExecutionTimestamps,
     ExecutionVersion, ExitStatus, FailureSummary, JobExecutionId, JobInstanceId, JobName, NodeId,
-    ParameterName, ParameterValueKind, RepeatId, RestartPolicy, StateSchemaId, StateSchemaVersion,
-    StepExecutionId, StepName, StepPartitionId,
+    ParameterName, ParameterValueKind, RepeatId, RestartPolicy, ScopeFrameworkSource, ScopeKind,
+    ScopedComponentId, StateSchemaId, StateSchemaVersion, StepExecutionId, StepName,
+    StepPartitionId,
 };
 
 use crate::{
     BoxFuture, CanonicalWriter, FlowDecision, NestedJobTerminalObservation, OperatorRecord,
     RecoveryDecision, RepeatDecision, RepeatLineage, RepositoryError, RetentionHold,
-    ScopeResolutionProvenance, hex_digest,
+    ScopeResolutionProvenance, ScopeResolutionSource, hex_digest,
 };
 
 /// Maximum rows one page may contain.
@@ -1031,10 +1032,147 @@ impl ScopeResolutionProjection {
         Self { order, provenance }
     }
 
-    /// Borrows the value-free scope-resolution provenance.
+    /// Returns the owning execution scope.
     #[must_use]
-    pub const fn provenance(&self) -> &ScopeResolutionProvenance {
-        &self.provenance
+    pub const fn scope(&self) -> ScopeKind {
+        self.provenance.scope()
+    }
+
+    /// Borrows the stable logical component identity.
+    #[must_use]
+    pub const fn component(&self) -> &ScopedComponentId {
+        self.provenance.component()
+    }
+
+    /// Borrows the late-bound input name.
+    #[must_use]
+    pub const fn input(&self) -> &ParameterName {
+        self.provenance.input()
+    }
+
+    /// Returns the owning job-execution attempt.
+    #[must_use]
+    pub const fn owner_job_execution_id(&self) -> JobExecutionId {
+        self.provenance.owner_job_execution_id()
+    }
+
+    /// Returns the owning step-execution attempt for step scope.
+    #[must_use]
+    pub const fn owner_step_execution_id(&self) -> Option<StepExecutionId> {
+        self.provenance.owner_step_execution_id()
+    }
+
+    /// Returns the stable value-free source-family code.
+    #[must_use]
+    pub const fn source_kind(&self) -> &'static str {
+        self.provenance.source().kind().as_str()
+    }
+
+    /// Returns the source job-execution identity when that source family records one.
+    #[must_use]
+    pub const fn source_job_execution_id(&self) -> Option<JobExecutionId> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobParameter {
+                job_execution_id, ..
+            }
+            | ScopeResolutionSource::JobContext {
+                job_execution_id, ..
+            }
+            | ScopeResolutionSource::Framework {
+                job_execution_id, ..
+            } => Some(*job_execution_id),
+            ScopeResolutionSource::StepContext { .. } => None,
+            _ => None,
+        }
+    }
+
+    /// Returns the source step-execution identity when recorded.
+    #[must_use]
+    pub const fn source_step_execution_id(&self) -> Option<StepExecutionId> {
+        match self.provenance.source() {
+            ScopeResolutionSource::StepContext {
+                step_execution_id, ..
+            }
+            | ScopeResolutionSource::Framework {
+                step_execution_id, ..
+            } => *step_execution_id,
+            ScopeResolutionSource::JobParameter { .. }
+            | ScopeResolutionSource::JobContext { .. } => None,
+            _ => None,
+        }
+    }
+
+    /// Returns the source execution version when the source is versioned context.
+    #[must_use]
+    pub const fn source_execution_version(&self) -> Option<ExecutionVersion> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobContext {
+                execution_version, ..
+            } => Some(*execution_version),
+            ScopeResolutionSource::StepContext {
+                execution_version, ..
+            } => *execution_version,
+            ScopeResolutionSource::JobParameter { .. }
+            | ScopeResolutionSource::Framework { .. } => None,
+            _ => None,
+        }
+    }
+
+    /// Borrows the source parameter identity for a job-parameter source.
+    #[must_use]
+    pub const fn source_parameter(&self) -> Option<&ParameterName> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobParameter { parameter, .. } => Some(parameter),
+            _ => None,
+        }
+    }
+
+    /// Borrows the logical source node for a step-context source.
+    #[must_use]
+    pub const fn source_node(&self) -> Option<&NodeId> {
+        match self.provenance.source() {
+            ScopeResolutionSource::StepContext { node, .. } => Some(node),
+            _ => None,
+        }
+    }
+
+    /// Returns the closed framework metadata field for a framework source.
+    #[must_use]
+    pub const fn source_framework_field(&self) -> Option<ScopeFrameworkSource> {
+        match self.provenance.source() {
+            ScopeResolutionSource::Framework { source, .. } => Some(*source),
+            _ => None,
+        }
+    }
+
+    /// Borrows the required application schema for a context source.
+    #[must_use]
+    pub const fn source_schema(&self) -> Option<&StateSchemaId> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobContext { schema, .. }
+            | ScopeResolutionSource::StepContext { schema, .. } => Some(schema),
+            _ => None,
+        }
+    }
+
+    /// Returns the required application schema version for a context source.
+    #[must_use]
+    pub const fn source_schema_version(&self) -> Option<StateSchemaVersion> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobContext { schema_version, .. }
+            | ScopeResolutionSource::StepContext { schema_version, .. } => Some(*schema_version),
+            _ => None,
+        }
+    }
+
+    /// Borrows the validated structured selector path for a context source.
+    #[must_use]
+    pub fn source_path(&self) -> Option<&[String]> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobContext { path, .. }
+            | ScopeResolutionSource::StepContext { path, .. } => Some(path),
+            _ => None,
+        }
     }
 }
 

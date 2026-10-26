@@ -38,11 +38,6 @@ const OPTIONAL_FEATURE: &str = "postgres";
 mod resolves {
     pub use oxide_batch::ParameterIncrementerIdentity;
     pub use oxide_batch::{
-        DefinitionRevisionProjection, DefinitionUpgradeProjection, ForkLineageProjection,
-        NestedJobLinkProjection, RepeatStateProjection, RestartControlDescriptor,
-        ScopeResolutionProjection,
-    };
-    pub use oxide_batch::{
         ActorRef, AdaptiveBounds, AdaptiveCompletionPolicy, AuthorizationClass, BackoffKind,
         BackoffOutcome, BackoffPolicy, BackoffSleeper, BatchStatus, BeforeCallbackOutcome,
         BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, BoxFuture, BoxedProcessor,
@@ -158,6 +153,11 @@ mod resolves {
         TimeCompletionPolicy, UnjoinedPhase, VERSION, VersionedStateCodec, WriteContext,
         WriteListener, WriteOutcome, WriterError, aggregate_step_partitions,
         completion_policy_revision,
+    };
+    pub use oxide_batch::{
+        DefinitionRevisionProjection, DefinitionUpgradeProjection, ForkLineageProjection,
+        NestedJobLinkProjection, RepeatStateProjection, RestartControlDescriptor,
+        ScopeResolutionProjection,
     };
     pub use oxide_batch::{
         LateBindingDefinitionError, LateBoundInput, LateBoundSource, MAX_LATE_BOUND_INPUTS,
