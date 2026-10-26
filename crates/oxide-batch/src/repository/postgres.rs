@@ -9557,7 +9557,7 @@ fn decode_fork_lineage_projection(row: &PgRow) -> Result<ForkLineageProjection, 
     ))
 }
 
-fn nested_job_link_projection(link: NestedJobLink) -> NestedJobLinkProjection {
+fn nested_job_link_projection(link: &NestedJobLink) -> NestedJobLinkProjection {
     NestedJobLinkProjection::new(
         link.parent_job_instance_id(),
         link.parent_job_execution_id(),
@@ -10415,7 +10415,7 @@ impl ExplorerRepository for PostgresExplorer {
             rows.iter()
                 .map(|row| {
                     decode_nested_job_link(row)
-                        .map(nested_job_link_projection)
+                        .map(|link| nested_job_link_projection(&link))
                         .map_err(ExplorerError::Repository)
                 })
                 .collect()
