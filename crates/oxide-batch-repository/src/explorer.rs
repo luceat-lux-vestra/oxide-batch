@@ -346,7 +346,8 @@ impl ExplorerQuery {
             Self::StepExecutions { job_execution_id }
             | Self::RecoveryDecisions { job_execution_id }
             | Self::FlowDecisions { job_execution_id }
-            | Self::OperatorRequests { job_execution_id } => {
+            | Self::OperatorRequests { job_execution_id }
+            | Self::ScopeResolutions { job_execution_id } => {
                 writer.push_u64(job_execution_id.get());
             }
             Self::UnresolvedExecutions { minimum_age } => {
@@ -354,7 +355,7 @@ impl ExplorerQuery {
             }
             Self::StepPartitions { step_execution_id } => writer.push_u64(step_execution_id.get()),
             Self::DefinitionRevisions { job_name } | Self::DefinitionUpgrades { job_name } => {
-                writer.push_str(job_name.as_str())
+                writer.push_str(job_name.as_str());
             }
             Self::ForkLineages {
                 source_execution_id,
@@ -362,9 +363,6 @@ impl ExplorerQuery {
             Self::NestedJobLinks {
                 parent_job_execution_id,
             } => writer.push_u64(parent_job_execution_id.get()),
-            Self::ScopeResolutions { job_execution_id } => {
-                writer.push_u64(job_execution_id.get());
-            }
         }
         writer.digest()
     }
@@ -673,18 +671,22 @@ impl RestartControlDescriptor {
         }
     }
 
+    /// Borrows the logical definition node identifier.
     #[must_use]
     pub const fn node_id(&self) -> &NodeId {
         &self.node_id
     }
+    /// Returns the maximum number of starts allowed for the node.
     #[must_use]
     pub const fn start_limit(&self) -> u32 {
         self.start_limit
     }
+    /// Returns whether a completed node may be started again.
     #[must_use]
     pub const fn allow_start_if_complete(&self) -> bool {
         self.allow_start_if_complete
     }
+    /// Returns the node-level restart policy.
     #[must_use]
     pub const fn restart_policy(&self) -> RestartPolicy {
         self.restart_policy
@@ -723,22 +725,27 @@ impl DefinitionRevisionProjection {
         }
     }
 
+    /// Borrows the registered job name.
     #[must_use]
     pub const fn job_name(&self) -> &JobName {
         &self.job_name
     }
+    /// Borrows the immutable definition artifact identity.
     #[must_use]
     pub const fn artifact(&self) -> &DefinitionArtifactId {
         &self.artifact
     }
+    /// Borrows the redacted definition descriptor.
     #[must_use]
     pub const fn definition(&self) -> &DefinitionDescriptor {
         &self.definition
     }
+    /// Returns the job-level restart policy.
     #[must_use]
     pub const fn restart_policy(&self) -> RestartPolicy {
         self.restart_policy
     }
+    /// Borrows the bounded node-level restart-control descriptors.
     #[must_use]
     pub fn restart_controls(&self) -> &[RestartControlDescriptor] {
         &self.restart_controls
@@ -790,34 +797,42 @@ impl DefinitionUpgradeProjection {
         }
     }
 
+    /// Borrows the job name that owns the compatible-upgrade edge.
     #[must_use]
     pub const fn job_name(&self) -> &JobName {
         &self.job_name
     }
+    /// Borrows the durable compatible-upgrade key.
     #[must_use]
     pub const fn key(&self) -> &DefinitionUpgradeKey {
         &self.key
     }
+    /// Borrows the optional durable upgrade revision.
     #[must_use]
     pub const fn revision(&self) -> Option<&DefinitionUpgradeRevision> {
         self.revision.as_ref()
     }
+    /// Borrows the source definition descriptor.
     #[must_use]
     pub const fn from(&self) -> &DefinitionDescriptor {
         &self.from
     }
+    /// Borrows the target definition descriptor.
     #[must_use]
     pub const fn to(&self) -> &DefinitionDescriptor {
         &self.to
     }
+    /// Returns the number of durable step mappings without exposing their contents.
     #[must_use]
     pub const fn step_mapping_count(&self) -> usize {
         self.step_mapping_count
     }
+    /// Returns the number of durable node mappings without exposing their contents.
     #[must_use]
     pub const fn node_mapping_count(&self) -> usize {
         self.node_mapping_count
     }
+    /// Returns the number of durable state transforms without exposing transform code.
     #[must_use]
     pub const fn transform_count(&self) -> usize {
         self.transform_count
@@ -869,42 +884,52 @@ impl ForkLineageProjection {
         }
     }
 
+    /// Returns the source execution identifier.
     #[must_use]
     pub const fn source_execution_id(&self) -> JobExecutionId {
         self.source_execution_id
     }
+    /// Returns the source execution version captured by the fork.
     #[must_use]
     pub const fn source_version(&self) -> ExecutionVersion {
         self.source_version
     }
+    /// Returns the source definition digest.
     #[must_use]
     pub const fn source_definition_digest(&self) -> &[u8; 32] {
         &self.source_definition_digest
     }
+    /// Returns the redacted source-state digest.
     #[must_use]
     pub const fn source_state_digest(&self) -> &[u8; 32] {
         &self.source_state_digest
     }
+    /// Borrows the target definition descriptor.
     #[must_use]
     pub const fn target_definition(&self) -> &DefinitionDescriptor {
         &self.target_definition
     }
+    /// Borrows the immutable target artifact identity.
     #[must_use]
     pub const fn target_artifact(&self) -> &DefinitionArtifactId {
         &self.target_artifact
     }
+    /// Returns the target job-instance identifier.
     #[must_use]
     pub const fn target_instance_id(&self) -> JobInstanceId {
         self.target_instance_id
     }
+    /// Returns the target job-execution identifier.
     #[must_use]
     pub const fn target_execution_id(&self) -> JobExecutionId {
         self.target_execution_id
     }
+    /// Returns the target parameter-set digest without exposing values.
     #[must_use]
     pub const fn target_parameters_digest(&self) -> &[u8; 32] {
         &self.target_parameters_digest
     }
+    /// Returns whether the fork used an explicit context transform.
     #[must_use]
     pub const fn transformed(&self) -> bool {
         self.transformed
@@ -950,34 +975,42 @@ impl NestedJobLinkProjection {
         }
     }
 
+    /// Returns the parent job-instance identifier.
     #[must_use]
     pub const fn parent_instance_id(&self) -> JobInstanceId {
         self.parent_instance_id
     }
+    /// Returns the parent job-execution identifier.
     #[must_use]
     pub const fn parent_execution_id(&self) -> JobExecutionId {
         self.parent_execution_id
     }
+    /// Borrows the logical nested-job node identifier.
     #[must_use]
     pub const fn node_id(&self) -> &NodeId {
         &self.node_id
     }
+    /// Borrows the child definition descriptor.
     #[must_use]
     pub const fn child_definition(&self) -> &DefinitionDescriptor {
         &self.child_definition
     }
+    /// Returns the child job-instance identifier.
     #[must_use]
     pub const fn child_instance_id(&self) -> JobInstanceId {
         self.child_instance_id
     }
+    /// Returns the child job-execution identifier.
     #[must_use]
     pub const fn child_execution_id(&self) -> JobExecutionId {
         self.child_execution_id
     }
+    /// Returns the durable link creation instant.
     #[must_use]
     pub const fn linked_at(&self) -> SystemTime {
         self.linked_at
     }
+    /// Borrows the bounded child terminal observation, when recorded.
     #[must_use]
     pub const fn terminal(&self) -> Option<&NestedJobTerminalObservation> {
         self.terminal.as_ref()
@@ -998,6 +1031,7 @@ impl ScopeResolutionProjection {
         Self { order, provenance }
     }
 
+    /// Borrows the value-free scope-resolution provenance.
     #[must_use]
     pub const fn provenance(&self) -> &ScopeResolutionProvenance {
         &self.provenance
@@ -1049,42 +1083,52 @@ impl RepeatStateProjection {
         }
     }
 
+    /// Returns the owning job-instance identifier.
     #[must_use]
     pub const fn job_instance_id(&self) -> JobInstanceId {
         self.job_instance_id
     }
+    /// Borrows the runtime logical node identifier.
     #[must_use]
     pub const fn node_id(&self) -> &NodeId {
         &self.node_id
     }
+    /// Borrows the definition node identifier.
     #[must_use]
     pub const fn definition_node_id(&self) -> &NodeId {
         &self.definition_node_id
     }
+    /// Returns the owning step-execution identifier.
     #[must_use]
     pub const fn step_execution_id(&self) -> StepExecutionId {
         self.step_execution_id
     }
+    /// Borrows the repeat identifier.
     #[must_use]
     pub const fn repeat_id(&self) -> &RepeatId {
         &self.repeat_id
     }
+    /// Borrows the durable repeat-lineage identity.
     #[must_use]
     pub const fn lineage(&self) -> &RepeatLineage {
         &self.lineage
     }
+    /// Returns the current repeat ordinal.
     #[must_use]
     pub const fn ordinal(&self) -> u32 {
         self.ordinal
     }
+    /// Borrows the redacted durable state-envelope descriptor.
     #[must_use]
     pub const fn state(&self) -> &StateEnvelopeDescriptor {
         &self.state
     }
+    /// Returns the current repeat decision.
     #[must_use]
     pub const fn decision(&self) -> RepeatDecision {
         self.decision
     }
+    /// Returns the bound plan fingerprint.
     #[must_use]
     pub const fn plan_fingerprint(&self) -> &[u8; 32] {
         &self.plan_fingerprint

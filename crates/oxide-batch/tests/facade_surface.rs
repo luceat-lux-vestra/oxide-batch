@@ -38,6 +38,11 @@ const OPTIONAL_FEATURE: &str = "postgres";
 mod resolves {
     pub use oxide_batch::ParameterIncrementerIdentity;
     pub use oxide_batch::{
+        DefinitionRevisionProjection, DefinitionUpgradeProjection, ForkLineageProjection,
+        NestedJobLinkProjection, RepeatStateProjection, RestartControlDescriptor,
+        ScopeResolutionProjection,
+    };
+    pub use oxide_batch::{
         ActorRef, AdaptiveBounds, AdaptiveCompletionPolicy, AuthorizationClass, BackoffKind,
         BackoffOutcome, BackoffPolicy, BackoffSleeper, BatchStatus, BeforeCallbackOutcome,
         BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, BoxFuture, BoxedProcessor,

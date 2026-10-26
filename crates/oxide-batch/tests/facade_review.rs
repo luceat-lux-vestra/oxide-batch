@@ -107,7 +107,8 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // RepeatLineage so nested cycles and dynamic execution owners retain an
     // explicit facade-owned restart identity.
     // #550 adds immutable registry binding construction/error values.
-    ("oxide_batch_repository", 123),
+    // #617 adds seven bounded, redacted M7 explorer projection descriptors.
+    ("oxide_batch_repository", 130),
     // #301 exposes the process-local repeat runtime contract: callback/policy/
     // interceptor traits and registrations, redacted failure/context values,
     // policy outcome, and the bounded secondary-failure ceiling.
