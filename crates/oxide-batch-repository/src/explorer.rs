@@ -1082,7 +1082,6 @@ impl ScopeResolutionProjection {
                 job_execution_id, ..
             } => Some(*job_execution_id),
             ScopeResolutionSource::StepContext { .. } => None,
-            _ => None,
         }
     }
 
@@ -1098,7 +1097,6 @@ impl ScopeResolutionProjection {
             } => *step_execution_id,
             ScopeResolutionSource::JobParameter { .. }
             | ScopeResolutionSource::JobContext { .. } => None,
-            _ => None,
         }
     }
 
@@ -1114,7 +1112,6 @@ impl ScopeResolutionProjection {
             } => *execution_version,
             ScopeResolutionSource::JobParameter { .. }
             | ScopeResolutionSource::Framework { .. } => None,
-            _ => None,
         }
     }
 
