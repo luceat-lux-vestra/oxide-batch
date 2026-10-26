@@ -14,24 +14,24 @@ use crate::{
     ActorRef, BatchStatus, CursorKey, DefinitionDescriptor, DefinitionIdentity,
     DefinitionRegistration, DefinitionRevision, DefinitionRevisionProjection, DefinitionStateKind,
     DefinitionStateTransform, DefinitionUpgrade, DefinitionUpgradeExecution,
-    DefinitionUpgradeProjection, DurableStateKind, ExecutionAttempt,
-    ExecutionContext, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion,
-    ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
+    DefinitionUpgradeProjection, DurableStateKind, ExecutionAttempt, ExecutionContext,
+    ExecutionCounts, ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitStatus,
+    ExplorerError, ExplorerQuery, ExplorerRepository, FlowDecision, FlowDecisionId,
     FlowDecisionRequest, FlowStepState, FlowTransitionKind, ForkLineage, ForkLineageProjection,
-    IdentifierKind, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
-    JobInstanceKey, JobInstanceProjection, JobName, JobParameters, LifecycleError,
+    IdentifierKind, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance,
+    JobInstanceId, JobInstanceKey, JobInstanceProjection, JobName, JobParameters, LifecycleError,
     LifecycleTransition, MAX_PARTITIONS, NestedJobLink, NestedJobLinkProjection,
     NestedJobLinkRequest, NestedJobTerminalObservation, NodeId, OperationId, OperatorAction,
-    OperatorRecord,
-    OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken, ParameterDescriptor,
-    ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate, PurgeCounts, PurgePlan,
-    PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode, RecoveryDecisionId, RecoveryRepository,
-    RecoverySnapshot, RecoveryStepEvidence, RepeatCommitRequest, RepeatDecision, RepeatExecution,
-    RepeatId, RepeatLineage, RepeatOrdinal, RepeatStateProjection, RestartControlDescriptor,
-    RestartPolicy, RetentionAction, RetentionActionId, RetentionHold, RetentionRecord,
-    RetentionRecordDraft, ScopeKind, ScopeResolutionProjection, ScopedComponentId, StartLimit,
-    StateEnvelopeDescriptor, StateLimits, StepExecution, StepExecutionId, StepExecutionProjection,
-    StepName, StepPartition, StepPartitionId, StepPartitionProjection,
+    OperatorRecord, OperatorRecordDraft, OperatorRequestId, OwnerObservation, OwnerToken,
+    ParameterDescriptor, ParameterName, PartitionPlanEntry, PartitionResult, PurgeCandidate,
+    PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
+    RecoveryDecisionId, RecoveryRepository, RecoverySnapshot, RecoveryStepEvidence,
+    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal,
+    RepeatStateProjection, RestartControlDescriptor, RestartPolicy, RetentionAction,
+    RetentionActionId, RetentionHold, RetentionRecord, RetentionRecordDraft, ScopeKind,
+    ScopeResolutionProjection, ScopedComponentId, StartLimit, StateEnvelopeDescriptor, StateLimits,
+    StepExecution, StepExecutionId, StepExecutionProjection, StepName, StepPartition,
+    StepPartitionId, StepPartitionProjection,
 };
 use crate::{
     BoxFuture, Clock, IdGenerator, JobInstanceSelection, JobRepository, RecoveryDecision,
@@ -298,8 +298,9 @@ impl MemoryState {
                         object.get("id").and_then(serde_json::Value::as_str),
                         object.get("start").and_then(serde_json::Value::as_object),
                     ) {
-                        let node = NodeId::new(id)
-                            .map_err(|_| ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
+                        let node = NodeId::new(id).map_err(|_| {
+                            ExplorerError::Repository(RepositoryError::FlowStateCorrupt)
+                        })?;
                         let limit = start
                             .get("start_limit")
                             .and_then(serde_json::Value::as_u64)
@@ -317,7 +318,9 @@ impl MemoryState {
                             )
                             .is_some()
                         {
-                            return Err(ExplorerError::Repository(RepositoryError::FlowStateCorrupt));
+                            return Err(ExplorerError::Repository(
+                                RepositoryError::FlowStateCorrupt,
+                            ));
                         }
                     }
                     for child in object.values() {
@@ -371,7 +374,7 @@ impl MemoryState {
         &self,
         job_name: &JobName,
         upgrade: &DefinitionUpgrade,
-    ) -> Result<DefinitionUpgradeProjection, ExplorerError> {
+    ) -> Result<(u64, u64, DefinitionUpgradeProjection), ExplorerError> {
         let source_key = (job_name.clone(), upgrade.from().revision().clone());
         let target_key = (job_name.clone(), upgrade.to().revision().clone());
         let source_order = self
@@ -384,17 +387,21 @@ impl MemoryState {
             .get(&target_key)
             .copied()
             .ok_or(ExplorerError::Repository(RepositoryError::FlowStateCorrupt))?;
-        Ok(DefinitionUpgradeProjection::new(
+        Ok((
             source_order,
             target_order,
-            job_name.clone(),
-            upgrade.key().clone(),
-            upgrade.revision().cloned(),
-            Self::definition_descriptor(upgrade.from()),
-            Self::definition_descriptor(upgrade.to()),
-            upgrade.step_mapping().len(),
-            upgrade.node_mapping().len(),
-            upgrade.transforms().len(),
+            DefinitionUpgradeProjection::new(
+                source_order,
+                target_order,
+                job_name.clone(),
+                upgrade.key().clone(),
+                upgrade.revision().cloned(),
+                Self::definition_descriptor(upgrade.from()),
+                Self::definition_descriptor(upgrade.to()),
+                upgrade.step_mapping().len(),
+                upgrade.node_mapping().len(),
+                upgrade.transforms().len(),
+            ),
         ))
     }
 
@@ -4545,13 +4552,17 @@ impl ExplorerRepository for InMemoryExplorer {
                 .filter(|((name, _, _), _)| name == job_name)
                 .map(|(_, upgrade)| state.definition_upgrade_projection(job_name, upgrade))
                 .collect::<Result<Vec<_>, _>>()?;
-            rows.retain(|row| {
-                row.source_order <= window.ceiling()
-                    && row.target_order <= window.ceiling()
-                    && after.is_none_or(|after| (row.source_order, row.target_order) > after)
+            rows.retain(|(source_order, target_order, _)| {
+                *source_order <= window.ceiling()
+                    && *target_order <= window.ceiling()
+                    && after.is_none_or(|after| (*source_order, *target_order) > after)
             });
-            rows.sort_by_key(|row| (row.source_order, row.target_order));
-            Ok(rows.into_iter().take(limit_of(window)).collect())
+            rows.sort_by_key(|(source_order, target_order, _)| (*source_order, *target_order));
+            Ok(rows
+                .into_iter()
+                .take(limit_of(window))
+                .map(|(_, _, projection)| projection)
+                .collect())
         })
     }
 

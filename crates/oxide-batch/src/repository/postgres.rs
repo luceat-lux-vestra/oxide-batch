@@ -36,26 +36,25 @@ use crate::{
     FaultStateError, FaultStateFormatError, FaultStateStore, FlowDecision, FlowDecisionId,
     FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind,
     ForkContextTransform, ForkLineage, ForkLineageProjection, IdentifierKind,
-    InheritedStepProgress, JobExecution,
-    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
-    JobInstanceProjection, JobInstanceSelection, JobName, JobParameter, JobParameters,
-    JobRepository, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
-    MAX_PARTITIONS, NestedJobLink, NestedJobLinkProjection, NestedJobLinkRequest,
-    NestedJobTerminalObservation, NodeId, OperationId, OperatorAction, OperatorOutcomeClass,
-    OperatorRecord, OperatorRecordDraft,
-    OperatorRejection, OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole,
-    ParameterValue, ParameterValueKind, PartitionKey, PartitionPlanEntry, PartitionResult,
-    PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
-    QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId, RecoveryRequest, RecoveryResult,
-    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal,
-    RepeatStateProjection, RepositoryCapability, RepositoryDescriptor, RepositoryError,
-    RepositoryUnitOfWork, RequestDigest, RestartControlDescriptor, RestartPolicy, RetentionAction,
-    RetentionActionId, RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft,
-    RetryCounts, RetryKey, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind,
+    InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance,
+    JobInstanceId, JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName,
+    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
+    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITIONS, NestedJobLink, NestedJobLinkProjection,
+    NestedJobLinkRequest, NestedJobTerminalObservation, NodeId, OperationId, OperatorAction,
+    OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
+    OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole, ParameterValue,
+    ParameterValueKind, PartitionKey, PartitionPlanEntry, PartitionResult, PurgeBatchBound,
+    PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
+    RecoveryDecision, RecoveryDecisionId, RecoveryRequest, RecoveryResult, RepeatCommitRequest,
+    RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal, RepeatStateProjection,
+    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    RequestDigest, RestartControlDescriptor, RestartPolicy, RetentionAction, RetentionActionId,
+    RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey,
+    RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind,
     ScopeResolutionProjection, ScopedComponentId, SkipCounts, StartLimit, StateEnvelopeDescriptor,
-    StateLimits, StateSchemaId, StateSchemaVersion, StepExecution,
-    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
-    StepPartitionProjection, TerminalKind,
+    StateLimits, StateSchemaId, StateSchemaVersion, StepExecution, StepExecutionId,
+    StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
+    TerminalKind,
 };
 
 fn encode_fork_context_transform(value: &ForkContextTransform) -> Value {
@@ -9278,6 +9277,7 @@ const fn ceiling_source(query: &ExplorerQuery) -> Option<&'static str> {
         ExplorerQuery::ScopeResolutions { .. } => {
             "SELECT max(id) AS ceiling FROM oxide_batch.ob_scope_resolution_provenance              WHERE owner_job_execution_id = $1"
         }
+        _ => return None,
     })
 }
 
@@ -9426,9 +9426,8 @@ fn explorer_restart_controls(
         Ok(())
     }
 
-    let document = serde_json::from_slice::<Value>(definition.canonical_manifest()).map_err(|_| {
-        ExplorerError::Repository(RepositoryError::DefinitionRegistryStateCorrupt)
-    })?;
+    let document = serde_json::from_slice::<Value>(definition.canonical_manifest())
+        .map_err(|_| ExplorerError::Repository(RepositoryError::DefinitionRegistryStateCorrupt))?;
     let object = document.as_object().ok_or(ExplorerError::Repository(
         RepositoryError::DefinitionRegistryStateCorrupt,
     ))?;
@@ -9441,11 +9440,9 @@ fn explorer_restart_controls(
 fn decode_definition_revision_projection(
     row: &PgRow,
 ) -> Result<DefinitionRevisionProjection, ExplorerError> {
-    let registration =
-        decode_definition_registration(row).map_err(ExplorerError::Repository)?;
+    let registration = decode_definition_registration(row).map_err(ExplorerError::Repository)?;
     let order = read_u64(row, "explorer_order").map_err(ExplorerError::Repository)?;
-    let (restart_policy, restart_controls) =
-        explorer_restart_controls(registration.definition())?;
+    let (restart_policy, restart_controls) = explorer_restart_controls(registration.definition())?;
     Ok(DefinitionRevisionProjection::new(
         order,
         registration.job_name().clone(),
@@ -9516,9 +9513,7 @@ fn decode_definition_upgrade_projection(
     ))
 }
 
-fn decode_fork_lineage_projection(
-    row: &PgRow,
-) -> Result<ForkLineageProjection, ExplorerError> {
+fn decode_fork_lineage_projection(row: &PgRow) -> Result<ForkLineageProjection, ExplorerError> {
     let corrupt = RepositoryError::ForkStateCorrupt;
     let target_definition = explorer_definition_descriptor(
         row,
@@ -9528,7 +9523,8 @@ fn decode_fork_lineage_projection(
         corrupt.clone(),
     )?;
     let target_artifact = DefinitionArtifactId::new(
-        read_text(row, "target_artifact").map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+        read_text(row, "target_artifact")
+            .map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
     )
     .map_err(|_| ExplorerError::Repository(corrupt.clone()))?;
     Ok(ForkLineageProjection::new(
@@ -9578,21 +9574,17 @@ fn nested_job_link_projection(link: NestedJobLink) -> NestedJobLinkProjection {
     )
 }
 
-fn decode_repeat_state_projection(
-    row: &PgRow,
-) -> Result<RepeatStateProjection, ExplorerError> {
+fn decode_repeat_state_projection(row: &PgRow) -> Result<RepeatStateProjection, ExplorerError> {
     let corrupt = RepositoryError::RepeatStateCorrupt;
     let plan_fingerprint = explorer_digest(row, "plan_fingerprint", corrupt.clone())?;
-    let definition_fingerprint =
-        explorer_digest(row, "definition_fingerprint", corrupt.clone())?;
+    let definition_fingerprint = explorer_digest(row, "definition_fingerprint", corrupt.clone())?;
     if plan_fingerprint != definition_fingerprint {
         return Err(ExplorerError::Repository(corrupt));
     }
     let Json(lineage_value): Json<Value> = row
         .try_get("lineage")
         .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?;
-    let lineage =
-        decode_repeat_lineage(&lineage_value).map_err(ExplorerError::Repository)?;
+    let lineage = decode_repeat_lineage(&lineage_value).map_err(ExplorerError::Repository)?;
     let format_version = u16::try_from(
         row.try_get::<i16, _>("state_format")
             .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
@@ -9626,7 +9618,9 @@ fn decode_repeat_state_projection(
         &read_text(row, "decision")
             .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
     )
-    .ok_or(ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?;
+    .ok_or(ExplorerError::Repository(
+        RepositoryError::RepeatStateCorrupt,
+    ))?;
     Ok(RepeatStateProjection::new(
         JobInstanceId::new(
             read_u64(row, "job_instance_id")
@@ -10343,7 +10337,9 @@ impl ExplorerRepository for PostgresExplorer {
                     .bind(window_limit(window)),
                 )
                 .await?;
-            rows.iter().map(decode_definition_revision_projection).collect()
+            rows.iter()
+                .map(decode_definition_revision_projection)
+                .collect()
         })
     }
 
@@ -10366,7 +10362,9 @@ impl ExplorerRepository for PostgresExplorer {
                     .bind(window_limit(window)),
                 )
                 .await?;
-            rows.iter().map(decode_definition_upgrade_projection).collect()
+            rows.iter()
+                .map(decode_definition_upgrade_projection)
+                .collect()
         })
     }
 

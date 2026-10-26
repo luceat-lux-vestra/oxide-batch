@@ -353,8 +353,9 @@ impl ExplorerQuery {
                 writer.push_u64(minimum_age.as_secs());
             }
             Self::StepPartitions { step_execution_id } => writer.push_u64(step_execution_id.get()),
-            Self::DefinitionRevisions { job_name }
-            | Self::DefinitionUpgrades { job_name } => writer.push_str(job_name.as_str()),
+            Self::DefinitionRevisions { job_name } | Self::DefinitionUpgrades { job_name } => {
+                writer.push_str(job_name.as_str())
+            }
             Self::ForkLineages {
                 source_execution_id,
             } => writer.push_u64(source_execution_id.get()),
@@ -673,13 +674,21 @@ impl RestartControlDescriptor {
     }
 
     #[must_use]
-    pub const fn node_id(&self) -> &NodeId { &self.node_id }
+    pub const fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
     #[must_use]
-    pub const fn start_limit(&self) -> u32 { self.start_limit }
+    pub const fn start_limit(&self) -> u32 {
+        self.start_limit
+    }
     #[must_use]
-    pub const fn allow_start_if_complete(&self) -> bool { self.allow_start_if_complete }
+    pub const fn allow_start_if_complete(&self) -> bool {
+        self.allow_start_if_complete
+    }
     #[must_use]
-    pub const fn restart_policy(&self) -> RestartPolicy { self.restart_policy }
+    pub const fn restart_policy(&self) -> RestartPolicy {
+        self.restart_policy
+    }
 }
 
 /// One registered definition revision without manifest bytes.
@@ -704,19 +713,36 @@ impl DefinitionRevisionProjection {
         restart_policy: RestartPolicy,
         restart_controls: Vec<RestartControlDescriptor>,
     ) -> Self {
-        Self { order, job_name, artifact, definition, restart_policy, restart_controls }
+        Self {
+            order,
+            job_name,
+            artifact,
+            definition,
+            restart_policy,
+            restart_controls,
+        }
     }
 
     #[must_use]
-    pub const fn job_name(&self) -> &JobName { &self.job_name }
+    pub const fn job_name(&self) -> &JobName {
+        &self.job_name
+    }
     #[must_use]
-    pub const fn artifact(&self) -> &DefinitionArtifactId { &self.artifact }
+    pub const fn artifact(&self) -> &DefinitionArtifactId {
+        &self.artifact
+    }
     #[must_use]
-    pub const fn definition(&self) -> &DefinitionDescriptor { &self.definition }
+    pub const fn definition(&self) -> &DefinitionDescriptor {
+        &self.definition
+    }
     #[must_use]
-    pub const fn restart_policy(&self) -> RestartPolicy { self.restart_policy }
+    pub const fn restart_policy(&self) -> RestartPolicy {
+        self.restart_policy
+    }
     #[must_use]
-    pub fn restart_controls(&self) -> &[RestartControlDescriptor] { &self.restart_controls }
+    pub fn restart_controls(&self) -> &[RestartControlDescriptor] {
+        &self.restart_controls
+    }
 }
 
 /// One explicit direct compatible-upgrade edge without mappings or transform code.
@@ -765,21 +791,37 @@ impl DefinitionUpgradeProjection {
     }
 
     #[must_use]
-    pub const fn job_name(&self) -> &JobName { &self.job_name }
+    pub const fn job_name(&self) -> &JobName {
+        &self.job_name
+    }
     #[must_use]
-    pub const fn key(&self) -> &DefinitionUpgradeKey { &self.key }
+    pub const fn key(&self) -> &DefinitionUpgradeKey {
+        &self.key
+    }
     #[must_use]
-    pub const fn revision(&self) -> Option<&DefinitionUpgradeRevision> { self.revision.as_ref() }
+    pub const fn revision(&self) -> Option<&DefinitionUpgradeRevision> {
+        self.revision.as_ref()
+    }
     #[must_use]
-    pub const fn from(&self) -> &DefinitionDescriptor { &self.from }
+    pub const fn from(&self) -> &DefinitionDescriptor {
+        &self.from
+    }
     #[must_use]
-    pub const fn to(&self) -> &DefinitionDescriptor { &self.to }
+    pub const fn to(&self) -> &DefinitionDescriptor {
+        &self.to
+    }
     #[must_use]
-    pub const fn step_mapping_count(&self) -> usize { self.step_mapping_count }
+    pub const fn step_mapping_count(&self) -> usize {
+        self.step_mapping_count
+    }
     #[must_use]
-    pub const fn node_mapping_count(&self) -> usize { self.node_mapping_count }
+    pub const fn node_mapping_count(&self) -> usize {
+        self.node_mapping_count
+    }
     #[must_use]
-    pub const fn transform_count(&self) -> usize { self.transform_count }
+    pub const fn transform_count(&self) -> usize {
+        self.transform_count
+    }
 }
 
 /// One explicit fork lineage projection without parameter/context payloads.
@@ -828,25 +870,45 @@ impl ForkLineageProjection {
     }
 
     #[must_use]
-    pub const fn source_execution_id(&self) -> JobExecutionId { self.source_execution_id }
+    pub const fn source_execution_id(&self) -> JobExecutionId {
+        self.source_execution_id
+    }
     #[must_use]
-    pub const fn source_version(&self) -> ExecutionVersion { self.source_version }
+    pub const fn source_version(&self) -> ExecutionVersion {
+        self.source_version
+    }
     #[must_use]
-    pub const fn source_definition_digest(&self) -> &[u8; 32] { &self.source_definition_digest }
+    pub const fn source_definition_digest(&self) -> &[u8; 32] {
+        &self.source_definition_digest
+    }
     #[must_use]
-    pub const fn source_state_digest(&self) -> &[u8; 32] { &self.source_state_digest }
+    pub const fn source_state_digest(&self) -> &[u8; 32] {
+        &self.source_state_digest
+    }
     #[must_use]
-    pub const fn target_definition(&self) -> &DefinitionDescriptor { &self.target_definition }
+    pub const fn target_definition(&self) -> &DefinitionDescriptor {
+        &self.target_definition
+    }
     #[must_use]
-    pub const fn target_artifact(&self) -> &DefinitionArtifactId { &self.target_artifact }
+    pub const fn target_artifact(&self) -> &DefinitionArtifactId {
+        &self.target_artifact
+    }
     #[must_use]
-    pub const fn target_instance_id(&self) -> JobInstanceId { self.target_instance_id }
+    pub const fn target_instance_id(&self) -> JobInstanceId {
+        self.target_instance_id
+    }
     #[must_use]
-    pub const fn target_execution_id(&self) -> JobExecutionId { self.target_execution_id }
+    pub const fn target_execution_id(&self) -> JobExecutionId {
+        self.target_execution_id
+    }
     #[must_use]
-    pub const fn target_parameters_digest(&self) -> &[u8; 32] { &self.target_parameters_digest }
+    pub const fn target_parameters_digest(&self) -> &[u8; 32] {
+        &self.target_parameters_digest
+    }
     #[must_use]
-    pub const fn transformed(&self) -> bool { self.transformed }
+    pub const fn transformed(&self) -> bool {
+        self.transformed
+    }
 }
 
 /// One redacted nested-job parent/child link.
@@ -889,21 +951,37 @@ impl NestedJobLinkProjection {
     }
 
     #[must_use]
-    pub const fn parent_instance_id(&self) -> JobInstanceId { self.parent_instance_id }
+    pub const fn parent_instance_id(&self) -> JobInstanceId {
+        self.parent_instance_id
+    }
     #[must_use]
-    pub const fn parent_execution_id(&self) -> JobExecutionId { self.parent_execution_id }
+    pub const fn parent_execution_id(&self) -> JobExecutionId {
+        self.parent_execution_id
+    }
     #[must_use]
-    pub const fn node_id(&self) -> &NodeId { &self.node_id }
+    pub const fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
     #[must_use]
-    pub const fn child_definition(&self) -> &DefinitionDescriptor { &self.child_definition }
+    pub const fn child_definition(&self) -> &DefinitionDescriptor {
+        &self.child_definition
+    }
     #[must_use]
-    pub const fn child_instance_id(&self) -> JobInstanceId { self.child_instance_id }
+    pub const fn child_instance_id(&self) -> JobInstanceId {
+        self.child_instance_id
+    }
     #[must_use]
-    pub const fn child_execution_id(&self) -> JobExecutionId { self.child_execution_id }
+    pub const fn child_execution_id(&self) -> JobExecutionId {
+        self.child_execution_id
+    }
     #[must_use]
-    pub const fn linked_at(&self) -> SystemTime { self.linked_at }
+    pub const fn linked_at(&self) -> SystemTime {
+        self.linked_at
+    }
     #[must_use]
-    pub const fn terminal(&self) -> Option<&NestedJobTerminalObservation> { self.terminal.as_ref() }
+    pub const fn terminal(&self) -> Option<&NestedJobTerminalObservation> {
+        self.terminal.as_ref()
+    }
 }
 
 /// One value-free scope-resolution provenance row with a private paging identity.
@@ -921,7 +999,9 @@ impl ScopeResolutionProjection {
     }
 
     #[must_use]
-    pub const fn provenance(&self) -> &ScopeResolutionProvenance { &self.provenance }
+    pub const fn provenance(&self) -> &ScopeResolutionProvenance {
+        &self.provenance
+    }
 }
 
 /// Current repeat-state metadata without application state bytes.
@@ -970,25 +1050,45 @@ impl RepeatStateProjection {
     }
 
     #[must_use]
-    pub const fn job_instance_id(&self) -> JobInstanceId { self.job_instance_id }
+    pub const fn job_instance_id(&self) -> JobInstanceId {
+        self.job_instance_id
+    }
     #[must_use]
-    pub const fn node_id(&self) -> &NodeId { &self.node_id }
+    pub const fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
     #[must_use]
-    pub const fn definition_node_id(&self) -> &NodeId { &self.definition_node_id }
+    pub const fn definition_node_id(&self) -> &NodeId {
+        &self.definition_node_id
+    }
     #[must_use]
-    pub const fn step_execution_id(&self) -> StepExecutionId { self.step_execution_id }
+    pub const fn step_execution_id(&self) -> StepExecutionId {
+        self.step_execution_id
+    }
     #[must_use]
-    pub const fn repeat_id(&self) -> &RepeatId { &self.repeat_id }
+    pub const fn repeat_id(&self) -> &RepeatId {
+        &self.repeat_id
+    }
     #[must_use]
-    pub const fn lineage(&self) -> &RepeatLineage { &self.lineage }
+    pub const fn lineage(&self) -> &RepeatLineage {
+        &self.lineage
+    }
     #[must_use]
-    pub const fn ordinal(&self) -> u32 { self.ordinal }
+    pub const fn ordinal(&self) -> u32 {
+        self.ordinal
+    }
     #[must_use]
-    pub const fn state(&self) -> &StateEnvelopeDescriptor { &self.state }
+    pub const fn state(&self) -> &StateEnvelopeDescriptor {
+        &self.state
+    }
     #[must_use]
-    pub const fn decision(&self) -> RepeatDecision { self.decision }
+    pub const fn decision(&self) -> RepeatDecision {
+        self.decision
+    }
     #[must_use]
-    pub const fn plan_fingerprint(&self) -> &[u8; 32] { &self.plan_fingerprint }
+    pub const fn plan_fingerprint(&self) -> &[u8; 32] {
+        &self.plan_fingerprint
+    }
 }
 
 /// A redacted logical job instance projection.
@@ -1982,7 +2082,10 @@ impl ExplorerRow for DefinitionUpgradeProjection {
             .as_str()
             .len()
             .saturating_add(self.key().as_str().len())
-            .saturating_add(self.revision().map_or(0, |revision| revision.as_str().len()))
+            .saturating_add(
+                self.revision()
+                    .map_or(0, |revision| revision.as_str().len()),
+            )
             .saturating_add(224)
     }
 }
