@@ -314,7 +314,7 @@ impl SourceFields {
     }
 }
 
-fn decode_provenance(
+pub(crate) fn decode_provenance(
     row: &sqlx::postgres::PgRow,
 ) -> Result<ScopeResolutionProvenance, RepositoryError> {
     let scope = match text(row, "scope_kind")?.as_str() {

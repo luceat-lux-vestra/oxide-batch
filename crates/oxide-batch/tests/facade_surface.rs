@@ -155,6 +155,11 @@ mod resolves {
         completion_policy_revision,
     };
     pub use oxide_batch::{
+        DefinitionRevisionProjection, DefinitionUpgradeProjection, ForkLineageProjection,
+        NestedJobLinkProjection, RepeatStateProjection, RestartControlDescriptor,
+        ScopeResolutionProjection,
+    };
+    pub use oxide_batch::{
         LateBindingDefinitionError, LateBoundInput, LateBoundSource, MAX_LATE_BOUND_INPUTS,
         MAX_REPEAT_INTERCEPTORS, MAX_REPEAT_NESTING_DEPTH, MAX_REPEAT_SECONDARY_FAILURES,
         MAX_SCOPED_COMPONENTS, MAX_SCOPED_DEPENDENCY_DEPTH, RepeatCallbackError,

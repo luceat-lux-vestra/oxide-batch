@@ -112,6 +112,7 @@ oxide_batch::DefinitionRegistration
 oxide_batch::DefinitionRegistrationError
 oxide_batch::DefinitionRegistry
 oxide_batch::DefinitionRevision
+oxide_batch::DefinitionRevisionProjection
 oxide_batch::DefinitionStateKind
 oxide_batch::DefinitionStateTransform
 oxide_batch::DefinitionStateTransformError
@@ -121,6 +122,7 @@ oxide_batch::DefinitionTokenKind
 oxide_batch::DefinitionUpgrade
 oxide_batch::DefinitionUpgradeExecution
 oxide_batch::DefinitionUpgradeKey
+oxide_batch::DefinitionUpgradeProjection
 oxide_batch::DefinitionUpgradeRevision
 oxide_batch::DiagnosticField
 oxide_batch::DomainError
@@ -194,6 +196,7 @@ oxide_batch::FlowTransition
 oxide_batch::FlowTransitionKind
 oxide_batch::ForkContextTransform
 oxide_batch::ForkLineage
+oxide_batch::ForkLineageProjection
 oxide_batch::ForkRequest
 oxide_batch::FrameworkParameterSource
 oxide_batch::IdGenerationError
@@ -317,6 +320,7 @@ oxide_batch::MonotonicInstant
 oxide_batch::NameKind
 oxide_batch::NestedFlow
 oxide_batch::NestedJobLink
+oxide_batch::NestedJobLinkProjection
 oxide_batch::NestedJobLinkRequest
 oxide_batch::NestedJobMappingFailure
 oxide_batch::NestedJobNode
@@ -434,6 +438,7 @@ oxide_batch::RepeatPolicyKind
 oxide_batch::RepeatPolicyOutcome
 oxide_batch::RepeatPolicyRegistration
 oxide_batch::RepeatRuntimeRegistration
+oxide_batch::RepeatStateProjection
 oxide_batch::RepeatStateSchema
 oxide_batch::RepositoryCapability
 oxide_batch::RepositoryDescriptor
@@ -442,6 +447,7 @@ oxide_batch::RepositoryUnitOfWork
 oxide_batch::RequestDigest
 oxide_batch::RequestField
 oxide_batch::RequestFieldError
+oxide_batch::RestartControlDescriptor
 oxide_batch::RestartPolicy
 oxide_batch::RestartabilityDeclaration
 oxide_batch::RetentionAction
@@ -468,6 +474,7 @@ oxide_batch::ScopeFrameworkSource
 oxide_batch::ScopeKind
 oxide_batch::ScopeRegistrationError
 oxide_batch::ScopeResolutionFailure
+oxide_batch::ScopeResolutionProjection
 oxide_batch::ScopeResolverKind
 oxide_batch::ScopedCleanupError
 oxide_batch::ScopedComponentDefinition

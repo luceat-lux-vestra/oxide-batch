@@ -26,32 +26,35 @@ use crate::{
     ChunkTransactionError, ChunkTransactionManager, ClassifierRevision, Clock,
     ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
     CursorError, CursorKey, DefinitionArtifactId, DefinitionDescriptor, DefinitionIdentity,
-    DefinitionRegistration, DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
-    DefinitionStateTransformId, DefinitionUpgrade, DefinitionUpgradeExecution,
+    DefinitionRegistration, DefinitionRevision, DefinitionRevisionProjection, DefinitionStateKind,
+    DefinitionStateTransform, DefinitionStateTransformId, DefinitionUpgrade,
+    DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeProjection,
     DefinitionUpgradeRevision, DurableStateKind, ExecutionContext, ExecutionCounts,
     ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, ExplorerError,
     ExplorerQuery, ExplorerRepository, ExternalStateReference, FailureCategory, FailureId,
     FailureSummary, FaultPhase, FaultPolicy, FaultProgress, FaultStateEntry, FaultStateEnvelope,
     FaultStateError, FaultStateFormatError, FaultStateStore, FlowDecision, FlowDecisionId,
     FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind,
-    ForkContextTransform, ForkLineage, IdentifierKind, InheritedStepProgress, JobExecution,
-    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
-    JobInstanceProjection, JobInstanceSelection, JobName, JobParameter, JobParameters,
-    JobRepository, LifecycleError, LifecycleTransition, MAX_PARTITION_CONTEXT_BYTES,
-    MAX_PARTITIONS, NestedJobLink, NestedJobLinkRequest, NestedJobTerminalObservation, NodeId,
-    OperationId, OperatorAction, OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft,
-    OperatorRejection, OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole,
-    ParameterValue, ParameterValueKind, PartitionKey, PartitionPlanEntry, PartitionResult,
-    PurgeBatchBound, PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey,
-    QueryWindow, ReasonCode, RecoveryDecision, RecoveryDecisionId, RecoveryRequest, RecoveryResult,
-    RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal,
+    ForkContextTransform, ForkLineage, ForkLineageProjection, IdentifierKind,
+    InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance,
+    JobInstanceId, JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName,
+    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
+    MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITIONS, NestedJobLink, NestedJobLinkProjection,
+    NestedJobLinkRequest, NestedJobTerminalObservation, NodeId, OperationId, OperatorAction,
+    OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
+    OperatorRequestId, ParameterDescriptor, ParameterName, ParameterRole, ParameterValue,
+    ParameterValueKind, PartitionKey, PartitionPlanEntry, PartitionResult, PurgeBatchBound,
+    PurgeCandidate, PurgeCounts, PurgePlan, PurgePlanRequest, PurgeSurvey, QueryWindow, ReasonCode,
+    RecoveryDecision, RecoveryDecisionId, RecoveryRequest, RecoveryResult, RepeatCommitRequest,
+    RepeatDecision, RepeatExecution, RepeatId, RepeatLineage, RepeatOrdinal, RepeatStateProjection,
     RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
-    RequestDigest, RetentionAction, RetentionActionId, RetentionHold, RetentionOutcome,
-    RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey, RetryLimit, RetryOrdinal,
-    RetryReservation, RetryStateLimit, ScopeKind, ScopedComponentId, SkipCounts, StartLimit,
-    StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion, StepExecution,
-    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
-    StepPartitionProjection, TerminalKind,
+    RequestDigest, RestartControlDescriptor, RestartPolicy, RetentionAction, RetentionActionId,
+    RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey,
+    RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind,
+    ScopeResolutionProjection, ScopedComponentId, SkipCounts, StartLimit, StateEnvelopeDescriptor,
+    StateLimits, StateSchemaId, StateSchemaVersion, StepExecution, StepExecutionId,
+    StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
+    TerminalKind,
 };
 
 fn encode_fork_context_transform(value: &ForkContextTransform) -> Value {
@@ -9262,9 +9265,18 @@ const fn ceiling_source(query: &ExplorerQuery) -> Option<&'static str> {
         ExplorerQuery::OperatorRequests { .. } => {
             "SELECT max(id) AS ceiling FROM oxide_batch.ob_operator_request"
         }
-        // Absorbs any query added later: this adapter has no statement that
-        // bounds a traversal it does not know, so it reports the missing
-        // capability instead of paging from a guessed ceiling.
+        ExplorerQuery::DefinitionRevisions { .. } | ExplorerQuery::DefinitionUpgrades { .. } => {
+            "SELECT max(id) AS ceiling FROM oxide_batch.ob_job_definition              WHERE job_name = $1 AND artifact_identity IS NOT NULL"
+        }
+        ExplorerQuery::ForkLineages { .. } => {
+            "SELECT max(target_job_execution_id) AS ceiling              FROM oxide_batch.ob_job_fork_lineage WHERE source_job_execution_id = $1"
+        }
+        ExplorerQuery::NestedJobLinks { .. } => {
+            "SELECT max(child_job_execution_id) AS ceiling              FROM oxide_batch.ob_nested_job_link WHERE parent_job_execution_id = $1"
+        }
+        ExplorerQuery::ScopeResolutions { .. } => {
+            "SELECT max(id) AS ceiling FROM oxide_batch.ob_scope_resolution_provenance              WHERE owner_job_execution_id = $1"
+        }
         _ => return None,
     })
 }
@@ -9312,6 +9324,341 @@ fn window_name(window: &QueryWindow) -> Result<Option<String>, ExplorerError> {
 
 fn explorer_id(value: u64, kind: IdentifierKind) -> Result<i64, ExplorerError> {
     database_id(value, kind).map_err(ExplorerError::Repository)
+}
+
+fn explorer_digest(
+    row: &PgRow,
+    column: &str,
+    corrupt: RepositoryError,
+) -> Result<[u8; 32], ExplorerError> {
+    row.try_get::<Vec<u8>, _>(column)
+        .map_err(|_| ExplorerError::Repository(corrupt.clone()))?
+        .try_into()
+        .map_err(|_| ExplorerError::Repository(corrupt))
+}
+
+fn explorer_definition_descriptor(
+    row: &PgRow,
+    revision: &str,
+    format: &str,
+    digest: &str,
+    corrupt: RepositoryError,
+) -> Result<DefinitionDescriptor, ExplorerError> {
+    let revision = DefinitionRevision::new(
+        read_text(row, revision).map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+    )
+    .map_err(|_| ExplorerError::Repository(corrupt.clone()))?;
+    let format = row
+        .try_get::<i16, _>(format)
+        .map_err(|_| ExplorerError::Repository(corrupt.clone()))
+        .and_then(|value| {
+            u16::try_from(value).map_err(|_| ExplorerError::Repository(corrupt.clone()))
+        })?;
+    let digest = explorer_digest(row, digest, corrupt)?;
+    Ok(DefinitionDescriptor::new(revision, format, digest))
+}
+
+fn explorer_restart_controls(
+    definition: &DefinitionIdentity,
+) -> Result<(RestartPolicy, Vec<RestartControlDescriptor>), ExplorerError> {
+    fn policy(value: Option<&Value>) -> Result<RestartPolicy, ExplorerError> {
+        match value {
+            None => Ok(RestartPolicy::Restartable),
+            Some(Value::String(value)) if value == "not_restartable" => {
+                Ok(RestartPolicy::NotRestartable)
+            }
+            _ => Err(ExplorerError::Repository(
+                RepositoryError::DefinitionRegistryStateCorrupt,
+            )),
+        }
+    }
+
+    fn visit(
+        value: &Value,
+        controls: &mut std::collections::BTreeMap<NodeId, RestartControlDescriptor>,
+    ) -> Result<(), ExplorerError> {
+        match value {
+            Value::Object(object) => {
+                if let (Some(id), Some(start)) = (
+                    object.get("id").and_then(Value::as_str),
+                    object.get("start").and_then(Value::as_object),
+                ) {
+                    let node = NodeId::new(id).map_err(|_| {
+                        ExplorerError::Repository(RepositoryError::DefinitionRegistryStateCorrupt)
+                    })?;
+                    let limit = start
+                        .get("start_limit")
+                        .and_then(Value::as_u64)
+                        .and_then(|value| u32::try_from(value).ok())
+                        .ok_or(ExplorerError::Repository(
+                            RepositoryError::DefinitionRegistryStateCorrupt,
+                        ))?;
+                    let allow = start
+                        .get("allow_start_if_complete")
+                        .and_then(Value::as_bool)
+                        .ok_or(ExplorerError::Repository(
+                            RepositoryError::DefinitionRegistryStateCorrupt,
+                        ))?;
+                    let restart = policy(start.get("restart_policy"))?;
+                    if controls
+                        .insert(
+                            node.clone(),
+                            RestartControlDescriptor::new(node, limit, allow, restart),
+                        )
+                        .is_some()
+                    {
+                        return Err(ExplorerError::Repository(
+                            RepositoryError::DefinitionRegistryStateCorrupt,
+                        ));
+                    }
+                }
+                for child in object.values() {
+                    visit(child, controls)?;
+                }
+            }
+            Value::Array(values) => {
+                for child in values {
+                    visit(child, controls)?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    let document = serde_json::from_slice::<Value>(definition.canonical_manifest())
+        .map_err(|_| ExplorerError::Repository(RepositoryError::DefinitionRegistryStateCorrupt))?;
+    let object = document.as_object().ok_or(ExplorerError::Repository(
+        RepositoryError::DefinitionRegistryStateCorrupt,
+    ))?;
+    let job_policy = policy(object.get("restart_policy"))?;
+    let mut controls = std::collections::BTreeMap::new();
+    visit(&document, &mut controls)?;
+    Ok((job_policy, controls.into_values().collect()))
+}
+
+fn decode_definition_revision_projection(
+    row: &PgRow,
+) -> Result<DefinitionRevisionProjection, ExplorerError> {
+    let registration = decode_definition_registration(row).map_err(ExplorerError::Repository)?;
+    let order = read_u64(row, "explorer_order").map_err(ExplorerError::Repository)?;
+    let (restart_policy, restart_controls) = explorer_restart_controls(registration.definition())?;
+    Ok(DefinitionRevisionProjection::new(
+        order,
+        registration.job_name().clone(),
+        registration.artifact().clone(),
+        DefinitionDescriptor::new(
+            registration.definition().revision().clone(),
+            registration.definition().manifest_format(),
+            *registration.definition().manifest_digest(),
+        ),
+        restart_policy,
+        restart_controls,
+    ))
+}
+
+fn decode_definition_upgrade_projection(
+    row: &PgRow,
+) -> Result<DefinitionUpgradeProjection, ExplorerError> {
+    let corrupt = RepositoryError::DefinitionUpgradeFailed;
+    let source_order =
+        read_u64(row, "source_order").map_err(|_| ExplorerError::Repository(corrupt.clone()))?;
+    let target_order =
+        read_u64(row, "target_order").map_err(|_| ExplorerError::Repository(corrupt.clone()))?;
+    let job_name = JobName::new(
+        read_text(row, "job_name").map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+    )
+    .map_err(|_| ExplorerError::Repository(corrupt.clone()))?;
+    let key = DefinitionUpgradeKey::new(
+        read_text(row, "upgrade_key").map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+    )
+    .map_err(|_| ExplorerError::Repository(corrupt.clone()))?;
+    let revision = read_optional_text(row, "upgrade_revision")
+        .map_err(|_| ExplorerError::Repository(corrupt.clone()))?
+        .map(DefinitionUpgradeRevision::new)
+        .transpose()
+        .map_err(|_| ExplorerError::Repository(corrupt.clone()))?;
+    let from = explorer_definition_descriptor(
+        row,
+        "from_revision",
+        "from_manifest_format",
+        "from_manifest_digest",
+        corrupt.clone(),
+    )?;
+    let to = explorer_definition_descriptor(
+        row,
+        "to_revision",
+        "to_manifest_format",
+        "to_manifest_digest",
+        corrupt.clone(),
+    )?;
+    let count = |column: &str| {
+        read_u64(row, column)
+            .map_err(|_| ExplorerError::Repository(corrupt.clone()))
+            .and_then(|value| {
+                usize::try_from(value).map_err(|_| ExplorerError::Repository(corrupt.clone()))
+            })
+    };
+    Ok(DefinitionUpgradeProjection::new(
+        source_order,
+        target_order,
+        job_name,
+        key,
+        revision,
+        from,
+        to,
+        count("step_mapping_count")?,
+        count("node_mapping_count")?,
+        count("transform_count")?,
+    ))
+}
+
+fn decode_fork_lineage_projection(row: &PgRow) -> Result<ForkLineageProjection, ExplorerError> {
+    let corrupt = RepositoryError::ForkStateCorrupt;
+    let target_definition = explorer_definition_descriptor(
+        row,
+        "target_revision",
+        "target_manifest_format",
+        "target_manifest_digest",
+        corrupt.clone(),
+    )?;
+    let target_artifact = DefinitionArtifactId::new(
+        read_text(row, "target_artifact")
+            .map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+    )
+    .map_err(|_| ExplorerError::Repository(corrupt.clone()))?;
+    Ok(ForkLineageProjection::new(
+        JobExecutionId::new(
+            read_u64(row, "source_job_execution_id")
+                .map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+        )
+        .map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+        ExecutionVersion::new(
+            read_u64(row, "source_execution_version")
+                .map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+        ),
+        explorer_digest(row, "source_definition_digest", corrupt.clone())?,
+        explorer_digest(row, "source_state_digest", corrupt.clone())?,
+        target_definition,
+        target_artifact,
+        JobInstanceId::new(
+            read_u64(row, "target_job_instance_id")
+                .map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+        )
+        .map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+        JobExecutionId::new(
+            read_u64(row, "target_job_execution_id")
+                .map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+        )
+        .map_err(|_| ExplorerError::Repository(corrupt.clone()))?,
+        explorer_digest(row, "target_parameters_digest", corrupt.clone())?,
+        row.try_get::<bool, _>("transformed")
+            .map_err(|_| ExplorerError::Repository(corrupt))?,
+    ))
+}
+
+fn nested_job_link_projection(link: &NestedJobLink) -> NestedJobLinkProjection {
+    NestedJobLinkProjection::new(
+        link.parent_job_instance_id(),
+        link.parent_job_execution_id(),
+        link.node_id().clone(),
+        DefinitionDescriptor::new(
+            link.child_definition().revision().clone(),
+            link.child_definition().manifest_format(),
+            *link.child_definition().manifest_digest(),
+        ),
+        link.child_job_instance_id(),
+        link.child_job_execution_id(),
+        link.linked_at(),
+        link.terminal().cloned(),
+    )
+}
+
+fn decode_repeat_state_projection(row: &PgRow) -> Result<RepeatStateProjection, ExplorerError> {
+    let corrupt = RepositoryError::RepeatStateCorrupt;
+    let plan_fingerprint = explorer_digest(row, "plan_fingerprint", corrupt.clone())?;
+    let definition_fingerprint = explorer_digest(row, "definition_fingerprint", corrupt.clone())?;
+    if plan_fingerprint != definition_fingerprint {
+        return Err(ExplorerError::Repository(corrupt));
+    }
+    let Json(lineage_value): Json<Value> = row
+        .try_get("lineage")
+        .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?;
+    let lineage = decode_repeat_lineage(&lineage_value).map_err(ExplorerError::Repository)?;
+    let format_version = u16::try_from(
+        row.try_get::<i16, _>("state_format")
+            .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+    )
+    .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?;
+    let schema_id = StateSchemaId::new(
+        read_text(row, "state_schema")
+            .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+    )
+    .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?;
+    let schema_version = u32::try_from(
+        row.try_get::<i32, _>("state_schema_version")
+            .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+    )
+    .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))
+    .and_then(|value| {
+        StateSchemaVersion::new(value)
+            .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))
+    })?;
+    let encoded_len = usize::try_from(
+        read_i64(row, "state_bytes")
+            .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+    )
+    .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?;
+    let ordinal = u32::try_from(
+        read_u64(row, "ordinal")
+            .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+    )
+    .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?;
+    let decision = RepeatDecision::from_str(
+        &read_text(row, "decision")
+            .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+    )
+    .ok_or(ExplorerError::Repository(
+        RepositoryError::RepeatStateCorrupt,
+    ))?;
+    Ok(RepeatStateProjection::new(
+        JobInstanceId::new(
+            read_u64(row, "job_instance_id")
+                .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        )
+        .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        NodeId::new(
+            read_text(row, "step_logical_id")
+                .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        )
+        .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        NodeId::new(
+            read_text(row, "definition_node_id")
+                .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        )
+        .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        StepExecutionId::new(
+            read_u64(row, "step_execution_id")
+                .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        )
+        .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        RepeatId::new(
+            read_text(row, "repeat_id")
+                .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        )
+        .map_err(|_| ExplorerError::Repository(RepositoryError::RepeatStateCorrupt))?,
+        lineage,
+        ordinal,
+        StateEnvelopeDescriptor::new(
+            DurableStateKind::ExecutionContext,
+            format_version,
+            schema_id,
+            schema_version,
+            encoded_len,
+        ),
+        decision,
+        plan_fingerprint,
+    ))
 }
 
 fn job_execution_projection_select(suffix: &str) -> String {
@@ -9659,7 +10006,26 @@ impl ExplorerRepository for PostgresExplorer {
             };
             let statement = sqlx::query(source);
             let statement = match query {
-                ExplorerQuery::Instances { job_name } => statement.bind(job_name.as_str()),
+                ExplorerQuery::Instances { job_name }
+                | ExplorerQuery::DefinitionRevisions { job_name }
+                | ExplorerQuery::DefinitionUpgrades { job_name } => {
+                    statement.bind(job_name.as_str())
+                }
+                ExplorerQuery::ForkLineages {
+                    source_execution_id,
+                } => statement.bind(explorer_id(
+                    source_execution_id.get(),
+                    IdentifierKind::JobExecution,
+                )?),
+                ExplorerQuery::NestedJobLinks {
+                    parent_job_execution_id,
+                } => statement.bind(explorer_id(
+                    parent_job_execution_id.get(),
+                    IdentifierKind::JobExecution,
+                )?),
+                ExplorerQuery::ScopeResolutions { job_execution_id } => statement.bind(
+                    explorer_id(job_execution_id.get(), IdentifierKind::JobExecution)?,
+                ),
                 _ => statement,
             };
             let row = self.fetch_optional(statement).await?;
@@ -9951,6 +10317,161 @@ impl ExplorerRepository for PostgresExplorer {
             rows.iter()
                 .map(|row| decode_operator_record(row).map_err(ExplorerError::Repository))
                 .collect()
+        })
+    }
+
+    fn definition_revisions<'a>(
+        &'a self,
+        job_name: &'a JobName,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<DefinitionRevisionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(
+                        "SELECT definition.id AS explorer_order, definition.job_name,                          definition.definition_revision, definition.manifest_format,                          definition.manifest_digest, definition.manifest,                          definition.artifact_identity                          FROM oxide_batch.ob_job_definition definition                          WHERE definition.job_name = $1                            AND definition.artifact_identity IS NOT NULL                            AND definition.id <= $2                            AND ($3::bigint IS NULL OR definition.id < $3)                          ORDER BY definition.id DESC LIMIT $4",
+                    )
+                    .bind(job_name.as_str())
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter()
+                .map(decode_definition_revision_projection)
+                .collect()
+        })
+    }
+
+    fn definition_upgrades<'a>(
+        &'a self,
+        job_name: &'a JobName,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<DefinitionUpgradeProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let after = window_ordered(window)?;
+            let rows = self
+                .fetch_all(
+                    sqlx::query(
+                        "SELECT source.id AS source_order, target.id AS target_order,                          source.job_name, upgrade.upgrade_key, upgrade.upgrade_revision,                          source.definition_revision AS from_revision,                          source.manifest_format AS from_manifest_format,                          source.manifest_digest AS from_manifest_digest,                          target.definition_revision AS to_revision,                          target.manifest_format AS to_manifest_format,                          target.manifest_digest AS to_manifest_digest,                          jsonb_object_length(upgrade.step_mapping)::bigint AS step_mapping_count,                          CASE WHEN upgrade.node_mapping IS NULL THEN 0                               ELSE jsonb_object_length(upgrade.node_mapping) END::bigint                               AS node_mapping_count,                          CASE WHEN upgrade.state_transforms IS NULL THEN 0                               ELSE jsonb_array_length(upgrade.state_transforms) END::bigint                               AS transform_count                          FROM oxide_batch.ob_definition_upgrade upgrade                          JOIN oxide_batch.ob_job_definition source                            ON source.id = upgrade.from_definition_id                          JOIN oxide_batch.ob_job_definition target                            ON target.id = upgrade.to_definition_id                          WHERE source.job_name = $1 AND target.job_name = $1                            AND source.artifact_identity IS NOT NULL                            AND target.artifact_identity IS NOT NULL                            AND source.id <= $2 AND target.id <= $2                            AND ($3::bigint IS NULL                                 OR (source.id, target.id) > ($3, $4))                          ORDER BY source.id, target.id LIMIT $5",
+                    )
+                    .bind(job_name.as_str())
+                    .bind(window_ceiling(window)?)
+                    .bind(after.map(|(primary, _)| primary))
+                    .bind(after.map_or(0, |(_, identity)| identity))
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter()
+                .map(decode_definition_upgrade_projection)
+                .collect()
+        })
+    }
+
+    fn fork_lineages<'a>(
+        &'a self,
+        source_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<ForkLineageProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(
+                        "SELECT lineage.source_job_execution_id,                          lineage.source_execution_version, lineage.source_definition_digest,                          lineage.source_state_digest, lineage.target_job_instance_id,                          lineage.target_job_execution_id, lineage.target_parameters_digest,                          (lineage.fork_transform IS NOT NULL) AS transformed,                          definition.definition_revision AS target_revision,                          definition.manifest_format AS target_manifest_format,                          definition.manifest_digest AS target_manifest_digest,                          definition.artifact_identity AS target_artifact                          FROM oxide_batch.ob_job_fork_lineage lineage                          JOIN oxide_batch.ob_job_definition definition                            ON definition.id = lineage.target_definition_id                          WHERE lineage.source_job_execution_id = $1                            AND definition.artifact_identity IS NOT NULL                            AND lineage.target_job_execution_id <= $2                            AND ($3::bigint IS NULL                                 OR lineage.target_job_execution_id > $3)                          ORDER BY lineage.target_job_execution_id LIMIT $4",
+                    )
+                    .bind(explorer_id(
+                        source_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter().map(decode_fork_lineage_projection).collect()
+        })
+    }
+
+    fn nested_job_links<'a>(
+        &'a self,
+        parent_job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<NestedJobLinkProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(AssertSqlSafe(nested_job_link_select(
+                        "WHERE link.parent_job_execution_id = $1                            AND link.child_job_execution_id <= $2                            AND ($3::bigint IS NULL OR link.child_job_execution_id > $3)                          ORDER BY link.child_job_execution_id LIMIT $4",
+                    )))
+                    .bind(explorer_id(
+                        parent_job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter()
+                .map(|row| {
+                    decode_nested_job_link(row)
+                        .map(|link| nested_job_link_projection(&link))
+                        .map_err(ExplorerError::Repository)
+                })
+                .collect()
+        })
+    }
+
+    fn scope_resolutions<'a>(
+        &'a self,
+        job_execution_id: JobExecutionId,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<ScopeResolutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let rows = self
+                .fetch_all(
+                    sqlx::query(
+                        "SELECT id, scope_kind, component_id, input_name, owner_job_execution_id,                          owner_step_execution_id, source_kind, source_parameter_name,                          source_node_id, source_framework_field, source_job_execution_id,                          source_step_execution_id, source_execution_version, source_schema,                          source_schema_version, source_path                          FROM oxide_batch.ob_scope_resolution_provenance                          WHERE owner_job_execution_id = $1 AND id <= $2                            AND ($3::bigint IS NULL OR id > $3)                          ORDER BY id LIMIT $4",
+                    )
+                    .bind(explorer_id(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .bind(window_ceiling(window)?)
+                    .bind(window_identity(window)?)
+                    .bind(window_limit(window)),
+                )
+                .await?;
+            rows.iter()
+                .map(|row| {
+                    let order = read_u64(row, "id").map_err(ExplorerError::Repository)?;
+                    let provenance = super::scope_postgres::decode_provenance(row)
+                        .map_err(ExplorerError::Repository)?;
+                    Ok(ScopeResolutionProjection::new(order, provenance))
+                })
+                .collect()
+        })
+    }
+
+    fn repeat_state<'a>(
+        &'a self,
+        step_execution_id: StepExecutionId,
+        repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatStateProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let row = self
+                .fetch_optional(
+                    sqlx::query(
+                        "SELECT repeat.step_execution_id, repeat.repeat_id, repeat.ordinal,                          repeat.state_format, repeat.state_schema, repeat.state_schema_version,                          pg_column_size(repeat.state_payload)::bigint AS state_bytes,                          repeat.decision, repeat.plan_fingerprint, repeat.definition_node_id,                          repeat.lineage, step.step_logical_id, job.job_instance_id,                          definition.manifest_digest AS definition_fingerprint                          FROM oxide_batch.ob_repeat_execution repeat                          JOIN oxide_batch.ob_step_execution step                            ON step.id = repeat.step_execution_id                          JOIN oxide_batch.ob_job_execution job                            ON job.id = step.job_execution_id                          JOIN oxide_batch.ob_job_definition definition                            ON definition.id = job.definition_id                          WHERE repeat.step_execution_id = $1 AND repeat.repeat_id = $2",
+                    )
+                    .bind(explorer_id(
+                        step_execution_id.get(),
+                        IdentifierKind::StepExecution,
+                    )?)
+                    .bind(repeat_id.as_str()),
+                )
+                .await?;
+            row.as_ref().map(decode_repeat_state_projection).transpose()
         })
     }
 }

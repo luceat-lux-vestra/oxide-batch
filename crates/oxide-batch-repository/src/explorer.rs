@@ -17,15 +17,18 @@ use std::time::{Duration, SystemTime};
 use sha2::{Digest, Sha256};
 
 use oxide_batch_core::{
-    BatchStatus, DefinitionRevision, DurableStateKind, ExecutionCounts, ExecutionTimestamps,
+    BatchStatus, DefinitionArtifactId, DefinitionRevision, DefinitionUpgradeKey,
+    DefinitionUpgradeRevision, DurableStateKind, ExecutionCounts, ExecutionTimestamps,
     ExecutionVersion, ExitStatus, FailureSummary, JobExecutionId, JobInstanceId, JobName, NodeId,
-    ParameterName, ParameterValueKind, StateSchemaId, StateSchemaVersion, StepExecutionId,
-    StepName, StepPartitionId,
+    ParameterName, ParameterValueKind, RepeatId, RestartPolicy, ScopeFrameworkSource, ScopeKind,
+    ScopedComponentId, StateSchemaId, StateSchemaVersion, StepExecutionId, StepName,
+    StepPartitionId,
 };
 
 use crate::{
-    BoxFuture, CanonicalWriter, FlowDecision, OperatorRecord, RecoveryDecision, RepositoryError,
-    RetentionHold, hex_digest,
+    BoxFuture, CanonicalWriter, FlowDecision, NestedJobTerminalObservation, OperatorRecord,
+    RecoveryDecision, RepeatDecision, RepeatLineage, RepositoryError, RetentionHold,
+    ScopeResolutionProvenance, ScopeResolutionSource, hex_digest,
 };
 
 /// Maximum rows one page may contain.
@@ -265,6 +268,31 @@ pub enum ExplorerQuery {
         /// Filtered job execution.
         job_execution_id: JobExecutionId,
     },
+    /// Registered definition revisions of one job name.
+    DefinitionRevisions {
+        /// Filtered job name.
+        job_name: JobName,
+    },
+    /// Explicit compatible-upgrade edges of one job name.
+    DefinitionUpgrades {
+        /// Filtered job name.
+        job_name: JobName,
+    },
+    /// Explicit fork lineages created from one source execution.
+    ForkLineages {
+        /// Exact source execution.
+        source_execution_id: JobExecutionId,
+    },
+    /// Nested-job links owned by one parent attempt.
+    NestedJobLinks {
+        /// Exact parent execution.
+        parent_job_execution_id: JobExecutionId,
+    },
+    /// Value-free scope-resolution provenance owned by one job attempt.
+    ScopeResolutions {
+        /// Exact owner job execution.
+        job_execution_id: JobExecutionId,
+    },
 }
 
 impl ExplorerQuery {
@@ -279,6 +307,11 @@ impl ExplorerQuery {
             Self::FlowDecisions { .. } => 7,
             Self::StepPartitions { .. } => 8,
             Self::OperatorRequests { .. } => 9,
+            Self::DefinitionRevisions { .. } => 10,
+            Self::DefinitionUpgrades { .. } => 11,
+            Self::ForkLineages { .. } => 12,
+            Self::NestedJobLinks { .. } => 13,
+            Self::ScopeResolutions { .. } => 14,
         }
     }
 
@@ -295,6 +328,11 @@ impl ExplorerQuery {
             Self::FlowDecisions { .. } => "list_flow_decisions",
             Self::StepPartitions { .. } => "list_step_partitions",
             Self::OperatorRequests { .. } => "list_operator_requests",
+            Self::DefinitionRevisions { .. } => "list_definition_revisions",
+            Self::DefinitionUpgrades { .. } => "list_definition_upgrades",
+            Self::ForkLineages { .. } => "list_fork_lineages",
+            Self::NestedJobLinks { .. } => "list_nested_job_links",
+            Self::ScopeResolutions { .. } => "list_scope_resolutions",
         }
     }
 
@@ -309,13 +347,23 @@ impl ExplorerQuery {
             Self::StepExecutions { job_execution_id }
             | Self::RecoveryDecisions { job_execution_id }
             | Self::FlowDecisions { job_execution_id }
-            | Self::OperatorRequests { job_execution_id } => {
+            | Self::OperatorRequests { job_execution_id }
+            | Self::ScopeResolutions { job_execution_id } => {
                 writer.push_u64(job_execution_id.get());
             }
             Self::UnresolvedExecutions { minimum_age } => {
                 writer.push_u64(minimum_age.as_secs());
             }
             Self::StepPartitions { step_execution_id } => writer.push_u64(step_execution_id.get()),
+            Self::DefinitionRevisions { job_name } | Self::DefinitionUpgrades { job_name } => {
+                writer.push_str(job_name.as_str());
+            }
+            Self::ForkLineages {
+                source_execution_id,
+            } => writer.push_u64(source_execution_id.get()),
+            Self::NestedJobLinks {
+                parent_job_execution_id,
+            } => writer.push_u64(parent_job_execution_id.get()),
         }
         writer.digest()
     }
@@ -594,6 +642,631 @@ impl DefinitionDescriptor {
     #[must_use]
     pub fn manifest_digest_hex(&self) -> String {
         hex_digest(&self.manifest_digest)
+    }
+}
+
+/// Restart-control metadata extracted from one canonical definition node.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestartControlDescriptor {
+    node_id: NodeId,
+    start_limit: u32,
+    allow_start_if_complete: bool,
+    restart_policy: RestartPolicy,
+}
+
+impl RestartControlDescriptor {
+    /// Builds one manifest-validated redacted restart-control descriptor.
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(
+        node_id: NodeId,
+        start_limit: u32,
+        allow_start_if_complete: bool,
+        restart_policy: RestartPolicy,
+    ) -> Self {
+        Self {
+            node_id,
+            start_limit,
+            allow_start_if_complete,
+            restart_policy,
+        }
+    }
+
+    /// Borrows the logical definition node identifier.
+    #[must_use]
+    pub const fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
+    /// Returns the maximum number of starts allowed for the node.
+    #[must_use]
+    pub const fn start_limit(&self) -> u32 {
+        self.start_limit
+    }
+    /// Returns whether a completed node may be started again.
+    #[must_use]
+    pub const fn allow_start_if_complete(&self) -> bool {
+        self.allow_start_if_complete
+    }
+    /// Returns the node-level restart policy.
+    #[must_use]
+    pub const fn restart_policy(&self) -> RestartPolicy {
+        self.restart_policy
+    }
+}
+
+/// One registered definition revision without manifest bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DefinitionRevisionProjection {
+    order: u64,
+    job_name: JobName,
+    artifact: DefinitionArtifactId,
+    definition: DefinitionDescriptor,
+    restart_policy: RestartPolicy,
+    restart_controls: Vec<RestartControlDescriptor>,
+}
+
+impl DefinitionRevisionProjection {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(
+        order: u64,
+        job_name: JobName,
+        artifact: DefinitionArtifactId,
+        definition: DefinitionDescriptor,
+        restart_policy: RestartPolicy,
+        restart_controls: Vec<RestartControlDescriptor>,
+    ) -> Self {
+        Self {
+            order,
+            job_name,
+            artifact,
+            definition,
+            restart_policy,
+            restart_controls,
+        }
+    }
+
+    /// Borrows the registered job name.
+    #[must_use]
+    pub const fn job_name(&self) -> &JobName {
+        &self.job_name
+    }
+    /// Borrows the immutable definition artifact identity.
+    #[must_use]
+    pub const fn artifact(&self) -> &DefinitionArtifactId {
+        &self.artifact
+    }
+    /// Borrows the redacted definition descriptor.
+    #[must_use]
+    pub const fn definition(&self) -> &DefinitionDescriptor {
+        &self.definition
+    }
+    /// Returns the job-level restart policy.
+    #[must_use]
+    pub const fn restart_policy(&self) -> RestartPolicy {
+        self.restart_policy
+    }
+    /// Borrows the bounded node-level restart-control descriptors.
+    #[must_use]
+    pub fn restart_controls(&self) -> &[RestartControlDescriptor] {
+        &self.restart_controls
+    }
+}
+
+/// One explicit direct compatible-upgrade edge without mappings or transform code.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DefinitionUpgradeProjection {
+    source_order: u64,
+    target_order: u64,
+    job_name: JobName,
+    key: DefinitionUpgradeKey,
+    revision: Option<DefinitionUpgradeRevision>,
+    from: DefinitionDescriptor,
+    to: DefinitionDescriptor,
+    step_mapping_count: usize,
+    node_mapping_count: usize,
+    transform_count: usize,
+}
+
+impl DefinitionUpgradeProjection {
+    #[allow(clippy::too_many_arguments)]
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(
+        source_order: u64,
+        target_order: u64,
+        job_name: JobName,
+        key: DefinitionUpgradeKey,
+        revision: Option<DefinitionUpgradeRevision>,
+        from: DefinitionDescriptor,
+        to: DefinitionDescriptor,
+        step_mapping_count: usize,
+        node_mapping_count: usize,
+        transform_count: usize,
+    ) -> Self {
+        Self {
+            source_order,
+            target_order,
+            job_name,
+            key,
+            revision,
+            from,
+            to,
+            step_mapping_count,
+            node_mapping_count,
+            transform_count,
+        }
+    }
+
+    /// Borrows the job name that owns the compatible-upgrade edge.
+    #[must_use]
+    pub const fn job_name(&self) -> &JobName {
+        &self.job_name
+    }
+    /// Borrows the durable compatible-upgrade key.
+    #[must_use]
+    pub const fn key(&self) -> &DefinitionUpgradeKey {
+        &self.key
+    }
+    /// Borrows the optional durable upgrade revision.
+    #[must_use]
+    pub const fn revision(&self) -> Option<&DefinitionUpgradeRevision> {
+        self.revision.as_ref()
+    }
+    /// Borrows the source definition descriptor.
+    #[must_use]
+    pub const fn from(&self) -> &DefinitionDescriptor {
+        &self.from
+    }
+    /// Borrows the target definition descriptor.
+    #[must_use]
+    pub const fn to(&self) -> &DefinitionDescriptor {
+        &self.to
+    }
+    /// Returns the number of durable step mappings without exposing their contents.
+    #[must_use]
+    pub const fn step_mapping_count(&self) -> usize {
+        self.step_mapping_count
+    }
+    /// Returns the number of durable node mappings without exposing their contents.
+    #[must_use]
+    pub const fn node_mapping_count(&self) -> usize {
+        self.node_mapping_count
+    }
+    /// Returns the number of durable state transforms without exposing transform code.
+    #[must_use]
+    pub const fn transform_count(&self) -> usize {
+        self.transform_count
+    }
+}
+
+/// One explicit fork lineage projection without parameter/context payloads.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ForkLineageProjection {
+    source_execution_id: JobExecutionId,
+    source_version: ExecutionVersion,
+    source_definition_digest: [u8; 32],
+    source_state_digest: [u8; 32],
+    target_definition: DefinitionDescriptor,
+    target_artifact: DefinitionArtifactId,
+    target_instance_id: JobInstanceId,
+    target_execution_id: JobExecutionId,
+    target_parameters_digest: [u8; 32],
+    transformed: bool,
+}
+
+impl ForkLineageProjection {
+    #[allow(clippy::too_many_arguments)]
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(
+        source_execution_id: JobExecutionId,
+        source_version: ExecutionVersion,
+        source_definition_digest: [u8; 32],
+        source_state_digest: [u8; 32],
+        target_definition: DefinitionDescriptor,
+        target_artifact: DefinitionArtifactId,
+        target_instance_id: JobInstanceId,
+        target_execution_id: JobExecutionId,
+        target_parameters_digest: [u8; 32],
+        transformed: bool,
+    ) -> Self {
+        Self {
+            source_execution_id,
+            source_version,
+            source_definition_digest,
+            source_state_digest,
+            target_definition,
+            target_artifact,
+            target_instance_id,
+            target_execution_id,
+            target_parameters_digest,
+            transformed,
+        }
+    }
+
+    /// Returns the source execution identifier.
+    #[must_use]
+    pub const fn source_execution_id(&self) -> JobExecutionId {
+        self.source_execution_id
+    }
+    /// Returns the source execution version captured by the fork.
+    #[must_use]
+    pub const fn source_version(&self) -> ExecutionVersion {
+        self.source_version
+    }
+    /// Returns the source definition digest.
+    #[must_use]
+    pub const fn source_definition_digest(&self) -> &[u8; 32] {
+        &self.source_definition_digest
+    }
+    /// Returns the redacted source-state digest.
+    #[must_use]
+    pub const fn source_state_digest(&self) -> &[u8; 32] {
+        &self.source_state_digest
+    }
+    /// Borrows the target definition descriptor.
+    #[must_use]
+    pub const fn target_definition(&self) -> &DefinitionDescriptor {
+        &self.target_definition
+    }
+    /// Borrows the immutable target artifact identity.
+    #[must_use]
+    pub const fn target_artifact(&self) -> &DefinitionArtifactId {
+        &self.target_artifact
+    }
+    /// Returns the target job-instance identifier.
+    #[must_use]
+    pub const fn target_instance_id(&self) -> JobInstanceId {
+        self.target_instance_id
+    }
+    /// Returns the target job-execution identifier.
+    #[must_use]
+    pub const fn target_execution_id(&self) -> JobExecutionId {
+        self.target_execution_id
+    }
+    /// Returns the target parameter-set digest without exposing values.
+    #[must_use]
+    pub const fn target_parameters_digest(&self) -> &[u8; 32] {
+        &self.target_parameters_digest
+    }
+    /// Returns whether the fork used an explicit context transform.
+    #[must_use]
+    pub const fn transformed(&self) -> bool {
+        self.transformed
+    }
+}
+
+/// One redacted nested-job parent/child link.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct NestedJobLinkProjection {
+    parent_instance_id: JobInstanceId,
+    parent_execution_id: JobExecutionId,
+    node_id: NodeId,
+    child_definition: DefinitionDescriptor,
+    child_instance_id: JobInstanceId,
+    child_execution_id: JobExecutionId,
+    linked_at: SystemTime,
+    terminal: Option<NestedJobTerminalObservation>,
+}
+
+impl NestedJobLinkProjection {
+    #[allow(clippy::too_many_arguments)]
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(
+        parent_instance_id: JobInstanceId,
+        parent_execution_id: JobExecutionId,
+        node_id: NodeId,
+        child_definition: DefinitionDescriptor,
+        child_instance_id: JobInstanceId,
+        child_execution_id: JobExecutionId,
+        linked_at: SystemTime,
+        terminal: Option<NestedJobTerminalObservation>,
+    ) -> Self {
+        Self {
+            parent_instance_id,
+            parent_execution_id,
+            node_id,
+            child_definition,
+            child_instance_id,
+            child_execution_id,
+            linked_at,
+            terminal,
+        }
+    }
+
+    /// Returns the parent job-instance identifier.
+    #[must_use]
+    pub const fn parent_instance_id(&self) -> JobInstanceId {
+        self.parent_instance_id
+    }
+    /// Returns the parent job-execution identifier.
+    #[must_use]
+    pub const fn parent_execution_id(&self) -> JobExecutionId {
+        self.parent_execution_id
+    }
+    /// Borrows the logical nested-job node identifier.
+    #[must_use]
+    pub const fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
+    /// Borrows the child definition descriptor.
+    #[must_use]
+    pub const fn child_definition(&self) -> &DefinitionDescriptor {
+        &self.child_definition
+    }
+    /// Returns the child job-instance identifier.
+    #[must_use]
+    pub const fn child_instance_id(&self) -> JobInstanceId {
+        self.child_instance_id
+    }
+    /// Returns the child job-execution identifier.
+    #[must_use]
+    pub const fn child_execution_id(&self) -> JobExecutionId {
+        self.child_execution_id
+    }
+    /// Returns the durable link creation instant.
+    #[must_use]
+    pub const fn linked_at(&self) -> SystemTime {
+        self.linked_at
+    }
+    /// Borrows the bounded child terminal observation, when recorded.
+    #[must_use]
+    pub const fn terminal(&self) -> Option<&NestedJobTerminalObservation> {
+        self.terminal.as_ref()
+    }
+}
+
+/// One value-free scope-resolution provenance row with a private paging identity.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ScopeResolutionProjection {
+    order: u64,
+    provenance: ScopeResolutionProvenance,
+}
+
+impl ScopeResolutionProjection {
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(order: u64, provenance: ScopeResolutionProvenance) -> Self {
+        Self { order, provenance }
+    }
+
+    /// Returns the owning execution scope.
+    #[must_use]
+    pub const fn scope(&self) -> ScopeKind {
+        self.provenance.scope()
+    }
+
+    /// Borrows the stable logical component identity.
+    #[must_use]
+    pub const fn component(&self) -> &ScopedComponentId {
+        self.provenance.component()
+    }
+
+    /// Borrows the late-bound input name.
+    #[must_use]
+    pub const fn input(&self) -> &ParameterName {
+        self.provenance.input()
+    }
+
+    /// Returns the owning job-execution attempt.
+    #[must_use]
+    pub const fn owner_job_execution_id(&self) -> JobExecutionId {
+        self.provenance.owner_job_execution_id()
+    }
+
+    /// Returns the owning step-execution attempt for step scope.
+    #[must_use]
+    pub const fn owner_step_execution_id(&self) -> Option<StepExecutionId> {
+        self.provenance.owner_step_execution_id()
+    }
+
+    /// Returns the stable value-free source-family code.
+    #[must_use]
+    pub const fn source_kind(&self) -> &'static str {
+        self.provenance.source().kind().as_str()
+    }
+
+    /// Returns the source job-execution identity when that source family records one.
+    #[must_use]
+    pub const fn source_job_execution_id(&self) -> Option<JobExecutionId> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobParameter {
+                job_execution_id, ..
+            }
+            | ScopeResolutionSource::JobContext {
+                job_execution_id, ..
+            }
+            | ScopeResolutionSource::Framework {
+                job_execution_id, ..
+            } => Some(*job_execution_id),
+            ScopeResolutionSource::StepContext { .. } => None,
+        }
+    }
+
+    /// Returns the source step-execution identity when recorded.
+    #[must_use]
+    pub const fn source_step_execution_id(&self) -> Option<StepExecutionId> {
+        match self.provenance.source() {
+            ScopeResolutionSource::StepContext {
+                step_execution_id, ..
+            }
+            | ScopeResolutionSource::Framework {
+                step_execution_id, ..
+            } => *step_execution_id,
+            ScopeResolutionSource::JobParameter { .. }
+            | ScopeResolutionSource::JobContext { .. } => None,
+        }
+    }
+
+    /// Returns the source execution version when the source is versioned context.
+    #[must_use]
+    pub const fn source_execution_version(&self) -> Option<ExecutionVersion> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobContext {
+                execution_version, ..
+            } => Some(*execution_version),
+            ScopeResolutionSource::StepContext {
+                execution_version, ..
+            } => *execution_version,
+            ScopeResolutionSource::JobParameter { .. }
+            | ScopeResolutionSource::Framework { .. } => None,
+        }
+    }
+
+    /// Borrows the source parameter identity for a job-parameter source.
+    #[must_use]
+    pub const fn source_parameter(&self) -> Option<&ParameterName> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobParameter { parameter, .. } => Some(parameter),
+            _ => None,
+        }
+    }
+
+    /// Borrows the logical source node for a step-context source.
+    #[must_use]
+    pub const fn source_node(&self) -> Option<&NodeId> {
+        match self.provenance.source() {
+            ScopeResolutionSource::StepContext { node, .. } => Some(node),
+            _ => None,
+        }
+    }
+
+    /// Returns the closed framework metadata field for a framework source.
+    #[must_use]
+    pub const fn source_framework_field(&self) -> Option<ScopeFrameworkSource> {
+        match self.provenance.source() {
+            ScopeResolutionSource::Framework { source, .. } => Some(*source),
+            _ => None,
+        }
+    }
+
+    /// Borrows the required application schema for a context source.
+    #[must_use]
+    pub const fn source_schema(&self) -> Option<&StateSchemaId> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobContext { schema, .. }
+            | ScopeResolutionSource::StepContext { schema, .. } => Some(schema),
+            _ => None,
+        }
+    }
+
+    /// Returns the required application schema version for a context source.
+    #[must_use]
+    pub const fn source_schema_version(&self) -> Option<StateSchemaVersion> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobContext { schema_version, .. }
+            | ScopeResolutionSource::StepContext { schema_version, .. } => Some(*schema_version),
+            _ => None,
+        }
+    }
+
+    /// Borrows the validated structured selector path for a context source.
+    #[must_use]
+    pub fn source_path(&self) -> Option<&[String]> {
+        match self.provenance.source() {
+            ScopeResolutionSource::JobContext { path, .. }
+            | ScopeResolutionSource::StepContext { path, .. } => Some(path),
+            _ => None,
+        }
+    }
+}
+
+/// Current repeat-state metadata without application state bytes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepeatStateProjection {
+    job_instance_id: JobInstanceId,
+    node_id: NodeId,
+    definition_node_id: NodeId,
+    step_execution_id: StepExecutionId,
+    repeat_id: RepeatId,
+    lineage: RepeatLineage,
+    ordinal: u32,
+    state: StateEnvelopeDescriptor,
+    decision: RepeatDecision,
+    plan_fingerprint: [u8; 32],
+}
+
+impl RepeatStateProjection {
+    #[allow(clippy::too_many_arguments)]
+    #[doc(hidden)]
+    #[must_use]
+    pub const fn new(
+        job_instance_id: JobInstanceId,
+        node_id: NodeId,
+        definition_node_id: NodeId,
+        step_execution_id: StepExecutionId,
+        repeat_id: RepeatId,
+        lineage: RepeatLineage,
+        ordinal: u32,
+        state: StateEnvelopeDescriptor,
+        decision: RepeatDecision,
+        plan_fingerprint: [u8; 32],
+    ) -> Self {
+        Self {
+            job_instance_id,
+            node_id,
+            definition_node_id,
+            step_execution_id,
+            repeat_id,
+            lineage,
+            ordinal,
+            state,
+            decision,
+            plan_fingerprint,
+        }
+    }
+
+    /// Returns the owning job-instance identifier.
+    #[must_use]
+    pub const fn job_instance_id(&self) -> JobInstanceId {
+        self.job_instance_id
+    }
+    /// Borrows the runtime logical node identifier.
+    #[must_use]
+    pub const fn node_id(&self) -> &NodeId {
+        &self.node_id
+    }
+    /// Borrows the definition node identifier.
+    #[must_use]
+    pub const fn definition_node_id(&self) -> &NodeId {
+        &self.definition_node_id
+    }
+    /// Returns the owning step-execution identifier.
+    #[must_use]
+    pub const fn step_execution_id(&self) -> StepExecutionId {
+        self.step_execution_id
+    }
+    /// Borrows the repeat identifier.
+    #[must_use]
+    pub const fn repeat_id(&self) -> &RepeatId {
+        &self.repeat_id
+    }
+    /// Borrows the durable repeat-lineage identity.
+    #[must_use]
+    pub const fn lineage(&self) -> &RepeatLineage {
+        &self.lineage
+    }
+    /// Returns the current repeat ordinal.
+    #[must_use]
+    pub const fn ordinal(&self) -> u32 {
+        self.ordinal
+    }
+    /// Borrows the redacted durable state-envelope descriptor.
+    #[must_use]
+    pub const fn state(&self) -> &StateEnvelopeDescriptor {
+        &self.state
+    }
+    /// Returns the current repeat decision.
+    #[must_use]
+    pub const fn decision(&self) -> RepeatDecision {
+        self.decision
+    }
+    /// Returns the bound plan fingerprint.
+    #[must_use]
+    pub const fn plan_fingerprint(&self) -> &[u8; 32] {
+        &self.plan_fingerprint
     }
 }
 
@@ -1142,6 +1815,60 @@ pub trait ExplorerRepository: Send + Sync {
         job_execution_id: JobExecutionId,
         window: &'a QueryWindow,
     ) -> BoxFuture<'a, Result<Vec<OperatorRecord>, ExplorerError>>;
+
+    /// Reads registered definition revisions of one job.
+    fn definition_revisions<'a>(
+        &'a self,
+        _job_name: &'a JobName,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<DefinitionRevisionProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
+
+    /// Reads explicit direct compatible-upgrade edges of one job.
+    fn definition_upgrades<'a>(
+        &'a self,
+        _job_name: &'a JobName,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<DefinitionUpgradeProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
+
+    /// Reads explicit fork lineages from one source execution.
+    fn fork_lineages<'a>(
+        &'a self,
+        _source_execution_id: JobExecutionId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<ForkLineageProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
+
+    /// Reads nested-job links owned by one parent attempt.
+    fn nested_job_links<'a>(
+        &'a self,
+        _parent_job_execution_id: JobExecutionId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<NestedJobLinkProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
+
+    /// Reads value-free scope-resolution provenance owned by one job attempt.
+    fn scope_resolutions<'a>(
+        &'a self,
+        _job_execution_id: JobExecutionId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<ScopeResolutionProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
+
+    /// Reads one exact current repeat-state projection.
+    fn repeat_state<'a>(
+        &'a self,
+        _step_execution_id: StepExecutionId,
+        _repeat_id: &'a RepeatId,
+    ) -> BoxFuture<'a, Result<Option<RepeatStateProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 }
 
 /// A stable inspection failure independent of a database or async runtime.
@@ -1497,5 +2224,79 @@ impl ExplorerRow for OperatorRecord {
             .saturating_add(self.actor().as_str().len())
             .saturating_add(self.reason().map_or(0, |reason| reason.as_str().len()))
             .saturating_add(192)
+    }
+}
+
+impl ExplorerRow for DefinitionRevisionProjection {
+    fn cursor_key(&self) -> CursorKey {
+        CursorKey::Identity(self.order)
+    }
+
+    fn encoded_len(&self) -> usize {
+        let controls = self
+            .restart_controls()
+            .iter()
+            .map(|control| control.node_id().as_str().len().saturating_add(48))
+            .fold(0_usize, usize::saturating_add);
+        self.job_name()
+            .as_str()
+            .len()
+            .saturating_add(self.artifact().as_str().len())
+            .saturating_add(self.definition().revision().as_str().len())
+            .saturating_add(160)
+            .saturating_add(controls)
+    }
+}
+
+impl ExplorerRow for DefinitionUpgradeProjection {
+    fn cursor_key(&self) -> CursorKey {
+        CursorKey::Ordered {
+            primary: self.source_order,
+            identity: self.target_order,
+        }
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.job_name()
+            .as_str()
+            .len()
+            .saturating_add(self.key().as_str().len())
+            .saturating_add(
+                self.revision()
+                    .map_or(0, |revision| revision.as_str().len()),
+            )
+            .saturating_add(224)
+    }
+}
+
+impl ExplorerRow for ForkLineageProjection {
+    fn cursor_key(&self) -> CursorKey {
+        CursorKey::Identity(self.target_execution_id().get())
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.target_artifact().as_str().len().saturating_add(256)
+    }
+}
+
+impl ExplorerRow for NestedJobLinkProjection {
+    fn cursor_key(&self) -> CursorKey {
+        CursorKey::Identity(self.child_execution_id().get())
+    }
+
+    fn encoded_len(&self) -> usize {
+        self.node_id().as_str().len().saturating_add(256)
+    }
+}
+
+impl ExplorerRow for ScopeResolutionProjection {
+    fn cursor_key(&self) -> CursorKey {
+        CursorKey::Identity(self.order)
+    }
+
+    fn encoded_len(&self) -> usize {
+        // The durable selector path is bounded to 32 segments / 4096 bytes.
+        // Use the full public bound rather than inspecting payload-free source details here.
+        4_608
     }
 }

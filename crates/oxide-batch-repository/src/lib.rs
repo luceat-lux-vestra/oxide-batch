@@ -51,11 +51,13 @@ mod scope;
 
 pub use definition::{DefinitionRegistration, DefinitionRegistrationError};
 pub use explorer::{
-    Cursor, CursorError, CursorKey, DEFAULT_PAGE_SIZE, DefinitionDescriptor, ExplorerError,
-    ExplorerQuery, ExplorerRepository, JobExecutionProjection, JobInstanceProjection,
-    MAX_CURSOR_BYTES, MAX_PAGE_SIZE, MAX_RESPONSE_BYTES, MIN_UNRESOLVED_AGE, Page, PageRequest,
-    PageSize, ParameterDescriptor, QueryWindow, StateEnvelopeDescriptor, StepExecutionProjection,
-    StepPartitionProjection,
+    Cursor, CursorError, CursorKey, DEFAULT_PAGE_SIZE, DefinitionDescriptor,
+    DefinitionRevisionProjection, DefinitionUpgradeProjection, ExplorerError, ExplorerQuery,
+    ExplorerRepository, ForkLineageProjection, JobExecutionProjection, JobInstanceProjection,
+    MAX_CURSOR_BYTES, MAX_PAGE_SIZE, MAX_RESPONSE_BYTES, MIN_UNRESOLVED_AGE,
+    NestedJobLinkProjection, Page, PageRequest, PageSize, ParameterDescriptor, QueryWindow,
+    RepeatStateProjection, RestartControlDescriptor, ScopeResolutionProjection,
+    StateEnvelopeDescriptor, StepExecutionProjection, StepPartitionProjection,
 };
 pub use explorer::{ExplorerRow, page, resume_window, start_window};
 pub use flow::{
