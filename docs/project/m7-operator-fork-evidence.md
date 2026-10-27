@@ -1,5 +1,9 @@
 # M7 operator fork audit evidence — #615
 
+**State:** Accepted Gate-E implementation evidence for #615. #615 is complete
+and this record is consumed by the completed #199 delivery; #200 remains the
+M7-wide conformance, documentation, and exit-evidence owner.
+
 ## Boundary
 
 This record covers only the Gate-E service integration of the already accepted
@@ -62,7 +66,7 @@ authoritative for fork target/lineage durability. #615 adds only the operator
 audit composition and schema-12 action-vocabulary migration; the normal PR
 PostgreSQL design/conformance gates remain required before acceptance.
 
-## Candidate tests
+## Accepted tests
 
 - `operator_fork_applies_once_and_replays_as_fork`
   - creates one fresh target lineage/instance/execution;
@@ -87,5 +91,6 @@ PostgreSQL design/conformance gates remain required before acceptance.
 - CLI/API-server/hosted control-plane work;
 - M8-M14 behavior.
 
-#199 retains the bounded explorer slice after this work; #200 owns final M7-wide
-conformance, documentation reconciliation, and exit evidence.
+At #615 acceptance, #199 still retained the bounded explorer slice. That
+follow-on Gate-E slice is now complete; #200 owns final M7-wide conformance,
+documentation reconciliation, and exit evidence.

@@ -6,7 +6,7 @@
 2026-08-03 and is recorded as ADR-0008. RFC-0009 remains an evidence gate for
 its specific architecture.
 
-**Last reviewed:** 2026-09-28
+**Last reviewed:** 2026-10-28
 
 Milestones are capability and evidence gates, not calendar promises. M0-M5
 record accepted history, closed by the release of `oxide-batch` `0.5.0`; M6
@@ -313,18 +313,17 @@ separate governance decision.
 
 ## M7 — Advanced Flow, Repeat, Scope, and Composition
 
-**Status:** In progress — activated 2026-09-07 after #194 closed the design
-gate and ADR-0013 became the binding M7 architecture decision.
+**Status:** Exit verification in progress — activated 2026-09-07 after #194
+closed the design gate and ADR-0013 became the binding M7 architecture
+decision.
 
-The active execution boundary is issue #192 / native milestone #8. #195
-(advanced compiled flow/custom-step ownership), #196 (scope/factories/late
-binding), #197 (repeat/interceptor semantics), and #198 (registry/evolution,
-compatible upgrade, and explicit fork) are complete. #199 is unblocked and
-remains the active launcher/operator/explorer owner; #200 remains the
-conformance/restart/documentation exit gate, and M7 cannot close until
-both remaining owners and their evidence are complete.
-The #198 Gate-D closeout matrix is in
-[`m7-198-gate-d-closeout.md`](project/m7-198-gate-d-closeout.md).
+The active execution boundary is issue #192 / native milestone #8. All bounded
+implementation owners #195-#199 are complete. #200 is now the sole M7-wide
+conformance, restart, documentation-reconciliation, and exit-evidence owner;
+M7 remains open until #200 satisfies the milestone exit criteria. This does not
+promote unreleased M7 implementation to a released compatibility claim.
+The accepted #198 Gate-D matrix is in
+[`m7-gate-d-acceptance-evidence.md`](project/m7-gate-d-acceptance-evidence.md).
 
 Binding M7 authority is
 [ADR-0013](architecture/decisions/0013-m7-advanced-flow-scope-repeat-and-evolution.md)

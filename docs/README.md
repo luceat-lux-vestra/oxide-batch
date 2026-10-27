@@ -109,6 +109,12 @@ decisions own the normative detail.
 - [M6 exit evidence](project/m6-exit-evidence.md)
 - [M7 advanced flow, scope, repeat, and composition kickoff gate](project/m7-kickoff-gate.md)
 - [M7 advanced flow, scope, repeat, and composition design-gate evidence](project/m7-design-gate-evidence.md)
+- [M7 Gate-D acceptance evidence](project/m7-gate-d-acceptance-evidence.md)
+- [M7 repeat definition-identity evidence](project/m7-299-repeat-definition-identity-evidence.md)
+- [M7 fork-lineage contract](project/m7-552-fork-lineage-contract.md)
+- [M7 start-controls evidence](project/m7-start-controls-evidence.md)
+- [M7 operator restart-selection evidence](project/m7-operator-restart-selection-evidence.md)
+- [M7 operator fork evidence](project/m7-operator-fork-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
