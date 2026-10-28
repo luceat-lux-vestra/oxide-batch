@@ -45,6 +45,7 @@ const REQUIRED_REPORTS: &[&str] = &[
     "nested-job-privileges",
     "scope-resolution-privileges",
     "repeat-state-privileges",
+    "fork-lineage-privileges",
     "least-privilege-roles",
     "redaction-sweep",
 ];
@@ -86,10 +87,12 @@ const DENIED_ATTRIBUTES: &[&str] = &["NOSUPERUSER", "NOCREATEDB", "NOCREATEROLE"
 /// state, M7 `#265` added schema 5 durable nested-job linkage, M7 `#276`
 /// added schema 6 scoped-resolution provenance, M7 `#300` adds schema 7
 /// durable repeat state, M7 `#401` adds schema 8 durable repeat lineage identity,
-/// M7 `#550` adds schema 9 definition artifact identity, and M7 `#551` adds
-/// schema 10 transformed compatible-upgrade metadata.
+/// M7 `#550` adds schema 9 definition artifact identity, M7 `#551` adds
+/// schema 10 transformed compatible-upgrade metadata, M7 `#552` adds schema 11
+/// immutable fork lineage, and M7 `#615` advances the operator action contract
+/// to schema 12.
 /// The campaign must exercise the privilege matrix against the current installed schema.
-const SCHEMA_VERSION: u64 = 10;
+const SCHEMA_VERSION: u64 = 12;
 
 /// The transport the M5 preview supports in production.
 const TLS_MODE: &str = "verify-full";

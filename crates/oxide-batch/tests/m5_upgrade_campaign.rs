@@ -73,11 +73,12 @@ const REQUIRED_PATHS: &[&str] = &[
 /// M7 `#265` added schema 5 durable nested-job linkage, M7 `#276` schema 6
 /// scoped-resolution provenance, M7 #300 schema 7 durable repeat state, M7 #401
 /// schema 8 repeat lineage identity, M7 #550 schema 9 definition artifact identity,
-/// and M7 #551 schema 10 transformed compatible-upgrade metadata.
+/// M7 #551 schema 10 transformed compatible-upgrade metadata, M7 #552 schema 11
+/// immutable fork lineage, and M7 #615 schema 12 operator FORK action support.
 /// The historical source denominator remains 1/2/3; populated 4 -> 5, 5 -> 6,
-/// 6 -> 7, 7 -> 8, 8 -> 9, and 9 -> 10 preservation are owned by their dedicated
-/// `PostgreSQL` DB design gates.
-const TARGET_SCHEMA_VERSION: u64 = 10;
+/// 6 -> 7, 7 -> 8, 8 -> 9, 9 -> 10, 10 -> 11, and 11 -> 12 preservation are
+/// owned by their dedicated `PostgreSQL` DB design gates.
+const TARGET_SCHEMA_VERSION: u64 = 12;
 
 /// The regression test the campaign keeps and does not stand in for.
 const KEPT_REGRESSION: &str = "newer_schema_is_rejected_without_guessing_compatibility";
