@@ -1,6 +1,6 @@
 # M7-M14 Roadmap and Feature-Ledger Reconciliation
 
-**State:** Active on merge of issue #189
+**State:** Historical accepted reconciliation record for #189; not a current feature-status snapshot
 
 **Audit baseline:** `main` commit
 `819a7c1cb048373c932ec183be0a79b1030f4fb0`
@@ -15,6 +15,12 @@ This record reconciles the accepted M7-M14 roadmap and canonical target
 architecture with the Spring Batch feature ledger. It is a traceability and
 ownership record, not a product implementation authorization and not a second
 feature-status authority.
+
+The row counts, non-terminal tables, and activation consequences below are
+preserved at their #189 review point. The current feature ledger is
+authoritative; #200 Gate-F reconciliation later reviewed all 25 M7-scoped rows,
+retaining 9 release-backed `Verified` bases and recording 16 unreleased
+`Implemented` M7 candidates.
 
 `docs/compatibility/conformance-matrix.md` remains authoritative for Spring
 feature population, row status, evidence profiles, and released compatibility
@@ -105,12 +111,14 @@ evidence authority remain in the conformance matrix.
 | M13 | selected columnar/adaptive/dynamic-partition capabilities left by earlier milestones | Reuse the relevant prior `SCALE-*` row when the observable Spring capability is the same; Arrow/Parquet and extension-only mechanics stay native-only unless a Spring source identity is established. | [#207](https://github.com/luceat-lux-vestra/oxide-batch/issues/207), consuming reviewed M10 evidence rather than reopening M10 by default |
 | M14 | stable API/schema/manifest/configuration/protocol/support boundaries, deprecation policy, N/N-1/N-2 compatibility, certification matrix, upgrade/rollback, maintained reference workloads, project-wide RC/GA evidence, and documented control-plane extraction decision | No release-governance row is created merely for GA. Existing rows such as `META-UPGRADE-001` and `META-RETENTION-001` carry their feature semantics; every advertised capability must independently have a terminal/released disposition. | M14 tracker [#208](https://github.com/luceat-lux-vestra/oxide-batch/issues/208) |
 
-## Non-terminal row ownership
+## Historical non-terminal row ownership at #189
 
-This matrix covers every current `Planned`, `Partial`, and actionable `Unknown`
-row. “Primary owner” means the issue that must either deliver the remaining
-semantics or record the reviewed terminal disposition. A secondary owner is
-listed only when the existing row deliberately spans two milestones.
+At #189 acceptance, this matrix covered every then-current `Planned`,
+`Partial`, and actionable `Unknown` row. “Primary owner” means the issue
+assigned at that review point to deliver the remaining semantics or record the
+reviewed terminal disposition. A secondary owner is listed only when the row
+deliberately spanned two milestones. Do not use the statuses in this historical
+table as a substitute for the current compatibility ledger.
 
 ### Planned rows
 
@@ -242,7 +250,11 @@ pinned Spring population. If a later Spring baseline establishes an official
 source identity for one of these observable capabilities, the normal baseline
 update procedure adds or maps the row before its disposition is decided.
 
-## Milestone activation consequences
+## Historical milestone activation consequences
+
+These were the activation consequences at #189 acceptance. #193-#199 have
+since completed; #200 is the current M7 exit owner. The blocker language below
+is retained to document the sequence that governed implementation.
 
 - #189 does not authorize M7 product code.
 - #193 must consume this record and freeze every M7-scoped row to exactly one

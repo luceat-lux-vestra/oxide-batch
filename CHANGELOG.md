@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- M7 Gate-E launcher/operator/explorer completion: deterministic parameter
+  incrementer and launch identity, non-restartable/start-control enforcement,
+  strict and compatible restart selection, audited fork operations, and bounded
+  explorer projections now consume the accepted M7 definition/restart model.
+- M7 Gate-D definition evolution: durable registry identity, compatible upgrade
+  edges, explicit fork lineage, drift rejection, and PostgreSQL 15/18
+  process-kill/restart evidence establish the accepted definition-evolution
+  boundary without creating a second restart authority.
 - M7 Gate-C repeat definition identity for #299: bounded repeat IDs, policy
   kind/revision/configuration identity, ordered interceptor identity, nested
   repeat depth, and state-schema identity now participate in canonical
@@ -25,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- M7 Gate-F compatibility-ledger reconciliation reviewed all 25 M7-scoped rows:
+  the 9 existing release-backed `Verified` bases remain bounded to their named
+  releases, while 16 unreleased M7 rows are `Implemented` candidate
+  capabilities. Public/core M7 semantics remain database-neutral; PostgreSQL
+  15/18 are the currently implemented durable-adapter evidence rather than the
+  definition of the semantic contract.
 - Locked Tokio 1.53.2 and trybuild 1.0.122, with reviewed campaign dependency
   closure updates. Tokio's patch includes runtime shutdown, semaphore and
   timer/waker fixes; public execution and restart contracts are unchanged.

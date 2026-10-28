@@ -1,6 +1,6 @@
 # M7 Advanced Flow, Scope, Repeat, and Composition Kickoff Gate
 
-**State:** Active on merge
+**State:** Historical accepted kickoff authorization; not a current status snapshot
 
 **Umbrella:** GitHub issue
 [#192](https://github.com/luceat-lux-vestra/oxide-batch/issues/192)
@@ -19,6 +19,11 @@ from issue #189 into definition-ready, dependency-ordered work. It freezes
 capability ownership, prerequisite invariants, design gates, and evidence
 obligations. It does not implement M7 behavior and does not promote any
 compatibility-ledger row.
+
+The authorization and blocker language below is preserved as point-in-time
+kickoff evidence. #195-#199 have since completed; #200 is the sole remaining M7
+conformance/documentation/exit owner. Current feature status is owned by the
+compatibility ledger and current milestone state by the roadmap.
 
 Closing #193 authorizes #194 to close the named design decisions. It does **not**
 authorize production implementation in #195-#199. Those issues remain blocked

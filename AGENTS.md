@@ -33,12 +33,11 @@ Current owner state on this baseline:
 
 - #195 advanced compiled flow/custom-step ownership — completed;
 - #196 job/step scope, factories, and late binding — completed;
-- #197 repeat/interceptors and flow-level fault semantics — open;
-- #198 definition registry/evolution/fork lineage — open;
-- #199 launcher/operator/explorer and incrementer semantics — open and blocked
-  by #198;
-- #200 M7 conformance/restart/docs exit gate — open and blocked until delivery
-  owners complete.
+- #197 repeat/interceptors and flow-level fault semantics — completed;
+- #198 definition registry/evolution/fork lineage — completed;
+- #199 launcher/operator/explorer and incrementer semantics — completed;
+- #200 M7 conformance/restart/docs exit gate — open, unblocked, and the sole
+  remaining M7-wide exit owner.
 
 Do not treat merged M7 implementation as a released or `Verified` compatibility
 claim. M8-M14 remain later milestones, and historical M0-M6/M7 gate records stay

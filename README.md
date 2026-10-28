@@ -158,13 +158,12 @@ Completed implementation milestones:
 
 Active development milestone:
 
-- **M7 — Advanced Flow, Repeat, Scope, and Composition** — in progress.
-  Advanced compiled flow/custom-step ownership (#195) and job/step
-  scope/late-binding ownership (#196) are complete; repeat/interceptor (#197),
-  definition-evolution (#198), launcher/operator/explorer (#199), and the M7
-  conformance/documentation exit gate (#200) remain open. This unreleased M7
-  work does not change the current published release or promote compatibility
-  rows by itself.
+- **M7 — Advanced Flow, Repeat, Scope, and Composition** — exit verification
+  in progress. All bounded implementation owners (#195-#199) are complete;
+  #200 is the sole remaining M7-wide conformance, restart, documentation, and
+  exit-evidence owner. The reconciled M7 ledger remains unreleased candidate
+  evidence: implementation does not by itself create a released `Verified`
+  compatibility claim.
 
 The detailed exit evidence, compatibility ledger, failure campaigns, and milestone records intentionally live under `docs/` rather than in this landing page.
 

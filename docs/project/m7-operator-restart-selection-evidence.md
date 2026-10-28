@@ -1,7 +1,8 @@
 # M7 Gate E: operator restart selection evidence (#613)
 
-**State:** candidate implementation evidence for #613. This is not #199 or M7 exit
-acceptance; #200 remains the M7-wide evidence owner.
+**State:** Accepted Gate-E implementation evidence for #613. #613 is complete
+and this record is consumed by the completed #199 delivery; #200 remains the
+M7-wide conformance, documentation, and exit-evidence owner.
 
 ## Bound
 
@@ -64,6 +65,7 @@ must remain green for the candidate.
 - no CLI/API-server/hosted control-plane work;
 - no M8-M14 behavior.
 
-After #613, #199 still owns fork operator integration and bounded M7 explorer
-projections/query forms. #200 owns final M7-wide conformance, documentation, and
-exit acceptance.
+At #613 acceptance, #199 still owned fork operator integration and bounded M7
+explorer projections/query forms. Those follow-on Gate-E slices are now
+complete; #200 owns final M7-wide conformance, documentation reconciliation,
+and exit acceptance.
