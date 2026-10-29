@@ -3,7 +3,7 @@
   "issue": "https://github.com/luceat-lux-vestra/oxide-batch/issues/102",
   "gate": "docs/project/m5-design-gate-evidence.md",
   "plan": "docs/engineering/performance-plan.md",
-  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage, M7 #276 adds schema 6 value-free scope-resolution provenance, and M7 #300 adds schema 7 durable repeat state, M7 #401 adds schema 8 repeat lineage identity, M7 #550 adds schema 9 definition artifact identity, and M7 #551 adds schema 10 transformed compatible-upgrade metadata. The same five privilege classes remain; each newly durable table has a dedicated restricted-role report.",
+  "note": "This document is the campaign's denominator. The runner reads it to decide what must run and what each report must have observed, and the in-process reconciliation in crates/oxide-batch/tests/m5_security_campaign.rs reads it to decide whether it still says what the accepted documents require. M7 #265 adds schema 5 nested-job linkage, #276 schema 6 value-free scope-resolution provenance, #300 schema 7 durable repeat state, #401 schema 8 repeat lineage identity, #550 schema 9 definition artifact identity, #551 schema 10 transformed compatible-upgrade metadata, #552 schema 11 immutable fork lineage, and #615 schema 12 operator FORK action support. The same five privilege classes remain; each newly durable table has a dedicated restricted-role report.",
   "support_contract": {
     "postgres_versions": [
       "15",
@@ -15,7 +15,7 @@
       "15",
       "18"
     ],
-    "installed_schema_version": 10,
+    "installed_schema_version": 12,
     "tls_mode": "verify-full",
     "privilege_classes": [
       "migration",
@@ -91,6 +91,16 @@
       "database_report": true
     },
     {
+      "id": "fork-lineage-privileges",
+      "title": "Schema-11 fork-lineage least-privilege",
+      "owes": "actual PostgreSQL allow/refuse evidence for the schema-11 immutable fork-lineage table under the committed roles and grants",
+      "package": "oxide-batch",
+      "target": "postgres_fork_lineage_privileges",
+      "name": "fork_lineage_privileges_match_schema11_policy",
+      "fixture": "postgres-security-roles",
+      "database_report": true
+    },
+    {
       "id": "least-privilege-roles",
       "title": "Least-privilege separation across the five M5 classes",
       "owes": "least-privilege role separation for migration, runtime, explorer, operator, and retention",
@@ -145,7 +155,7 @@
     {
       "class": "runtime",
       "role": "oxide_batch_m5_runtime",
-      "allowed": "the job, step, partition, flow, nested-job linkage, and ItemStream component-state lifecycle",
+      "allowed": "the job, step, partition, flow, nested-job linkage, fork-lineage creation/readback, and ItemStream component-state lifecycle",
       "forbidden": "schema lifecycle, migration bookkeeping, operator decisions, retention deletes, and retention holds",
       "allowed_cells": 3,
       "forbidden_cells": 8
@@ -176,7 +186,7 @@
     }
   ],
   "role_matrix": {
-    "note": "The exact cell count of the long-lived M5 least-privilege matrix `postgres_least_privilege_roles.rs` produces, counted from the `PERMITTED` and `BOUNDARIES` tables and the one service-path cell each class contributes. Schema-5 `ob_nested_job_link` permissions are exercised separately by the `nested-job-privileges` report so this historical denominator does not silently change shape.",
+    "note": "The exact cell count of the long-lived M5 least-privilege matrix `postgres_least_privilege_roles.rs` produces, counted from the `PERMITTED` and `BOUNDARIES` tables and the one service-path cell each class contributes. Later durable tables are exercised by dedicated restricted-role reports (schema 5 nested-job linkage, schema 6 scope provenance, schema 8 repeat state, and schema 11 fork lineage), so this historical denominator does not silently change shape.",
     "total_cells": 44,
     "total_allowed_cells": 11,
     "total_forbidden_cells": 33
@@ -483,6 +493,95 @@
       },
       {
         "id": "retention.delete-repeat-state",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      }
+    ]
+  },
+  "fork_lineage_privileges": {
+    "note": "Exact schema-11 probe denominator for `postgres_fork_lineage_privileges.rs`. Runtime may read and insert immutable fork lineage but may not update or delete it. Explorer, operator, and retention may read only; all direct writes are refused.",
+    "report": "fork-lineage-privileges",
+    "total_probes": 16,
+    "allowed_probes": 5,
+    "forbidden_probes": 11,
+    "probes": [
+      {
+        "id": "runtime.read-fork-lineage",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.create-fork-lineage",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "allowed"
+      },
+      {
+        "id": "runtime.update-fork-lineage",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "forbidden"
+      },
+      {
+        "id": "runtime.delete-fork-lineage",
+        "role": "oxide_batch_m5_runtime",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.read-fork-lineage",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "allowed"
+      },
+      {
+        "id": "explorer.create-fork-lineage",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.update-fork-lineage",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "explorer.delete-fork-lineage",
+        "role": "oxide_batch_m5_explorer",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.read-fork-lineage",
+        "role": "oxide_batch_m5_operator",
+        "expected": "allowed"
+      },
+      {
+        "id": "operator.create-fork-lineage",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.update-fork-lineage",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "operator.delete-fork-lineage",
+        "role": "oxide_batch_m5_operator",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.read-fork-lineage",
+        "role": "oxide_batch_m5_retention",
+        "expected": "allowed"
+      },
+      {
+        "id": "retention.create-fork-lineage",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.update-fork-lineage",
+        "role": "oxide_batch_m5_retention",
+        "expected": "forbidden"
+      },
+      {
+        "id": "retention.delete-fork-lineage",
         "role": "oxide_batch_m5_retention",
         "expected": "forbidden"
       }

@@ -79,6 +79,12 @@ GRANT SELECT, INSERT, UPDATE ON
 -- retention removes rows only through schema-owned foreign-key cascades.
 GRANT SELECT, INSERT ON oxide_batch.ob_scope_resolution_provenance
     TO oxide_batch_m5_runtime;
+-- ob_job_fork_lineage (#552, schema 11) is immutable new-lineage identity.
+-- The runtime creates and reads it in the same transaction as the target
+-- instance/execution; UPDATE/DELETE stay ungranted and the schema trigger is a
+-- second line of defense against mutation.
+GRANT SELECT, INSERT ON oxide_batch.ob_job_fork_lineage
+    TO oxide_batch_m5_runtime;
 -- Creating an attempt locks the instance row for the duration of the
 -- transaction, so that two launches cannot both decide they are the first.
 -- PostgreSQL requires UPDATE on at least one column to take that lock, and the

@@ -63,7 +63,13 @@
     "redaction_sweep_must_be_non_vacuous": true,
     "redaction_sweep_must_be_non_vacuous_note": "artifacts_scanned and strings_scanned must both be greater than zero, every declared surface must have collected at least one artifact, every declared value class must have injected a canary, and prohibited_occurrences must be exactly zero.",
     "declared_reports_must_agree_on_one_execution_manifest": true,
-    "declared_reports_must_agree_on_one_execution_manifest_note": "Each report records the object identity of the campaign's semantic closure from inside its own test process, including the redaction sweep, which runs in a different workspace crate. All four must agree, or the campaign ran against a tree that changed underneath it."
+    "declared_reports_must_agree_on_one_execution_manifest_note": "Each report records the object identity of the campaign's semantic closure from inside its own test process, including the redaction sweep in a different workspace crate. All declared reports must agree, or the campaign ran against a tree that changed underneath it.",
+    "scope_resolution_privileges_must_match_schema6_policy": true,
+    "scope_resolution_privileges_must_match_schema6_policy_note": "The schema-6 report proves runtime read/insert and read-only explorer/operator/retention access for immutable scope-resolution provenance; direct update/delete paths are refused.",
+    "repeat_state_privileges_must_match_schema8_policy": true,
+    "repeat_state_privileges_must_match_schema8_policy_note": "The schema-8 report proves runtime read/insert/update and read-only explorer/operator/retention access for repeat state; direct deletes and non-runtime writes are refused.",
+    "fork_lineage_privileges_must_match_schema11_policy": true,
+    "fork_lineage_privileges_must_match_schema11_policy_note": "The schema-11 report proves runtime read/insert and read-only explorer/operator/retention access for immutable fork lineage; UPDATE/DELETE and non-runtime inserts are refused."
   },
   "environment": {
     "OXIDEBATCH_CAMPAIGN_DIR": "target/m5-campaigns",
@@ -73,16 +79,22 @@
   "artifact_name": "security-campaign-postgres-{major}",
   "artifact_retention": "30 days, on success and on failure alike, because what a failed security campaign is mostly worth reading for is which report, which TLS attempt, which privilege cell, or which surface it lost",
   "timeout_minutes": 45,
-  "timeout_note": "The campaign's execution envelope is one TLS report of four attempts, one schema-5 nested-link privilege report, one role matrix of forty-four cells across five classes, and one redaction sweep across four surfaces, a bounded workload rather than a whole-workspace suite. Still a ceiling: a campaign that stopped making progress must fail rather than occupy a runner.",
+  "timeout_note": "The campaign's execution envelope is one TLS report, four dedicated durable-table privilege reports (schemas 5, 6, 8, and 11), one five-class role matrix, and one redaction sweep. It is a bounded workload, but a campaign that stops making progress must fail rather than occupy a runner.",
   "required_reports": [
     "verify-full-tls",
     "nested-job-privileges",
+    "scope-resolution-privileges",
+    "repeat-state-privileges",
+    "fork-lineage-privileges",
     "least-privilege-roles",
     "redaction-sweep"
   ],
   "required_scenarios": [
     "verify_full_tls_is_required_in_the_supported_mode",
     "nested_job_link_privileges_match_schema5_policy",
+    "scope_resolution_provenance_privileges_match_schema6_policy",
+    "repeat_state_privileges_match_schema8_policy",
+    "fork_lineage_privileges_match_schema11_policy",
     "least_privilege_role_cannot_exceed_its_class",
     "redaction_sweep_finds_no_prohibited_value_class"
   ],
@@ -116,6 +128,8 @@
     "verify-full-tls",
     "nested-job-privileges",
     "scope-resolution-privileges",
+    "repeat-state-privileges",
+    "fork-lineage-privileges",
     "least-privilege-roles"
   ],
   "database_free_reports": [

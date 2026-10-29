@@ -84,11 +84,14 @@ use serde_json::Value;
 /// `STEP-STARTLIMIT-001` moves `Partial` to `Implemented` in #611 after the
 /// bounded M7 start-control completion evidence is delivered. It likewise
 /// remains outside the frozen M5 campaign scope; only this aggregate moves.
+/// M7 Gate-F ledger reconciliation in #621 then reviewed all 25 M7-scoped rows,
+/// leaving the frozen M5 accepted scope untouched while advancing the current
+/// whole-ledger population to the counts below.
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
-    ("Implemented", 16),
-    ("Partial", 13),
-    ("Planned", 24),
+    ("Implemented", 28),
+    ("Partial", 9),
+    ("Planned", 16),
     ("Unknown", 2),
 ];
 

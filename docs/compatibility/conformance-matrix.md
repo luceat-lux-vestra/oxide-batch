@@ -247,17 +247,22 @@ satisfied release preconditions are necessary but not sufficient by
 themselves. M5's 28 released `Verified` rows remain verified against
 `0.5.0`; they are not retroactively reclassified as M6 evidence.
 
-**Rows that stay `Partial`.** `LIFE-STOP-001`, `LIFE-RECOVER-001`,
-`FT-RETRY-001`, `FT-SKIP-001`, `FT-ROLLBACK-001`, `LISTENER-ITEM-001`,
-`FLOW-SEQUENCE-001`, `FLOW-DECIDER-001`, `REPO-COMMAND-001`,
-`REPO-RETENTION-001`, `SCALE-PARSTEP-001`, `SCALE-LOCALPART-001`, and
-`REPEAT-POLICY-001` are implemented at a bounded M0-M6 boundary and retain
-their reviewed `Partial` disposition. Rows with an explicit later milestone
-continue there; rows without one receive their later disposition owner in the
+**Rows that stay `Partial`.** `LIFE-RECOVER-001`, `FT-RETRY-001`,
+`FT-SKIP-001`, `FT-ROLLBACK-001`, `LISTENER-ITEM-001`,
+`REPO-COMMAND-001`, `REPO-RETENTION-001`, `SCALE-PARSTEP-001`, and
+`SCALE-LOCALPART-001` retain their reviewed `Partial` disposition. Rows with
+an explicit later milestone continue there; rows without one receive their
+later disposition owner in the
 [M7-M14 roadmap and feature-ledger reconciliation](../project/m7-m14-ledger-reconciliation.md)
-rather than implying speculative M7-M11 implementation. They are not
-advertised as verified capability, and the preview limitations record names
-each one and its bound.
+rather than implying speculative later implementation. They are not advertised
+as verified capability, and the preview limitations record names each one and
+its bound.
+
+**M7 rows promoted out of `Partial`.** `LIFE-STOP-001`,
+`REPEAT-POLICY-001`, `FLOW-SEQUENCE-001`, and `FLOW-DECIDER-001` now carry
+`Implemented` after their bounded M7 acceptance evidence landed under #195
+and #197. These remain unreleased candidate capabilities; #200 owns final
+M7-wide evidence aggregation and any later release-verification decision.
 
 **`STEP-STARTLIMIT-001`** moved from `Partial` to `Implemented` in #611
 when the bounded M7 logical-step/composition completion evidence was added.

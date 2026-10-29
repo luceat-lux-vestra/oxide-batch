@@ -14,10 +14,11 @@
 //! introduced is recoverable exactly the way the two M5 edges already were,
 //! rather than assuming an additive migration is automatically safe to roll
 //! back. M7 `#265` advanced the target to schema 5, M7 `#276` to schema 6,
-//! M7 `#300` advanced the target to schema 7, #401 to schema 8, and #550 to
-//! schema 9 and #551 to schema 10; the populated 4 -> 5, 5 -> 6, 6 -> 7,
-//! 7 -> 8, 8 -> 9, and 9 -> 10 boundaries are owned by their dedicated design
-//! gates rather than duplicated here.
+//! M7 `#300` advanced the target to schema 7, #401 to schema 8, #550 to schema
+//! 9, #551 to schema 10, #552 to schema 11, and #615 to schema 12; the populated
+//! 4 -> 5, 5 -> 6, 6 -> 7, 7 -> 8, 8 -> 9, 9 -> 10, 10 -> 11, and 11 -> 12
+//! boundaries are owned by their dedicated design gates rather than duplicated
+//! here.
 //!
 //! Each run does the whole operational sequence. A prior-schema database is
 //! built and seeded, `pg_dump` writes a custom-format archive of the metadata
@@ -70,9 +71,9 @@ use upgrade::{
 const SOURCE_VERSIONS: [u32; 3] = [1, 2, 3];
 
 /// The schema version the upgrade reaches before the rollback: the current
-/// installed schema (10, including #551 transformed-upgrade metadata), not the
-/// schema-3 target the M5 preview named when it was current.
-const UPGRADED_VERSION: u32 = 10;
+/// installed schema (12, including #552 fork lineage and #615 operator FORK
+/// action support), not the schema-3 target the M5 preview named when it was current.
+const UPGRADED_VERSION: u32 = 12;
 
 /// The metadata schema the logical backup covers.
 const DUMPED_SCHEMA: &str = "oxide_batch";
