@@ -196,8 +196,7 @@ fn fork_lineage_privileges_match_schema11_policy() -> Result<(), Box<dyn Error>>
 }
 
 #[test]
-fn declared_fork_lineage_privilege_probes_match_scope_denominator() -> Result<(), Box<dyn Error>>
-{
+fn declared_fork_lineage_privilege_probes_match_scope_denominator() -> Result<(), Box<dyn Error>> {
     let source = std::fs::read_to_string(fixtures().join("campaign-scope.json"))?;
     let scope: Value = serde_json::from_str(&source)?;
     let denominator = scope
