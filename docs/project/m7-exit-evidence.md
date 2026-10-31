@@ -1,7 +1,12 @@
 # M7 Advanced Flow, Scope, Repeat, and Composition Exit Evidence
 
-**State:** Candidate M7 exit evidence for issue #200. This record becomes accepted
-only after its candidate is reviewed and merged.
+**State:** Accepted M7 exit evidence for issue #200.
+
+**Acceptance:** PR [#624](https://github.com/luceat-lux-vestra/oxide-batch/pull/624)
+reviewed exact candidate `5e2a1ff6bcd4666d0fb4db6131b3d9d8d4886347`.
+Ready-state PR CI run #811 / `41166958319` completed successfully, and the
+candidate was squash-merged as
+`cad7abd196406b6290ca24b78ddb0fe5b1cbea5c`.
 
 **Milestone:** M7 / GitHub milestone 8
 
@@ -152,7 +157,7 @@ promote an unreleased row to release-backed `Verified`.
 
 ## Severity gate
 
-At this candidate baseline there is no open P0 issue. The only open P1 found in
+At the accepted evidence baseline there is no open P0 issue. The only open P1 found in
 the repository is
 [#521](https://github.com/luceat-lux-vestra/oxide-batch/issues/521), a CI
 compile/link performance research issue. It is not a correctness, security, or
@@ -166,7 +171,7 @@ data-integrity blocker for M7 exit.
 | No correctness/security/data-integrity P0/P1 remains | Satisfied | No open P0; open P1 #521 is CI performance research |
 | Required PostgreSQL 15/18 evidence is visibly executed, not green-by-skip | Satisfied | M5 Conformance run #1914 / `41049339895`, exact `e04848b7ccebb9a12bde3db7cc3a94b812245ca1`, all deep shards/campaigns/final contexts successful |
 | M7 docs distinguish implemented, released/verified, deferred, and later-milestone capability | Satisfied | PR #622 and unchanged release-bound `0.6.0` support/guides |
-| This exit record exists with criterion-by-criterion evidence | Candidate | Satisfied only after this candidate is reviewed and merged |
+| This exit record exists with criterion-by-criterion evidence | Satisfied | PR #624 reviewed the exact candidate, ready-state PR CI #811 succeeded, and merge commit `cad7abd196406b6290ca24b78ddb0fe5b1cbea5c` placed this record on `main` |
 | #192 can close without implying M8-M14 or project-wide GA readiness | Ready for final bookkeeping after #200 | This record explicitly excludes M8-M14 and 1.0/GA claims; #192 must be reconciled and closed separately |
 
 ## Portability and later milestones
@@ -185,15 +190,17 @@ complete on its accepted boundary.
 
 ## Exit disposition
 
-The technical Gate-F evidence is complete at the baseline recorded above.
-Acceptance of this document is the remaining repository artifact for #200.
+The technical Gate-F evidence is complete at the baseline recorded above, and
+this document is accepted through PR #624.
 
-After this candidate is merged and its exact-head review/CI is accepted:
+With the exit record now accepted:
 
-1. #200 may mark the exit-record criterion satisfied and close;
-2. #192 must be reconciled against the accepted M7 record and current milestone
-   issue state;
-3. #192 may then close without changing any M8-M14 or project-wide GA status.
+1. #200 may mark the exit-record criterion satisfied and close after its final
+   authoritative readback;
+2. #192 must then be reconciled against this accepted M7 record and the current
+   milestone issue state;
+3. #192 may close separately without changing any M8-M14 or project-wide GA
+   status.
 
-Until that sequence completes, this document remains candidate evidence and
-neither #200 nor #192 should be treated as closed M7 authority.
+This document is accepted M7 Gate-F evidence. #200 and #192 remain open until
+their separate issue-bookkeeping checkpoints complete.
