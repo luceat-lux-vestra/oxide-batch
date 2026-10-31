@@ -1,0 +1,89 @@
+name: Setup #626 production-equivalent sccache
+description: Restore the protected-main read-only compiler cache for one research execution.
+inputs:
+  target-dir:
+    description: Exact target checkout directory
+    required: true
+  target-sha:
+    description: Exact protected-main/source SHA used as the cache identity
+    required: true
+outputs:
+  cache-hit:
+    description: Exact-key cache restore result
+    value: ${{ steps.restore.outputs.cache-hit }}
+  cache-key:
+    description: Exact cache key requested
+    value: ${{ steps.identity.outputs.key }}
+runs:
+  using: composite
+  steps:
+    - name: Verify ARM64 research runner
+      shell: bash
+      run: |
+        set -euo pipefail
+        test "$RUNNER_ARCH" = ARM64
+        test "$(uname -m)" = aarch64
+
+    - name: Resolve production-equivalent compiler cache identity
+      id: identity
+      shell: bash
+      env:
+        TARGET_DIR: ${{ inputs.target-dir }}
+        TARGET_SHA: ${{ inputs.target-sha }}
+      run: |
+        set -euo pipefail
+        [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+        toolchain_hash="$(sha256sum "$TARGET_DIR/rust-toolchain.toml" | awk '{print $1}')"
+        lock_hash="$(sha256sum "$TARGET_DIR/Cargo.lock" | awk '{print $1}')"
+        [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
+        [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
+        family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+        lock_prefix="${family}-${lock_hash}-"
+        key="${lock_prefix}${TARGET_SHA}"
+        {
+          echo "family=$family"
+          echo "lock_prefix=$lock_prefix"
+          echo "key=$key"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Install verified sccache 0.18.0
+      shell: bash
+      run: |
+        set -euo pipefail
+        archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
+        install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+        curl --fail --location --retry 3 --retry-delay 2           "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"           --output "$archive"
+        echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive"           | sha256sum --check --strict
+        mkdir -p "$install_dir"
+        tar -xzf "$archive" -C "$install_dir" --strip-components=1
+        test -x "$install_dir/sccache"
+        echo "$install_dir" >> "$GITHUB_PATH"
+
+    - name: Restore protected-main compiler cache read-only
+      id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/oxide-fast-sccache
+        key: ${{ steps.identity.outputs.key }}
+        restore-keys: |
+          ${{ steps.identity.outputs.lock_prefix }}
+          ${{ steps.identity.outputs.family }}-
+
+    - name: Enable production-equivalent read-only compiler cache
+      shell: bash
+      env:
+        CACHE_KEY: ${{ steps.identity.outputs.key }}
+        CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+      run: |
+        set -euo pipefail
+        {
+          echo "CARGO_TERM_COLOR=never"
+          echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache"
+          echo "SCCACHE_CACHE_SIZE=768M"
+          echo "SCCACHE_LOCAL_RW_MODE=READ_ONLY"
+          echo "RUSTC_WRAPPER=sccache"
+          echo "CARGO_INCREMENTAL=0"
+          echo "RESEARCH_CACHE_KEY=$CACHE_KEY"
+          echo "RESEARCH_CACHE_HIT=$CACHE_HIT"
+        } >> "$GITHUB_ENV"
+        echo "protected-main research cache hit: $CACHE_HIT"
