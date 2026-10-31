@@ -96,15 +96,24 @@ def validate_harness_delta(harness_root: Path, base_sha: str, head_sha: str) -> 
 
 
 def harness_logic(root: Path) -> tuple[dict[str, str], str]:
-    files = [WORKFLOW_REL]
     if not (root / HARNESS_DIR).is_dir():
         raise PlanError(f"missing harness directory: {HARNESS_DIR}")
-    files.extend(
-        path.relative_to(root)
-        for path in sorted((root / HARNESS_DIR).rglob("*"))
-        if path.is_file()
-    )
-    files = [path for path in files if path != DISPATCH_REL]
+    tracked = [
+        Path(line)
+        for line in git(
+            root,
+            "ls-files",
+            "--",
+            HARNESS_DIR.as_posix(),
+            WORKFLOW_REL.as_posix(),
+        ).splitlines()
+        if line
+    ]
+    files = sorted(path for path in tracked if path != DISPATCH_REL)
+    if WORKFLOW_REL not in files:
+        raise PlanError(f"workflow is not tracked: {WORKFLOW_REL}")
+    if not any(path.is_relative_to(HARNESS_DIR) for path in files):
+        raise PlanError(f"no tracked harness logic files under: {HARNESS_DIR}")
     hashes: dict[str, str] = {}
     digest = hashlib.sha256()
     for rel in sorted(files):
