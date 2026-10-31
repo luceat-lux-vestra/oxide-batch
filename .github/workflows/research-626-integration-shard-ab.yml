@@ -1,0 +1,240 @@
+name: Research 626 integration shard A/B
+
+on:
+  push:
+    branches: [research/626-integration-shard-ab]
+    paths: [.github/research/626-dispatch.json]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: research-626-integration-ab-${{ github.ref }}-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    outputs:
+      variant: ${{ steps.plan.outputs.variant }}
+      pair_id: ${{ steps.plan.outputs.pair_id }}
+      order_position: ${{ steps.plan.outputs.order_position }}
+      target_sha: ${{ steps.plan.outputs.target_sha }}
+      harness_base_sha: ${{ steps.plan.outputs.harness_base_sha }}
+      target_count: ${{ steps.plan.outputs.target_count }}
+      target_digest: ${{ steps.plan.outputs.target_digest }}
+      harness_logic_digest: ${{ steps.plan.outputs.harness_logic_digest }}
+    steps:
+      - name: Check out research harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read exact target SHA for checkout
+        id: dispatch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path(".github/research/626-dispatch.json")
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          target = payload.get("target_sha")
+          if not isinstance(target, str) or re.fullmatch(r"[0-9a-f]{40}", target) is None:
+              raise SystemExit("dispatch target_sha must be a lowercase 40-hex SHA")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write(f"target_sha={target}\n")
+          PY
+
+      - name: Check out exact target source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ steps.dispatch.outputs.target_sha }}
+          path: target
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Self-test research harness
+        run: python3 .github/research/626/test-integration-ab.py
+
+      - name: Build fail-closed A/B plan
+        id: plan
+        run: |
+          set -euo pipefail
+          python3 .github/research/626/plan-integration-ab.py \
+            --harness-root . \
+            --target-root target \
+            --dispatch .github/research/626-dispatch.json \
+            --head-sha "$GITHUB_SHA" \
+            --out "${{ runner.temp }}/plan.json" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Retain exact research plan
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-ab-plan-${{ github.run_id }}
+          path: ${{ runner.temp }}/plan.json
+          retention-days: 14
+          if-no-files-found: error
+
+  four-way:
+    name: A shard ${{ matrix.shard }}
+    if: needs.plan.outputs.variant == 'A'
+    needs: plan
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Check out research harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out exact target source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.target_sha }}
+          path: target
+          persist-credentials: false
+
+      - name: Download exact research plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-ab-plan-${{ github.run_id }}
+          path: research-plan
+
+      - name: Setup production-equivalent compiler cache
+        uses: ./.github/research/626/setup-sccache
+        with:
+          target-dir: target
+          target-sha: ${{ needs.plan.outputs.target_sha }}
+
+      - name: Execute integration variant
+        run: |
+          set -euo pipefail
+          python3 .github/research/626/run-integration-ab.py \
+            --variant A \
+            --shard-index "${{ matrix.shard }}" \
+            --target-root target \
+            --plan research-plan/plan.json \
+            --out "evidence-A-${{ matrix.shard }}.json"
+
+      - name: Retain shard evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-ab-evidence-A-${{ matrix.shard }}-${{ github.run_id }}
+          path: evidence-A-${{ matrix.shard }}.json
+          retention-days: 14
+          if-no-files-found: error
+
+  unsharded:
+    name: B unsharded
+    if: needs.plan.outputs.variant == 'B'
+    needs: plan
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - name: Check out research harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Check out exact target source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.target_sha }}
+          path: target
+          persist-credentials: false
+
+      - name: Download exact research plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-ab-plan-${{ github.run_id }}
+          path: research-plan
+
+      - name: Setup production-equivalent compiler cache
+        uses: ./.github/research/626/setup-sccache
+        with:
+          target-dir: target
+          target-sha: ${{ needs.plan.outputs.target_sha }}
+
+      - name: Execute integration variant
+        run: |
+          set -euo pipefail
+          python3 .github/research/626/run-integration-ab.py \
+            --variant B \
+            --target-root target \
+            --plan research-plan/plan.json \
+            --out evidence-B.json
+
+      - name: Retain unsharded evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-ab-evidence-B-${{ github.run_id }}
+          path: evidence-B.json
+          retention-days: 14
+          if-no-files-found: error
+
+  summarize:
+    name: summarize
+    if: always() && needs.plan.result == 'success'
+    needs:
+      - plan
+      - four-way
+      - unsharded
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - name: Check out research harness
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Download exact research plan
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: integration-ab-plan-${{ github.run_id }}
+          path: research-plan
+
+      - name: Download selected execution evidence
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: integration-ab-evidence-*-${{ github.run_id }}
+          path: research-evidence
+          merge-multiple: true
+
+      - name: Summarize exact coverage, cache, and timing evidence
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python3 .github/research/626/summarize-integration-ab.py \
+            --plan research-plan/plan.json \
+            --evidence-dir research-evidence \
+            --out research-summary.json
+
+      - name: Retain aggregate research summary
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: integration-ab-summary-${{ github.run_id }}
+          path: research-summary.json
+          retention-days: 14
+          if-no-files-found: error
