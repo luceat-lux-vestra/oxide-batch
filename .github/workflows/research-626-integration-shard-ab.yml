@@ -35,6 +35,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Refresh protected main reference
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin main
+          git rev-parse --verify origin/main
+
       - name: Read exact target SHA for checkout
         id: dispatch
         shell: bash
