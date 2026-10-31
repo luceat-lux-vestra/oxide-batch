@@ -115,6 +115,7 @@ decisions own the normative detail.
 - [M7 start-controls evidence](project/m7-start-controls-evidence.md)
 - [M7 operator restart-selection evidence](project/m7-operator-restart-selection-evidence.md)
 - [M7 operator fork evidence](project/m7-operator-fork-evidence.md)
+- [M7 exit evidence](project/m7-exit-evidence.md)
 - [Historical M0 decision register](product/open-decisions.md)
 
 Historical gates are preserved as records of their date. Later decisions link
