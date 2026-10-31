@@ -84,6 +84,7 @@ def validate_environment(target_root: Path, plan: dict) -> dict:
         "sccache_local_rw_mode": os.environ["SCCACHE_LOCAL_RW_MODE"],
         "cargo_incremental": os.environ["CARGO_INCREMENTAL"],
         "cache_key": os.environ.get("RESEARCH_CACHE_KEY"),
+        "cache_matched_key": os.environ.get("RESEARCH_CACHE_MATCHED_KEY"),
         "cache_hit": os.environ.get("RESEARCH_CACHE_HIT"),
     }
 
