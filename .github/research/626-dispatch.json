@@ -2,7 +2,7 @@
   "schema": "oxide-batch-integration-ab/v1",
   "harness_base_sha": "62647d56515abc360591d0f568955cfe3766110a",
   "target_sha": "2be0442acc8a010a9e2c31163a86c6d46b16c418",
-  "variant": "B",
+  "variant": "A",
   "pair_id": "pair-06-BA",
-  "order_position": 1
+  "order_position": 2
 }
