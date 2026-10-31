@@ -54,6 +54,8 @@ def read_dispatch(path: Path) -> dict:
         raise PlanError("pair_id must match [A-Za-z0-9._-]{1,64}")
     if raw["order_position"] not in {1, 2}:
         raise PlanError("order_position must be integer 1 or 2")
+    if not raw["pair_id"].endswith(("-AB", "-BA")):
+        raise PlanError("pair_id must end with -AB or -BA to encode crossover order")
     expected_variant = "A" if raw["order_position"] == 1 else "B"
     reverse_variant = "B" if raw["order_position"] == 1 else "A"
     if raw["pair_id"].endswith("-AB") and raw["variant"] != expected_variant:
@@ -127,6 +129,17 @@ def build_plan(harness_root: Path, target_root: Path, dispatch_path: Path, head_
         raise PlanError(
             f"target checkout mismatch: expected={dispatch['target_sha']} observed={actual_target_sha}"
         )
+    try:
+        subprocess.run(
+            ["git", "-C", str(harness_root), "merge-base", "--is-ancestor", actual_target_sha, "origin/main"],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise PlanError(
+            f"target SHA {actual_target_sha} is not reachable from protected main history"
+        ) from exc
 
     sharder = load_production_sharder(target_root)
     if getattr(sharder, "SHARD_COUNT", None) != 4:
