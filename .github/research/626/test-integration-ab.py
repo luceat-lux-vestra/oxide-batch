@@ -95,6 +95,8 @@ class DispatchTests(unittest.TestCase):
             self.read(self.valid(variant="B", pair_id="pair-01-AB", order=1))
         with self.assertRaises(planner.PlanError):
             self.read(self.valid(variant="A", pair_id="pair-02-BA", order=1))
+        with self.assertRaises(planner.PlanError):
+            self.read(self.valid(pair_id="pair-03", order=1))
 
     def test_rejects_extra_keys_and_non_sha_refs(self) -> None:
         bad = self.valid()
