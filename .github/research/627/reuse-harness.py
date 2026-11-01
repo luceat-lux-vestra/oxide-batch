@@ -117,6 +117,78 @@ def worker(a):
     e={'schema':SCHEMA,'kind':'worker','status':'success' if proc.returncode==0 else 'failed','exit_code':proc.returncode,'shard_index':a.shard,'selected_targets':parts[a.shard],'all_targets':targets,'execution_seconds':elapsed,'seed_archive_sha256':m['archive_sha256'],'sccache_stats':stats,**identity(p)}
     a.out.write_text(json.dumps(e,indent=2,sort_keys=True)+'\n'); return proc.returncode
 
+def shared_commands():
+    return [['python3','.github/scripts/run-integration-shard.py',str(i),'4'] for i in range(4)]
+
+def shared_run(a):
+    p=load(a.plan); root=a.target_root.resolve()
+    if p.get('schema')!=SCHEMA or p.get('kind')!='plan' or git(root,'rev-parse','HEAD')!=p['target_sha']: fail('shared-run identity mismatch')
+    if os.getenv('RUNNER_ARCH')!='ARM64' or platform.machine()!='aarch64': fail('ARM64 required')
+    if git(root,'status','--porcelain','--untracked-files=no'): fail('shared-run source dirty before execution')
+    targets,parts=inventory(root)
+    if targets!=p['targets'] or parts!=p['partitions']: fail('shared-run inventory/partition mismatch')
+    flat=[name for part in parts for name in part]; counts=Counter(flat)
+    if set(flat)!=set(targets) or any(v!=1 for v in counts.values()): fail('shared-run plan is not exact one-to-one cover')
+    a.log_dir.mkdir(parents=True,exist_ok=True)
+    run(['sccache','--zero-stats'])
+    commands=shared_commands(); started_at=now(); wall_start=time.monotonic(); running=[]
+    for i,command in enumerate(commands):
+        log_path=a.log_dir/f'shared-shard-{i}.log'
+        handle=log_path.open('w',encoding='utf-8')
+        process=subprocess.Popen(command,cwd=root,stdout=handle,stderr=subprocess.STDOUT,text=True)
+        running.append({'index':i,'command':command,'process':process,'handle':handle,'log_path':log_path,'started':time.monotonic()})
+    pending=set(range(4)); results={}
+    while pending:
+        for i in list(pending):
+            item=running[i]; code=item['process'].poll()
+            if code is None: continue
+            item['handle'].close()
+            results[i]={
+                'shard_index':i,
+                'command':item['command'],
+                'selected_targets':parts[i],
+                'exit_code':code,
+                'execution_seconds':round(time.monotonic()-item['started'],3),
+                'log_sha256':sha(item['log_path']),
+            }
+            pending.remove(i)
+        if pending: time.sleep(0.05)
+    wall_seconds=round(time.monotonic()-wall_start,3)
+    stats=json.loads(run(['sccache','--show-stats','--stats-format=json'],capture=True).stdout)
+    source_clean=not bool(git(root,'status','--porcelain','--untracked-files=no'))
+    ordered=[results[i] for i in range(4)]
+    valid=source_clean and all(x['exit_code']==0 for x in ordered)
+    summary={
+        **identity(p),
+        'schema':SCHEMA,
+        'kind':'shared-run-summary',
+        'valid':valid,
+        'strategy':'single-runner-shared-target-concurrent-production-sharders',
+        'started_at':started_at,
+        'completed_at':now(),
+        'runner_arch':os.getenv('RUNNER_ARCH'),
+        'uname_machine':platform.machine(),
+        'rustc':run(['rustc','--version'],capture=True).stdout.strip(),
+        'cargo':run(['cargo','--version'],capture=True).stdout.strip(),
+        'sccache':run(['sccache','--version'],capture=True).stdout.strip(),
+        'worker_commands':commands,
+        'shared_target_dir':True,
+        'seed_stage_present':False,
+        'transport_archive_bytes':0,
+        'source_clean_after_execution':source_clean,
+        'partition_sizes':[len(x) for x in parts],
+        'shards':ordered,
+        'execution_wall_seconds':wall_seconds,
+        'execution_critical_seconds':max(x['execution_seconds'] for x in ordered),
+        'execution_sum_seconds':round(sum(x['execution_seconds'] for x in ordered),3),
+        'sccache_stats':stats,
+        'cache':{k:os.getenv(k) for k in ('RESEARCH_CACHE_KEY','RESEARCH_CACHE_MATCHED_KEY','RESEARCH_CACHE_HIT')},
+    }
+    if not valid:
+        summary['error']='one or more production shard processes failed or source tree changed'
+    a.out.write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
+    return 0 if valid else 1
+
 def validate(plan,seed,items):
     same(plan,seed)
     if len(items)!=4: fail('expected four workers')
@@ -146,6 +218,17 @@ class Tests(unittest.TestCase):
         w=(Path(__file__).resolve().parents[2]/'workflows'/WORKFLOW.name).read_text()
         self.assertIn('push:',w); self.assertIn('branches: [research/627-integration-reuse]',w); self.assertIn('paths: [.github/research/627-dispatch.json]',w)
         self.assertNotIn('workflow_dispatch:',w); self.assertNotIn('pull_request:',w)
+        self.assertIn('shared-run',w)
+        self.assertNotIn('seed producer',w)
+        self.assertNotIn('seed-workspace',w)
+        self.assertNotIn('actions/download-artifact',w)
+    def test_shared_commands_preserve_production_sharder_contract(self):
+        self.assertEqual(shared_commands(),[
+            ['python3','.github/scripts/run-integration-shard.py','0','4'],
+            ['python3','.github/scripts/run-integration-shard.py','1','4'],
+            ['python3','.github/scripts/run-integration-shard.py','2','4'],
+            ['python3','.github/scripts/run-integration-shard.py','3','4'],
+        ])
     def test_complete_worker_schema_validates(self):
         plan={
             'harness_head_sha':'a'*40,'harness_logic_sha256':'b'*64,'target_sha':'c'*40,'target_count':4,
@@ -175,6 +258,7 @@ def parser():
     q=s.add_parser('seed'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--archive',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.set_defaults(f=seed)
     q=s.add_parser('extract'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.add_argument('--archive',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--marker',type=Path,required=True); q.set_defaults(f=extract)
     q=s.add_parser('run'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.add_argument('--marker',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--shard',type=int,required=True); q.add_argument('--out',type=Path,required=True); q.set_defaults(f=worker)
+    q=s.add_parser('shared-run'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--out',type=Path,required=True); q.add_argument('--log-dir',type=Path,required=True); q.set_defaults(f=shared_run)
     q=s.add_parser('summarize'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.add_argument('--evidence-dir',type=Path,required=True); q.add_argument('--out',type=Path,required=True); q.set_defaults(f=summarize)
     q=s.add_parser('self-test'); q.set_defaults(f=selftest); return p
 
