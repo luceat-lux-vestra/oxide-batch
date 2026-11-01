@@ -1,0 +1,112 @@
+name: Research 627 integration compiler reuse
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_sha:
+        description: Exact protected-main source SHA to measure
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: research-627-integration-reuse-${{ github.ref }}-${{ github.run_id }}
+  cancel-in-progress: false
+
+env:
+  SCCACHE_VERSION: "0.18.0"
+  SCCACHE_SHA256: 2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    outputs:
+      target_sha: ${{ steps.plan.outputs.target_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ github.sha }}", fetch-depth: 0, persist-credentials: false}
+      - run: git fetch --no-tags origin main
+      - id: target
+        env: {TARGET_SHA: "${{ inputs.target_sha }}"}
+        run: |
+          set -euo pipefail
+          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
+          echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ steps.target.outputs.target_sha }}", path: target-src, fetch-depth: 1, persist-credentials: false}
+      - run: python3 .github/research/627/reuse-harness.py self-test
+      - id: plan
+        run: |
+          python3 .github/research/627/reuse-harness.py plan --harness-root . --target-root target-src \
+            --head-sha "$GITHUB_SHA" --target-sha "${{ steps.target.outputs.target_sha }}" \
+            --out "${{ runner.temp }}/reuse-plan.json" --github-output "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: "integration-reuse-plan-${{ github.run_id }}", path: "${{ runner.temp }}/reuse-plan.json", retention-days: 14, if-no-files-found: error}
+
+  seed:
+    name: seed producer
+    needs: plan
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ needs.plan.outputs.target_sha }}", path: target-src, fetch-depth: 1, persist-credentials: false}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: "integration-reuse-plan-${{ github.run_id }}", path: research-plan}
+      - uses: ./.github/research/627/setup-sccache
+        with: {target-root: target-src, target-sha: "${{ needs.plan.outputs.target_sha }}"}
+      - run: |
+          python3 .github/research/627/reuse-harness.py seed --plan research-plan/reuse-plan.json --target-root target-src \
+            --archive "${{ runner.temp }}/seed-workspace.tar.zst" --manifest "${{ runner.temp }}/seed-manifest.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: "integration-reuse-seed-manifest-${{ github.run_id }}", path: "${{ runner.temp }}/seed-manifest.json", retention-days: 14, if-no-files-found: error}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: "integration-reuse-seed-workspace-${{ github.run_id }}", path: "${{ runner.temp }}/seed-workspace.tar.zst", compression-level: 0, retention-days: 14, if-no-files-found: error}
+
+  workers:
+    name: reuse shard ${{ matrix.shard }}
+    needs: [plan, seed]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    strategy: {fail-fast: false, matrix: {shard: [0, 1, 2, 3]}}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: "integration-reuse-plan-${{ github.run_id }}", path: research-plan}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: "integration-reuse-seed-manifest-${{ github.run_id }}", path: research-seed}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: "integration-reuse-seed-workspace-${{ github.run_id }}", path: research-seed}
+      - run: python3 .github/research/627/reuse-harness.py extract --plan research-plan/reuse-plan.json --manifest research-seed/seed-manifest.json --archive research-seed/seed-workspace.tar.zst --target-root target-src --marker "${{ runner.temp }}/reuse-prepared.json"
+      - uses: ./.github/research/627/setup-sccache
+        with: {target-root: target-src, target-sha: "${{ needs.plan.outputs.target_sha }}"}
+      - run: python3 .github/research/627/reuse-harness.py run --plan research-plan/reuse-plan.json --manifest research-seed/seed-manifest.json --marker "${{ runner.temp }}/reuse-prepared.json" --target-root target-src --shard "${{ matrix.shard }}" --out "evidence-reuse-${{ matrix.shard }}.json"
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: "integration-reuse-evidence-${{ matrix.shard }}-${{ github.run_id }}", path: "evidence-reuse-${{ matrix.shard }}.json", retention-days: 14, if-no-files-found: error}
+
+  summarize:
+    if: always() && needs.plan.result == 'success' && needs.seed.result == 'success'
+    needs: [plan, seed, workers]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {ref: "${{ github.sha }}", persist-credentials: false}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: "integration-reuse-plan-${{ github.run_id }}", path: research-plan}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {name: "integration-reuse-seed-manifest-${{ github.run_id }}", path: research-seed}
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with: {pattern: "integration-reuse-evidence-*-${{ github.run_id }}", path: research-evidence, merge-multiple: true}
+      - run: python3 .github/research/627/reuse-harness.py summarize --plan research-plan/reuse-plan.json --manifest research-seed/seed-manifest.json --evidence-dir research-evidence --out reuse-summary.json
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with: {name: "integration-reuse-summary-${{ github.run_id }}", path: reuse-summary.json, retention-days: 14, if-no-files-found: error}

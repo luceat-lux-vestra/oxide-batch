@@ -1,0 +1,62 @@
+name: Research 627 protected-main sccache
+inputs:
+  target-root:
+    required: true
+  target-sha:
+    required: true
+outputs:
+  key:
+    value: ${{ steps.cache-id.outputs.key }}
+  matched-key:
+    value: ${{ steps.restore.outputs.cache-matched-key }}
+  cache-hit:
+    value: ${{ steps.restore.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - id: cache-id
+      shell: bash
+      run: |
+        set -euo pipefail
+        root='${{ inputs.target-root }}'
+        toolchain_hash="$(sha256sum "$root/rust-toolchain.toml" | awk '{print $1}')"
+        lock_hash="$(sha256sum "$root/Cargo.lock" | awk '{print $1}')"
+        family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+        lock_prefix="${family}-${lock_hash}-"
+        key="${lock_prefix}${{ inputs.target-sha }}"
+        printf 'family=%s\nlock_prefix=%s\nkey=%s\n' "$family" "$lock_prefix" "$key" >> "$GITHUB_OUTPUT"
+    - shell: bash
+      run: |
+        set -euo pipefail
+        test "$RUNNER_ARCH" = ARM64
+        test "$(uname -m)" = aarch64
+        archive="$RUNNER_TEMP/sccache.tar.gz"
+        dir="$RUNNER_TEMP/sccache-$SCCACHE_VERSION"
+        curl --fail --location --retry 3 --retry-delay 2 \
+          "https://github.com/mozilla/sccache/releases/download/v${SCCACHE_VERSION}/sccache-v${SCCACHE_VERSION}-aarch64-unknown-linux-musl.tar.gz" \
+          --output "$archive"
+        echo "$SCCACHE_SHA256  $archive" | sha256sum --check --strict
+        mkdir -p "$dir"
+        tar -xzf "$archive" -C "$dir" --strip-components=1
+        echo "$dir" >> "$GITHUB_PATH"
+    - id: restore
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ runner.temp }}/oxide-fast-sccache
+        key: ${{ steps.cache-id.outputs.key }}
+        restore-keys: |
+          ${{ steps.cache-id.outputs.lock_prefix }}
+          ${{ steps.cache-id.outputs.family }}-
+    - shell: bash
+      run: |
+        {
+          echo 'CARGO_TERM_COLOR=never'
+          echo "SCCACHE_DIR=$RUNNER_TEMP/oxide-fast-sccache"
+          echo 'SCCACHE_CACHE_SIZE=768M'
+          echo 'SCCACHE_LOCAL_RW_MODE=READ_ONLY'
+          echo 'RUSTC_WRAPPER=sccache'
+          echo 'CARGO_INCREMENTAL=0'
+          echo 'RESEARCH_CACHE_KEY=${{ steps.cache-id.outputs.key }}'
+          echo 'RESEARCH_CACHE_MATCHED_KEY=${{ steps.restore.outputs.cache-matched-key }}'
+          echo 'RESEARCH_CACHE_HIT=${{ steps.restore.outputs.cache-hit }}'
+        } >> "$GITHUB_ENV"
