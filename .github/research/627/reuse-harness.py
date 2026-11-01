@@ -8,6 +8,7 @@ from pathlib import Path, PurePosixPath
 
 SCHEMA='oxide-batch-reuse/v1'; DISPATCH_SCHEMA='oxide-batch-integration-reuse-dispatch/v1'; SEED_CMD=['cargo','test','--workspace','--all-features','--lib','--no-run']
 RESEARCH=Path('.github/research/627'); WORKFLOW=Path('.github/workflows/research-627-integration-reuse.yml'); DISPATCH=Path('.github/research/627-dispatch.json')
+IDENTITY_KEYS=('harness_head_sha','harness_logic_sha256','target_sha','target_count','target_digest_sha256','toolchain_sha256','cargo_lock_sha256')
 
 def fail(msg): raise ValueError(msg)
 def run(cmd,cwd=None,capture=False): return subprocess.run(cmd,cwd=cwd,check=True,text=True,capture_output=capture)
@@ -71,8 +72,10 @@ def plan(a):
     if a.github_output:
         with a.github_output.open('a') as f: f.write(f"target_sha={target_sha}\ntarget_count={len(targets)}\nharness_base_sha={base}\nharness_logic_digest={digest}\nexperiment_id={dispatch['experiment_id']}\n")
 
+def identity(plan): return {k:plan[k] for k in IDENTITY_KEYS}
+
 def same(plan,other):
-    for k in ('harness_head_sha','harness_logic_sha256','target_sha','target_count','target_digest_sha256','toolchain_sha256','cargo_lock_sha256'):
+    for k in IDENTITY_KEYS:
         if other.get(k)!=plan.get(k): fail(f'{k} mismatch')
 
 def seed(a):
@@ -83,7 +86,7 @@ def seed(a):
     if git(root,'status','--porcelain','--untracked-files=no') or not (root/'target').is_dir(): fail('seed modified source or target missing')
     a.archive.parent.mkdir(parents=True,exist_ok=True); run(['tar','--zstd','-cf',str(a.archive.resolve()),'-C',str(root.parent),root.name])
     stats=json.loads(run(['sccache','--show-stats','--stats-format=json'],capture=True).stdout)
-    m={**{k:p[k] for k in ('harness_head_sha','harness_logic_sha256','target_sha','target_count','target_digest_sha256','toolchain_sha256','cargo_lock_sha256')},'schema':SCHEMA,'kind':'seed','status':'success','seed_command':SEED_CMD,'seed_seconds':elapsed,'started_at':started,'completed_at':now(),'archive_sha256':sha(a.archive),'archive_bytes':a.archive.stat().st_size,'archive_name':a.archive.name,'sccache_stats':stats,'cache':{k:os.getenv(k) for k in ('RESEARCH_CACHE_KEY','RESEARCH_CACHE_MATCHED_KEY','RESEARCH_CACHE_HIT')}}
+    m={**identity(p),'schema':SCHEMA,'kind':'seed','status':'success','seed_command':SEED_CMD,'seed_seconds':elapsed,'started_at':started,'completed_at':now(),'archive_sha256':sha(a.archive),'archive_bytes':a.archive.stat().st_size,'archive_name':a.archive.name,'sccache_stats':stats,'cache':{k:os.getenv(k) for k in ('RESEARCH_CACHE_KEY','RESEARCH_CACHE_MATCHED_KEY','RESEARCH_CACHE_HIT')}}
     a.manifest.write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
 
 def safe_members(names,root):
@@ -111,7 +114,7 @@ def worker(a):
     if targets!=p['targets'] or parts!=p['partitions']: fail('worker inventory/partition mismatch')
     run(['sccache','--zero-stats']); t=time.monotonic(); proc=subprocess.run(['python3','.github/scripts/run-integration-shard.py',str(a.shard),'4'],cwd=root); elapsed=round(time.monotonic()-t,3)
     stats=json.loads(run(['sccache','--show-stats','--stats-format=json'],capture=True).stdout)
-    e={'schema':SCHEMA,'kind':'worker','status':'success' if proc.returncode==0 else 'failed','exit_code':proc.returncode,'shard_index':a.shard,'selected_targets':parts[a.shard],'all_targets':targets,'execution_seconds':elapsed,'seed_archive_sha256':m['archive_sha256'],'sccache_stats':stats,**{k:p[k] for k in ('harness_head_sha','harness_logic_sha256','target_sha','target_count','target_digest_sha256')}}
+    e={'schema':SCHEMA,'kind':'worker','status':'success' if proc.returncode==0 else 'failed','exit_code':proc.returncode,'shard_index':a.shard,'selected_targets':parts[a.shard],'all_targets':targets,'execution_seconds':elapsed,'seed_archive_sha256':m['archive_sha256'],'sccache_stats':stats,**identity(p)}
     a.out.write_text(json.dumps(e,indent=2,sort_keys=True)+'\n'); return proc.returncode
 
 def validate(plan,seed,items):
@@ -143,6 +146,26 @@ class Tests(unittest.TestCase):
         w=(Path(__file__).resolve().parents[2]/'workflows'/WORKFLOW.name).read_text()
         self.assertIn('push:',w); self.assertIn('branches: [research/627-integration-reuse]',w); self.assertIn('paths: [.github/research/627-dispatch.json]',w)
         self.assertNotIn('workflow_dispatch:',w); self.assertNotIn('pull_request:',w)
+    def test_complete_worker_schema_validates(self):
+        plan={
+            'harness_head_sha':'a'*40,'harness_logic_sha256':'b'*64,'target_sha':'c'*40,'target_count':4,
+            'target_digest_sha256':'d'*64,'toolchain_sha256':'e'*64,'cargo_lock_sha256':'f'*64,
+            'targets':['a','b','c','d'],'partitions':[['a'],['b'],['c'],['d']]
+        }
+        seed={**identity(plan),'kind':'seed','status':'success','archive_sha256':'1'*64}
+        items=[
+            {**identity(plan),'kind':'worker','status':'success','exit_code':0,'shard_index':i,
+             'selected_targets':plan['partitions'][i],'all_targets':plan['targets'],
+             'execution_seconds':float(i+1),'seed_archive_sha256':seed['archive_sha256'],'sccache_stats':{}}
+            for i in range(4)
+        ]
+        result=validate(plan,seed,items)
+        self.assertEqual(result['execution_seconds'],[1.0,2.0,3.0,4.0])
+        self.assertEqual(result['execution_critical_seconds'],4.0)
+        self.assertEqual(result['execution_sum_seconds'],10.0)
+        for item in items:
+            self.assertEqual(item['toolchain_sha256'],plan['toolchain_sha256'])
+            self.assertEqual(item['cargo_lock_sha256'],plan['cargo_lock_sha256'])
 
 def selftest(_): return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(Tests)).wasSuccessful() else 1
 
