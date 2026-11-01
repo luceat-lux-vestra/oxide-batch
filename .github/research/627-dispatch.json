@@ -1,6 +1,6 @@
 {
   "schema": "oxide-batch-integration-reuse-dispatch/v1",
-  "harness_base_sha": "d49c0a6d551994c160e6e27b608c24d0d9678f72",
+  "harness_base_sha": "96cd160755b75a91384be8cc7bcac002e83c0516",
   "target_sha": "2be0442acc8a010a9e2c31163a86c6d46b16c418",
-  "experiment_id": "reuse-01"
+  "experiment_id": "reuse-02"
 }
