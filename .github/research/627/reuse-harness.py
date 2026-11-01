@@ -6,8 +6,8 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
-SCHEMA='oxide-batch-reuse/v1'; SEED_CMD=['cargo','test','--workspace','--all-features','--lib','--no-run']
-RESEARCH=Path('.github/research/627'); WORKFLOW=Path('.github/workflows/research-627-integration-reuse.yml')
+SCHEMA='oxide-batch-reuse/v1'; DISPATCH_SCHEMA='oxide-batch-integration-reuse-dispatch/v1'; SEED_CMD=['cargo','test','--workspace','--all-features','--lib','--no-run']
+RESEARCH=Path('.github/research/627'); WORKFLOW=Path('.github/workflows/research-627-integration-reuse.yml'); DISPATCH=Path('.github/research/627-dispatch.json')
 
 def fail(msg): raise ValueError(msg)
 def run(cmd,cwd=None,capture=False): return subprocess.run(cmd,cwd=cwd,check=True,text=True,capture_output=capture)
@@ -35,26 +35,41 @@ def inventory(root):
     return targets,parts
 
 def harness_identity(root):
-    names=git(root,'ls-files','--',str(RESEARCH),str(WORKFLOW)).splitlines(); names=sorted(x for x in names if x)
+    names=git(root,'ls-files','--',str(RESEARCH),str(WORKFLOW)).splitlines(); names=sorted(x for x in names if x and x!=str(DISPATCH))
     if str(WORKFLOW) not in names or not any(x.startswith(str(RESEARCH)+'/') for x in names): fail('tracked research harness incomplete')
     files={x:sha(root/x) for x in names}; h=hashlib.sha256()
     for x in names: h.update(x.encode()+b'\0'+files[x].encode()+b'\n')
     return files,h.hexdigest()
 
-def plan(a):
-    root=a.harness_root.resolve(); target=a.target_root.resolve(); head=a.head_sha; target_sha=a.target_sha
-    if len(head)!=40 or len(target_sha)!=40: fail('head/target SHA must be 40 hex')
-    base=git(root,'merge-base',head,'origin/main'); run(['git','-C',str(root),'merge-base','--is-ancestor',base,'origin/main'])
+def read_dispatch(path):
+    d=load(path); expected={'schema','harness_base_sha','target_sha','experiment_id'}
+    if set(d)!=expected: fail(f'dispatch keys mismatch: {sorted(d)}')
+    if d.get('schema')!=DISPATCH_SCHEMA: fail('unsupported dispatch schema')
+    for key in ('harness_base_sha','target_sha'):
+        value=d.get(key)
+        if not isinstance(value,str) or len(value)!=40 or any(c not in '0123456789abcdef' for c in value): fail(f'{key} must be lowercase 40-hex')
+    experiment=d.get('experiment_id'); allowed='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-'
+    if not isinstance(experiment,str) or not (1<=len(experiment)<=64) or any(c not in allowed for c in experiment): fail('experiment_id is invalid')
+    return d
+
+def validate_dispatch_delta(root,base,head):
+    run(['git','-C',str(root),'merge-base','--is-ancestor',base,head])
     changed=[x for x in git(root,'diff','--name-only',base,head).splitlines() if x]
-    if any(x!=str(WORKFLOW) and not x.startswith(str(RESEARCH)+'/') for x in changed): fail(f'non-research delta: {changed}')
+    if changed!=[str(DISPATCH)]: fail(f'dispatch head may differ from harness base only by {DISPATCH}: {changed}')
+    return changed
+
+def plan(a):
+    root=a.harness_root.resolve(); target=a.target_root.resolve(); head=a.head_sha; dispatch=read_dispatch(a.dispatch.resolve()); target_sha=dispatch['target_sha']; base=dispatch['harness_base_sha']
+    if len(head)!=40 or any(c not in '0123456789abcdef' for c in head): fail('head SHA must be lowercase 40-hex')
+    validate_dispatch_delta(root,base,head)
     if git(target,'rev-parse','HEAD')!=target_sha: fail('target checkout mismatch')
     run(['git','-C',str(root),'merge-base','--is-ancestor',target_sha,'origin/main'])
     if git(target,'status','--porcelain','--untracked-files=no'): fail('target checkout dirty')
     targets,parts=inventory(target); files,digest=harness_identity(root)
-    out={'schema':SCHEMA,'kind':'plan','harness_base_sha':base,'harness_head_sha':head,'harness_logic_files':files,'harness_logic_sha256':digest,'target_sha':target_sha,'target_count':len(targets),'target_digest_sha256':hashlib.sha256(('\n'.join(targets)+'\n').encode()).hexdigest(),'targets':targets,'partitions':parts,'partition_sizes':[len(x) for x in parts],'toolchain_sha256':sha(target/'rust-toolchain.toml'),'cargo_lock_sha256':sha(target/'Cargo.lock'),'workspace_root_name':'target-src','seed_command':SEED_CMD,'worker_command':'python3 .github/scripts/run-integration-shard.py <index> 4'}
+    out={'schema':SCHEMA,'kind':'plan','experiment_id':dispatch['experiment_id'],'harness_base_sha':base,'harness_head_sha':head,'harness_logic_files':files,'harness_logic_sha256':digest,'target_sha':target_sha,'target_count':len(targets),'target_digest_sha256':hashlib.sha256(('\n'.join(targets)+'\n').encode()).hexdigest(),'targets':targets,'partitions':parts,'partition_sizes':[len(x) for x in parts],'toolchain_sha256':sha(target/'rust-toolchain.toml'),'cargo_lock_sha256':sha(target/'Cargo.lock'),'workspace_root_name':'target-src','seed_command':SEED_CMD,'worker_command':'python3 .github/scripts/run-integration-shard.py <index> 4'}
     a.out.write_text(json.dumps(out,indent=2,sort_keys=True)+'\n');
     if a.github_output:
-        with a.github_output.open('a') as f: f.write(f"target_sha={target_sha}\ntarget_count={len(targets)}\nharness_logic_digest={digest}\n")
+        with a.github_output.open('a') as f: f.write(f"target_sha={target_sha}\ntarget_count={len(targets)}\nharness_base_sha={base}\nharness_logic_digest={digest}\nexperiment_id={dispatch['experiment_id']}\n")
 
 def same(plan,other):
     for k in ('harness_head_sha','harness_logic_sha256','target_sha','target_count','target_digest_sha256','toolchain_sha256','cargo_lock_sha256'):
@@ -124,14 +139,16 @@ class Tests(unittest.TestCase):
         for x in [['../x'],['target-src/../../x'],['other/x'],['/x']]:
             with self.assertRaises(ValueError): safe_members(x,'target-src')
     def test_seed_scope(self): self.assertEqual(SEED_CMD,['cargo','test','--workspace','--all-features','--lib','--no-run']); self.assertNotIn('--tests',SEED_CMD)
-    def test_manual_workflow(self):
-        w=(Path(__file__).resolve().parents[2]/'workflows'/WORKFLOW.name).read_text(); self.assertIn('workflow_dispatch:',w); self.assertNotIn('pull_request:',w); self.assertNotIn('\n  push:',w)
+    def test_branch_dispatch_workflow(self):
+        w=(Path(__file__).resolve().parents[2]/'workflows'/WORKFLOW.name).read_text()
+        self.assertIn('push:',w); self.assertIn('branches: [research/627-integration-reuse]',w); self.assertIn('paths: [.github/research/627-dispatch.json]',w)
+        self.assertNotIn('workflow_dispatch:',w); self.assertNotIn('pull_request:',w)
 
 def selftest(_): return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(Tests)).wasSuccessful() else 1
 
 def parser():
     p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd',required=True)
-    q=s.add_parser('plan'); q.add_argument('--harness-root',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--head-sha',required=True); q.add_argument('--target-sha',required=True); q.add_argument('--out',type=Path,required=True); q.add_argument('--github-output',type=Path); q.set_defaults(f=plan)
+    q=s.add_parser('plan'); q.add_argument('--harness-root',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--dispatch',type=Path,required=True); q.add_argument('--head-sha',required=True); q.add_argument('--out',type=Path,required=True); q.add_argument('--github-output',type=Path); q.set_defaults(f=plan)
     q=s.add_parser('seed'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--archive',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.set_defaults(f=seed)
     q=s.add_parser('extract'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.add_argument('--archive',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--marker',type=Path,required=True); q.set_defaults(f=extract)
     q=s.add_parser('run'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.add_argument('--marker',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--shard',type=int,required=True); q.add_argument('--out',type=Path,required=True); q.set_defaults(f=worker)

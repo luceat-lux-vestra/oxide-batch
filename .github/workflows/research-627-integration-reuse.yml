@@ -1,19 +1,16 @@
 name: Research 627 integration compiler reuse
 
 on:
-  workflow_dispatch:
-    inputs:
-      target_sha:
-        description: Exact protected-main source SHA to measure
-        required: true
-        type: string
+  push:
+    branches: [research/627-integration-reuse]
+    paths: [.github/research/627-dispatch.json]
 
 permissions:
   actions: read
   contents: read
 
 concurrency:
-  group: research-627-integration-reuse-${{ github.ref }}-${{ github.run_id }}
+  group: research-627-integration-reuse-${{ github.ref }}-${{ github.sha }}
   cancel-in-progress: false
 
 env:
@@ -30,19 +27,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with: {ref: "${{ github.sha }}", fetch-depth: 0, persist-credentials: false}
       - run: git fetch --no-tags origin main
-      - id: target
-        env: {TARGET_SHA: "${{ inputs.target_sha }}"}
+      - id: dispatch
         run: |
           set -euo pipefail
-          [[ "$TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
-          echo "target_sha=$TARGET_SHA" >> "$GITHUB_OUTPUT"
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          payload=json.loads(Path(".github/research/627-dispatch.json").read_text())
+          target=payload.get("target_sha")
+          if not isinstance(target,str) or re.fullmatch(r"[0-9a-f]{40}",target) is None:
+              raise SystemExit("dispatch target_sha must be lowercase 40-hex")
+          with open(os.environ["GITHUB_OUTPUT"],"a",encoding="utf-8") as out:
+              out.write(f"target_sha={target}\n")
+          PY
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {ref: "${{ steps.target.outputs.target_sha }}", path: target-src, fetch-depth: 1, persist-credentials: false}
+        with: {ref: "${{ steps.dispatch.outputs.target_sha }}", path: target-src, fetch-depth: 1, persist-credentials: false}
       - run: python3 .github/research/627/reuse-harness.py self-test
       - id: plan
         run: |
           python3 .github/research/627/reuse-harness.py plan --harness-root . --target-root target-src \
-            --head-sha "$GITHUB_SHA" --target-sha "${{ steps.target.outputs.target_sha }}" \
+            --head-sha "$GITHUB_SHA" --dispatch .github/research/627-dispatch.json \
             --out "${{ runner.temp }}/reuse-plan.json" --github-output "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with: {name: "integration-reuse-plan-${{ github.run_id }}", path: "${{ runner.temp }}/reuse-plan.json", retention-days: 14, if-no-files-found: error}
