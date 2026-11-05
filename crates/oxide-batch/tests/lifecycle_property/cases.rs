@@ -252,3 +252,54 @@ fn step_restart_rejects_reuse_of_either_attempt_identifier() -> Result<(), Box<d
     }
     Ok(())
 }
+
+#[test]
+fn restart_rejects_stale_expected_version() -> Result<(), Box<dyn Error>> {
+    let execution = execution(BatchStatus::Stopped)?;
+    let snapshot = execution.clone();
+    let stale = oxide_batch::ExecutionVersion::new(execution.version().get() + 1);
+
+    assert_eq!(
+        execution.new_restart_attempt(stale, JobExecutionId::new(12)?, time(200)),
+        Err(LifecycleError::StaleVersion {
+            expected: stale,
+            actual: execution.version(),
+        })
+    );
+    assert_eq!(execution, snapshot);
+    Ok(())
+}
+
+#[test]
+fn non_restartable_status_rejects_job_and_step_restart_attempts() -> Result<(), Box<dyn Error>> {
+    let execution = execution(BatchStatus::Completed)?;
+    assert_eq!(
+        execution.new_restart_attempt(
+            execution.version(),
+            JobExecutionId::new(12)?,
+            time(200)
+        ),
+        Err(LifecycleError::NotRestartable {
+            status: BatchStatus::Completed,
+        })
+    );
+
+    let step = StepExecution::new(
+        StepExecutionId::new(21)?,
+        execution.id(),
+        StepName::new("import")?,
+        metadata(BatchStatus::Completed)?,
+    );
+    assert_eq!(
+        step.new_restart_attempt(
+            step.version(),
+            StepExecutionId::new(22)?,
+            JobExecutionId::new(12)?,
+            time(200)
+        ),
+        Err(LifecycleError::NotRestartable {
+            status: BatchStatus::Completed,
+        })
+    );
+    Ok(())
+}

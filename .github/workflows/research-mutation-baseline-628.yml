@@ -9,6 +9,7 @@ on:
     branches: [main]
     paths:
       - .github/workflows/research-mutation-baseline-628.yml
+      - crates/oxide-batch/tests/lifecycle_property/cases.rs
 
 permissions:
   contents: read
@@ -35,6 +36,27 @@ jobs:
           persist-credentials: false
           fetch-depth: 1
 
+      - name: Checkout exact test-only intervention
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: intervention-source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Overlay test-only lifecycle oracle
+        env:
+          FIXED_SOURCE_SHA: 2be0442acc8a010a9e2c31163a86c6d46b16c418
+          INTERVENTION_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C baseline-source rev-parse HEAD)" = "$FIXED_SOURCE_SHA"
+          test "$(git -C intervention-source rev-parse HEAD)" = "$INTERVENTION_SHA"
+          cp intervention-source/crates/oxide-batch/tests/lifecycle_property/cases.rs \
+            baseline-source/crates/oxide-batch/tests/lifecycle_property/cases.rs
+
       - name: Install pinned repository Rust toolchain
         shell: bash
         run: |
@@ -48,7 +70,7 @@ jobs:
           set -euo pipefail
           cargo install --locked --version 27.1.0 cargo-mutants
 
-      - name: Record environment and unmodified test baseline
+      - name: Record environment and clean intervention baseline
         working-directory: baseline-source
         shell: bash
         run: |
@@ -57,6 +79,12 @@ jobs:
           {
             printf 'source_sha='
             git rev-parse HEAD
+            printf 'intervention_head_sha='
+            git -C "$GITHUB_WORKSPACE/intervention-source" rev-parse HEAD
+            printf 'fixed_oracle_sha256='
+            git show HEAD:crates/oxide-batch/tests/lifecycle_property/cases.rs | sha256sum | awk '{print $1}'
+            printf 'intervention_oracle_sha256='
+            sha256sum crates/oxide-batch/tests/lifecycle_property/cases.rs | awk '{print $1}'
             printf 'os='
             uname -a
             printf 'cpu='
@@ -118,7 +146,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: research-mutation-628-before-${{ github.sha }}
+          name: research-mutation-628-after-${{ github.sha }}
           path: mutation-evidence/
           if-no-files-found: warn
           retention-days: 30
