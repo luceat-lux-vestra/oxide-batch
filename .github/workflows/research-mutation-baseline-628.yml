@@ -69,7 +69,7 @@ jobs:
             cargo mutants --version
             sha256sum Cargo.lock rust-toolchain.toml crates/oxide-batch-core/src/domain/lifecycle.rs crates/oxide-batch/tests/lifecycle_property/cases.rs
           } | tee "$GITHUB_WORKSPACE/mutation-evidence/environment.txt"
-          /usr/bin/time -v cargo test --locked --package oxide-batch --test lifecycle_property \
+          /usr/bin/time -v cargo test --locked --package oxide-batch --features postgres --test lifecycle_property \
             > "$GITHUB_WORKSPACE/mutation-evidence/clean-test.log" 2>&1 || {
               cat "$GITHUB_WORKSPACE/mutation-evidence/clean-test.log"
               exit 1
@@ -88,6 +88,11 @@ jobs:
             > "$output/mutants-list.json"
           test -s "$output/mutants-list.json"
           sha256sum "$output/mutants-list.json" > "$output/mutants-list.sha256"
+          # The oxide-batch integration-test inventory includes postgres-gated targets.
+          # Keep the explicit lifecycle oracle but enable the facade's package-scoped
+          # postgres feature for both the clean oracle and every cargo-mutants Cargo call.
+          # cargo-mutants forwards feature flags to Cargo invocations.
+          # https://mutants.rs/cargo-args.html
           # cargo-mutants 27.1.0 issue #662: --test-package is not applied to
           # cargo-mutants' own unmutated baseline. The explicit clean oracle above
           # is the baseline, so skip the buggy internal baseline while retaining
@@ -95,6 +100,7 @@ jobs:
           # https://github.com/sourcefrog/cargo-mutants/issues/662
           set +e
           /usr/bin/time -v cargo mutants --baseline=skip --package oxide-batch-core \
+            --features=oxide-batch/postgres \
             --file 'crates/oxide-batch-core/src/domain/lifecycle.rs' --re "$filter" \
             --test-package=oxide-batch \
             --cargo-test-arg=--test --cargo-test-arg=lifecycle_property \
