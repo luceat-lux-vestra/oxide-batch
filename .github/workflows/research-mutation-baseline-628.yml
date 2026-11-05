@@ -1,0 +1,113 @@
+name: Research Mutation Baseline 628
+# lifecycle-owner: https://github.com/luceat-lux-vestra/oxide-batch/issues/628
+# lifecycle-retire: delete this PR-only research workflow when #628's fixed-source baseline evidence is accepted; never merge into protected main
+# This is a non-privileged, short-lived measurement workflow. It intentionally checks out
+# an immutable source revision, independently of the branch containing this workflow.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - .github/workflows/research-mutation-baseline-628.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: research-mutation-628-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  bounded-mutation-baseline:
+    name: Fixed-source lifecycle mutation baseline
+    if: ${{ github.event.pull_request.head.repo.full_name == github.repository }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 100
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - name: Checkout immutable pre-intervention source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: 2be0442acc8a010a9e2c31163a86c6d46b16c418
+          path: baseline-source
+          persist-credentials: false
+          fetch-depth: 1
+
+      - name: Install pinned repository Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          rustup toolchain install 1.97.1 --profile minimal
+          rustup default 1.97.1
+
+      - name: Install pinned cargo-mutants
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo install --locked --version 27.1.0 cargo-mutants
+
+      - name: Record environment and unmodified test baseline
+        working-directory: baseline-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$GITHUB_WORKSPACE/mutation-evidence"
+          {
+            printf 'source_sha='
+            git rev-parse HEAD
+            printf 'os='
+            uname -a
+            printf 'cpu='
+            nproc
+            printf 'rustc='
+            rustc --version
+            printf 'cargo='
+            cargo --version
+            printf 'cargo_mutants='
+            cargo mutants --version
+            sha256sum Cargo.lock rust-toolchain.toml crates/oxide-batch-core/src/domain/lifecycle.rs crates/oxide-batch/tests/lifecycle_property/cases.rs
+          } | tee "$GITHUB_WORKSPACE/mutation-evidence/environment.txt"
+          /usr/bin/time -v cargo test --locked --package oxide-batch --test lifecycle_property \
+            > "$GITHUB_WORKSPACE/mutation-evidence/clean-test.log" 2>&1 || {
+              cat "$GITHUB_WORKSPACE/mutation-evidence/clean-test.log"
+              exit 1
+            }
+          tail -n 30 "$GITHUB_WORKSPACE/mutation-evidence/clean-test.log"
+
+      - name: Freeze mutation corpus and record bounded test results
+        working-directory: baseline-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="$GITHUB_WORKSPACE/mutation-evidence"
+          filter='(is_legal_in_place_transition|validate_transition|validate_restart|validate_expected_version)'
+          cargo mutants --list --json --package oxide-batch-core \
+            --file 'crates/oxide-batch-core/src/domain/lifecycle.rs' --re "$filter" \
+            > "$output/mutants-list.json"
+          test -s "$output/mutants-list.json"
+          sha256sum "$output/mutants-list.json" > "$output/mutants-list.sha256"
+          set +e
+          /usr/bin/time -v cargo mutants --package oxide-batch-core \
+            --file 'crates/oxide-batch-core/src/domain/lifecycle.rs' --re "$filter" \
+            --test-package oxide-batch \
+            --cargo-test-arg=--test --cargo-test-arg=lifecycle_property \
+            --jobs=1 --timeout=120 --build-timeout=600 \
+            --output "$output/mutants.out" \
+            > "$output/mutation-console.log" 2>&1
+          mutation_rc=$?
+          set -e
+          printf 'mutation_exit_code=%s\n' "$mutation_rc" | tee "$output/mutation-status.txt"
+          tail -n 60 "$output/mutation-console.log"
+          # Survivor(s) are a measured finding, not a workflow execution error.
+          # Preserve nonzero mutation exit status and all raw files for later classification.
+
+      - name: Upload raw baseline evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: research-mutation-628-before-${{ github.sha }}
+          path: mutation-evidence/
+          if-no-files-found: warn
+          retention-days: 30
