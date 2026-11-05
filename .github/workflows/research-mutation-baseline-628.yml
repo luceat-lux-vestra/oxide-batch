@@ -88,10 +88,15 @@ jobs:
             > "$output/mutants-list.json"
           test -s "$output/mutants-list.json"
           sha256sum "$output/mutants-list.json" > "$output/mutants-list.sha256"
+          # cargo-mutants 27.1.0 issue #662: --test-package is not applied to
+          # cargo-mutants' own unmutated baseline. The explicit clean oracle above
+          # is the baseline, so skip the buggy internal baseline while retaining
+          # oxide-batch as the test package for each mutant.
+          # https://github.com/sourcefrog/cargo-mutants/issues/662
           set +e
-          /usr/bin/time -v cargo mutants --package oxide-batch-core \
+          /usr/bin/time -v cargo mutants --baseline=skip --package oxide-batch-core \
             --file 'crates/oxide-batch-core/src/domain/lifecycle.rs' --re "$filter" \
-            --test-package oxide-batch \
+            --test-package=oxide-batch \
             --cargo-test-arg=--test --cargo-test-arg=lifecycle_property \
             --jobs=1 --timeout=120 --build-timeout=600 \
             --output "$output/mutants.out" \
