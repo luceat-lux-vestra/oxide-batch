@@ -1,269 +1,456 @@
 #!/usr/bin/env python3
-"""Research-only compiler/setup reuse harness for oxide-batch #627."""
+"""Research-only A4-vs-C3 integration topology harness for oxide-batch #627."""
 from __future__ import annotations
-import argparse, hashlib, importlib.util, json, os, platform, subprocess, sys, tarfile, time, unittest
+
+import argparse
+import hashlib
+import importlib.util
+import json
+import os
+import platform
+import subprocess
+import sys
+import time
+import unittest
 from collections import Counter
 from datetime import datetime, timezone
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
-SCHEMA='oxide-batch-reuse/v1'; DISPATCH_SCHEMA='oxide-batch-integration-reuse-dispatch/v1'; SEED_CMD=['cargo','test','--workspace','--all-features','--lib','--no-run']
-RESEARCH=Path('.github/research/627'); WORKFLOW=Path('.github/workflows/research-627-integration-reuse.yml'); DISPATCH=Path('.github/research/627-dispatch.json')
-IDENTITY_KEYS=('harness_head_sha','harness_logic_sha256','target_sha','target_count','target_digest_sha256','toolchain_sha256','cargo_lock_sha256')
+SCHEMA = "oxide-batch-topology/v1"
+DISPATCH_SCHEMA = "oxide-batch-integration-topology-dispatch/v1"
+RESEARCH = Path(".github/research/627")
+WORKFLOW = Path(".github/workflows/research-627-integration-reuse.yml")
+DISPATCH = Path(".github/research/627-dispatch.json")
+IDENTITY_KEYS = (
+    "harness_head_sha",
+    "harness_logic_sha256",
+    "target_sha",
+    "target_count",
+    "target_digest_sha256",
+    "toolchain_sha256",
+    "cargo_lock_sha256",
+    "variant",
+    "lane_count",
+)
 
-def fail(msg): raise ValueError(msg)
-def run(cmd,cwd=None,capture=False): return subprocess.run(cmd,cwd=cwd,check=True,text=True,capture_output=capture)
-def git(root,*args): return run(['git','-C',str(root),*args],capture=True).stdout.strip()
-def sha(path): return hashlib.sha256(path.read_bytes()).hexdigest()
-def load(path):
-    x=json.loads(path.read_text());
-    if not isinstance(x,dict): fail(f'{path}: expected JSON object')
-    return x
-def now(): return datetime.now(timezone.utc).isoformat()
 
-def sharder(root):
-    p=root/'.github/scripts/run-integration-shard.py'; spec=importlib.util.spec_from_file_location('sharder627',p)
-    if not p.is_file() or spec is None or spec.loader is None: fail('production sharder unavailable')
-    m=importlib.util.module_from_spec(spec); spec.loader.exec_module(m)
-    if getattr(m,'SHARD_COUNT',None)!=4: fail('production SHARD_COUNT must be 4')
-    return m
+def fail(message: str) -> None:
+    raise ValueError(message)
 
-def inventory(root):
-    m=sharder(root); old=Path.cwd()
-    try: os.chdir(root); targets=m.load_targets(); parts=m.partition(targets)
-    finally: os.chdir(old)
-    flat=[x for p in parts for x in p]; counts=Counter(flat)
-    if len(parts)!=4 or any(not p for p in parts) or set(flat)!=set(targets) or any(v!=1 for v in counts.values()): fail('production partition is not exact one-to-one cover')
-    return targets,parts
 
-def harness_identity(root):
-    names=git(root,'ls-files','--',str(RESEARCH),str(WORKFLOW)).splitlines(); names=sorted(x for x in names if x and x!=str(DISPATCH))
-    if str(WORKFLOW) not in names or not any(x.startswith(str(RESEARCH)+'/') for x in names): fail('tracked research harness incomplete')
-    files={x:sha(root/x) for x in names}; h=hashlib.sha256()
-    for x in names: h.update(x.encode()+b'\0'+files[x].encode()+b'\n')
-    return files,h.hexdigest()
+def run(command: list[str], cwd: Path | None = None, capture: bool = False) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, cwd=cwd, check=True, text=True, capture_output=capture)
 
-def read_dispatch(path):
-    d=load(path); expected={'schema','harness_base_sha','target_sha','experiment_id'}
-    if set(d)!=expected: fail(f'dispatch keys mismatch: {sorted(d)}')
-    if d.get('schema')!=DISPATCH_SCHEMA: fail('unsupported dispatch schema')
-    for key in ('harness_base_sha','target_sha'):
-        value=d.get(key)
-        if not isinstance(value,str) or len(value)!=40 or any(c not in '0123456789abcdef' for c in value): fail(f'{key} must be lowercase 40-hex')
-    experiment=d.get('experiment_id'); allowed='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-'
-    if not isinstance(experiment,str) or not (1<=len(experiment)<=64) or any(c not in allowed for c in experiment): fail('experiment_id is invalid')
-    return d
 
-def validate_dispatch_delta(root,base,head):
-    run(['git','-C',str(root),'merge-base','--is-ancestor',base,head])
-    changed=[x for x in git(root,'diff','--name-only',base,head).splitlines() if x]
-    if changed!=[str(DISPATCH)]: fail(f'dispatch head may differ from harness base only by {DISPATCH}: {changed}')
+def git(root: Path, *args: str) -> str:
+    return run(["git", "-C", str(root), *args], capture=True).stdout.strip()
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def load(path: Path) -> dict:
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict):
+        fail(f"{path}: expected JSON object")
+    return value
+
+
+def now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def production_sharder(root: Path):
+    path = root / ".github/scripts/run-integration-shard.py"
+    spec = importlib.util.spec_from_file_location("oxide_batch_production_sharder_627", path)
+    if not path.is_file() or spec is None or spec.loader is None:
+        fail("production sharder unavailable")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    if getattr(module, "SHARD_COUNT", None) != 4:
+        fail("production SHARD_COUNT must remain 4 for A4 control")
+    if not isinstance(getattr(module, "HISTORICAL_SECONDS", None), dict):
+        fail("production historical weights unavailable")
+    return module
+
+
+def exact_cover(targets: list[str], partitions: list[list[str]], expected_count: int) -> None:
+    if len(partitions) != expected_count or any(not lane for lane in partitions):
+        fail("partition count mismatch or empty lane")
+    flattened = [name for lane in partitions for name in lane]
+    counts = Counter(flattened)
+    if set(flattened) != set(targets) or len(flattened) != len(targets):
+        fail("partition does not cover the target inventory")
+    if any(count != 1 for count in counts.values()):
+        fail("partition is not exact one-to-one cover")
+
+
+def generic_partition(targets: list[str], weights: dict[str, float], count: int) -> tuple[list[list[str]], list[float]]:
+    if count < 1:
+        fail("lane count must be positive")
+    if len(targets) < count:
+        fail("lane count exceeds target count")
+    lanes: list[list[str]] = [[] for _ in range(count)]
+    loads = [0.0] * count
+    ordered = sorted(targets, key=lambda name: (-float(weights.get(name, 0.10)), name))
+    for name in ordered:
+        lane = min(range(count), key=lambda index: (loads[index], index))
+        lanes[lane].append(name)
+        loads[lane] += float(weights.get(name, 0.10))
+    lanes = [sorted(lane) for lane in lanes]
+    exact_cover(targets, lanes, count)
+    return lanes, [round(value, 3) for value in loads]
+
+
+def inventory(root: Path, variant: str) -> tuple[list[str], list[list[str]], list[float]]:
+    sharder = production_sharder(root)
+    old = Path.cwd()
+    try:
+        os.chdir(root)
+        targets = sharder.load_targets()
+        production = sharder.partition(targets)
+    finally:
+        os.chdir(old)
+    exact_cover(targets, production, 4)
+    weights = {str(key): float(value) for key, value in sharder.HISTORICAL_SECONDS.items()}
+    if variant == "A4":
+        lanes = production
+        loads = [round(sum(weights.get(name, 0.10) for name in lane), 3) for lane in lanes]
+    elif variant == "C3":
+        lanes, loads = generic_partition(targets, weights, 3)
+    else:
+        fail(f"unsupported variant: {variant}")
+    exact_cover(targets, lanes, 4 if variant == "A4" else 3)
+    return targets, lanes, loads
+
+
+def harness_identity(root: Path) -> tuple[dict[str, str], str]:
+    tracked = [
+        str(RESEARCH / "reuse-harness.py"),
+        str(RESEARCH / "setup-sccache/action.yml"),
+        str(WORKFLOW),
+    ]
+    for name in tracked:
+        if not (root / name).is_file():
+            fail(f"tracked harness file missing: {name}")
+    files = {name: sha256(root / name) for name in tracked}
+    digest = hashlib.sha256()
+    for name in sorted(files):
+        digest.update(name.encode("utf-8") + b"\0" + files[name].encode("ascii") + b"\n")
+    return files, digest.hexdigest()
+
+
+def read_dispatch(path: Path) -> dict:
+    data = load(path)
+    expected = {"schema", "harness_base_sha", "target_sha", "experiment_id", "variant"}
+    if set(data) != expected:
+        fail(f"dispatch keys mismatch: {sorted(data)}")
+    if data.get("schema") != DISPATCH_SCHEMA:
+        fail("unsupported dispatch schema")
+    for key in ("harness_base_sha", "target_sha"):
+        value = data.get(key)
+        if not isinstance(value, str) or len(value) != 40 or any(c not in "0123456789abcdef" for c in value):
+            fail(f"{key} must be lowercase 40-hex")
+    experiment = data.get("experiment_id")
+    allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+    if not isinstance(experiment, str) or not (1 <= len(experiment) <= 64) or any(c not in allowed for c in experiment):
+        fail("experiment_id is invalid")
+    if data.get("variant") not in ("A4", "C3"):
+        fail("variant must be A4 or C3")
+    return data
+
+
+def validate_dispatch_delta(root: Path, base: str, head: str) -> list[str]:
+    run(["git", "-C", str(root), "merge-base", "--is-ancestor", base, head])
+    changed = [line for line in git(root, "diff", "--name-only", base, head).splitlines() if line]
+    if changed != [str(DISPATCH)]:
+        fail(f"dispatch head may differ from harness base only by {DISPATCH}: {changed}")
     return changed
 
-def plan(a):
-    root=a.harness_root.resolve(); target=a.target_root.resolve(); head=a.head_sha; dispatch=read_dispatch(a.dispatch.resolve()); target_sha=dispatch['target_sha']; base=dispatch['harness_base_sha']
-    if len(head)!=40 or any(c not in '0123456789abcdef' for c in head): fail('head SHA must be lowercase 40-hex')
-    validate_dispatch_delta(root,base,head)
-    if git(target,'rev-parse','HEAD')!=target_sha: fail('target checkout mismatch')
-    run(['git','-C',str(root),'merge-base','--is-ancestor',target_sha,'origin/main'])
-    if git(target,'status','--porcelain','--untracked-files=no'): fail('target checkout dirty')
-    targets,parts=inventory(target); files,digest=harness_identity(root)
-    out={'schema':SCHEMA,'kind':'plan','experiment_id':dispatch['experiment_id'],'harness_base_sha':base,'harness_head_sha':head,'harness_logic_files':files,'harness_logic_sha256':digest,'target_sha':target_sha,'target_count':len(targets),'target_digest_sha256':hashlib.sha256(('\n'.join(targets)+'\n').encode()).hexdigest(),'targets':targets,'partitions':parts,'partition_sizes':[len(x) for x in parts],'toolchain_sha256':sha(target/'rust-toolchain.toml'),'cargo_lock_sha256':sha(target/'Cargo.lock'),'workspace_root_name':'target-src','seed_command':SEED_CMD,'worker_command':'python3 .github/scripts/run-integration-shard.py <index> 4'}
-    a.out.write_text(json.dumps(out,indent=2,sort_keys=True)+'\n');
-    if a.github_output:
-        with a.github_output.open('a') as f: f.write(f"target_sha={target_sha}\ntarget_count={len(targets)}\nharness_base_sha={base}\nharness_logic_digest={digest}\nexperiment_id={dispatch['experiment_id']}\n")
 
-def identity(plan): return {k:plan[k] for k in IDENTITY_KEYS}
+def plan(args) -> int:
+    root = args.harness_root.resolve()
+    target = args.target_root.resolve()
+    dispatch = read_dispatch(args.dispatch.resolve())
+    head = args.head_sha
+    base = dispatch["harness_base_sha"]
+    target_sha = dispatch["target_sha"]
+    if len(head) != 40 or any(c not in "0123456789abcdef" for c in head):
+        fail("head SHA must be lowercase 40-hex")
+    validate_dispatch_delta(root, base, head)
+    if git(target, "rev-parse", "HEAD") != target_sha:
+        fail("target checkout mismatch")
+    run(["git", "-C", str(root), "merge-base", "--is-ancestor", target_sha, "origin/main"])
+    if git(target, "status", "--porcelain", "--untracked-files=no"):
+        fail("target checkout dirty")
 
-def same(plan,other):
-    for k in IDENTITY_KEYS:
-        if other.get(k)!=plan.get(k): fail(f'{k} mismatch')
-
-def seed(a):
-    p=load(a.plan); root=a.target_root.resolve()
-    if p.get('schema')!=SCHEMA or p.get('kind')!='plan' or git(root,'rev-parse','HEAD')!=p['target_sha']: fail('seed identity mismatch')
-    if os.getenv('RUNNER_ARCH')!='ARM64' or platform.machine()!='aarch64': fail('ARM64 required')
-    run(['sccache','--zero-stats']); started=now(); t=time.monotonic(); run(SEED_CMD,cwd=root); elapsed=round(time.monotonic()-t,3)
-    if git(root,'status','--porcelain','--untracked-files=no') or not (root/'target').is_dir(): fail('seed modified source or target missing')
-    a.archive.parent.mkdir(parents=True,exist_ok=True); run(['tar','--zstd','-cf',str(a.archive.resolve()),'-C',str(root.parent),root.name])
-    stats=json.loads(run(['sccache','--show-stats','--stats-format=json'],capture=True).stdout)
-    m={**identity(p),'schema':SCHEMA,'kind':'seed','status':'success','seed_command':SEED_CMD,'seed_seconds':elapsed,'started_at':started,'completed_at':now(),'archive_sha256':sha(a.archive),'archive_bytes':a.archive.stat().st_size,'archive_name':a.archive.name,'sccache_stats':stats,'cache':{k:os.getenv(k) for k in ('RESEARCH_CACHE_KEY','RESEARCH_CACHE_MATCHED_KEY','RESEARCH_CACHE_HIT')}}
-    a.manifest.write_text(json.dumps(m,indent=2,sort_keys=True)+'\n')
-
-def safe_members(names,root):
-    pre=root+'/'
-    if not names: fail('empty archive')
-    for raw in names:
-        n=raw.rstrip('/'); q=PurePosixPath(n)
-        if q.is_absolute() or '..' in q.parts or (n!=root and not n.startswith(pre)): fail(f'unsafe archive member: {raw}')
-
-def extract(a):
-    p,m=load(a.plan),load(a.manifest); same(p,m)
-    if m.get('kind')!='seed' or m.get('status')!='success' or sha(a.archive)!=m.get('archive_sha256') or a.archive.stat().st_size!=m.get('archive_bytes'): fail('seed artifact integrity mismatch')
-    root=a.target_root.resolve()
-    if root.exists() or root.name!=p['workspace_root_name']: fail('target root preexists or wrong name')
-    names=run(['tar','--zstd','-tf',str(a.archive)],capture=True).stdout.splitlines(); safe_members(names,root.name)
-    run(['tar','--zstd','-xf',str(a.archive),'-C',str(root.parent)])
-    if git(root,'rev-parse','HEAD')!=p['target_sha'] or git(root,'status','--porcelain','--untracked-files=no'): fail('extracted source identity mismatch')
-    if sha(root/'rust-toolchain.toml')!=p['toolchain_sha256'] or sha(root/'Cargo.lock')!=p['cargo_lock_sha256'] or not (root/'target').is_dir(): fail('extracted build identity mismatch')
-    a.marker.write_text(json.dumps({'schema':SCHEMA,'kind':'prepared','target_sha':p['target_sha'],'archive_sha256':m['archive_sha256']})+'\n')
-
-def worker(a):
-    p,m,r=load(a.plan),load(a.manifest),load(a.marker); same(p,m)
-    if a.shard not in range(4) or r.get('target_sha')!=p['target_sha'] or r.get('archive_sha256')!=m['archive_sha256']: fail('prepared worker identity mismatch')
-    root=a.target_root.resolve(); targets,parts=inventory(root)
-    if targets!=p['targets'] or parts!=p['partitions']: fail('worker inventory/partition mismatch')
-    run(['sccache','--zero-stats']); t=time.monotonic(); proc=subprocess.run(['python3','.github/scripts/run-integration-shard.py',str(a.shard),'4'],cwd=root); elapsed=round(time.monotonic()-t,3)
-    stats=json.loads(run(['sccache','--show-stats','--stats-format=json'],capture=True).stdout)
-    e={'schema':SCHEMA,'kind':'worker','status':'success' if proc.returncode==0 else 'failed','exit_code':proc.returncode,'shard_index':a.shard,'selected_targets':parts[a.shard],'all_targets':targets,'execution_seconds':elapsed,'seed_archive_sha256':m['archive_sha256'],'sccache_stats':stats,**identity(p)}
-    a.out.write_text(json.dumps(e,indent=2,sort_keys=True)+'\n'); return proc.returncode
-
-def shared_commands():
-    return [['python3','.github/scripts/run-integration-shard.py',str(i),'4'] for i in range(4)]
-
-def shared_run(a):
-    p=load(a.plan); root=a.target_root.resolve()
-    if p.get('schema')!=SCHEMA or p.get('kind')!='plan' or git(root,'rev-parse','HEAD')!=p['target_sha']: fail('shared-run identity mismatch')
-    if os.getenv('RUNNER_ARCH')!='ARM64' or platform.machine()!='aarch64': fail('ARM64 required')
-    if git(root,'status','--porcelain','--untracked-files=no'): fail('shared-run source dirty before execution')
-    targets,parts=inventory(root)
-    if targets!=p['targets'] or parts!=p['partitions']: fail('shared-run inventory/partition mismatch')
-    flat=[name for part in parts for name in part]; counts=Counter(flat)
-    if set(flat)!=set(targets) or any(v!=1 for v in counts.values()): fail('shared-run plan is not exact one-to-one cover')
-    a.log_dir.mkdir(parents=True,exist_ok=True)
-    run(['sccache','--zero-stats'])
-    commands=shared_commands(); started_at=now(); wall_start=time.monotonic(); running=[]
-    for i,command in enumerate(commands):
-        log_path=a.log_dir/f'shared-shard-{i}.log'
-        handle=log_path.open('w',encoding='utf-8')
-        process=subprocess.Popen(command,cwd=root,stdout=handle,stderr=subprocess.STDOUT,text=True)
-        running.append({'index':i,'command':command,'process':process,'handle':handle,'log_path':log_path,'started':time.monotonic()})
-    pending=set(range(4)); results={}
-    while pending:
-        for i in list(pending):
-            item=running[i]; code=item['process'].poll()
-            if code is None: continue
-            item['handle'].close()
-            results[i]={
-                'shard_index':i,
-                'command':item['command'],
-                'selected_targets':parts[i],
-                'exit_code':code,
-                'execution_seconds':round(time.monotonic()-item['started'],3),
-                'log_sha256':sha(item['log_path']),
-            }
-            pending.remove(i)
-        if pending: time.sleep(0.05)
-    wall_seconds=round(time.monotonic()-wall_start,3)
-    stats=json.loads(run(['sccache','--show-stats','--stats-format=json'],capture=True).stdout)
-    source_clean=not bool(git(root,'status','--porcelain','--untracked-files=no'))
-    ordered=[results[i] for i in range(4)]
-    valid=source_clean and all(x['exit_code']==0 for x in ordered)
-    summary={
-        **identity(p),
-        'schema':SCHEMA,
-        'kind':'shared-run-summary',
-        'valid':valid,
-        'strategy':'single-runner-shared-target-concurrent-production-sharders',
-        'started_at':started_at,
-        'completed_at':now(),
-        'runner_arch':os.getenv('RUNNER_ARCH'),
-        'uname_machine':platform.machine(),
-        'rustc':run(['rustc','--version'],capture=True).stdout.strip(),
-        'cargo':run(['cargo','--version'],capture=True).stdout.strip(),
-        'sccache':run(['sccache','--version'],capture=True).stdout.strip(),
-        'worker_commands':commands,
-        'shared_target_dir':True,
-        'seed_stage_present':False,
-        'transport_archive_bytes':0,
-        'source_clean_after_execution':source_clean,
-        'partition_sizes':[len(x) for x in parts],
-        'shards':ordered,
-        'execution_wall_seconds':wall_seconds,
-        'execution_critical_seconds':max(x['execution_seconds'] for x in ordered),
-        'execution_sum_seconds':round(sum(x['execution_seconds'] for x in ordered),3),
-        'sccache_stats':stats,
-        'cache':{k:os.getenv(k) for k in ('RESEARCH_CACHE_KEY','RESEARCH_CACHE_MATCHED_KEY','RESEARCH_CACHE_HIT')},
+    targets, partitions, modeled_loads = inventory(target, dispatch["variant"])
+    files, digest = harness_identity(root)
+    lane_count = len(partitions)
+    target_digest = hashlib.sha256(("\n".join(targets) + "\n").encode("utf-8")).hexdigest()
+    matrix = {"include": [{"lane": index} for index in range(lane_count)]}
+    out = {
+        "schema": SCHEMA,
+        "kind": "plan",
+        "experiment_id": dispatch["experiment_id"],
+        "variant": dispatch["variant"],
+        "lane_count": lane_count,
+        "harness_base_sha": base,
+        "harness_head_sha": head,
+        "harness_logic_files": files,
+        "harness_logic_sha256": digest,
+        "target_sha": target_sha,
+        "target_count": len(targets),
+        "target_digest_sha256": target_digest,
+        "targets": targets,
+        "partitions": partitions,
+        "partition_sizes": [len(lane) for lane in partitions],
+        "modeled_loads": modeled_loads,
+        "toolchain_sha256": sha256(target / "rust-toolchain.toml"),
+        "cargo_lock_sha256": sha256(target / "Cargo.lock"),
+        "matrix": matrix,
     }
-    if not valid:
-        summary['error']='one or more production shard processes failed or source tree changed'
-    a.out.write_text(json.dumps(summary,indent=2,sort_keys=True)+'\n')
-    return 0 if valid else 1
+    args.out.write_text(json.dumps(out, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if args.github_output:
+        with args.github_output.open("a", encoding="utf-8") as output:
+            output.write(f"target_sha={target_sha}\n")
+            output.write(f"variant={dispatch['variant']}\n")
+            output.write(f"lane_count={lane_count}\n")
+            output.write(f"matrix={json.dumps(matrix, separators=(',', ':'))}\n")
+            output.write(f"harness_base_sha={base}\n")
+            output.write(f"harness_logic_digest={digest}\n")
+            output.write(f"target_count={len(targets)}\n")
+            output.write(f"target_digest={target_digest}\n")
+            output.write(f"experiment_id={dispatch['experiment_id']}\n")
+    return 0
 
-def validate(plan,seed,items):
-    same(plan,seed)
-    if len(items)!=4: fail('expected four workers')
-    by={}
-    for x in items:
-        same(plan,x); i=x.get('shard_index')
-        if x.get('kind')!='worker' or x.get('status')!='success' or x.get('exit_code')!=0 or i not in range(4) or i in by or x.get('selected_targets')!=plan['partitions'][i] or not isinstance(x.get('sccache_stats'),dict): fail('invalid worker evidence')
-        by[i]=x
-    flat=[n for i in range(4) for n in by[i]['selected_targets']]; c=Counter(flat)
-    if set(flat)!=set(plan['targets']) or any(v!=1 for v in c.values()): fail('worker evidence not exact cover')
-    times=[float(by[i]['execution_seconds']) for i in range(4)]
-    return {'execution_seconds':times,'execution_critical_seconds':max(times),'execution_sum_seconds':round(sum(times),3)}
 
-def summarize(a):
-    p,m=load(a.plan),load(a.manifest); items=[load(x) for x in sorted(a.evidence_dir.glob('evidence-reuse-*.json'))]; out={'schema':SCHEMA,'kind':'summary','valid':False}
-    try: out.update({'valid':True,'target_sha':p['target_sha'],'target_count':p['target_count'],'target_digest_sha256':p['target_digest_sha256'],'partition_sizes':p['partition_sizes'],'harness_logic_sha256':p['harness_logic_sha256'],'seed':{'seed_seconds':m['seed_seconds'],'archive_bytes':m['archive_bytes'],'archive_sha256':m['archive_sha256'],'sccache_stats':m['sccache_stats']},'execution':validate(p,m,items),'worker_cache':[{'shard_index':x['shard_index'],'sccache_stats':x['sccache_stats']} for x in sorted(items,key=lambda z:z['shard_index'])]})
-    except Exception as e: out['error']=str(e)
-    a.out.write_text(json.dumps(out,indent=2,sort_keys=True)+'\n'); return 0 if out['valid'] else 1
+def identity(plan_data: dict) -> dict:
+    return {key: plan_data[key] for key in IDENTITY_KEYS}
+
+
+def same_identity(plan_data: dict, other: dict) -> None:
+    for key in IDENTITY_KEYS:
+        if other.get(key) != plan_data.get(key):
+            fail(f"{key} mismatch")
+
+
+def cargo_command(selected: list[str]) -> list[str]:
+    command = ["cargo", "test", "--workspace", "--all-features"]
+    for name in selected:
+        command.extend(["--test", name])
+    return command
+
+
+def lane(args) -> int:
+    plan_data = load(args.plan)
+    root = args.target_root.resolve()
+    if plan_data.get("schema") != SCHEMA or plan_data.get("kind") != "plan":
+        fail("invalid plan")
+    if git(root, "rev-parse", "HEAD") != plan_data["target_sha"]:
+        fail("lane target checkout mismatch")
+    if os.getenv("RUNNER_ARCH") != "ARM64" or platform.machine() != "aarch64":
+        fail("ARM64 required")
+    if git(root, "status", "--porcelain", "--untracked-files=no"):
+        fail("lane source dirty before execution")
+    targets, partitions, modeled_loads = inventory(root, plan_data["variant"])
+    if targets != plan_data["targets"] or partitions != plan_data["partitions"] or modeled_loads != plan_data["modeled_loads"]:
+        fail("lane inventory/partition drift")
+    if args.lane not in range(plan_data["lane_count"]):
+        fail("lane index out of range")
+    selected = partitions[args.lane]
+    command = (
+        ["python3", ".github/scripts/run-integration-shard.py", str(args.lane), "4"]
+        if plan_data["variant"] == "A4"
+        else cargo_command(selected)
+    )
+    run(["sccache", "--zero-stats"])
+    started_at = now()
+    started = time.monotonic()
+    proc = subprocess.run(command, cwd=root)
+    elapsed = round(time.monotonic() - started, 3)
+    stats = json.loads(run(["sccache", "--show-stats", "--stats-format=json"], capture=True).stdout)
+    source_clean = not bool(git(root, "status", "--porcelain", "--untracked-files=no"))
+    evidence = {
+        **identity(plan_data),
+        "schema": SCHEMA,
+        "kind": "lane",
+        "status": "success" if proc.returncode == 0 and source_clean else "failed",
+        "exit_code": proc.returncode,
+        "lane_index": args.lane,
+        "selected_targets": selected,
+        "selected_target_count": len(selected),
+        "modeled_load": modeled_loads[args.lane],
+        "command": command,
+        "execution_seconds": elapsed,
+        "started_at": started_at,
+        "completed_at": now(),
+        "source_clean_after_execution": source_clean,
+        "runner_arch": os.getenv("RUNNER_ARCH"),
+        "uname_machine": platform.machine(),
+        "rustc": run(["rustc", "--version"], capture=True).stdout.strip(),
+        "cargo": run(["cargo", "--version"], capture=True).stdout.strip(),
+        "sccache": run(["sccache", "--version"], capture=True).stdout.strip(),
+        "sccache_stats": stats,
+        "cache": {
+            key: os.getenv(key)
+            for key in ("RESEARCH_CACHE_KEY", "RESEARCH_CACHE_MATCHED_KEY", "RESEARCH_CACHE_HIT")
+        },
+    }
+    args.out.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return 0 if evidence["status"] == "success" else 1
+
+
+def validate_summary(plan_data: dict, items: list[dict]) -> dict:
+    lane_count = plan_data["lane_count"]
+    if len(items) != lane_count:
+        fail(f"expected {lane_count} lane evidence files")
+    by_lane: dict[int, dict] = {}
+    for item in items:
+        same_identity(plan_data, item)
+        index = item.get("lane_index")
+        if (
+            item.get("kind") != "lane"
+            or item.get("status") != "success"
+            or item.get("exit_code") != 0
+            or index not in range(lane_count)
+            or index in by_lane
+            or item.get("selected_targets") != plan_data["partitions"][index]
+            or item.get("source_clean_after_execution") is not True
+            or not isinstance(item.get("sccache_stats"), dict)
+        ):
+            fail("invalid lane evidence")
+        by_lane[index] = item
+    flattened = [name for index in range(lane_count) for name in by_lane[index]["selected_targets"]]
+    counts = Counter(flattened)
+    if set(flattened) != set(plan_data["targets"]) or len(flattened) != len(plan_data["targets"]):
+        fail("lane evidence does not cover exact target inventory")
+    if any(count != 1 for count in counts.values()):
+        fail("lane evidence contains duplicate target execution")
+    execution = [float(by_lane[index]["execution_seconds"]) for index in range(lane_count)]
+    return {
+        "execution_seconds": execution,
+        "execution_critical_seconds": max(execution),
+        "execution_sum_seconds": round(sum(execution), 3),
+        "partition_sizes": plan_data["partition_sizes"],
+        "modeled_loads": plan_data["modeled_loads"],
+        "lane_cache": [
+            {
+                "lane_index": index,
+                "sccache_stats": by_lane[index]["sccache_stats"],
+                "cache": by_lane[index]["cache"],
+            }
+            for index in range(lane_count)
+        ],
+    }
+
+
+def summarize(args) -> int:
+    plan_data = load(args.plan)
+    items = [load(path) for path in sorted(args.evidence_dir.glob("evidence-topology-*.json"))]
+    out = {
+        "schema": SCHEMA,
+        "kind": "summary",
+        "valid": False,
+        "variant": plan_data.get("variant"),
+        "target_sha": plan_data.get("target_sha"),
+        "target_count": plan_data.get("target_count"),
+        "target_digest_sha256": plan_data.get("target_digest_sha256"),
+        "harness_logic_sha256": plan_data.get("harness_logic_sha256"),
+    }
+    try:
+        out.update(validate_summary(plan_data, items))
+        out["valid"] = True
+    except Exception as exc:
+        out["error"] = str(exc)
+    args.out.write_text(json.dumps(out, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return 0 if out["valid"] else 1
+
 
 class Tests(unittest.TestCase):
-    def test_archive(self):
-        safe_members(['target-src/','target-src/target/a'],'target-src')
-        for x in [['../x'],['target-src/../../x'],['other/x'],['/x']]:
-            with self.assertRaises(ValueError): safe_members(x,'target-src')
-    def test_seed_scope(self): self.assertEqual(SEED_CMD,['cargo','test','--workspace','--all-features','--lib','--no-run']); self.assertNotIn('--tests',SEED_CMD)
-    def test_branch_dispatch_workflow(self):
-        w=(Path(__file__).resolve().parents[2]/'workflows'/WORKFLOW.name).read_text()
-        self.assertIn('push:',w); self.assertIn('branches: [research/627-integration-reuse]',w); self.assertIn('paths: [.github/research/627-dispatch.json]',w)
-        self.assertNotIn('workflow_dispatch:',w); self.assertNotIn('pull_request:',w)
-        self.assertIn('shared-run',w)
-        self.assertNotIn('seed producer',w)
-        self.assertNotIn('seed-workspace',w)
-        self.assertNotIn('actions/download-artifact',w)
-    def test_shared_commands_preserve_production_sharder_contract(self):
-        self.assertEqual(shared_commands(),[
-            ['python3','.github/scripts/run-integration-shard.py','0','4'],
-            ['python3','.github/scripts/run-integration-shard.py','1','4'],
-            ['python3','.github/scripts/run-integration-shard.py','2','4'],
-            ['python3','.github/scripts/run-integration-shard.py','3','4'],
-        ])
-    def test_complete_worker_schema_validates(self):
-        plan={
-            'harness_head_sha':'a'*40,'harness_logic_sha256':'b'*64,'target_sha':'c'*40,'target_count':4,
-            'target_digest_sha256':'d'*64,'toolchain_sha256':'e'*64,'cargo_lock_sha256':'f'*64,
-            'targets':['a','b','c','d'],'partitions':[['a'],['b'],['c'],['d']]
+    def test_generic_partition_exact_cover(self) -> None:
+        targets = ["ui", "a", "b", "c", "d", "e"]
+        weights = {"ui": 10.0, "a": 3.0, "b": 2.0}
+        lanes, loads = generic_partition(targets, weights, 3)
+        exact_cover(targets, lanes, 3)
+        self.assertEqual(lanes[0], ["ui"])
+        self.assertEqual(len(loads), 3)
+
+    def test_command_surface(self) -> None:
+        self.assertEqual(
+            cargo_command(["a", "b"]),
+            ["cargo", "test", "--workspace", "--all-features", "--test", "a", "--test", "b"],
+        )
+
+    def test_dispatch_contract(self) -> None:
+        good = {
+            "schema": DISPATCH_SCHEMA,
+            "harness_base_sha": "a" * 40,
+            "target_sha": "b" * 40,
+            "experiment_id": "pair01-A4",
+            "variant": "A4",
         }
-        seed={**identity(plan),'kind':'seed','status':'success','archive_sha256':'1'*64}
-        items=[
-            {**identity(plan),'kind':'worker','status':'success','exit_code':0,'shard_index':i,
-             'selected_targets':plan['partitions'][i],'all_targets':plan['targets'],
-             'execution_seconds':float(i+1),'seed_archive_sha256':seed['archive_sha256'],'sccache_stats':{}}
-            for i in range(4)
-        ]
-        result=validate(plan,seed,items)
-        self.assertEqual(result['execution_seconds'],[1.0,2.0,3.0,4.0])
-        self.assertEqual(result['execution_critical_seconds'],4.0)
-        self.assertEqual(result['execution_sum_seconds'],10.0)
-        for item in items:
-            self.assertEqual(item['toolchain_sha256'],plan['toolchain_sha256'])
-            self.assertEqual(item['cargo_lock_sha256'],plan['cargo_lock_sha256'])
+        self.assertEqual(set(good), {"schema", "harness_base_sha", "target_sha", "experiment_id", "variant"})
+        self.assertIn(good["variant"], ("A4", "C3"))
 
-def selftest(_): return 0 if unittest.TextTestRunner(verbosity=2).run(unittest.defaultTestLoader.loadTestsFromTestCase(Tests)).wasSuccessful() else 1
+    def test_workflow_is_research_dispatch_only(self) -> None:
+        workflow = (Path(__file__).resolve().parents[2] / "workflows" / WORKFLOW.name).read_text(encoding="utf-8")
+        self.assertIn("branches: [research/627-integration-reuse]", workflow)
+        self.assertIn("paths: [.github/research/627-dispatch.json]", workflow)
+        self.assertNotIn("pull_request:", workflow)
+        self.assertNotIn("workflow_dispatch:", workflow)
+        self.assertIn("fromJSON(needs.plan.outputs.matrix)", workflow)
+        self.assertIn("setup-sccache", workflow)
+        self.assertNotIn("actions/cache/save", workflow)
+        self.assertNotIn("seed-workspace", workflow)
 
-def parser():
-    p=argparse.ArgumentParser(); s=p.add_subparsers(dest='cmd',required=True)
-    q=s.add_parser('plan'); q.add_argument('--harness-root',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--dispatch',type=Path,required=True); q.add_argument('--head-sha',required=True); q.add_argument('--out',type=Path,required=True); q.add_argument('--github-output',type=Path); q.set_defaults(f=plan)
-    q=s.add_parser('seed'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--archive',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.set_defaults(f=seed)
-    q=s.add_parser('extract'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.add_argument('--archive',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--marker',type=Path,required=True); q.set_defaults(f=extract)
-    q=s.add_parser('run'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.add_argument('--marker',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--shard',type=int,required=True); q.add_argument('--out',type=Path,required=True); q.set_defaults(f=worker)
-    q=s.add_parser('shared-run'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--target-root',type=Path,required=True); q.add_argument('--out',type=Path,required=True); q.add_argument('--log-dir',type=Path,required=True); q.set_defaults(f=shared_run)
-    q=s.add_parser('summarize'); q.add_argument('--plan',type=Path,required=True); q.add_argument('--manifest',type=Path,required=True); q.add_argument('--evidence-dir',type=Path,required=True); q.add_argument('--out',type=Path,required=True); q.set_defaults(f=summarize)
-    q=s.add_parser('self-test'); q.set_defaults(f=selftest); return p
 
-def main():
-    try: a=parser().parse_args(); code=a.f(a)
-    except Exception as e: print(f'::error::{e}'); code=1
+def self_test(_) -> int:
+    suite = unittest.defaultTestLoader.loadTestsFromTestCase(Tests)
+    return 0 if unittest.TextTestRunner(verbosity=2).run(suite).wasSuccessful() else 1
+
+
+def parser() -> argparse.ArgumentParser:
+    root = argparse.ArgumentParser()
+    commands = root.add_subparsers(dest="cmd", required=True)
+
+    command = commands.add_parser("plan")
+    command.add_argument("--harness-root", type=Path, required=True)
+    command.add_argument("--target-root", type=Path, required=True)
+    command.add_argument("--dispatch", type=Path, required=True)
+    command.add_argument("--head-sha", required=True)
+    command.add_argument("--out", type=Path, required=True)
+    command.add_argument("--github-output", type=Path)
+    command.set_defaults(handler=plan)
+
+    command = commands.add_parser("run-lane")
+    command.add_argument("--plan", type=Path, required=True)
+    command.add_argument("--target-root", type=Path, required=True)
+    command.add_argument("--lane", type=int, required=True)
+    command.add_argument("--out", type=Path, required=True)
+    command.set_defaults(handler=lane)
+
+    command = commands.add_parser("summarize")
+    command.add_argument("--plan", type=Path, required=True)
+    command.add_argument("--evidence-dir", type=Path, required=True)
+    command.add_argument("--out", type=Path, required=True)
+    command.set_defaults(handler=summarize)
+
+    command = commands.add_parser("self-test")
+    command.set_defaults(handler=self_test)
+    return root
+
+
+def main() -> None:
+    try:
+        args = parser().parse_args()
+        code = args.handler(args)
+    except Exception as exc:
+        print(f"::error::{exc}")
+        code = 1
     raise SystemExit(code or 0)
-if __name__=='__main__': main()
+
+
+if __name__ == "__main__":
+    main()
