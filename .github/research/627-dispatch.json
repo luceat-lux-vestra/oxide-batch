@@ -2,6 +2,6 @@
   "schema": "oxide-batch-integration-topology-dispatch/v1",
   "harness_base_sha": "a7e09f77906a088dc361bbfb3cceffea380d619d",
   "target_sha": "ec7b80df181bca4430988e7ad7b7c11ab0590283",
-  "experiment_id": "a4c3-pair01-C3",
-  "variant": "C3"
+  "experiment_id": "a4c3-pair02-A4",
+  "variant": "A4"
 }
