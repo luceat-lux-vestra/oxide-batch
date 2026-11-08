@@ -51,7 +51,7 @@ jobs:
           if not isinstance(target, str) or re.fullmatch(r"[0-9a-f]{40}", target) is None:
               raise SystemExit("dispatch target_sha must be lowercase 40-hex")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
-              out.write(f"target_sha={target}\\n")
+              out.write(f"target_sha={target}\n")
           PY
       - name: Check out exact target source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
