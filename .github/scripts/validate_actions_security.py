@@ -452,6 +452,82 @@ def check_codeql_weekly_manual_contract(root: Path) -> list[str]:
     return check_codeql_weekly_manual_contract_text(text, path.relative_to(root))
 
 
+
+def _immutable_codeql_pin(block: str, action: str, where: str, violations: list[str]) -> str | None:
+    matches = re.findall(rf"(?m)^\s+uses:\s*github/codeql-action/{re.escape(action)}@([0-9a-f]{{40}})(?:\s+#.*)?$", block)
+    if len(matches) != 1:
+        violations.append(f"{where}: expected exactly one immutable CodeQL {action} action")
+        return None
+    return matches[0]
+
+def check_codeql_pr_runtime_contract_text(pr_ci: str, codeql: str, path: Path = Path(".github/workflows/pr-ci.yml")) -> list[str]:
+    violations: list[str] = []
+    runtime = _job_block(pr_ci, "codeql-runtime"); scope = _job_block(pr_ci, "scope")
+    gate = _job_block(pr_ci, "direct-merge-gate"); production = _job_block(codeql, "analyze")
+    if runtime is None or scope is None or gate is None or production is None:
+        return [f"{path}: selective CodeQL runtime topology is incomplete"]
+    permission_blocks = list(re.finditer(r"(?m)^    permissions:[ \t]*\n", runtime))
+    observed_permissions: dict[str, str] = {}
+    if len(permission_blocks) != 1:
+        violations.append(f"{path}: codeql-runtime job-local permissions missing or duplicated")
+    else:
+        for line in runtime[permission_blocks[0].end():].splitlines():
+            if not line.startswith("      "):
+                break
+            match = re.fullmatch(r" {6}([A-Za-z0-9_-]+):[ \t]*([A-Za-z-]+)[ \t]*(?:#[^\r\n]*)?", line)
+            if match is None:
+                violations.append(f"{path}: malformed codeql-runtime permission")
+                break
+            key = match.group(1)
+            if key in observed_permissions:
+                violations.append(f"{path}: duplicate codeql-runtime permission: {key}")
+            observed_permissions[key] = match.group(2)
+    if observed_permissions != {"contents": "read", "pull-requests": "read"}:
+        violations.append(f"{path}: codeql-runtime permissions must be exactly contents:read + pull-requests:read")
+    prod_init = _immutable_codeql_pin(production, "init", "codeql.yml:analyze", violations)
+    prod_analyze = _immutable_codeql_pin(production, "analyze", "codeql.yml:analyze", violations)
+    pr_init = _immutable_codeql_pin(runtime, "init", f"{path}:codeql-runtime", violations)
+    pr_analyze = _immutable_codeql_pin(runtime, "analyze", f"{path}:codeql-runtime", violations)
+    if prod_init and prod_analyze and prod_init != prod_analyze: violations.append("codeql.yml:analyze: production CodeQL init/analyze pins must match")
+    if prod_init and pr_init and prod_init != pr_init: violations.append(f"{path}: PR CodeQL init pin must match production")
+    if prod_analyze and pr_analyze and prod_analyze != pr_analyze: violations.append(f"{path}: PR CodeQL analyze pin must match production")
+    runtime_fragments = (
+        "needs: scope", "if: ${{ needs.scope.outputs.codeql_runtime_required == 'true' }}",
+        "repository: ${{ github.event.pull_request.head.repo.full_name }}", "ref: ${{ github.event.pull_request.head.sha }}",
+        "persist-credentials: false", "trusted-codeql-runtime-validation.py self-test", "trusted-codeql-runtime-validation.py check-contract",
+        "languages: actions", "build-mode: none", "category: /language:actions", "upload: never",
+        "output: ${{ runner.temp }}/pr-codeql-runtime", "trusted-codeql-runtime-validation.py verify",
+    )
+    for fragment in runtime_fragments:
+        if fragment not in runtime: violations.append(f"{path}: codeql-runtime contract missing: {fragment}")
+    for forbidden in ("security-events: write", "actions: write", "id-token: write", "upload-artifact"):
+        if forbidden in runtime: violations.append(f"{path}: codeql-runtime has forbidden authority/retention: {forbidden}")
+    scope_fragments = (
+        "codeql_runtime_classification_outcome: ${{ steps.codeql-runtime-scope.outcome }}",
+        "codeql_runtime_required: ${{ steps.codeql-runtime-scope.outputs.required }}",
+        "Classify selective CodeQL runtime from trusted base", ".trusted-base/.github/scripts/trusted-codeql-runtime-validation.py",
+        "echo 'required=true' >> \"$GITHUB_OUTPUT\"", "--github-output \"$GITHUB_OUTPUT\"",
+    )
+    for fragment in scope_fragments:
+        if fragment not in scope: violations.append(f"{path}: trusted-base CodeQL classifier missing: {fragment}")
+    gate_fragments = (
+        "needs: [scope, rust, dependency, evidence, supply, conformance, codeql-runtime]",
+        "CODEQL_RUNTIME_CLASSIFICATION_OUTCOME:", "CODEQL_RUNTIME_REQUIRED:", "CODEQL_RUNTIME_RESULT:",
+        'require_success codeql-runtime-scope "$CODEQL_RUNTIME_CLASSIFICATION_OUTCOME"',
+        'require_success codeql-runtime "$CODEQL_RUNTIME_RESULT"', 'require_skipped codeql-runtime "$CODEQL_RUNTIME_RESULT"',
+    )
+    for fragment in gate_fragments:
+        if fragment not in gate: violations.append(f"{path}: Direct Merge Gate CodeQL contract missing: {fragment}")
+    return violations
+
+def check_codeql_pr_runtime_contract(root: Path) -> list[str]:
+    pr_path = root / ".github" / "workflows" / "pr-ci.yml"; codeql_path = root / ".github" / "workflows" / "codeql.yml"
+    try:
+        pr_ci = pr_path.read_text(encoding="utf-8"); codeql = codeql_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"CodeQL PR runtime contract unreadable: {exc}"]
+    return check_codeql_pr_runtime_contract_text(pr_ci, codeql, pr_path.relative_to(root))
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -466,6 +542,7 @@ def main() -> int:
     violations = validate(root)
     violations.extend(check_issue_labeler_contract(root))
     violations.extend(check_codeql_weekly_manual_contract(root))
+    violations.extend(check_codeql_pr_runtime_contract(root))
     if violations:
         print("GitHub Actions security policy violations:", file=sys.stderr)
         for violation in violations:
