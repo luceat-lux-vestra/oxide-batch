@@ -8,6 +8,8 @@ codeql = (workflows / "codeql.yml").read_text()
 draft = (workflows / "release-draft.yml").read_text()
 release = (workflows / "release.yml").read_text()
 ci = (workflows / "ci.yml").read_text()
+pr_ci = (workflows / "pr-ci.yml").read_text()
+adapter = (ROOT / ".github/scripts/trusted-codeql-runtime-validation.py").read_text()
 gate = (ROOT / ".github/scripts/check_release_codeql.py").read_text()
 verdict = (ROOT / ".github/scripts/check_codeql_sarif.py").read_text()
 
@@ -76,4 +78,15 @@ require("check_codeql_sarif.py --self-test" in ci
         and "check_release_codeql.py --self-test" in ci
         and "test_release_codeql_policy.py" in ci,
         "PR CI must exercise SARIF, lifecycle and publication-order regressions")
+require("  codeql-runtime:" in pr_ci
+        and "github/codeql-action/init@" in pr_ci
+        and "github/codeql-action/analyze@" in pr_ci
+        and "upload: never" in pr_ci
+        and "trusted-codeql-runtime-validation.py verify" in pr_ci,
+        "selective PR CodeQL runtime adapter wiring missing")
+require("production_evidence" in adapter and "pull_request" in adapter and "metadata_ok" in adapter and "check_codeql_sarif.py" in adapter,
+        "PR CodeQL runtime must prove local verdict and production-evidence rejection")
+require("upload-artifact" not in pr_ci[pr_ci.index("  codeql-runtime:"):pr_ci.index("  direct-merge-gate:")],
+        "PR CodeQL runtime SARIF must not be retained as an artifact")
+
 print("Oxide exact-SHA CodeQL release boundary policy passed")

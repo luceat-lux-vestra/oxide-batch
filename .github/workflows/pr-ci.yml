@@ -25,6 +25,8 @@ jobs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       supply_chain_impact: ${{ steps.classify.outputs.supply_chain_impact }}
       evidence_impact: ${{ steps.classify.outputs.evidence_impact }}
+      codeql_runtime_classification_outcome: ${{ steps.codeql-runtime-scope.outcome }}
+      codeql_runtime_required: ${{ steps.codeql-runtime-scope.outputs.required }}
     steps:
       - name: Check out exact trusted base
         id: trusted-base
@@ -95,6 +97,43 @@ jobs:
             echo "evidence_impact=$evidence_impact"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Classify selective CodeQL runtime from trusted base
+        id: codeql-runtime-scope
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          TRUSTED_CHECKOUT: ${{ steps.trusted-base.outcome }}
+        shell: bash
+        run: |
+          echo 'required=true' >> "$GITHUB_OUTPUT"
+          set -euo pipefail
+          test "$TRUSTED_CHECKOUT" = "success"
+
+          validator=.trusted-base/.github/scripts/trusted-codeql-runtime-validation.py
+          if [ ! -f "$validator" ]; then
+            echo "Trusted base predates #633 classifier; bootstrap requires the real runtime."
+            exit 0
+          fi
+
+          pr_json="$RUNNER_TEMP/codeql-runtime-pr.json"
+          files_json="$RUNNER_TEMP/codeql-runtime-files.json"
+          gh api -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}" > "$pr_json"
+          gh api --paginate --slurp -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/pulls/${PR_NUMBER}/files?per_page=100" > "$files_json"
+
+          python3 "$validator" classify \
+            --pr-json "$pr_json" \
+            --files-json "$files_json" \
+            --repo "$GITHUB_REPOSITORY" \
+            --base "$BASE_SHA" \
+            --head "$HEAD_SHA" \
+            --head-repo "$HEAD_REPO" \
+            --github-output "$GITHUB_OUTPUT"
   rust:
     needs: scope
     if: ${{ (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
@@ -131,9 +170,54 @@ jobs:
       contents: read
       pull-requests: read # M5 trusted routing re-reads exact PR identity and changed-file metadata.
 
+  codeql-runtime:
+    name: codeql-runtime
+    needs: scope
+    if: ${{ needs.scope.outputs.codeql_runtime_required == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read # Re-read exact PR metadata for the selective CodeQL runtime.
+    steps:
+      - name: Check out exact PR head for CodeQL runtime
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Verify selective CodeQL runtime contract
+        run: |
+          python3 .github/scripts/trusted-codeql-runtime-validation.py self-test
+          python3 .github/scripts/trusted-codeql-runtime-validation.py check-contract
+
+      - name: Initialize PR-only CodeQL runtime
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: actions
+          build-mode: none
+
+      - name: Analyze PR-only CodeQL runtime without upload
+        id: codeql-runtime-analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:actions
+          upload: never
+          output: ${{ runner.temp }}/pr-codeql-runtime
+
+      - name: Verify local PR-only CodeQL SARIF and reject promotion
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SARIF_DIR: ${{ steps.codeql-runtime-analyze.outputs.sarif-output }}
+        run: |
+          python3 .github/scripts/trusted-codeql-runtime-validation.py verify \
+            --sarif-dir "$SARIF_DIR" \
+            --head "$HEAD_SHA"
   direct-merge-gate:
     name: Direct Merge Gate
-    needs: [scope, rust, dependency, evidence, supply, conformance]
+    needs: [scope, rust, dependency, evidence, supply, conformance, codeql-runtime]
     if: ${{ always() }}
     runs-on: ubuntu-slim
     timeout-minutes: 5
@@ -153,6 +237,9 @@ jobs:
           EVIDENCE_RESULT: ${{ needs.evidence.result }}
           SUPPLY_RESULT: ${{ needs.supply.result }}
           CONFORMANCE_RESULT: ${{ needs.conformance.result }}
+          CODEQL_RUNTIME_CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.codeql_runtime_classification_outcome }}
+          CODEQL_RUNTIME_REQUIRED: ${{ needs.scope.outputs.codeql_runtime_required }}
+          CODEQL_RUNTIME_RESULT: ${{ needs.codeql-runtime.result }}
         shell: bash
         run: |
           set -euo pipefail
@@ -181,8 +268,18 @@ jobs:
           }
 
           require_success conformance "$CONFORMANCE_RESULT"
+          require_success codeql-runtime-scope "$CODEQL_RUNTIME_CLASSIFICATION_OUTCOME"
 
-          echo "scope=$SCOPE_RESULT classification=$CLASSIFICATION_OUTCOME docs_only=$DOCS_ONLY"
+          if [ "$CODEQL_RUNTIME_REQUIRED" = "true" ]; then
+            require_success codeql-runtime "$CODEQL_RUNTIME_RESULT"
+          elif [ "$CODEQL_RUNTIME_REQUIRED" = "false" ]; then
+            require_skipped codeql-runtime "$CODEQL_RUNTIME_RESULT"
+          else
+            echo "::error::invalid codeql_runtime_required=$CODEQL_RUNTIME_REQUIRED" >&2
+            exit 1
+          fi
+
+          echo "scope=$SCOPE_RESULT classification=$CLASSIFICATION_OUTCOME docs_only=$DOCS_ONLY codeql_runtime_required=$CODEQL_RUNTIME_REQUIRED"
 
           if [ "$CLASSIFICATION_OUTCOME" != "success" ]; then
             require_success rust "$RUST_RESULT"

@@ -481,3 +481,38 @@ for title, mutated, diagnostic in (
     assert any(diagnostic in error for error in errors), (title, errors)
 
 print("Activated weekly/manual CodeQL security contract: PASS")
+ACTIVE_PR_CI = ROOT / ".github/workflows/pr-ci.yml"
+activated_pr_ci = ACTIVE_PR_CI.read_text(encoding="utf-8")
+assert MODULE.check_codeql_pr_runtime_contract_text(activated_pr_ci, activated_codeql) == []
+RUNTIME_PIN = "9b3254085494b55a0f7c4c2b3d2d52cc712ce370"
+runtime_job = MODULE._job_block(activated_pr_ci, "codeql-runtime")
+assert runtime_job is not None
+assert "      contents: read\n" in runtime_job
+runtime_write = runtime_job.replace("      contents: read\n", "      contents: write\n", 1)
+runtime_duplicate = runtime_job.replace(
+    "      contents: read\n",
+    "      contents: read\n      contents: read # must fail closed\n",
+    1,
+)
+runtime_commented = runtime_job.replace(
+    "      contents: read\n",
+    "      contents: read # scoped exact-source checkout\n",
+    1,
+)
+assert all(x != runtime_job for x in (runtime_write, runtime_duplicate, runtime_commented))
+assert MODULE.check_codeql_pr_runtime_contract_text(
+    activated_pr_ci.replace(runtime_job, runtime_commented, 1), activated_codeql
+) == [], "valid inline permission comments were rejected"
+for title, mutated, diagnostic in (
+    ("permit SARIF upload", activated_pr_ci.replace("          upload: never\n", "          upload: always\n", 1), "upload: never"),
+    ("drift PR init pin", activated_pr_ci.replace(f"github/codeql-action/init@{RUNTIME_PIN}", "github/codeql-action/init@" + "0" * 40, 1), "PR CodeQL init pin must match production"),
+    ("grant runtime write authority", activated_pr_ci.replace(runtime_job, runtime_write, 1), "permissions must be exactly"),
+    ("duplicate runtime permission", activated_pr_ci.replace(runtime_job, runtime_duplicate, 1), "duplicate codeql-runtime permission"),
+    ("detach runtime from Direct Merge Gate", activated_pr_ci.replace("needs: [scope, rust, dependency, evidence, supply, conformance, codeql-runtime]", "needs: [scope, rust, dependency, evidence, supply, conformance]", 1), "Direct Merge Gate CodeQL contract missing"),
+    ("lose exact PR head checkout", activated_pr_ci.replace("          ref: ${{ github.event.pull_request.head.sha }}\n", "          ref: ${{ github.sha }}\n", 1), "ref: ${{ github.event.pull_request.head.sha }}"),
+    ("lose trusted-base classifier", activated_pr_ci.replace(".trusted-base/.github/scripts/trusted-codeql-runtime-validation.py", ".github/scripts/trusted-codeql-runtime-validation.py", 1), "trusted-base CodeQL classifier missing"),
+):
+    assert mutated != activated_pr_ci, ("CodeQL PR runtime negative fixture ineffective", title)
+    errors = MODULE.check_codeql_pr_runtime_contract_text(mutated, activated_codeql)
+    assert any(diagnostic in error for error in errors), (title, errors)
+print("Selective PR CodeQL runtime security contract: PASS")
