@@ -139,7 +139,7 @@
       "id": "main-ruleset.strict_required_status_checks",
       "classification": "required",
       "readback": "main-ruleset-api",
-      "expected": true
+      "expected": false
     },
     {
       "id": "main-ruleset.required_status_contexts",

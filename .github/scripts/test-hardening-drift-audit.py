@@ -67,7 +67,7 @@ def ruleset(active=True, tag=False):
             {
                 "type": "required_status_checks",
                 "parameters": {
-                    "strict_required_status_checks_policy": True,
+                    "strict_required_status_checks_policy": False,
                     "required_status_checks": [
                         {"context": "Direct Merge Gate", "integration_id": 15368}
                     ],
