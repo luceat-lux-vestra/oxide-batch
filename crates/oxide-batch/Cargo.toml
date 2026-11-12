@@ -43,7 +43,6 @@ tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
 
 [dev-dependencies]
 futures-executor = "0.3.31"
-oxide-batch-test = { path = "../oxide-batch-test", version = "=0.6.0" }
 stats_alloc = "0.1.10"
 syn = { version = "3.0.3", default-features = false, features = ["full", "parsing"] }
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "time"] }
