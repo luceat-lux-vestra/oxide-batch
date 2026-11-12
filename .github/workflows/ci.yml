@@ -1,3 +1,4 @@
+# Temporary production cache restore validation; do not merge.
 name: Rust
 on:
   workflow_call:
