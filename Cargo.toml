@@ -1,4 +1,3 @@
-# CI cache restore validation round 2 (temporary, do not merge)
 [workspace]
 members = [
     "crates/oxide-batch",
