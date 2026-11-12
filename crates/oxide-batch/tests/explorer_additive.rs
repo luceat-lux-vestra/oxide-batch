@@ -30,9 +30,6 @@ fn omitted_point_query_fails_closed() -> Result<(), Box<dyn Error>> {
 
     let result = block_on(explorer.get_execution(execution_id));
 
-    assert!(matches!(
-        result,
-        Err(ExplorerError::UnsupportedCapability)
-    ));
+    assert!(matches!(result, Err(ExplorerError::UnsupportedCapability)));
     Ok(())
 }
