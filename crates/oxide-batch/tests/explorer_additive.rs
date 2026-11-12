@@ -19,10 +19,7 @@ fn omitted_paginated_query_fails_closed() -> Result<(), Box<dyn Error>> {
 
     let result = block_on(explorer.list_job_names(&request));
 
-    assert!(matches!(
-        result,
-        Err(ExplorerError::UnsupportedCapability)
-    ));
+    assert!(matches!(result, Err(ExplorerError::UnsupportedCapability)));
     Ok(())
 }
 
