@@ -52,9 +52,12 @@ later milestone; none is silently dropped.
 
 ## Planned and Unknown: not yet implemented
 
-The remaining rows are `Planned` for a named later milestone (M7-M14), and `2` rows —
-`DB-MONGO-001` and `IO-MAILLDAP-001` — are `Unknown` (reviewed disposition not
-yet decided). None of these is implemented in this release. The complete list
+The remaining rows are `Planned` for a named later milestone (M7-M14), and
+`IO-MAILLDAP-001` is the remaining `Unknown` row (reviewed disposition not
+yet decided). M8 Gate-A #643 resolved `DB-MONGO-001` to `Planned` with a
+distinct non-relational adapter track; that planning decision is not an
+implementation or support claim. None of these is implemented in this release.
+The complete list
 with target milestones is the
 [feature ledger](../compatibility/conformance-matrix.md); notable absences a
 new user is likely to look for:
