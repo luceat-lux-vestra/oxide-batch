@@ -352,12 +352,11 @@ jobs:
           ref="refs/heads/$DEFAULT_BRANCH"
           found=0
           for _ in 1 2 3 4 5; do
-            # $key/$ref below are jq variables inside the jq program.
-            # shellcheck disable=SC2016
-            count="$(gh api -H 'Accept: application/vnd.github+json' \
-              "repos/$GITHUB_REPOSITORY/actions/caches?ref=$ref&key=$CURRENT_KEY&per_page=100" \
-              --jq --arg key "$CURRENT_KEY" --arg ref "$ref" \
-              '[.actions_caches[] | select(.key == $key and .ref == $ref)] | length')"
+            response="$(gh api -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/actions/caches?ref=$ref&key=$CURRENT_KEY&per_page=100")"
+            count="$(jq -r --arg key "$CURRENT_KEY" --arg ref "$ref" \
+              '[.actions_caches[] | select(.key == $key and .ref == $ref)] | length' \
+              <<<"$response")"
             if [ "$count" -ge 1 ]; then
               found=1
               break
