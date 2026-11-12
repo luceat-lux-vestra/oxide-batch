@@ -289,7 +289,7 @@ where
         instance_key(job, discriminator)?,
         definition(job)?,
     );
-    let outcome = (fixture.operator.execute(&request)).await?;
+    let outcome = fixture.operator.execute(&request).await?;
     outcome
         .execution()
         .cloned()
@@ -314,10 +314,10 @@ where
     } else {
         LifecycleTransition::new(target, at)
     };
-    let mut unit = (fixture.repository.begin()).await?;
+    let mut unit = fixture.repository.begin().await?;
     let moved =
-        (unit.transition_job_execution(execution.id(), execution.version(), requested)).await?;
-    (unit.commit()).await?;
+        unit.transition_job_execution(execution.id(), execution.version(), requested).await?;
+    unit.commit().await?;
     Ok(moved)
 }
 
@@ -390,7 +390,7 @@ where
     let mut request = PageRequest::first(size);
     let mut observed = Vec::new();
     loop {
-        let page = (fixture.explorer.list_instances(&name, &request)).await?;
+        let page = fixture.explorer.list_instances(&name, &request).await?;
         for row in page.rows() {
             observed.push(row.id());
         }
@@ -425,11 +425,10 @@ where
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
-    let first = (
+    let first = 
         fixture
             .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    ).await
+            .list_instances(&name, &PageRequest::first(size)).await
     .map_err(at!(backend, CASE))?;
     let cursor = first
         .next_cursor()
@@ -437,11 +436,10 @@ where
         .ok_or_else(|| String::from("first page carried no cursor"))
         .map_err(at!(backend, CASE))?;
     let late = launch(&fixture, JOB, "ceiling-late", "ceiling-late").await.map_err(at!(backend, CASE))?;
-    let second = (
+    let second = 
         fixture
             .explorer
-            .list_instances(&name, &PageRequest::resume(size, cursor)),
-    ).await
+            .list_instances(&name, &PageRequest::resume(size, cursor)).await
     .map_err(at!(backend, CASE))?;
     let returned = second
         .rows()
@@ -480,22 +478,20 @@ where
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let other = JobName::new(OTHER_JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
-    let page = (
+    let page = 
         fixture
             .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    ).await
+            .list_instances(&name, &PageRequest::first(size)).await
     .map_err(at!(backend, CASE))?;
     let cursor = page
         .next_cursor()
         .cloned()
         .ok_or_else(|| String::from("first page carried no cursor"))
         .map_err(at!(backend, CASE))?;
-    let filtered = (
+    let filtered = 
         fixture
             .explorer
-            .list_instances(&other, &PageRequest::resume(size, cursor.clone())),
-    ).await;
+            .list_instances(&other, &PageRequest::resume(size, cursor.clone())).await;
     ensure(
         matches!(
             filtered,
@@ -506,11 +502,10 @@ where
         "a cursor from another filter was accepted",
     )?;
     let resized = PageSize::new(3).map_err(at!(backend, CASE))?;
-    let sized = (
+    let sized = 
         fixture
             .explorer
-            .list_instances(&name, &PageRequest::resume(resized, cursor)),
-    ).await;
+            .list_instances(&name, &PageRequest::resume(resized, cursor)).await;
     ensure(
         matches!(
             sized,
@@ -545,11 +540,10 @@ where
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
-    let page = (
+    let page = 
         fixture
             .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    ).await
+            .list_instances(&name, &PageRequest::first(size)).await
     .map_err(at!(backend, CASE))?;
     let cursor = page
         .next_cursor()
@@ -559,11 +553,10 @@ where
     let last = bytes.len() - 1;
     bytes[last] ^= 0xff;
     let corrupt = oxide_batch::Cursor::from_bytes(bytes).map_err(at!(backend, CASE))?;
-    let rejected = (
+    let rejected = 
         fixture
             .explorer
-            .list_instances(&name, &PageRequest::resume(size, corrupt)),
-    ).await;
+            .list_instances(&name, &PageRequest::resume(size, corrupt)).await;
     ensure(
         matches!(
             rejected,
@@ -616,11 +609,10 @@ where
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
-    let page = (
+    let page = 
         fixture
             .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    ).await
+            .list_instances(&name, &PageRequest::first(size)).await
     .map_err(at!(backend, CASE))?;
     ensure(
         page.rows().len() <= 2,
@@ -645,11 +637,10 @@ where
     let execution = launch(&fixture, JOB, SENTINEL, "redaction").await.map_err(at!(backend, CASE))?;
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(10).map_err(at!(backend, CASE))?;
-    let instances = (
+    let instances = 
         fixture
             .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    ).await
+            .list_instances(&name, &PageRequest::first(size)).await
     .map_err(at!(backend, CASE))?;
     let rendered = format!("{:?}", instances.rows());
     ensure(
@@ -658,7 +649,7 @@ where
         CASE,
         "an instance projection exposed a parameter value",
     )?;
-    let projection = (fixture.explorer.get_execution(execution.id())).await
+    let projection = fixture.explorer.get_execution(execution.id()).await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -699,9 +690,9 @@ where
         actor().map_err(at!(backend, CASE))?,
         instance_key(JOB, "replay").map_err(at!(backend, CASE))?,
         definition(JOB).map_err(at!(backend, CASE))?,
-    ).await;
-    let first = (fixture.operator.execute(&request)).await.map_err(at!(backend, CASE))?;
-    let second = (fixture.operator.execute(&request)).await.map_err(at!(backend, CASE))?;
+    );
+    let first = fixture.operator.execute(&request).await.map_err(at!(backend, CASE))?;
+    let second = fixture.operator.execute(&request).await.map_err(at!(backend, CASE))?;
     ensure(
         first.class() == OperatorOutcomeClass::Applied,
         backend,
@@ -732,11 +723,10 @@ where
         .ok_or_else(|| String::from("the launch recorded no instance"))
         .map_err(at!(backend, CASE))?;
     let size = PageSize::new(10).map_err(at!(backend, CASE))?;
-    let executions = (
+    let executions = 
         fixture
             .explorer
-            .list_executions(instance, &PageRequest::first(size)),
-    ).await
+            .list_executions(instance, &PageRequest::first(size)).await
     .map_err(at!(backend, CASE))?;
     ensure(
         executions.rows().len() == 1,
@@ -764,8 +754,8 @@ where
         actor().map_err(at!(backend, CASE))?,
         instance_key(JOB, "conflict-b").map_err(at!(backend, CASE))?,
         definition(JOB).map_err(at!(backend, CASE))?,
-    ).await;
-    let rejected = (fixture.operator.execute(&other)).await;
+    );
+    let rejected = fixture.operator.execute(&other).await;
     ensure(
         matches!(rejected, Err(OperatorError::OperationIdConflict { .. })),
         backend,
@@ -788,11 +778,10 @@ where
     let fixture = fixture(backend, CASE, factory).await?;
     let execution = launch(&fixture, JOB, "audited", "audited").await.map_err(at!(backend, CASE))?;
     let size = PageSize::new(10).map_err(at!(backend, CASE))?;
-    let audit = (
+    let audit = 
         fixture
             .explorer
-            .list_operator_requests(execution.id(), &PageRequest::first(size)),
-    ).await
+            .list_operator_requests(execution.id(), &PageRequest::first(size)).await
     .map_err(at!(backend, CASE))?;
     ensure(
         audit.rows().len() == 1,
@@ -835,8 +824,8 @@ where
         reason().map_err(at!(backend, CASE))?,
         execution.id(),
         execution.version(),
-    ).await;
-    let outcome = (fixture.operator.execute(&request)).await.map_err(at!(backend, CASE))?;
+    );
+    let outcome = fixture.operator.execute(&request).await.map_err(at!(backend, CASE))?;
     ensure(
         outcome.class() == OperatorOutcomeClass::Rejected
             && matches!(
@@ -849,7 +838,7 @@ where
         CASE,
         "abandoning a starting execution was not rejected",
     )?;
-    let observed = (fixture.explorer.get_execution(execution.id())).await
+    let observed = fixture.explorer.get_execution(execution.id()).await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -860,11 +849,10 @@ where
         "a rejected action changed durable state",
     )?;
     let size = PageSize::new(10).map_err(at!(backend, CASE))?;
-    let audit = (
+    let audit = 
         fixture
             .explorer
-            .list_operator_requests(execution.id(), &PageRequest::first(size)),
-    ).await
+            .list_operator_requests(execution.id(), &PageRequest::first(size)).await
     .map_err(at!(backend, CASE))?;
     ensure(
         audit
@@ -897,8 +885,8 @@ where
         reason().map_err(at!(backend, CASE))?,
         failed.id(),
         ExecutionVersion::new(failed.version().get().saturating_sub(1)),
-    ).await;
-    let outcome = (fixture.operator.execute(&request)).await.map_err(at!(backend, CASE))?;
+    );
+    let outcome = fixture.operator.execute(&request).await.map_err(at!(backend, CASE))?;
     ensure(
         matches!(
             outcome.rejection(),
@@ -908,7 +896,7 @@ where
         CASE,
         "a stale expected version won its compare-and-swap",
     )?;
-    let observed = (fixture.explorer.get_execution(failed.id())).await
+    let observed = fixture.explorer.get_execution(failed.id()).await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -975,7 +963,7 @@ where
         execution.id(),
         execution.version(),
     );
-    Ok((fixture.operator.execute(&request)).await?)
+    Ok(fixture.operator.execute(&request).await?)
 }
 
 async fn repeat_abandon_changes_nothing<R, S, F, Fut>(
@@ -1005,7 +993,7 @@ where
         CASE,
         "a repeated abandon changed durable state",
     )?;
-    let observed = (fixture.explorer.get_execution(abandoned.id())).await
+    let observed = fixture.explorer.get_execution(abandoned.id()).await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -1039,7 +1027,7 @@ where
         failed.job_instance_id(),
         definition(JOB).map_err(at!(backend, CASE))?,
     );
-    let outcome = (fixture.operator.execute(&restart)).await.map_err(at!(backend, CASE))?;
+    let outcome = fixture.operator.execute(&restart).await.map_err(at!(backend, CASE))?;
     ensure(
         outcome.class() == OperatorOutcomeClass::Rejected,
         backend,
@@ -1071,14 +1059,14 @@ where
         stopping.id(),
         stopping.version(),
     );
-    let outcome = (fixture.operator.execute(&request)).await.map_err(at!(backend, CASE))?;
+    let outcome = fixture.operator.execute(&request).await.map_err(at!(backend, CASE))?;
     ensure(
         outcome.class() == OperatorOutcomeClass::Applied && !outcome.changed_state(),
         backend,
         CASE,
         "a stop request on a stopping execution changed durable state",
     )?;
-    let observed = (fixture.explorer.get_execution(stopping.id())).await
+    let observed = fixture.explorer.get_execution(stopping.id()).await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -1115,12 +1103,12 @@ where
     let fixture = fixture(backend, CASE, factory).await?;
     let execution = launch(&fixture, JOB, "held", "held-launch").await.map_err(at!(backend, CASE))?;
     finish(&fixture, &execution, BatchStatus::Completed).await.map_err(at!(backend, CASE))?;
-    let report = (fixture.retention.place_hold(
+    let report = fixture.retention.place_hold(
         OperationId::new("held-hold").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
         reason().map_err(at!(backend, CASE))?,
         execution.job_instance_id(),
-    )).await
+    ).await
     .map_err(at!(backend, CASE))?;
     ensure(
         report.outcome() == RetentionOutcome::Applied && report.hold().is_some(),
@@ -1129,11 +1117,10 @@ where
         "the hold was not applied",
     )?;
     fixture.clock.advance(Duration::from_hours(2));
-    let plan = (
+    let plan = 
         fixture
             .retention
-            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?),
-    ).await
+            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?).await
     .map_err(at!(backend, CASE))?;
     ensure(
         plan.candidates()
@@ -1160,11 +1147,10 @@ where
     let execution = launch(&fixture, JOB, "active", "active-launch").await.map_err(at!(backend, CASE))?;
     transition(&fixture, &execution, BatchStatus::Started).await.map_err(at!(backend, CASE))?;
     fixture.clock.advance(Duration::from_hours(2));
-    let plan = (
+    let plan = 
         fixture
             .retention
-            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?),
-    ).await
+            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?).await
     .map_err(at!(backend, CASE))?;
     ensure(
         plan.is_empty(),
@@ -1190,11 +1176,10 @@ where
         launch(&fixture, JOB, "stale-plan", "stale-plan-launch").await.map_err(at!(backend, CASE))?;
     let failed = finish(&fixture, &execution, BatchStatus::Failed).await.map_err(at!(backend, CASE))?;
     fixture.clock.advance(Duration::from_hours(2));
-    let plan = (
+    let plan = 
         fixture
             .retention
-            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?),
-    ).await
+            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?).await
     .map_err(at!(backend, CASE))?;
     ensure(
         !plan.is_empty(),
@@ -1203,12 +1188,12 @@ where
         "the plan observed no candidate",
     )?;
     abandon(&fixture, &failed, "stale-plan-abandon").await.map_err(at!(backend, CASE))?;
-    let applied = (fixture.retention.apply_purge(
+    let applied = fixture.retention.apply_purge(
         OperationId::new("stale-plan-apply").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
         reason().map_err(at!(backend, CASE))?,
         &plan,
-    )).await;
+    ).await;
     ensure(
         matches!(
             applied,
@@ -1219,7 +1204,7 @@ where
         "a stale plan was applied",
     )?;
     let observed =
-        (fixture.explorer.get_execution(failed.id())).await.map_err(at!(backend, CASE))?;
+        fixture.explorer.get_execution(failed.id()).await.map_err(at!(backend, CASE))?;
     ensure(
         observed.is_some(),
         backend,
@@ -1253,11 +1238,10 @@ where
         executions.push(execution);
     }
     fixture.clock.advance(Duration::from_hours(2));
-    let plan = (
+    let plan = 
         fixture
             .retention
-            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?),
-    ).await
+            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?).await
     .map_err(at!(backend, CASE))?;
     ensure(
         plan.candidates().len() == 2 && plan.counts().job_executions() == 2,
@@ -1265,12 +1249,12 @@ where
         CASE,
         "the plan did not observe both candidates",
     )?;
-    let report = (fixture.retention.apply_purge(
+    let report = fixture.retention.apply_purge(
         OperationId::new("purge-apply").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
         reason().map_err(at!(backend, CASE))?,
         &plan,
-    )).await
+    ).await
     .map_err(at!(backend, CASE))?;
     ensure(
         report.outcome() == RetentionOutcome::Applied
@@ -1283,7 +1267,7 @@ where
     )?;
     for execution in &executions {
         let observed =
-            (fixture.explorer.get_execution(execution.id())).await.map_err(at!(backend, CASE))?;
+            fixture.explorer.get_execution(execution.id()).await.map_err(at!(backend, CASE))?;
         ensure(
             observed.is_none(),
             backend,
@@ -1324,7 +1308,7 @@ where
         PurgeBatchBound::new(1).map_err(at!(backend, CASE))?,
     )
     .map_err(at!(backend, CASE))?;
-    let first = (fixture.retention.plan_purge(&bounded)).await.map_err(at!(backend, CASE))?;
+    let first = fixture.retention.plan_purge(&bounded).await.map_err(at!(backend, CASE))?;
     ensure(
         first.candidates().len() == 1,
         backend,
@@ -1337,14 +1321,14 @@ where
         .map(PurgeCandidate::job_execution_id)
         .ok_or_else(|| String::from("the plan observed no candidate"))
         .map_err(at!(backend, CASE))?;
-    (fixture.retention.apply_purge(
+    fixture.retention.apply_purge(
         OperationId::new("batch-apply-1").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
         reason().map_err(at!(backend, CASE))?,
         &first,
-    )).await
+    ).await
     .map_err(at!(backend, CASE))?;
-    let second = (fixture.retention.plan_purge(&bounded)).await.map_err(at!(backend, CASE))?;
+    let second = fixture.retention.plan_purge(&bounded).await.map_err(at!(backend, CASE))?;
     let remaining = second
         .candidates()
         .first()
@@ -1357,7 +1341,7 @@ where
         CASE,
         "a completed batch was replanned",
     )?;
-    let gone: Option<JobExecutionId> = (fixture.explorer.get_execution(purged)).await
+    let gone: Option<JobExecutionId> = fixture.explorer.get_execution(purged).await
         .map_err(at!(backend, CASE))?
         .map(|projection| projection.id());
     ensure(
