@@ -109,7 +109,11 @@ jobs:
         continue-on-error: true
         shell: bash
         run: |
-          "${ACTIONLINT}" -color
+          # GitHub supports the documented cache-mode key, but pinned actionlint
+          # v1.7.12 predates that schema addition. Ignore only that exact
+          # compatibility false positive; all other actionlint findings remain binding.
+          "${ACTIONLINT}" -color \
+            -ignore 'unexpected key "cache-mode" for "job" section'
 
       - name: Run zizmor full audit
         id: zizmor
