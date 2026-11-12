@@ -291,6 +291,14 @@ jobs:
 
           cargo test --workspace --all-features --lib
 
+          # quality-fast runs one additional xtask Clippy pass to verify that
+          # the two documented audit-shape exceptions remain narrowly scoped.
+          # Prime its compiler outputs too so read-only PR consumers do not
+          # incur the otherwise repeatable three Rust misses.
+          cargo clippy -p oxide-batch-xtask --all-targets --all-features --message-format=json -- \
+            -W clippy::too_many_arguments -W clippy::too_many_lines \
+            > /tmp/xtask-clippy-prime.json
+
           sccache --show-stats --stats-format=json | tee /tmp/sccache-main-prime-stats.json
           python3 - /tmp/sccache-main-prime-stats.json "$SCCACHE_DIR" <<'PY'
           import json
