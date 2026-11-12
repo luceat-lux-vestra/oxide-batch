@@ -1745,76 +1745,98 @@ pub trait ExplorerRepository: Send + Sync {
     /// Captures the exclusive identity ceiling for one traversal.
     fn identity_ceiling<'a>(
         &'a self,
-        query: &'a ExplorerQuery,
-    ) -> BoxFuture<'a, Result<u64, ExplorerError>>;
+        _query: &'a ExplorerQuery,
+    ) -> BoxFuture<'a, Result<u64, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads registered job names in byte order.
     fn job_names<'a>(
         &'a self,
-        window: &'a QueryWindow,
-    ) -> BoxFuture<'a, Result<Vec<JobName>, ExplorerError>>;
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobName>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads instances of one job name, newest identity first.
     fn instances<'a>(
         &'a self,
-        job_name: &'a JobName,
-        window: &'a QueryWindow,
-    ) -> BoxFuture<'a, Result<Vec<JobInstanceProjection>, ExplorerError>>;
+        _job_name: &'a JobName,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobInstanceProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads executions of one instance, newest attempt first.
     fn executions<'a>(
         &'a self,
-        job_instance_id: JobInstanceId,
-        window: &'a QueryWindow,
-    ) -> BoxFuture<'a, Result<Vec<JobExecutionProjection>, ExplorerError>>;
+        _job_instance_id: JobInstanceId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads one execution projection.
     fn execution(
         &self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Option<JobExecutionProjection>, ExplorerError>>;
+        _job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads step executions of one job execution.
     fn step_executions<'a>(
         &'a self,
-        job_execution_id: JobExecutionId,
-        window: &'a QueryWindow,
-    ) -> BoxFuture<'a, Result<Vec<StepExecutionProjection>, ExplorerError>>;
+        _job_execution_id: JobExecutionId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<StepExecutionProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads non-terminal executions older than `minimum_age`.
     fn unresolved_executions<'a>(
         &'a self,
-        minimum_age: Duration,
-        window: &'a QueryWindow,
-    ) -> BoxFuture<'a, Result<Vec<JobExecutionProjection>, ExplorerError>>;
+        _minimum_age: Duration,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads recovery decisions of one job execution.
     fn recovery_decisions<'a>(
         &'a self,
-        job_execution_id: JobExecutionId,
-        window: &'a QueryWindow,
-    ) -> BoxFuture<'a, Result<Vec<RecoveryDecision>, ExplorerError>>;
+        _job_execution_id: JobExecutionId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<RecoveryDecision>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads flow decisions of one job execution in sequence order.
     fn flow_decisions<'a>(
         &'a self,
-        job_execution_id: JobExecutionId,
-        window: &'a QueryWindow,
-    ) -> BoxFuture<'a, Result<Vec<FlowDecision>, ExplorerError>>;
+        _job_execution_id: JobExecutionId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<FlowDecision>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads partitions of one partitioned step execution.
     fn step_partitions<'a>(
         &'a self,
-        step_execution_id: StepExecutionId,
-        window: &'a QueryWindow,
-    ) -> BoxFuture<'a, Result<Vec<StepPartitionProjection>, ExplorerError>>;
+        _step_execution_id: StepExecutionId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<StepPartitionProjection>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads audited operator requests for one job execution.
     fn operator_requests<'a>(
         &'a self,
-        job_execution_id: JobExecutionId,
-        window: &'a QueryWindow,
-    ) -> BoxFuture<'a, Result<Vec<OperatorRecord>, ExplorerError>>;
+        _job_execution_id: JobExecutionId,
+        _window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<OperatorRecord>, ExplorerError>> {
+        Box::pin(async { Err(ExplorerError::UnsupportedCapability) })
+    }
 
     /// Reads registered definition revisions of one job.
     fn definition_revisions<'a>(
@@ -1894,7 +1916,7 @@ pub enum ExplorerError {
     },
     /// The statement exceeded the configured statement timeout.
     Timeout,
-    /// The adapter cannot provide bounded keyset pagination.
+    /// The adapter does not support the requested explorer operation.
     UnsupportedCapability,
     /// The underlying repository failed.
     Repository(RepositoryError),
@@ -1920,7 +1942,7 @@ impl fmt::Display for ExplorerError {
                 formatter.write_str("the bounded query exceeded its statement timeout")
             }
             Self::UnsupportedCapability => {
-                formatter.write_str("the adapter does not support keyset pagination")
+                formatter.write_str("the adapter does not support the requested explorer operation")
             }
             Self::Repository(error) => error.fmt(formatter),
         }
