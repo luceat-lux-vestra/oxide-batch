@@ -26,7 +26,8 @@ failure/panic/cooperative-stop injection, a restart harness, and repository
 fixtures (embedded and, behind the `postgres` feature, `PostgreSQL`).
 
 The `certification` module is a contract test kit, not a support badge. Its
-portable core repository contract is separate from optional definition,
+runners are async and executor-neutral: the consuming adapter test chooses and
+owns its executor. The portable core repository contract is separate from optional definition,
 partition, explorer, operator/control, and retention contract groups. The
 `run_full_*` aggregates exist for reference adapters that claim all represented
 capabilities; they are not the minimum portable contract.

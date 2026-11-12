@@ -18,10 +18,10 @@ pub use services::{
 };
 
 use std::error::Error;
+use std::future::Future;
 use std::fmt;
 use std::time::{Duration, UNIX_EPOCH};
 
-use futures_executor::block_on;
 use oxide_batch::{
     BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade, DefinitionRevision,
     DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
@@ -46,20 +46,21 @@ use oxide_batch::{
 ///
 /// Returns [`RepositoryContractFailure`] with the stable case and backend
 /// names when construction, an operation, or an observation differs.
-pub fn run_core_repository_contract<R, F>(
+pub async fn run_core_repository_contract<R, F, Fut>(
     backend: &'static str,
     mut factory: F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
-    create_then_find(backend, &mut factory)?;
-    duplicate_key_preserves_original_id(backend, &mut factory)?;
-    first_launch_creates_linked_graph(backend, &mut factory)?;
-    completed_instance_rejects_another_execution(backend, &mut factory)?;
-    stale_transition_is_typed_and_atomic(backend, &mut factory)?;
-    rollback_discards_staged_metadata(backend, &mut factory)
+    create_then_find(backend, &mut factory).await?;
+    duplicate_key_preserves_original_id(backend, &mut factory).await?;
+    first_launch_creates_linked_graph(backend, &mut factory).await?;
+    completed_instance_rejects_another_execution(backend, &mut factory).await?;
+    stale_transition_is_typed_and_atomic(backend, &mut factory).await?;
+    rollback_discards_staged_metadata(backend, &mut factory).await
 }
 
 /// Runs the definition-registry/compatible-upgrade capability contract.
@@ -70,19 +71,20 @@ where
 ///
 /// Returns [`RepositoryContractFailure`] when any definition-upgrade case
 /// differs from the accepted public semantics.
-pub fn run_definition_upgrade_contract<R, F>(
+pub async fn run_definition_upgrade_contract<R, F, Fut>(
     backend: &'static str,
     mut factory: F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
-    compatible_upgrade_transforms_context_before_target_step(backend, &mut factory)?;
-    compatible_upgrade_rejects_conflicting_or_stale_edge(backend, &mut factory)?;
-    compatible_upgrade_is_not_transitive(backend, &mut factory)?;
-    compatible_upgrade_rejects_newer_persisted_state(backend, &mut factory)?;
-    compatible_upgrade_target_only_node_starts_fresh(backend, &mut factory)
+    compatible_upgrade_transforms_context_before_target_step(backend, &mut factory).await?;
+    compatible_upgrade_rejects_conflicting_or_stale_edge(backend, &mut factory).await?;
+    compatible_upgrade_is_not_transitive(backend, &mut factory).await?;
+    compatible_upgrade_rejects_newer_persisted_state(backend, &mut factory).await?;
+    compatible_upgrade_target_only_node_starts_fresh(backend, &mut factory).await
 }
 
 /// Runs the durable local-partition capability contract.
@@ -94,17 +96,18 @@ where
 ///
 /// Returns [`RepositoryContractFailure`] when any partition case differs from
 /// the accepted public semantics.
-pub fn run_partition_contract<R, F>(
+pub async fn run_partition_contract<R, F, Fut>(
     backend: &'static str,
     mut factory: F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
-    partition_plan_commits_before_any_worker_starts(backend, &mut factory)?;
-    duplicate_partition_key_is_rejected(backend, &mut factory)?;
-    partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory)
+    partition_plan_commits_before_any_worker_starts(backend, &mut factory).await?;
+    duplicate_partition_key_is_rejected(backend, &mut factory).await?;
+    partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory).await
 }
 
 /// Runs every repository contract group used by the in-memory and PostgreSQL
@@ -119,28 +122,29 @@ where
 ///
 /// Returns [`RepositoryContractFailure`] with the stable case and backend
 /// names when any included case differs.
-pub fn run_full_repository_contract<R, F>(
+pub async fn run_full_repository_contract<R, F, Fut>(
     backend: &'static str,
     mut factory: F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
-    create_then_find(backend, &mut factory)?;
-    duplicate_key_preserves_original_id(backend, &mut factory)?;
-    first_launch_creates_linked_graph(backend, &mut factory)?;
-    completed_instance_rejects_another_execution(backend, &mut factory)?;
-    stale_transition_is_typed_and_atomic(backend, &mut factory)?;
-    rollback_discards_staged_metadata(backend, &mut factory)?;
-    compatible_upgrade_transforms_context_before_target_step(backend, &mut factory)?;
-    compatible_upgrade_rejects_conflicting_or_stale_edge(backend, &mut factory)?;
-    compatible_upgrade_is_not_transitive(backend, &mut factory)?;
-    compatible_upgrade_rejects_newer_persisted_state(backend, &mut factory)?;
-    compatible_upgrade_target_only_node_starts_fresh(backend, &mut factory)?;
-    partition_plan_commits_before_any_worker_starts(backend, &mut factory)?;
-    duplicate_partition_key_is_rejected(backend, &mut factory)?;
-    partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory)
+    create_then_find(backend, &mut factory).await?;
+    duplicate_key_preserves_original_id(backend, &mut factory).await?;
+    first_launch_creates_linked_graph(backend, &mut factory).await?;
+    completed_instance_rejects_another_execution(backend, &mut factory).await?;
+    stale_transition_is_typed_and_atomic(backend, &mut factory).await?;
+    rollback_discards_staged_metadata(backend, &mut factory).await?;
+    compatible_upgrade_transforms_context_before_target_step(backend, &mut factory).await?;
+    compatible_upgrade_rejects_conflicting_or_stale_edge(backend, &mut factory).await?;
+    compatible_upgrade_is_not_transitive(backend, &mut factory).await?;
+    compatible_upgrade_rejects_newer_persisted_state(backend, &mut factory).await?;
+    compatible_upgrade_target_only_node_starts_fresh(backend, &mut factory).await?;
+    partition_plan_commits_before_any_worker_starts(backend, &mut factory).await?;
+    duplicate_partition_key_is_rejected(backend, &mut factory).await?;
+    partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory).await
 }
 
 fn compatible_upgrade_payload(payload: &[u8]) -> Result<Vec<u8>, DefinitionStateTransformError> {
@@ -246,16 +250,17 @@ fn contract_upgrade_context(value: u64, version: u32) -> Result<ExecutionContext
     Ok(ExecutionContext::from_json(&bytes, StateLimits::default())?)
 }
 
-fn compatible_upgrade_transforms_context_before_target_step<R, F>(
+async fn compatible_upgrade_transforms_context_before_target_step<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "compatible_upgrade_transforms_context_before_target_step";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let job_name = JobName::new("repository_contract_job")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
@@ -275,33 +280,33 @@ where
         contract_upgrade_definition(&job_name, "upgrade-v2", &target_node, &target_step, 2)
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut setup = block_on(repository.begin())
+    let mut setup = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(setup.select_or_create_job_instance(&key))
+    let instance = (setup.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
     let source_job =
-        block_on(setup.create_job_execution_with_definition(instance.id(), &source_definition))
+        (setup.create_job_execution_with_definition(instance.id(), &source_definition)).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let source_execution = block_on(setup.create_flow_step_execution(
+    let source_execution = (setup.create_flow_step_execution(
         source_job.id(),
         &source_step,
         &source_node,
         StartLimit::UNRESTRICTED,
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let started = block_on(setup.transition_step_execution(
+    let started = (setup.transition_step_execution(
         source_execution.id(),
         source_execution.version(),
         LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(1)),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let source_context = contract_upgrade_context(7, 1)
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.commit_step_execution_context(started.id(), started.version(), &source_context))
+    (setup.commit_step_execution_context(started.id(), started.version(), &source_context)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.transition_job_execution(
+    (setup.transition_job_execution(
         source_job.id(),
         source_job.version(),
         LifecycleTransition::failed(
@@ -313,9 +318,9 @@ where
                 })?,
             ),
         ),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.commit())
+    (setup.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     let transform_revision = DefinitionUpgradeRevision::new("context-v1-to-v2")
@@ -363,30 +368,30 @@ where
     )
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut registration = block_on(repository.begin())
+    let mut registration = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(registration.register_definition_upgrade(&job_name, &edge))
+    (registration.register_definition_upgrade(&job_name, &edge)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(registration.commit())
+    (registration.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut restart = block_on(repository.begin())
+    let mut restart = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let target_job = block_on(restart.create_job_execution_with_upgrade(instance.id(), &selected))
+    let target_job = (restart.create_job_execution_with_upgrade(instance.id(), &selected)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(restart.create_flow_step_execution(
+    (restart.create_flow_step_execution(
         target_job.id(),
         &target_step,
         &target_node,
         StartLimit::UNRESTRICTED,
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(restart.commit())
+    (restart.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut inspect = block_on(repository.begin())
+    let mut inspect = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let state = block_on(inspect.latest_flow_step(instance.id(), &target_node))
+    let state = (inspect.latest_flow_step(instance.id(), &target_node)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .ok_or_else(|| RepositoryContractFailure::new(backend, CASE, "target state missing"))?;
     let context = state
@@ -410,7 +415,7 @@ where
         CASE,
         "target context payload did not use the selected live transformer",
     )?;
-    block_on(inspect.rollback())
+    (inspect.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     Ok(())
 }
@@ -449,16 +454,17 @@ fn metadata_only_upgrade(
     )?)
 }
 
-fn compatible_upgrade_rejects_conflicting_or_stale_edge<R, F>(
+async fn compatible_upgrade_rejects_conflicting_or_stale_edge<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "compatible_upgrade_rejects_conflicting_or_stale_edge";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let job_name = JobName::new("repository_contract_upgrade_conflict")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
@@ -468,21 +474,21 @@ where
     let target = contract_tasklet_definition(&job_name, "v2", "target")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut setup = block_on(repository.begin())
+    let mut setup = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(setup.select_or_create_job_instance(&key))
+    let instance = (setup.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
     let source_job =
-        block_on(setup.create_job_execution_with_definition(instance.id(), &source))
+        (setup.create_job_execution_with_definition(instance.id(), &source)).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.commit())
+    (setup.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut fail = block_on(repository.begin())
+    let mut fail = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(fail.transition_job_execution(
+    (fail.transition_job_execution(
         source_job.id(),
         source_job.version(),
         LifecycleTransition::failed(
@@ -494,9 +500,9 @@ where
                 })?,
             ),
         ),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(fail.commit())
+    (fail.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     let registered = metadata_only_upgrade(
@@ -511,47 +517,47 @@ where
     let stale = metadata_only_upgrade("stale-edge", "edge-v2", source, target, "source", "target")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut registration = block_on(repository.begin())
+    let mut registration = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(registration.register_definition_upgrade(&job_name, &registered))
+    (registration.register_definition_upgrade(&job_name, &registered)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(registration.commit())
+    (registration.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut conflict = block_on(repository.begin())
+    let mut conflict = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         matches!(
-            block_on(conflict.register_definition_upgrade(&job_name, &stale)),
+            (conflict.register_definition_upgrade(&job_name, &stale)).await,
             Err(RepositoryError::DefinitionUpgradeConflict { .. })
         ),
         backend,
         CASE,
         "a second immutable edge for the same source/target pair was accepted",
     )?;
-    block_on(conflict.rollback())
+    (conflict.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     let selected = DefinitionUpgradeExecution::new(stale, [])
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut restart = block_on(repository.begin())
+    let mut restart = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         matches!(
-            block_on(restart.create_job_execution_with_upgrade(instance.id(), &selected)),
+            (restart.create_job_execution_with_upgrade(instance.id(), &selected)).await,
             Err(RepositoryError::IncompatibleDefinition { .. })
         ),
         backend,
         CASE,
         "an unregistered/stale selected edge created a compatible restart",
     )?;
-    block_on(restart.rollback())
+    (restart.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut inspect = block_on(repository.begin())
+    let mut inspect = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
-        block_on(inspect.job_executions(instance.id()))
+        (inspect.job_executions(instance.id())).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
             .len()
             == 1,
@@ -559,21 +565,22 @@ where
         CASE,
         "rejected edge selection created a partial target attempt",
     )?;
-    block_on(inspect.rollback())
+    (inspect.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     Ok(())
 }
 
-fn compatible_upgrade_is_not_transitive<R, F>(
+async fn compatible_upgrade_is_not_transitive<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "compatible_upgrade_is_not_transitive";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let job_name = JobName::new("repository_contract_upgrade_non_transitive")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
@@ -585,19 +592,19 @@ where
     let v3 = contract_tasklet_definition(&job_name, "v3", "step-v3")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut setup = block_on(repository.begin())
+    let mut setup = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(setup.select_or_create_job_instance(&key))
+    let instance = (setup.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
-    let first = block_on(setup.create_job_execution_with_definition(instance.id(), &v1))
+    let first = (setup.create_job_execution_with_definition(instance.id(), &v1)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.commit())
+    (setup.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut fail = block_on(repository.begin())
+    let mut fail = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(fail.transition_job_execution(
+    (fail.transition_job_execution(
         first.id(),
         first.version(),
         LifecycleTransition::failed(
@@ -609,66 +616,67 @@ where
                 })?,
             ),
         ),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(fail.commit())
+    (fail.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     let v1_v2 = metadata_only_upgrade("v1-v2", "edge-12", v1, v2.clone(), "step-v1", "step-v2")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let v2_v3 = metadata_only_upgrade("v2-v3", "edge-23", v2, v3.clone(), "step-v2", "step-v3")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut register = block_on(repository.begin())
+    let mut register = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(register.register_definition_upgrade(&job_name, &v1_v2))
+    (register.register_definition_upgrade(&job_name, &v1_v2)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(register.register_definition_upgrade(&job_name, &v2_v3))
+    (register.register_definition_upgrade(&job_name, &v2_v3)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(register.commit())
+    (register.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     let selected = DefinitionUpgradeExecution::new(v2_v3, [])
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut compatible = block_on(repository.begin())
+    let mut compatible = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         matches!(
-            block_on(compatible.create_job_execution_with_upgrade(instance.id(), &selected)),
+            (compatible.create_job_execution_with_upgrade(instance.id(), &selected)).await,
             Err(RepositoryError::IncompatibleDefinition { .. })
         ),
         backend,
         CASE,
         "v1->v2 plus v2->v3 was inferred as authority for v1->v3",
     )?;
-    block_on(compatible.rollback())
+    (compatible.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut strict = block_on(repository.begin())
+    let mut strict = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         matches!(
-            block_on(strict.create_job_execution_with_definition(instance.id(), &v3)),
+            (strict.create_job_execution_with_definition(instance.id(), &v3)).await,
             Err(RepositoryError::IncompatibleDefinition { .. })
         ),
         backend,
         CASE,
         "strict restart inferred transitive definition compatibility",
     )?;
-    block_on(strict.rollback())
+    (strict.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     Ok(())
 }
 
-fn compatible_upgrade_rejects_newer_persisted_state<R, F>(
+async fn compatible_upgrade_rejects_newer_persisted_state<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "compatible_upgrade_rejects_newer_persisted_state";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let job_name = JobName::new("repository_contract_upgrade_newer_state")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
@@ -688,33 +696,33 @@ where
         contract_upgrade_definition(&job_name, "v2", &target_node, &target_step, 2)
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut setup = block_on(repository.begin())
+    let mut setup = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(setup.select_or_create_job_instance(&key))
+    let instance = (setup.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
     let source_job =
-        block_on(setup.create_job_execution_with_definition(instance.id(), &source_definition))
+        (setup.create_job_execution_with_definition(instance.id(), &source_definition)).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let source_execution = block_on(setup.create_flow_step_execution(
+    let source_execution = (setup.create_flow_step_execution(
         source_job.id(),
         &source_step,
         &source_node,
         StartLimit::UNRESTRICTED,
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let started = block_on(setup.transition_step_execution(
+    let started = (setup.transition_step_execution(
         source_execution.id(),
         source_execution.version(),
         LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(22)),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let newer = contract_upgrade_context(9, 2)
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.commit_step_execution_context(started.id(), started.version(), &newer))
+    (setup.commit_step_execution_context(started.id(), started.version(), &newer)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.transition_job_execution(
+    (setup.transition_job_execution(
         source_job.id(),
         source_job.version(),
         LifecycleTransition::failed(
@@ -726,9 +734,9 @@ where
                 })?,
             ),
         ),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.commit())
+    (setup.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     let transform_revision = DefinitionUpgradeRevision::new("context-v1-to-v2")
@@ -776,31 +784,31 @@ where
     )
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut register = block_on(repository.begin())
+    let mut register = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(register.register_definition_upgrade(&job_name, &edge))
+    (register.register_definition_upgrade(&job_name, &edge)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(register.commit())
+    (register.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut restart = block_on(repository.begin())
+    let mut restart = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         matches!(
-            block_on(restart.create_job_execution_with_upgrade(instance.id(), &selected)),
+            (restart.create_job_execution_with_upgrade(instance.id(), &selected)).await,
             Err(RepositoryError::DefinitionUpgradeFailed)
         ),
         backend,
         CASE,
         "state newer than the declared source transform was accepted",
     )?;
-    block_on(restart.rollback())
+    (restart.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut inspect = block_on(repository.begin())
+    let mut inspect = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
-        block_on(inspect.job_executions(instance.id()))
+        (inspect.job_executions(instance.id())).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
             .len()
             == 1,
@@ -808,7 +816,7 @@ where
         CASE,
         "newer-state rejection created a partial target attempt",
     )?;
-    block_on(inspect.rollback())
+    (inspect.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     Ok(())
 }
@@ -817,16 +825,17 @@ where
     clippy::too_many_lines,
     reason = "the shared proof keeps source mapping, target-only materialization, and both parity observations together"
 )]
-fn compatible_upgrade_target_only_node_starts_fresh<R, F>(
+async fn compatible_upgrade_target_only_node_starts_fresh<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "compatible_upgrade_target_only_node_starts_fresh";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let job_name = JobName::new("repository_contract_upgrade_target_only")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
@@ -869,48 +878,48 @@ where
     )
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut setup = block_on(repository.begin())
+    let mut setup = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(setup.select_or_create_job_instance(&key))
+    let instance = (setup.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
     let source_job =
-        block_on(setup.create_job_execution_with_definition(instance.id(), &source_definition))
+        (setup.create_job_execution_with_definition(instance.id(), &source_definition)).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let started_job = block_on(setup.transition_job_execution(
+    let started_job = (setup.transition_job_execution(
         source_job.id(),
         source_job.version(),
         LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(30)),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     for (node, step, value, failure_id) in [
         (&source, &source_step, 7_u64, 30_u64),
         (&legacy_extra, &legacy_extra_step, 41_u64, 31_u64),
     ] {
-        let execution = block_on(setup.create_flow_step_execution(
+        let execution = (setup.create_flow_step_execution(
             source_job.id(),
             step,
             node,
             StartLimit::UNRESTRICTED,
-        ))
+        )).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-        let started = block_on(setup.transition_step_execution(
+        let started = (setup.transition_step_execution(
             execution.id(),
             execution.version(),
             LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(30)),
-        ))
+        )).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
         let context = contract_upgrade_context(value, 1)
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-        let committed = block_on(setup.commit_step_execution_context(
+        let committed = (setup.commit_step_execution_context(
             started.id(),
             started.version(),
             &context,
-        ))
+        )).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-        block_on(setup.transition_step_execution(
+        (setup.transition_step_execution(
             committed.id(),
             committed.version(),
             LifecycleTransition::failed(
@@ -922,10 +931,10 @@ where
                     })?,
                 ),
             ),
-        ))
+        )).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     }
-    block_on(setup.transition_job_execution(
+    (setup.transition_job_execution(
         started_job.id(),
         started_job.version(),
         LifecycleTransition::failed(
@@ -937,9 +946,9 @@ where
                 })?,
             ),
         ),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.commit())
+    (setup.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     let edge = DefinitionUpgrade::transformed(
@@ -958,37 +967,37 @@ where
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let selected = DefinitionUpgradeExecution::new(edge.clone(), [])
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut register = block_on(repository.begin())
+    let mut register = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(register.register_definition_upgrade(&job_name, &edge))
+    (register.register_definition_upgrade(&job_name, &edge)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(register.commit())
+    (register.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut restart = block_on(repository.begin())
+    let mut restart = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let target_job = block_on(restart.create_job_execution_with_upgrade(instance.id(), &selected))
+    let target_job = (restart.create_job_execution_with_upgrade(instance.id(), &selected)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(restart.create_flow_step_execution(
+    (restart.create_flow_step_execution(
         target_job.id(),
         &renamed_extra_step,
         &renamed_extra,
         StartLimit::UNRESTRICTED,
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(restart.create_flow_step_execution(
+    (restart.create_flow_step_execution(
         target_job.id(),
         &target_only_step,
         &legacy_extra,
         StartLimit::UNRESTRICTED,
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(restart.commit())
+    (restart.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut inspect = block_on(repository.begin())
+    let mut inspect = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mapped = block_on(inspect.latest_flow_step(instance.id(), &renamed_extra))
+    let mapped = (inspect.latest_flow_step(instance.id(), &renamed_extra)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .ok_or_else(|| RepositoryContractFailure::new(backend, CASE, "mapped target missing"))?;
     let mapped_context = mapped.context().ok_or_else(|| {
@@ -1010,7 +1019,7 @@ where
         "mapped durable source state was not preserved under its renamed target",
     )?;
 
-    let fresh = block_on(inspect.latest_flow_step(instance.id(), &legacy_extra))
+    let fresh = (inspect.latest_flow_step(instance.id(), &legacy_extra)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .ok_or_else(|| RepositoryContractFailure::new(backend, CASE, "target-only node missing"))?;
     ensure(
@@ -1021,7 +1030,7 @@ where
         CASE,
         "target-only node inherited historical state instead of declared initial state",
     )?;
-    block_on(inspect.rollback())
+    (inspect.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     Ok(())
 }
@@ -1030,16 +1039,17 @@ where
     clippy::too_many_lines,
     reason = "the shared contract keeps plan, assignment, CAS, completion, and restart observations in one named scenario"
 )]
-fn partition_plan_commits_before_any_worker_starts<R, F>(
+async fn partition_plan_commits_before_any_worker_starts<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "partition_plan_commits_before_any_worker_starts";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
     let key = contract_key("2026-08-02")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
@@ -1051,35 +1061,35 @@ where
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let restarted_worker_name = StepName::new("restarted-worker")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut setup = block_on(repository.begin())
+    let mut setup = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(setup.select_or_create_job_instance(&key))
+    let instance = (setup.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
-    let job = block_on(setup.create_job_execution(instance.id()))
+    let job = (setup.create_job_execution(instance.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let parent = block_on(setup.create_step_execution(job.id(), &parent_name))
+    let parent = (setup.create_step_execution(job.id(), &parent_name)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let parent = block_on(setup.transition_step_execution(
+    let parent = (setup.transition_step_execution(
         parent.id(),
         parent.version(),
         LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(1)),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let worker = block_on(setup.create_step_execution(job.id(), &worker_name))
+    let worker = (setup.create_step_execution(job.id(), &worker_name)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let retry_worker = block_on(setup.create_step_execution(job.id(), &retry_worker_name))
+    let retry_worker = (setup.create_step_execution(job.id(), &retry_worker_name)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let restarted_worker = block_on(setup.create_step_execution(job.id(), &restarted_worker_name))
+    let restarted_worker = (setup.create_step_execution(job.id(), &restarted_worker_name)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.commit())
+    (setup.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
     let entries = [partition_entry("zeta")?, partition_entry("alpha")?];
-    let mut planning = block_on(repository.begin())
+    let mut planning = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let planned = block_on(planning.create_step_partition_plan(parent.id(), &entries))
+    let planned = (planning.create_step_partition_plan(parent.id(), &entries)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         planned.iter().all(|partition| {
@@ -1091,11 +1101,11 @@ where
         CASE,
         "new partition plan did not remain wholly unassigned",
     )?;
-    let early_assignment = block_on(planning.assign_step_partition(
+    let early_assignment = (planning.assign_step_partition(
         planned[0].id(),
         planned[0].version(),
         worker.id(),
-    ));
+    )).await;
     ensure(
         early_assignment
             == Err(RepositoryError::PartitionPlanNotCommitted {
@@ -1105,12 +1115,12 @@ where
         CASE,
         "worker assignment was visible before the plan transaction committed",
     )?;
-    block_on(planning.commit())
+    (planning.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut assignment = block_on(repository.begin())
+    let mut assignment = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let ordered = block_on(assignment.step_partition_plan(parent.id()))
+    let ordered = (assignment.step_partition_plan(parent.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         ordered
@@ -1122,17 +1132,17 @@ where
         CASE,
         "partition aggregation read was not ordered by byte-exact key",
     )?;
-    let assigned = block_on(assignment.assign_step_partition(
+    let assigned = (assignment.assign_step_partition(
         planned[0].id(),
         ExecutionVersion::INITIAL,
         worker.id(),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let reused_worker = block_on(assignment.assign_step_partition(
+    let reused_worker = (assignment.assign_step_partition(
         planned[1].id(),
         ExecutionVersion::INITIAL,
         worker.id(),
-    ));
+    )).await;
     ensure(
         reused_worker
             == Err(RepositoryError::PartitionWorkerAlreadyAssigned {
@@ -1142,40 +1152,40 @@ where
         CASE,
         "one worker attempt was assigned to multiple partitions",
     )?;
-    let assigned_for_retry = block_on(assignment.assign_step_partition(
+    let assigned_for_retry = (assignment.assign_step_partition(
         planned[1].id(),
         ExecutionVersion::INITIAL,
         retry_worker.id(),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(assignment.commit())
+    (assignment.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut completion = block_on(repository.begin())
+    let mut completion = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let worker = block_on(completion.transition_step_execution(
+    let worker = (completion.transition_step_execution(
         worker.id(),
         worker.version(),
         LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(2)),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let worker = block_on(completion.enrich_step_exit_status(
+    let worker = (completion.enrich_step_exit_status(
         worker.id(),
         worker.version(),
         &ExitStatus::completed(),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let worker = block_on(completion.transition_step_execution(
+    let worker = (completion.transition_step_execution(
         worker.id(),
         worker.version(),
         LifecycleTransition::new(BatchStatus::Completed, UNIX_EPOCH + Duration::from_secs(3)),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let stale = block_on(completion.complete_step_partition(
+    let stale = (completion.complete_step_partition(
         assigned.id(),
         ExecutionVersion::INITIAL,
         worker.id(),
-    ));
+    )).await;
     ensure(
         stale
             == Err(RepositoryError::Lifecycle(LifecycleError::StaleVersion {
@@ -1186,25 +1196,25 @@ where
         CASE,
         "stale partition writer did not lose compare-and-swap",
     )?;
-    let completed = block_on(completion.complete_step_partition(
+    let completed = (completion.complete_step_partition(
         assigned.id(),
         assigned.version(),
         worker.id(),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let retry_worker = block_on(completion.transition_step_execution(
+    let retry_worker = (completion.transition_step_execution(
         retry_worker.id(),
         retry_worker.version(),
         LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(2)),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let retry_worker = block_on(completion.enrich_step_exit_status(
+    let retry_worker = (completion.enrich_step_exit_status(
         retry_worker.id(),
         retry_worker.version(),
         &ExitStatus::failed(),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let retry_worker = block_on(completion.transition_step_execution(
+    let retry_worker = (completion.transition_step_execution(
         retry_worker.id(),
         retry_worker.version(),
         LifecycleTransition::failed(
@@ -1216,21 +1226,21 @@ where
                 })?,
             ),
         ),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let failed = block_on(completion.complete_step_partition(
+    let failed = (completion.complete_step_partition(
         assigned_for_retry.id(),
         assigned_for_retry.version(),
         retry_worker.id(),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(completion.commit())
+    (completion.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut restart = block_on(repository.begin())
+    let mut restart = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let rerun =
-        block_on(restart.assign_step_partition(completed.id(), completed.version(), worker.id()));
+        (restart.assign_step_partition(completed.id(), completed.version(), worker.id())).await;
     ensure(
         rerun
             == Err(RepositoryError::PartitionUpdateNotAllowed {
@@ -1241,11 +1251,11 @@ where
         CASE,
         "completed partition was assignable on restart",
     )?;
-    let retried = block_on(restart.assign_step_partition(
+    let retried = (restart.assign_step_partition(
         failed.id(),
         failed.version(),
         restarted_worker.id(),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         retried.status() == BatchStatus::Started
@@ -1256,7 +1266,7 @@ where
         CASE,
         "failed partition retry retained the prior attempt result",
     )?;
-    let replan = block_on(restart.create_step_partition_plan(parent.id(), &entries));
+    let replan = (restart.create_step_partition_plan(parent.id(), &entries)).await;
     ensure(
         replan
             == Err(RepositoryError::PartitionPlanExists {
@@ -1266,37 +1276,38 @@ where
         CASE,
         "persisted partition plan could be replaced on restart",
     )?;
-    block_on(restart.commit())
+    (restart.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 
-fn duplicate_partition_key_is_rejected<R, F>(
+async fn duplicate_partition_key_is_rejected<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "duplicate_partition_key_is_rejected";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
     let key = contract_key("2026-08-03")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let step_name = StepName::new("partitioned")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut unit = block_on(repository.begin())
+    let mut unit = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(unit.select_or_create_job_instance(&key))
+    let instance = (unit.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
-    let job = block_on(unit.create_job_execution(instance.id()))
+    let job = (unit.create_job_execution(instance.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let parent = block_on(unit.create_step_execution(job.id(), &step_name))
+    let parent = (unit.create_step_execution(job.id(), &step_name)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let entries = [partition_entry("same")?, partition_entry("same")?];
-    let duplicate = block_on(unit.create_step_partition_plan(parent.id(), &entries));
+    let duplicate = (unit.create_step_partition_plan(parent.id(), &entries)).await;
     ensure(
         duplicate == Err(RepositoryError::DuplicatePartitionKey),
         backend,
@@ -1304,14 +1315,14 @@ where
         "duplicate byte-exact key was accepted",
     )?;
     ensure(
-        block_on(unit.step_partition_plan(parent.id()))
+        (unit.step_partition_plan(parent.id())).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
             .is_empty(),
         backend,
         CASE,
         "duplicate-key rejection retained a partial plan",
     )?;
-    block_on(unit.rollback())
+    (unit.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 
@@ -1319,16 +1330,17 @@ where
     clippy::too_many_lines,
     reason = "the shared scenario proves incomplete, rollback, and committed aggregation boundaries together"
 )]
-fn partition_aggregation_commits_with_parent_terminal_state<R, F>(
+async fn partition_aggregation_commits_with_parent_terminal_state<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "partition_aggregation_commits_with_parent_terminal_state";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
     let key = contract_key("2026-08-04")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
@@ -1341,93 +1353,93 @@ where
     let started_at = UNIX_EPOCH + Duration::from_secs(1);
     let ended_at = UNIX_EPOCH + Duration::from_secs(2);
 
-    let mut setup = block_on(repository.begin())
+    let mut setup = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(setup.select_or_create_job_instance(&key))
+    let instance = (setup.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
-    let job = block_on(setup.create_job_execution(instance.id()))
+    let job = (setup.create_job_execution(instance.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let parent = block_on(setup.create_step_execution(job.id(), &parent_name))
+    let parent = (setup.create_step_execution(job.id(), &parent_name)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let parent = block_on(setup.transition_step_execution(
+    let parent = (setup.transition_step_execution(
         parent.id(),
         parent.version(),
         LifecycleTransition::new(BatchStatus::Started, started_at),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let worker = block_on(setup.create_step_execution(job.id(), &worker_name))
+    let worker = (setup.create_step_execution(job.id(), &worker_name)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let other_worker = block_on(setup.create_step_execution(job.id(), &other_worker_name))
+    let other_worker = (setup.create_step_execution(job.id(), &other_worker_name)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(setup.commit())
+    (setup.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut plan = block_on(repository.begin())
+    let mut plan = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let partitions = block_on(plan.create_step_partition_plan(
+    let partitions = (plan.create_step_partition_plan(
         parent.id(),
         &[partition_entry("zeta")?, partition_entry("alpha")?],
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(plan.commit())
+    (plan.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut work = block_on(repository.begin())
+    let mut work = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let zeta = block_on(work.assign_step_partition(
+    let zeta = (work.assign_step_partition(
         partitions[0].id(),
         partitions[0].version(),
         other_worker.id(),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let alpha = block_on(work.assign_step_partition(
+    let alpha = (work.assign_step_partition(
         partitions[1].id(),
         partitions[1].version(),
         worker.id(),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let alpha_exit = ExitStatus::new(
         oxide_batch::ExitCode::new("ALPHA_FAILED")
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
     );
-    let worker = block_on(work.transition_step_execution(
+    let worker = (work.transition_step_execution(
         worker.id(),
         worker.version(),
         LifecycleTransition::new(BatchStatus::Started, started_at),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let worker = block_on(work.enrich_step_exit_status(worker.id(), worker.version(), &alpha_exit))
+    let worker = (work.enrich_step_exit_status(worker.id(), worker.version(), &alpha_exit)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let alpha_failure = FailureSummary::new(
         FailureCategory::UserComponent,
         FailureId::new(901)
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
     );
-    let worker = block_on(work.transition_step_execution(
+    let worker = (work.transition_step_execution(
         worker.id(),
         worker.version(),
         LifecycleTransition::failed(ended_at, alpha_failure),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let zeta_exit = ExitStatus::new(
         oxide_batch::ExitCode::new("ZETA_FAILED")
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?,
     );
-    let other_worker = block_on(work.transition_step_execution(
+    let other_worker = (work.transition_step_execution(
         other_worker.id(),
         other_worker.version(),
         LifecycleTransition::new(BatchStatus::Started, started_at),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let other_worker = block_on(work.enrich_step_exit_status(
+    let other_worker = (work.enrich_step_exit_status(
         other_worker.id(),
         other_worker.version(),
         &zeta_exit,
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let other_worker = block_on(work.transition_step_execution(
+    let other_worker = (work.transition_step_execution(
         other_worker.id(),
         other_worker.version(),
         LifecycleTransition::failed(
@@ -1439,12 +1451,12 @@ where
                 })?,
             ),
         ),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(work.complete_step_partition(alpha.id(), alpha.version(), worker.id()))
+    (work.complete_step_partition(alpha.id(), alpha.version(), worker.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let incomplete =
-        block_on(work.aggregate_step_partitions(parent.id(), parent.version(), ended_at));
+        (work.aggregate_step_partitions(parent.id(), parent.version(), ended_at)).await;
     ensure(
         incomplete
             == Err(RepositoryError::PartitionAggregationIncomplete {
@@ -1455,15 +1467,15 @@ where
         CASE,
         "active child allowed a partial parent aggregate",
     )?;
-    block_on(work.complete_step_partition(zeta.id(), zeta.version(), other_worker.id()))
+    (work.complete_step_partition(zeta.id(), zeta.version(), other_worker.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(work.commit())
+    (work.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut rolled_back = block_on(repository.begin())
+    let mut rolled_back = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let provisional =
-        block_on(rolled_back.aggregate_step_partitions(parent.id(), parent.version(), ended_at))
+        (rolled_back.aggregate_step_partitions(parent.id(), parent.version(), ended_at)).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         provisional.metadata().status() == BatchStatus::Failed
@@ -1473,15 +1485,15 @@ where
         CASE,
         "provisional aggregate did not follow key order and checked counter sums",
     )?;
-    block_on(rolled_back.rollback())
+    (rolled_back.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut commit = block_on(repository.begin())
+    let mut commit = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let aggregated =
-        block_on(commit.aggregate_step_partitions(parent.id(), parent.version(), ended_at))
+        (commit.aggregate_step_partitions(parent.id(), parent.version(), ended_at)).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(commit.commit())
+    (commit.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         aggregated.metadata().status() == BatchStatus::Failed
@@ -1491,10 +1503,10 @@ where
         CASE,
         "parent terminal state did not commit with its aggregate",
     )?;
-    let mut retry = block_on(repository.begin())
+    let mut retry = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let duplicate =
-        block_on(retry.aggregate_step_partitions(parent.id(), parent.version(), ended_at))
+        (retry.aggregate_step_partitions(parent.id(), parent.version(), ended_at)).await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         duplicate == aggregated,
@@ -1502,11 +1514,11 @@ where
         CASE,
         "retried aggregation did not return the already committed parent",
     )?;
-    let reopened = block_on(retry.assign_step_partition(
+    let reopened = (retry.assign_step_partition(
         alpha.id(),
         ExecutionVersion::new(alpha.version().get() + 1),
         worker.id(),
-    ));
+    )).await;
     ensure(
         reopened
             == Err(RepositoryError::PartitionParentNotActive {
@@ -1517,7 +1529,7 @@ where
         CASE,
         "terminal parent allowed a child retry assignment",
     )?;
-    block_on(retry.rollback())
+    (retry.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 
@@ -1537,22 +1549,23 @@ fn partition_entry(key: &str) -> Result<PartitionPlanEntry, RepositoryContractFa
     .map_err(|error| RepositoryContractFailure::new("fixture", CASE, error.to_string()))
 }
 
-fn create_then_find<R, F>(
+async fn create_then_find<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "repository_create_then_find_instance";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
     let key = contract_key("2026-07-29")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut unit = block_on(repository.begin())
+    let mut unit = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let outcome = block_on(unit.select_or_create_job_instance(&key))
+    let outcome = (unit.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let proposed_id = outcome.instance().id();
     ensure(
@@ -1561,11 +1574,11 @@ where
         CASE,
         "first selection did not create an instance",
     )?;
-    block_on(unit.commit())
+    (unit.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut inspection = block_on(repository.begin())
+    let mut inspection = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let found = block_on(inspection.find_job_instance(&key))
+    let found = (inspection.find_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         found.as_ref().map(oxide_batch::JobInstance::id) == Some(proposed_id),
@@ -1573,34 +1586,35 @@ where
         CASE,
         "created instance was not found by its identifying key",
     )?;
-    block_on(inspection.rollback())
+    (inspection.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 
-fn duplicate_key_preserves_original_id<R, F>(
+async fn duplicate_key_preserves_original_id<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "repository_duplicate_key_preserves_original_id";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
     let key = contract_key("2026-07-29")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut first = block_on(repository.begin())
+    let mut first = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let created = block_on(first.select_or_create_job_instance(&key))
+    let created = (first.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let first_id = created.instance().id();
-    block_on(first.commit())
+    (first.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut second = block_on(repository.begin())
+    let mut second = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let duplicate = block_on(second.select_or_create_job_instance(&key))
+    let duplicate = (second.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         !duplicate.was_created() && duplicate.instance().id() == first_id,
@@ -1608,34 +1622,35 @@ where
         CASE,
         "duplicate creation replaced or duplicated the logical instance",
     )?;
-    block_on(second.rollback())
+    (second.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 
-fn first_launch_creates_linked_graph<R, F>(
+async fn first_launch_creates_linked_graph<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "repository_first_launch_creates_linked_graph";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
     let key = contract_key("2026-07-29")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     let step_name = StepName::new("import")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut unit = block_on(repository.begin())
+    let mut unit = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(unit.select_or_create_job_instance(&key))
+    let instance = (unit.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
-    let job = block_on(unit.create_job_execution(instance.id()))
+    let job = (unit.create_job_execution(instance.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let step = block_on(unit.create_step_execution(job.id(), &step_name))
+    let step = (unit.create_step_execution(job.id(), &step_name)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         job.job_instance_id() == instance.id() && step.job_execution_id() == job.id(),
@@ -1643,14 +1658,14 @@ where
         CASE,
         "created execution graph was not linked",
     )?;
-    block_on(unit.commit())
+    (unit.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut inspection = block_on(repository.begin())
+    let mut inspection = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let jobs = block_on(inspection.job_executions(instance.id()))
+    let jobs = (inspection.job_executions(instance.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let steps = block_on(inspection.step_executions(job.id()))
+    let steps = (inspection.step_executions(job.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         jobs == vec![job] && steps == vec![step],
@@ -1658,81 +1673,83 @@ where
         CASE,
         "execution graph inspection differed from creation",
     )?;
-    block_on(inspection.rollback())
+    (inspection.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 
-fn completed_instance_rejects_another_execution<R, F>(
+async fn completed_instance_rejects_another_execution<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "repository_completed_instance_rejects_launch";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
     let key = contract_key("2026-07-29")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut first = block_on(repository.begin())
+    let mut first = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(first.select_or_create_job_instance(&key))
+    let instance = (first.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
-    let execution = block_on(first.create_job_execution(instance.id()))
+    let execution = (first.create_job_execution(instance.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let started = block_on(first.transition_job_execution(
+    let started = (first.transition_job_execution(
         execution.id(),
         execution.version(),
         LifecycleTransition::new(BatchStatus::Started, UNIX_EPOCH + Duration::from_secs(1)),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(first.transition_job_execution(
+    (first.transition_job_execution(
         started.id(),
         started.version(),
         LifecycleTransition::new(BatchStatus::Completed, UNIX_EPOCH + Duration::from_secs(2)),
-    ))
+    )).await
     .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(first.commit())
+    (first.commit()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut duplicate = block_on(repository.begin())
+    let mut duplicate = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let error = block_on(duplicate.create_job_execution(instance.id()));
+    let error = (duplicate.create_job_execution(instance.id())).await;
     ensure(
         error == Err(RepositoryError::CompletedInstance { id: instance.id() }),
         backend,
         CASE,
         "completed instance accepted another execution",
     )?;
-    block_on(duplicate.rollback())
+    (duplicate.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 
-fn stale_transition_is_typed_and_atomic<R, F>(
+async fn stale_transition_is_typed_and_atomic<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "repository_stale_transition_is_typed_and_atomic";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
     let key = contract_key("2026-07-29")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut unit = block_on(repository.begin())
+    let mut unit = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let instance = block_on(unit.select_or_create_job_instance(&key))
+    let instance = (unit.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
         .instance()
         .clone();
-    let execution = block_on(unit.create_job_execution(instance.id()))
+    let execution = (unit.create_job_execution(instance.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let error = block_on(unit.transition_job_execution(
+    let error = (unit.transition_job_execution(
         execution.id(),
         ExecutionVersion::new(1),
         LifecycleTransition::failed(
@@ -1744,7 +1761,7 @@ where
                 })?,
             ),
         ),
-    ));
+    )).await;
     ensure(
         error
             == Err(RepositoryError::Lifecycle(LifecycleError::StaleVersion {
@@ -1755,7 +1772,7 @@ where
         CASE,
         "stale transition did not return the accepted optimistic conflict",
     )?;
-    let unchanged = block_on(unit.get_job_execution(execution.id()))
+    let unchanged = (unit.get_job_execution(execution.id())).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         unchanged == Some(execution),
@@ -1763,33 +1780,34 @@ where
         CASE,
         "rejected stale transition mutated the execution",
     )?;
-    block_on(unit.rollback())
+    (unit.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 
-fn rollback_discards_staged_metadata<R, F>(
+async fn rollback_discards_staged_metadata<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository,
-    F: FnMut() -> Result<R, RepositoryError>,
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
 {
     const CASE: &str = "repository_rollback_discards_staged_metadata";
-    let repository = factory()
+    let repository = factory().await
         .map_err(|error| RepositoryContractFailure::new("unavailable", CASE, error.to_string()))?;
     let key = contract_key("2026-07-29")
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let mut staged = block_on(repository.begin())
+    let mut staged = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(staged.select_or_create_job_instance(&key))
+    (staged.select_or_create_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    block_on(staged.rollback())
+    (staged.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
 
-    let mut inspection = block_on(repository.begin())
+    let mut inspection = (repository.begin()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let found = block_on(inspection.find_job_instance(&key))
+    let found = (inspection.find_job_instance(&key)).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
         found.is_none(),
@@ -1797,7 +1815,7 @@ where
         CASE,
         "rolled-back metadata became visible",
     )?;
-    block_on(inspection.rollback())
+    (inspection.rollback()).await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))
 }
 

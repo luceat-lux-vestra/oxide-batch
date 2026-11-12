@@ -57,7 +57,9 @@ fn backend(
 
 #[test]
 fn shared_service_contract_passes_in_memory() -> Result<(), Box<dyn Error>> {
-    run_service_contract("in-memory", backend)?;
+    block_on(run_service_contract("in-memory", |clock| async move {
+        backend(clock)
+    }))?;
     Ok(())
 }
 
