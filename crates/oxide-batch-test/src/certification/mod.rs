@@ -1,8 +1,8 @@
 //! Reusable repository-adapter certification contracts.
 //!
-//! These runners exercise public OxideBatch repository, explorer, operator,
+//! These runners exercise public `OxideBatch` repository, explorer, operator,
 //! and retention semantics. Passing them is necessary evidence for an adapter,
-//! but does not by itself grant an OxideBatch support or compatibility claim.
+//! but does not by itself grant an `OxideBatch` support or compatibility claim.
 //! Concrete adapters remain responsible for isolated setup, cleanup, version
 //! declarations, and any capability-specific evidence required by the support
 //! matrix.
