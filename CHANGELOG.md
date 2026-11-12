@@ -33,6 +33,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Changed
 
+- M8 explorer-port evolution now treats every `ExplorerRepository` query as
+  additive: adapters may omit unsupported reads and receive a typed
+  `ExplorerError::UnsupportedCapability` rejection instead of being forced
+  to implement every future query. Existing PostgreSQL and in-memory query
+  behavior is unchanged.
+
 - M7 Gate-F compatibility-ledger reconciliation reviewed all 25 M7-scoped rows:
   the 9 existing release-backed `Verified` bases remain bounded to their named
   releases, while 16 unreleased M7 rows are `Implemented` candidate
