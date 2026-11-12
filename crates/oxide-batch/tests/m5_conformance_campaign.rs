@@ -85,14 +85,17 @@ use serde_json::Value;
 /// bounded M7 start-control completion evidence is delivered. It likewise
 /// remains outside the frozen M5 campaign scope; only this aggregate moves.
 /// M7 Gate-F ledger reconciliation in #621 then reviewed all 25 M7-scoped rows,
-/// leaving the frozen M5 accepted scope untouched while advancing the current
-/// whole-ledger population to the counts below.
+/// leaving the frozen M5 accepted scope untouched. M8 Gate-A #643 later split
+/// the aggregate enterprise database row into Oracle, DB2, and HANA rows and
+/// resolved the `MongoDB` row from `Unknown` to `Planned`. Those planning-only
+/// changes advance the current whole-ledger population to the counts below
+/// without changing the frozen M5 accepted scope.
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
     ("Verified", 28),
     ("Implemented", 28),
     ("Partial", 9),
-    ("Planned", 16),
-    ("Unknown", 2),
+    ("Planned", 19),
+    ("Unknown", 1),
 ];
 
 /// The statuses that make a row part of the accepted M0-M4 scope.
