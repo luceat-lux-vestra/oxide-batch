@@ -48,7 +48,7 @@ jobs:
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
-          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
           {
@@ -74,6 +74,10 @@ jobs:
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
           echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+        shell: bash
+        run: bash .github/scripts/install-mold-arm64.sh
 
       - name: Restore protected-main compiler cache read-only
         id: fast-restore-sccache
@@ -200,7 +204,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -230,6 +234,10 @@ jobs:
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
           echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+        shell: bash
+        run: bash .github/scripts/install-mold-arm64.sh
 
       - name: Restore protected-main compiler cache read-only
         id: integration-restore-sccache
@@ -297,7 +305,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -327,6 +335,10 @@ jobs:
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
           echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+        shell: bash
+        run: bash .github/scripts/install-mold-arm64.sh
 
       - name: Restore protected-main compiler cache read-only
         id: integration-restore-sccache
@@ -394,7 +406,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -424,6 +436,10 @@ jobs:
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
           echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+        shell: bash
+        run: bash .github/scripts/install-mold-arm64.sh
 
       - name: Restore protected-main compiler cache read-only
         id: integration-restore-sccache
@@ -491,7 +507,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -521,6 +537,10 @@ jobs:
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
           echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+        shell: bash
+        run: bash .github/scripts/install-mold-arm64.sh
 
       - name: Restore protected-main compiler cache read-only
         id: integration-restore-sccache
@@ -1001,7 +1021,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v1-linux-arm64-${toolchain_hash}"
+          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -1031,6 +1051,10 @@ jobs:
           tar -xzf "$archive" -C "$install_dir" --strip-components=1
           test -x "$install_dir/sccache"
           echo "$install_dir" >> "$GITHUB_PATH"
+
+      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+        shell: bash
+        run: bash .github/scripts/install-mold-arm64.sh
 
       - name: Restore protected-main compiler cache read-only
         id: integration-restore-sccache
