@@ -1,6 +1,6 @@
 # M8 Gate-A — Repository portability and adapter certification
 
-**Status:** Proposed for acceptance by #643  
+**State:** Accepted by Gate-A #643  
 **Owner:** M8 tracker #201  
 **Scope:** repository semantics, adapter boundaries, support dispositions, and certification ownership
 
@@ -52,6 +52,25 @@ The pinned Spring Batch 6.0.4 baseline contains a MongoDB-backed job repository,
 so `DB-MONGO-001` is not NotApplicable. OxideBatch treats MongoDB as a
 separate non-relational metadata-adapter track rather than pretending it is a
 relational dialect.
+
+## External baseline evidence
+
+The support dispositions above are grounded in the pinned/current dependency
+sources rather than inferred from product names:
+
+- Spring Batch v6.0.4
+  [`EnableMongoJobRepository`](https://github.com/spring-projects/spring-batch/blob/v6.0.4/spring-batch-core/src/main/java/org/springframework/batch/core/configuration/annotation/EnableMongoJobRepository.java)
+  explicitly enables a MongoDB-backed job repository.
+- Spring Batch v6.0.4
+  [`MongoJobRepositoryFactoryBean`](https://github.com/spring-projects/spring-batch/blob/v6.0.4/spring-batch-core/src/main/java/org/springframework/batch/core/repository/support/MongoJobRepositoryFactoryBean.java)
+  constructs the repository from Mongo-specific metadata DAOs and sequence
+  incrementers.
+- SQLx 0.9
+  [documents PostgreSQL, MySQL/MariaDB, and SQLite support](https://docs.rs/crate/sqlx/0.9.0)
+  and records that MSSQL support was removed pending a driver rewrite.
+
+These references justify the Gate-A disposition. They are not adapter
+certification evidence for OxideBatch.
 
 ## Portable contract versus adapter mechanics
 
