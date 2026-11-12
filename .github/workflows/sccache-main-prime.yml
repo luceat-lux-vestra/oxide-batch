@@ -351,7 +351,8 @@ jobs:
           set -euo pipefail
           ref="refs/heads/$DEFAULT_BRANCH"
           found=0
-          for attempt in 1 2 3 4 5; do
+          for _ in 1 2 3 4 5; do
+            # shellcheck disable=SC2016 -- $key/$ref are jq variables inside the jq program.
             count="$(gh api -H 'Accept: application/vnd.github+json' \
               "repos/$GITHUB_REPOSITORY/actions/caches?ref=$ref&key=$CURRENT_KEY&per_page=100" \
               --jq --arg key "$CURRENT_KEY" --arg ref "$ref" \
