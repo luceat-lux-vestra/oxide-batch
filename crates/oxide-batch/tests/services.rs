@@ -4,13 +4,17 @@
 #[path = "support/ids.rs"]
 mod ids;
 
+#[allow(dead_code, unused_imports)]
+#[path = "contract/mod.rs"]
+mod contract;
+
 use std::error::Error;
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use oxide_batch_test::certification::{ContractClock, ServiceBackend, run_service_contract};
+use contract::{ContractClock, ServiceBackend, run_service_contract};
 use futures_executor::block_on;
 use ids::DeterministicIds;
 use oxide_batch::{
