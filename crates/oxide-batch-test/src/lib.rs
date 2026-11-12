@@ -15,7 +15,7 @@
 //!
 //! - [`certification`]: reusable repository, explorer, operator, and
 //!   retention contract runners for adapter certification. Passing these
-//!   contracts is evidence, not by itself an OxideBatch support claim.
+//!   contracts is evidence, not by itself an `OxideBatch` support claim.
 //! - [`ManualClock`] and [`DeterministicIds`]: deterministic implementations
 //!   of the framework's own [`Clock`](oxide_batch::Clock) and
 //!   [`IdGenerator`](oxide_batch::IdGenerator) ports.
