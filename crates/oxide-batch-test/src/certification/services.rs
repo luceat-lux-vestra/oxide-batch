@@ -142,7 +142,7 @@ where
     interrupted_purge_leaves_completed_batches_durable(backend, &mut factory).await
 }
 
-/// Runs every service contract group used by the in-memory and PostgreSQL
+/// Runs every service contract group used by the in-memory and `PostgreSQL`
 /// reference adapters.
 ///
 /// This aggregate is a full-capability equivalence/control suite, not the

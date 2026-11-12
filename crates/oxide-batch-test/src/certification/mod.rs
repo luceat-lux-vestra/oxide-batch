@@ -110,7 +110,7 @@ where
     partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory).await
 }
 
-/// Runs every repository contract group used by the in-memory and PostgreSQL
+/// Runs every repository contract group used by the in-memory and `PostgreSQL`
 /// reference adapters.
 ///
 /// This aggregate is an equivalence/control convenience for adapters that claim
