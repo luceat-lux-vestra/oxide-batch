@@ -2,15 +2,17 @@
 
 #![cfg(feature = "postgres")]
 
+#[allow(dead_code, unused_imports)]
+#[path = "contract/mod.rs"]
+mod contract;
+
 use std::collections::VecDeque;
 use std::error::Error;
 use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use oxide_batch_test::certification::{
-    ServiceBackend, run_repository_contract, run_service_contract,
-};
+use contract::{ServiceBackend, run_repository_contract, run_service_contract};
 use oxide_batch::{
     BackoffPolicy, BatchStatus, BoxFuture, BusinessStatement, BusinessValue, CaCertificate,
     Checkpoint, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
