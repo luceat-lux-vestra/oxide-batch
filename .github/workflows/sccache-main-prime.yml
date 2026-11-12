@@ -26,6 +26,7 @@ env:
 jobs:
   prime:
     name: main ${{ matrix.arch }} compiler cache prime
+    cache-mode: write
     # The successful merged-main signal job is verified again below against the
     # exact upstream workflow run; closed-without-merge cannot populate caches.
     if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request') }}
@@ -338,6 +339,31 @@ jobs:
         with:
           path: ${{ runner.temp }}/oxide-fast-sccache
           key: ${{ steps.cache-id.outputs.key }}
+
+      - name: Verify exact protected-main compiler cache was published
+        if: ${{ steps.restore-cache.outputs.cache-hit != 'true' && steps.save-cache.outcome == 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_KEY: ${{ steps.cache-id.outputs.key }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="refs/heads/$DEFAULT_BRANCH"
+          found=0
+          for attempt in 1 2 3 4 5; do
+            count="$(gh api -H 'Accept: application/vnd.github+json' \
+              "repos/$GITHUB_REPOSITORY/actions/caches?ref=$ref&key=$CURRENT_KEY&per_page=100" \
+              --jq --arg key "$CURRENT_KEY" --arg ref "$ref" \
+              '[.actions_caches[] | select(.key == $key and .ref == $ref)] | length')"
+            if [ "$count" -ge 1 ]; then
+              found=1
+              break
+            fi
+            sleep 2
+          done
+          test "$found" -eq 1
+          echo "Verified published protected-main compiler cache: $CURRENT_KEY"
 
       - name: Keep only current and one previous Fast compiler cache
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' && steps.save-cache.outcome == 'success' }}
