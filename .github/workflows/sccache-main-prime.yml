@@ -37,7 +37,7 @@ jobs:
             runner: ubuntu-24.04-arm
             runner_arch: ARM64
             uname_arch: aarch64
-            cache_prefix: oxide-fast-sccache-v1-linux-arm64-
+            cache_prefix: oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-
             artifact_triple: aarch64-unknown-linux-musl
             artifact_sha256: 2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a
           - arch: x64
@@ -236,6 +236,11 @@ jobs:
           cargo_bin_dir="$(dirname "$(command -v cargo)")"
           test -d "$cargo_bin_dir"
           install -m 0755 "$install_dir/sccache" "$cargo_bin_dir/sccache"
+
+      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+        if: ${{ matrix.arch == 'arm64' && steps.restore-cache.outputs.cache-hit != 'true' }}
+        shell: bash
+        run: bash .github/scripts/install-mold-arm64.sh
 
       # Explicit, scoped env avoids privileged GITHUB_ENV writes. This is
       # the FIRST invocation of sccache; it starts the server on the
