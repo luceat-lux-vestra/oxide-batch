@@ -9,8 +9,9 @@ repository fixtures, a restart harness) independent of the production
 runtime, per the M6 design gate's
 [Gate G decision](https://github.com/luceat-lux-vestra/oxide-batch/blob/main/docs/project/m6-design-gate-evidence.md#gate-g--oxide-batch-test-boundary).
 
-- Production `oxide-batch` code never depends on this crate; workspace integration tests may use it as a dev-dependency.
+- `oxide-batch` never depends on this crate.
 - The `oxide-batch` facade never re-exports it.
+- Workspace facade integration tests compile the same certification source through an internal test-only path; external adapters consume the public `oxide_batch_test::certification` API.
 - It consumes only `oxide-batch`'s public contracts, never a private
   implementation type.
 - It leaks no `SQLx`, Tokio runtime-handle, or other database-driver concrete
