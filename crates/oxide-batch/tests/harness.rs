@@ -10,9 +10,8 @@ use std::num::NonZeroU64;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, UNIX_EPOCH};
 
-use contract::run_component_contract;
+use contract::{run_component_contract, run_repository_contract};
 use oxide_batch::InMemoryJobRepository;
-use oxide_batch_test::certification::run_repository_contract;
 use support::{
     BoundedTimeout, BoundedTimeoutError, ControlledBackoff, DeterministicIds, DiagnosticContext,
     EventCapture, FixtureProvenance, FixtureProvenanceError, IdSequenceError, ManualClock,
