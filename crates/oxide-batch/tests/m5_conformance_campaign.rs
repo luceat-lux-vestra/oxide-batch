@@ -87,7 +87,7 @@ use serde_json::Value;
 /// M7 Gate-F ledger reconciliation in #621 then reviewed all 25 M7-scoped rows,
 /// leaving the frozen M5 accepted scope untouched. M8 Gate-A #643 later split
 /// the aggregate enterprise database row into Oracle, DB2, and HANA rows and
-/// resolved the MongoDB row from `Unknown` to `Planned`. Those planning-only
+/// resolved the `MongoDB` row from `Unknown` to `Planned`. Those planning-only
 /// changes advance the current whole-ledger population to the counts below
 /// without changing the frozen M5 accepted scope.
 const CLOSED_DISPOSITION: &[(&str, usize)] = &[
