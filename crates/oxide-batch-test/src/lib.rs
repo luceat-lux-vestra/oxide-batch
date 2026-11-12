@@ -6,10 +6,10 @@
 //! own dependency/resource boundary independent of the production runtime,
 //! and it consumes only `oxide-batch`'s public contracts.
 //!
-//! Production `oxide-batch` code never depends on this crate, and its facade
-//! never re-exports it. Workspace integration tests may use it as a
-//! dev-dependency to prove that the same public certification contracts are
-//! exercised by built-in adapters.
+//! `oxide-batch` never depends on this crate, and its facade never re-exports
+//! it. Workspace facade integration tests compile the certification source
+//! through an internal test-only path so built-in adapters exercise the same
+//! contracts exposed to external adapter tests.
 //!
 //! ## What this crate provides
 //!
