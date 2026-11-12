@@ -12,6 +12,10 @@
 
 mod services;
 
+#[allow(
+    unused_imports,
+    reason = "facade integration tests include this public module source but exercise only selected capability groups"
+)]
 pub use services::{
     ContractClock, ServiceBackend, run_explorer_contract, run_full_service_contract,
     run_operator_control_contract, run_retention_contract,
