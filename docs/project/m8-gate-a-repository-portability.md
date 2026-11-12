@@ -1,7 +1,7 @@
 # M8 Gate-A — Repository portability and adapter certification
 
-**State:** Accepted by Gate-A #643  
-**Owner:** M8 tracker #201  
+**State:** Accepted by Gate-A #643
+**Owner:** M8 tracker #201
 **Scope:** repository semantics, adapter boundaries, support dispositions, and certification ownership
 
 This record freezes the repository-portability decisions needed before M8 creates
