@@ -60,16 +60,96 @@ pub struct ServiceBackend<R, S> {
     pub clock: Arc<ContractClock>,
 }
 
-/// Runs the reusable M4 operator, explorer, and retention contract.
+/// Runs the bounded explorer-query capability contract.
 ///
-/// A fresh backend is constructed for each case, so registration order and
-/// state leakage cannot affect the result.
+/// Adapters may omit this group when they do not claim the corresponding
+/// explorer surface; unsupported reads remain fail-closed at the port.
 ///
 /// # Errors
 ///
-/// Returns [`RepositoryContractFailure`] with the stable case and backend
-/// names when construction, an operation, or an observation differs.
-pub fn run_service_contract<R, S, F>(
+/// Returns [`RepositoryContractFailure`] when any explorer case differs from
+/// the accepted public semantics.
+pub fn run_explorer_contract<R, S, F>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository + Clone,
+    S: ExplorerRepository,
+    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+{
+    keyset_traversal_returns_each_row_once(backend, &mut factory)?;
+    rows_created_after_traversal_start_are_not_returned(backend, &mut factory)?;
+    cursor_rejects_a_different_query_or_filter(backend, &mut factory)?;
+    corrupt_cursor_checksum_is_rejected(backend, &mut factory)?;
+    page_and_response_bounds_are_enforced(backend, &mut factory)?;
+    projection_excludes_parameter_and_context_values(backend, &mut factory)
+}
+
+/// Runs operator idempotency and lifecycle-control capability contracts.
+///
+/// This group covers audited operation identity, stale compare-and-swap,
+/// abandon/restart behavior, and durable stop control.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] when any operator/control case differs
+/// from the accepted public semantics.
+pub fn run_operator_control_contract<R, S, F>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository + Clone,
+    S: ExplorerRepository,
+    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+{
+    replayed_operation_id_returns_the_recorded_outcome(backend, &mut factory)?;
+    operation_id_reuse_with_a_different_digest_is_rejected(backend, &mut factory)?;
+    operator_request_and_effect_commit_together(backend, &mut factory)?;
+    rejected_action_is_audited_without_an_effect(backend, &mut factory)?;
+    stale_expected_version_loses_the_compare_and_swap(backend, &mut factory)?;
+    abandon_requires_a_stopped_failed_or_recovered_execution(backend, &mut factory)?;
+    repeat_abandon_changes_nothing(backend, &mut factory)?;
+    abandoned_execution_rejects_restart(backend, &mut factory)?;
+    stop_on_a_stopping_or_terminal_execution_changes_nothing(backend, &mut factory)
+}
+
+/// Runs retention/hold/purge capability contracts.
+///
+/// Adapters that do not declare retention purge should not run this group.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] when any retention case differs from
+/// the accepted public semantics.
+pub fn run_retention_contract<R, S, F>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository + Clone,
+    S: ExplorerRepository,
+    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+{
+    held_instance_is_never_purged(backend, &mut factory)?;
+    running_stopping_or_unknown_execution_is_never_purged(backend, &mut factory)?;
+    stale_plan_digest_rejects_apply_without_deleting(backend, &mut factory)?;
+    purge_deletes_in_instance_owned_order_within_batch_bounds(backend, &mut factory)?;
+    interrupted_purge_leaves_completed_batches_durable(backend, &mut factory)
+}
+
+/// Runs every service contract group used by the in-memory and PostgreSQL
+/// reference adapters.
+///
+/// This aggregate is a full-capability equivalence/control suite, not the
+/// minimum portable adapter contract.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] when any included case differs from
+/// the accepted public semantics.
+pub fn run_full_service_contract<R, S, F>(
     backend: &'static str,
     mut factory: F,
 ) -> Result<(), RepositoryContractFailure>

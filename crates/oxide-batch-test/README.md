@@ -25,8 +25,13 @@ fixture, a single-step harness, a full-job harness,
 failure/panic/cooperative-stop injection, a restart harness, and repository
 fixtures (embedded and, behind the `postgres` feature, `PostgreSQL`).
 
-The `certification` module is a contract test kit, not a support badge. An
-adapter that passes the shared repository/service cases still needs the
-versioned migration, crash/unknown-outcome, resource-bound, security, and
-capability-specific evidence required by the OxideBatch support matrix before
-it can be advertised as supported.
+The `certification` module is a contract test kit, not a support badge. Its
+portable core repository contract is separate from optional definition,
+partition, explorer, operator/control, and retention contract groups. The
+`run_full_*` aggregates exist for reference adapters that claim all represented
+capabilities; they are not the minimum portable contract.
+
+An adapter that passes every applicable contract group still needs the versioned
+migration, crash/unknown-outcome, resource-bound, security, and capability-specific
+evidence required by the OxideBatch support matrix before it can be advertised
+as supported.

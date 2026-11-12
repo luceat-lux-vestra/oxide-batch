@@ -1,15 +1,21 @@
 //! Reusable repository-adapter certification contracts.
 //!
 //! These runners exercise public `OxideBatch` repository, explorer, operator,
-//! and retention semantics. Passing them is necessary evidence for an adapter,
-//! but does not by itself grant an `OxideBatch` support or compatibility claim.
-//! Concrete adapters remain responsible for isolated setup, cleanup, version
-//! declarations, and any capability-specific evidence required by the support
-//! matrix.
+//! and retention semantics. The contract surface is capability-scoped: core
+//! repository semantics are certified separately from optional definition,
+//! partition, explorer, operator/control, and retention capabilities.
+//!
+//! Passing the applicable groups is necessary evidence for an adapter, but does
+//! not by itself grant an `OxideBatch` support or compatibility claim. Concrete
+//! adapters remain responsible for isolated setup, cleanup, version declarations,
+//! and the additional evidence required by the support matrix.
 
 mod services;
 
-pub use services::{ContractClock, ServiceBackend, run_service_contract};
+pub use services::{
+    ContractClock, ServiceBackend, run_explorer_contract, run_full_service_contract,
+    run_operator_control_contract, run_retention_contract,
+};
 
 use std::error::Error;
 use std::fmt;
@@ -28,16 +34,92 @@ use oxide_batch::{
     StateSchemaVersion, StepName,
 };
 
-/// Runs the reusable M1 repository instance-identity contract.
+/// Runs the mandatory portable repository contract.
 ///
-/// A fresh backend is constructed for each case so registration order and
-/// state leakage cannot affect the result.
+/// This group contains only semantics required of every durable
+/// `JobRepository`: logical-instance identity, execution graph identity,
+/// lifecycle compare-and-swap, completion/relaunch policy, and rollback
+/// visibility. Optional repository capabilities are certified by separate
+/// runners.
 ///
 /// # Errors
 ///
 /// Returns [`RepositoryContractFailure`] with the stable case and backend
 /// names when construction, an operation, or an observation differs.
-pub fn run_repository_contract<R, F>(
+pub fn run_core_repository_contract<R, F>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut() -> Result<R, RepositoryError>,
+{
+    create_then_find(backend, &mut factory)?;
+    duplicate_key_preserves_original_id(backend, &mut factory)?;
+    first_launch_creates_linked_graph(backend, &mut factory)?;
+    completed_instance_rejects_another_execution(backend, &mut factory)?;
+    stale_transition_is_typed_and_atomic(backend, &mut factory)?;
+    rollback_discards_staged_metadata(backend, &mut factory)
+}
+
+/// Runs the definition-registry/compatible-upgrade capability contract.
+///
+/// Adapters that do not declare this capability should not run this group.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] when any definition-upgrade case
+/// differs from the accepted public semantics.
+pub fn run_definition_upgrade_contract<R, F>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut() -> Result<R, RepositoryError>,
+{
+    compatible_upgrade_transforms_context_before_target_step(backend, &mut factory)?;
+    compatible_upgrade_rejects_conflicting_or_stale_edge(backend, &mut factory)?;
+    compatible_upgrade_is_not_transitive(backend, &mut factory)?;
+    compatible_upgrade_rejects_newer_persisted_state(backend, &mut factory)?;
+    compatible_upgrade_target_only_node_starts_fresh(backend, &mut factory)
+}
+
+/// Runs the durable local-partition capability contract.
+///
+/// Adapters that do not declare durable step partitions should not run this
+/// group.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] when any partition case differs from
+/// the accepted public semantics.
+pub fn run_partition_contract<R, F>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut() -> Result<R, RepositoryError>,
+{
+    partition_plan_commits_before_any_worker_starts(backend, &mut factory)?;
+    duplicate_partition_key_is_rejected(backend, &mut factory)?;
+    partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory)
+}
+
+/// Runs every repository contract group used by the in-memory and PostgreSQL
+/// reference adapters.
+///
+/// This aggregate is an equivalence/control convenience for adapters that claim
+/// all currently represented capabilities. It is not the minimum portable
+/// adapter contract and must not be used to infer support for an undeclared
+/// capability.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] with the stable case and backend
+/// names when any included case differs.
+pub fn run_full_repository_contract<R, F>(
     backend: &'static str,
     mut factory: F,
 ) -> Result<(), RepositoryContractFailure>
