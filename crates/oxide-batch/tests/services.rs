@@ -1,8 +1,5 @@
 //! Bounded operator, explorer, and retention service behavior.
 
-#[allow(dead_code, unused_imports)]
-#[path = "contract/mod.rs"]
-mod contract;
 #[allow(dead_code)]
 #[path = "support/ids.rs"]
 mod ids;
@@ -13,7 +10,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use contract::{ContractClock, ServiceBackend, run_service_contract};
+use oxide_batch_test::certification::{ContractClock, ServiceBackend, run_service_contract};
 use futures_executor::block_on;
 use ids::DeterministicIds;
 use oxide_batch::{
