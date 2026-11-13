@@ -21,24 +21,24 @@ use oxide_batch_repository::{
 
 use crate::{
     ActorRef, BatchStatus, BoxFuture, BusinessStatement, BusinessTransaction,
-    BusinessTransactionError, BusinessValueKind, BusinessWriteResult, Checkpoint,
-    ChunkCommitReceipt, ChunkCounts, ChunkFaultProgress, ChunkTransaction, ChunkTransactionContext,
-    ChunkTransactionError, ChunkTransactionManager, ClassifierRevision, Clock,
-    ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
+    BusinessTransactionError, BusinessTransactionErrorKind, BusinessValueKind, BusinessWriteResult,
+    Checkpoint, ChunkCommitReceipt, ChunkCounts, ChunkFaultProgress, ChunkTransaction,
+    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, ClassifierRevision,
+    Clock, ComponentStateEnvelope, ComponentStatePayload, ComponentStreamIdentity, ContentIdentity,
     CursorError, CursorKey, DefinitionArtifactId, DefinitionDescriptor, DefinitionIdentity,
     DefinitionRegistration, DefinitionRevision, DefinitionRevisionProjection, DefinitionStateKind,
     DefinitionStateTransform, DefinitionStateTransformId, DefinitionUpgrade,
     DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeProjection,
     DefinitionUpgradeRevision, DurableStateKind, ExecutionContext, ExecutionCounts,
     ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, ExplorerError,
-    ExplorerQuery, ExplorerRepository, ExternalStateReference, FailureCategory, FailureId,
-    FailureSummary, FaultPhase, FaultPolicy, FaultProgress, FaultStateEntry, FaultStateEnvelope,
-    FaultStateError, FaultStateFormatError, FaultStateStore, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind,
-    ForkContextTransform, ForkLineage, ForkLineageProjection, IdentifierKind,
-    InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection, JobInstance,
-    JobInstanceId, JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName,
-    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
+    ExplorerQuery, ExplorerRepository, ExternalStateReference, FailureCategory, FailureCode,
+    FailureId, FailureProvenance, FailureSummary, FaultPhase, FaultPolicy, FaultProgress,
+    FaultStateEntry, FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore,
+    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
+    FlowTarget, FlowTransitionKind, ForkContextTransform, ForkLineage, ForkLineageProjection,
+    IdentifierKind, InheritedStepProgress, JobExecution, JobExecutionId, JobExecutionProjection,
+    JobInstance, JobInstanceId, JobInstanceKey, JobInstanceProjection, JobInstanceSelection,
+    JobName, JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
     MAX_PARTITION_CONTEXT_BYTES, MAX_PARTITIONS, NestedJobLink, NestedJobLinkProjection,
     NestedJobLinkRequest, NestedJobTerminalObservation, NodeId, OperationId, OperatorAction,
     OperatorOutcomeClass, OperatorRecord, OperatorRecordDraft, OperatorRejection,
@@ -51,10 +51,10 @@ use crate::{
     RequestDigest, RestartControlDescriptor, RestartPolicy, RetentionAction, RetentionActionId,
     RetentionHold, RetentionOutcome, RetentionRecord, RetentionRecordDraft, RetryCounts, RetryKey,
     RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit, ScopeKind,
-    ScopeResolutionProjection, ScopedComponentId, SkipCounts, StartLimit, StateEnvelopeDescriptor,
-    StateLimits, StateSchemaId, StateSchemaVersion, StepExecution, StepExecutionId,
-    StepExecutionProjection, StepName, StepPartition, StepPartitionId, StepPartitionProjection,
-    TerminalKind,
+    ScopeResolutionProjection, ScopedComponentId, SkipCounts, SqlStateCode, StartLimit,
+    StateEnvelopeDescriptor, StateLimits, StateSchemaId, StateSchemaVersion, StepExecution,
+    StepExecutionId, StepExecutionProjection, StepName, StepPartition, StepPartitionId,
+    StepPartitionProjection, TerminalKind,
 };
 
 fn encode_fork_context_transform(value: &ForkContextTransform) -> Value {
@@ -6887,7 +6887,7 @@ impl BusinessTransaction for PostgresChunkTransaction {
                 Ok(result) => Ok(BusinessWriteResult::new(result.rows_affected())),
                 Err(error) => {
                     let classified = classify_business_error(&error);
-                    if classified != BusinessTransactionError::Rejected {
+                    if classified.kind() != BusinessTransactionErrorKind::Rejected {
                         self.discard_connection();
                     }
                     Err(classified)
@@ -7143,13 +7143,20 @@ fn classify_business_error(error: &sqlx::Error) -> BusinessTransactionError {
     let Some(code) = database.code() else {
         return BusinessTransactionError::Infrastructure;
     };
-    if code == "57014" {
-        return BusinessTransactionError::Cancelled;
-    }
-    if code.starts_with("22") || code.starts_with("23") || code.starts_with("42") {
-        return BusinessTransactionError::Rejected;
-    }
-    BusinessTransactionError::Infrastructure
+    let provenance = SqlStateCode::new(code.as_ref()).map_or(
+        FailureProvenance::known_not_committed(),
+        |sql_state| {
+            FailureProvenance::known_not_committed().with_code(FailureCode::SqlState(sql_state))
+        },
+    );
+    let kind = if code == "57014" {
+        BusinessTransactionErrorKind::Cancelled
+    } else if code.starts_with("22") || code.starts_with("23") || code.starts_with("42") {
+        BusinessTransactionErrorKind::Rejected
+    } else {
+        BusinessTransactionErrorKind::Infrastructure
+    };
+    BusinessTransactionError::with_provenance(kind, provenance)
 }
 
 fn add_chunk_counts(

@@ -731,10 +731,135 @@ pub trait ChunkTransactionManager: Send + Sync {
     }
 }
 
-/// Stable, value-redacted enlisted-transaction failure.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// Correctness-relevant durable outcome knowledge carried by a redacted failure.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
-pub enum BusinessTransactionError {
+pub enum FailureOutcome {
+    /// The adapter knows the failed operation did not commit.
+    KnownNotCommitted,
+    /// The adapter cannot prove whether the operation became durable.
+    Unknown,
+}
+
+/// A bounded five-byte `SQLSTATE` code safe to expose without a driver error object.
+///
+/// Construction accepts exactly five `ASCII` uppercase letters or digits. Raw
+/// database messages, SQL, bound values, connection details, and other driver
+/// diagnostics are intentionally not represented by this type.
+#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+pub struct SqlStateCode([u8; 5]);
+
+impl SqlStateCode {
+    /// Validates and copies one `SQLSTATE` code.
+    #[must_use]
+    pub fn new(value: &str) -> Option<Self> {
+        let bytes = value.as_bytes();
+        if bytes.len() != 5
+            || !bytes
+                .iter()
+                .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit())
+        {
+            return None;
+        }
+        let mut code = [0_u8; 5];
+        code.copy_from_slice(bytes);
+        Some(Self(code))
+    }
+
+    /// Returns the validated five-byte representation.
+    #[must_use]
+    pub const fn bytes(self) -> [u8; 5] {
+        self.0
+    }
+
+    /// Tests this code against a string without allocating.
+    #[must_use]
+    pub fn matches(self, value: &str) -> bool {
+        self.0.as_slice() == value.as_bytes()
+    }
+}
+
+impl fmt::Debug for SqlStateCode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, formatter)
+    }
+}
+
+impl fmt::Display for SqlStateCode {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "{}{}{}{}{}",
+            char::from(self.0[0]),
+            char::from(self.0[1]),
+            char::from(self.0[2]),
+            char::from(self.0[3]),
+            char::from(self.0[4])
+        )
+    }
+}
+
+/// One bounded, reviewed backend code retained at a portable failure boundary.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum FailureCode {
+    /// SQL-standard five-character state code.
+    SqlState(SqlStateCode),
+}
+
+/// Stable, bounded, value-redacted provenance for a portable failure.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct FailureProvenance {
+    outcome: FailureOutcome,
+    code: Option<FailureCode>,
+}
+
+impl FailureProvenance {
+    /// Constructs provenance with no backend code.
+    #[must_use]
+    pub const fn new(outcome: FailureOutcome) -> Self {
+        Self {
+            outcome,
+            code: None,
+        }
+    }
+
+    /// Constructs known-not-committed provenance with no backend code.
+    #[must_use]
+    pub const fn known_not_committed() -> Self {
+        Self::new(FailureOutcome::KnownNotCommitted)
+    }
+
+    /// Constructs unknown-outcome provenance with no backend code.
+    #[must_use]
+    pub const fn unknown() -> Self {
+        Self::new(FailureOutcome::Unknown)
+    }
+
+    /// Adds one bounded, reviewed backend code.
+    #[must_use]
+    pub const fn with_code(mut self, code: FailureCode) -> Self {
+        self.code = Some(code);
+        self
+    }
+
+    /// Returns the correctness-relevant outcome knowledge.
+    #[must_use]
+    pub const fn outcome(self) -> FailureOutcome {
+        self.outcome
+    }
+
+    /// Returns the retained backend code, when one is available.
+    #[must_use]
+    pub const fn code(self) -> Option<FailureCode> {
+        self.code
+    }
+}
+
+/// Stable category for an enlisted-transaction failure.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum BusinessTransactionErrorKind {
     /// The transaction cannot safely continue after an infrastructure failure.
     Infrastructure,
     /// The statement was rejected permanently.
@@ -743,12 +868,91 @@ pub enum BusinessTransactionError {
     Cancelled,
 }
 
+/// Stable, value-redacted enlisted-transaction failure.
+///
+/// The category remains driver-neutral. `FailureProvenance` may retain only
+/// bounded, reviewed codes and outcome knowledge; raw driver diagnostics never
+/// cross this boundary.
+#[derive(Clone, Copy, Eq, PartialEq)]
+#[non_exhaustive]
+pub struct BusinessTransactionError {
+    kind: BusinessTransactionErrorKind,
+    provenance: FailureProvenance,
+}
+
+impl BusinessTransactionError {
+    /// Source-compatible infrastructure value with no backend code.
+    #[allow(
+        non_upper_case_globals,
+        reason = "preserves the former enum-variant spelling at the public boundary"
+    )]
+    pub const Infrastructure: Self = Self::with_provenance(
+        BusinessTransactionErrorKind::Infrastructure,
+        FailureProvenance::known_not_committed(),
+    );
+
+    /// Source-compatible permanent-rejection value with no backend code.
+    #[allow(
+        non_upper_case_globals,
+        reason = "preserves the former enum-variant spelling at the public boundary"
+    )]
+    pub const Rejected: Self = Self::with_provenance(
+        BusinessTransactionErrorKind::Rejected,
+        FailureProvenance::known_not_committed(),
+    );
+
+    /// Source-compatible cancellation value with no backend code.
+    #[allow(
+        non_upper_case_globals,
+        reason = "preserves the former enum-variant spelling at the public boundary"
+    )]
+    pub const Cancelled: Self = Self::with_provenance(
+        BusinessTransactionErrorKind::Cancelled,
+        FailureProvenance::known_not_committed(),
+    );
+
+    /// Constructs a value-redacted failure with explicit provenance.
+    #[must_use]
+    pub const fn with_provenance(
+        kind: BusinessTransactionErrorKind,
+        provenance: FailureProvenance,
+    ) -> Self {
+        Self { kind, provenance }
+    }
+
+    /// Returns the stable transaction-failure category.
+    #[must_use]
+    pub const fn kind(self) -> BusinessTransactionErrorKind {
+        self.kind
+    }
+
+    /// Returns bounded, value-redacted provenance.
+    #[must_use]
+    pub const fn provenance(self) -> FailureProvenance {
+        self.provenance
+    }
+}
+
+impl fmt::Debug for BusinessTransactionError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BusinessTransactionError")
+            .field("kind", &self.kind)
+            .field("provenance", &self.provenance)
+            .finish()
+    }
+}
+
 impl fmt::Display for BusinessTransactionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(match self {
-            Self::Infrastructure => "business transaction infrastructure failed",
-            Self::Rejected => "business transaction statement was rejected",
-            Self::Cancelled => "business transaction operation was cancelled",
+        formatter.write_str(match self.kind {
+            BusinessTransactionErrorKind::Infrastructure => {
+                "business transaction infrastructure failed"
+            }
+            BusinessTransactionErrorKind::Rejected => "business transaction statement was rejected",
+            BusinessTransactionErrorKind::Cancelled => {
+                "business transaction operation was cancelled"
+            }
         })
     }
 }
@@ -1049,6 +1253,7 @@ macro_rules! component_error {
         /// The adapter translates its own typed error into a stable
         /// [`FailureCategory`] at this boundary. The payload, display text, and
         /// source chain are dropped, so classification never inspects them.
+        /// Explicit fields may retain only bounded, value-redacted provenance.
         #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub struct $name {
             category: FailureCategory,
@@ -1124,6 +1329,8 @@ component_error!(
     "item writer failed",
     rolled_back_output: Option<usize> = None,
     "The located, known-rolled-back output index, when the writer supplied one.",
+    provenance: Option<FailureProvenance> = None,
+    "Bounded, value-redacted failure provenance retained from an enlisted transaction.",
 );
 component_error!(ChunkCompletionError, "chunk completion callback failed");
 
@@ -1147,6 +1354,32 @@ impl ReaderError {
 }
 
 impl WriterError {
+    /// Maps an enlisted-transaction failure without dropping its provenance.
+    #[must_use]
+    pub const fn from_business_transaction(error: BusinessTransactionError) -> Self {
+        let category = match error.kind() {
+            BusinessTransactionErrorKind::Infrastructure => {
+                FailureCategory::TransientInfrastructure
+            }
+            BusinessTransactionErrorKind::Rejected => FailureCategory::UserComponent,
+            BusinessTransactionErrorKind::Cancelled => FailureCategory::Cancelled,
+        };
+        Self::with_category(category).with_provenance(error.provenance())
+    }
+
+    /// Retains bounded, value-redacted provenance from a lower portable boundary.
+    #[must_use]
+    pub const fn with_provenance(mut self, provenance: FailureProvenance) -> Self {
+        self.provenance = Some(provenance);
+        self
+    }
+
+    /// Returns bounded, value-redacted failure provenance when available.
+    #[must_use]
+    pub const fn provenance(self) -> Option<FailureProvenance> {
+        self.provenance
+    }
+
     /// Records that the batch is known to have rolled back and identifies the
     /// single failed output by its zero-based index in the supplied batch.
     ///

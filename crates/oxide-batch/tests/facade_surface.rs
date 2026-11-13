@@ -155,6 +155,9 @@ mod resolves {
         completion_policy_revision,
     };
     pub use oxide_batch::{
+        BusinessTransactionErrorKind, FailureCode, FailureOutcome, FailureProvenance, SqlStateCode,
+    };
+    pub use oxide_batch::{
         DefinitionRevisionProjection, DefinitionUpgradeProjection, ForkLineageProjection,
         NestedJobLinkProjection, RepeatStateProjection, RestartControlDescriptor,
         ScopeResolutionProjection,
