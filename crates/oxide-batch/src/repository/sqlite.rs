@@ -13,8 +13,8 @@ use sqlx::{AssertSqlSafe, Connection, Sqlite, SqliteConnection, SqlitePool, Row}
 use crate::{
     BatchStatus, BoxFuture, Clock, DefinitionIdentity, DefinitionUpgrade, ExecutionCounts,
     ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus,
-    IdentifierKind,
-    FailureCategory, FailureId, FailureSummary, JobExecution, JobExecutionId, JobInstance,
+    FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId,
+    JobInstance,
     JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName, JobParameter, JobParameters,
     JobRepository, LifecycleError, LifecycleTransition, ParameterName, ParameterRole,
     ParameterValue, ParameterValueKind, RecoveryDecision, RecoveryRequest, RecoveryResult,
@@ -57,7 +57,7 @@ impl SqliteConfig {
     ///
     /// # Errors
     ///
-    /// Rejects zero and values above 1024.
+    /// Rejects zero and values above 16.
     pub fn with_pool_size(mut self, pool_size: u32) -> Result<Self, SqliteConfigError> {
         self.pool_size = pool_size;
         self.validate()?;
@@ -421,7 +421,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
 
             match inserted {
                 Ok(result) => {
-                    let id = JobInstanceId::new(rowid_u64(result.last_insert_rowid(), IdentifierKind::JobInstance)?)?;
+                    let id = JobInstanceId::new(rowid_u64(
+                        result.last_insert_rowid(),
+                        IdentifierKind::JobInstance,
+                    )?)?;
                     Ok(JobInstanceSelection::Created(JobInstance::new(
                         id,
                         key.clone(),
@@ -511,7 +514,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
             .execute(&mut **self.connection()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            let id = JobExecutionId::new(rowid_u64(result.last_insert_rowid(), IdentifierKind::JobExecution)?)?;
+            let id = JobExecutionId::new(rowid_u64(
+                result.last_insert_rowid(),
+                IdentifierKind::JobExecution,
+            )?)?;
             Ok(JobExecution::new(
                 id,
                 job_instance_id,
@@ -563,7 +569,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
             .execute(&mut **self.connection()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            let id = StepExecutionId::new(rowid_u64(result.last_insert_rowid(), IdentifierKind::StepExecution)?)?;
+            let id = StepExecutionId::new(rowid_u64(
+                result.last_insert_rowid(),
+                IdentifierKind::StepExecution,
+            )?)?;
             Ok(StepExecution::new(
                 id,
                 job_execution_id,

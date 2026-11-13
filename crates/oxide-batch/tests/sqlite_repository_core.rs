@@ -128,15 +128,15 @@ fn begin_immediate_serializes_competing_write_units() -> Result<(), Box<dyn Erro
             SqliteJobRepository::connect(config, Arc::new(FixedClock(UNIX_EPOCH))).await?;
 
         let first = repository.begin().await?;
-        let blocked =
-            tokio::time::timeout(Duration::from_millis(100), repository.begin()).await;
+        let mut second = Box::pin(repository.begin());
+        let blocked = tokio::time::timeout(Duration::from_millis(100), &mut second).await;
         assert!(
             blocked.is_err(),
             "a second SQLite write unit must wait while BEGIN IMMEDIATE owns the writer lock"
         );
 
         first.rollback().await?;
-        let second = tokio::time::timeout(Duration::from_secs(1), repository.begin())
+        let second = tokio::time::timeout(Duration::from_secs(1), &mut second)
             .await
             .map_err(|_| RepositoryError::Unavailable)??;
         second.rollback().await?;
