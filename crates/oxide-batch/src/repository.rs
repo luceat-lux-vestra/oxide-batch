@@ -2,13 +2,15 @@
 //!
 //! The ports themselves live in `oxide-batch-repository`. This module holds the
 //! adapters that implement them: the reference in-memory implementation and the
-//! `PostgreSQL` implementation behind the `postgres` feature.
+//! concrete SQL adapters behind their respective facade features.
 
 mod memory;
 #[cfg(feature = "mysql")]
 mod mysql;
 #[cfg(feature = "postgres")]
 pub(crate) mod postgres;
+#[cfg(feature = "sqlite")]
+mod sqlite;
 #[cfg(feature = "postgres")]
 mod scope_postgres;
 
@@ -21,6 +23,8 @@ pub use postgres::{
     PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresDurableStepState,
     PostgresExplorer, PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
 };
+#[cfg(feature = "sqlite")]
+pub use sqlite::{SqliteConfig, SqliteConfigError, SqliteJobRepository, SqliteMigrator};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RepeatManifestOwner {

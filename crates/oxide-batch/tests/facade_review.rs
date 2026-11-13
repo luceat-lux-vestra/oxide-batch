@@ -114,9 +114,9 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // interceptor traits and registrations, redacted failure/context values,
     // policy outcome, and the bounded secondary-failure ceiling.
     ("repeat_runtime", 14),
-    // #654 adds four concrete MySQL-protocol adapter entry points while the
-    // repository SPI itself remains driver-neutral.
-    ("repository", 18),
+    // #654 and #656 add four concrete entry points per non-PostgreSQL adapter
+    // while the repository SPI itself remains driver-neutral.
+    ("repository", 22),
     ("runtime", 18),
     // #277 exposes only process-local live-scope assembly contracts: opaque
     // handles, explicit factories/registrations, value-redacted errors, and the
@@ -137,7 +137,7 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
 const REVIEWED_CONSTANTS: usize = 1;
 
 /// Reviewed concrete-adapter entry points by feature.
-const REVIEWED_OPTIONAL: &[(&str, usize)] = &[("mysql", 4), ("postgres", 12)];
+const REVIEWED_OPTIONAL: &[(&str, usize)] = &[("mysql", 4), ("postgres", 12), ("sqlite", 4)];
 
 #[test]
 fn debug_output_redacts_every_sensitive_payload_class() -> Result<(), Box<dyn Error>> {
@@ -425,6 +425,18 @@ fn credential_classes() -> Result<Vec<Rendered>, Box<dyn Error>> {
             "MySQL connection string",
             Withheld::Marked,
             format!("{:?}", MysqlConfig::new(connection_string)?),
+        ));
+    }
+
+    #[cfg(feature = "sqlite")]
+    {
+        use oxide_batch::SqliteConfig;
+
+        let connection_string = format!("sqlite://{SENTINEL}.db");
+        classes.push((
+            "SQLite connection string",
+            Withheld::Marked,
+            format!("{:?}", SqliteConfig::new(connection_string)?),
         ));
     }
 

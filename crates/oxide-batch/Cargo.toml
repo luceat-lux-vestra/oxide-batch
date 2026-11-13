@@ -22,6 +22,7 @@ all-features = true
 default = []
 mysql = ["dep:sqlx", "sqlx/mysql"]
 postgres = ["dep:sqlx", "sqlx/postgres"]
+sqlite = ["dep:sqlx", "sqlx/sqlite"]
 
 [dependencies]
 csv = "1.4.0"
