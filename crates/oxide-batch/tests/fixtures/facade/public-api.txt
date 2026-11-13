@@ -502,10 +502,10 @@ oxide_batch::ShutdownTaskPhase
 oxide_batch::SkipCounts
 oxide_batch::SkipLimit
 oxide_batch::SkipListener
-oxide_batch::SqlStateCode
 oxide_batch::SplitBranch
 oxide_batch::SplitBudget
 oxide_batch::SplitNode
+oxide_batch::SqlStateCode
 oxide_batch::StaleThreshold
 oxide_batch::StartControls
 oxide_batch::StartLimit
