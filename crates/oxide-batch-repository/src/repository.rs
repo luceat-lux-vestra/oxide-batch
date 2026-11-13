@@ -768,7 +768,7 @@ impl ExecutionControl {
 /// Transaction-scoped metadata operations required by the executable kernel.
 ///
 /// Methods borrow the unit of work for the returned future, allowing a future
-/// `PostgreSQL` adapter to keep its concrete transaction private. A successful
+/// durable adapter to keep its concrete transaction private. A successful
 /// operation is still provisional until [`commit`](Self::commit) succeeds.
 pub trait RepositoryUnitOfWork: Send {
     /// Looks up one immutable fork key in this transaction.
@@ -2043,7 +2043,7 @@ pub enum RepositoryError {
     },
     /// Another committed unit of work invalidated this snapshot.
     ConcurrentModification,
-    /// A commit failed after `PostgreSQL` may have made it durable.
+    /// A commit failed after the durable store may have made it visible.
     ///
     /// Callers must inspect durable metadata through a new healthy unit of
     /// work before deciding whether to retry.
@@ -2057,20 +2057,20 @@ impl fmt::Display for RepositoryError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::SchemaUninitialized => {
-                formatter.write_str("PostgreSQL metadata schema is not initialized")
+                formatter.write_str("metadata schema is not initialized")
             }
             Self::MigrationRequired { current, supported } => write!(
                 formatter,
-                "PostgreSQL metadata schema version {current} requires migration to {supported}"
+                "metadata schema version {current} requires migration to {supported}"
             ),
             Self::NewerSchema { current, supported } => write!(
                 formatter,
-                "PostgreSQL metadata schema version {current} is newer than supported version {supported}"
+                "metadata schema version {current} is newer than supported version {supported}"
             ),
             Self::IdentifierOutOfRange { kind, value } => {
                 write!(
                     formatter,
-                    "{kind} identifier {value} exceeds PostgreSQL bigint"
+                    "{kind} identifier {value} exceeds the adapter durable range"
                 )
             }
             Self::JobInstanceNotFound { id } => {
@@ -2284,7 +2284,7 @@ impl fmt::Display for RepositoryError {
                 formatter.write_str("repository unit of work is based on a stale snapshot")
             }
             Self::CommitOutcomeUnknown => formatter.write_str(
-                "PostgreSQL commit outcome is unknown; inspect durable metadata before recovery",
+                "commit outcome is unknown; inspect durable metadata before recovery",
             ),
             Self::Unavailable => formatter.write_str("repository is unavailable"),
         }

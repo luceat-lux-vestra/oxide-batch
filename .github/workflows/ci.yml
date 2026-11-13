@@ -724,6 +724,80 @@ jobs:
         run: cargo +1.95.0 check --workspace --all-targets --all-features --locked
 
 
+  mysql-repository-core:
+    name: mysql-8.4.13-repository-core
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    services:
+      mysql:
+        image: mysql:8.4.13 # zizmor: ignore[unpinned-images]
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_ROOT_HOST: "%"
+          MYSQL_DATABASE: oxide_batch_repository
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping --silent -proot"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      OXIDEBATCH_MYSQL_TEST_PRODUCT: mysql
+      OXIDEBATCH_MYSQL_TEST_URL: mysql://root:root@127.0.0.1:3306/oxide_batch_repository
+    steps:
+      - name: Check out repository
+        if: ${{ github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Run database-neutral core repository certification on MySQL
+        if: ${{ github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features mysql
+          --test mysql_repository_core
+          -- --nocapture --test-threads=1
+
+  mariadb-repository-core:
+    name: mariadb-11.8.9-repository-core
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 20
+    services:
+      mariadb:
+        image: mariadb:11.8.9 # zizmor: ignore[unpinned-images]
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_ROOT_HOST: "%"
+          MARIADB_DATABASE: oxide_batch_repository
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mariadb-admin ping --silent -proot"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      OXIDEBATCH_MYSQL_TEST_PRODUCT: mariadb
+      OXIDEBATCH_MYSQL_TEST_URL: mysql://root:root@127.0.0.1:3306/oxide_batch_repository
+    steps:
+      - name: Check out repository
+        if: ${{ github.event.pull_request.draft == false }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Run database-neutral core repository certification on MariaDB
+        if: ${{ github.event.pull_request.draft == false }}
+        run: >-
+          cargo test -p oxide-batch --features mysql
+          --test mysql_repository_core
+          -- --nocapture --test-threads=1
+
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate
     runs-on: ubuntu-24.04-arm

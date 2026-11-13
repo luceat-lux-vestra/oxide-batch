@@ -20,7 +20,8 @@ all-features = true
 
 [features]
 default = []
-postgres = ["dep:sqlx"]
+mysql = ["dep:sqlx", "sqlx/mysql"]
+postgres = ["dep:sqlx", "sqlx/postgres"]
 
 [dependencies]
 csv = "1.4.0"
@@ -35,7 +36,6 @@ sqlx = { version = "0.9.0", default-features = false, optional = true, features 
     "json",
     "macros",
     "migrate",
-    "postgres",
     "runtime-tokio",
     "tls-rustls-ring-native-roots",
 ] }

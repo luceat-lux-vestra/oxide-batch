@@ -568,6 +568,8 @@ pub use repeat_runtime::{
     RepeatFailureCause, RepeatInterceptor, RepeatInterceptorRegistration, RepeatPolicy,
     RepeatPolicyOutcome, RepeatPolicyRegistration, RepeatRuntimeRegistration,
 };
+#[cfg(feature = "mysql")]
+pub use repository::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};
 #[cfg(feature = "postgres")]
 pub use repository::{
     CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,

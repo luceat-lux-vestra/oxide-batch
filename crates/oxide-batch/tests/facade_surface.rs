@@ -27,8 +27,8 @@ use std::path::{Path, PathBuf};
 /// Environment variable that rewrites the committed snapshot.
 const UPDATE_VARIABLE: &str = "OXIDEBATCH_UPDATE_FACADE_SNAPSHOT";
 
-/// The feature that gates the optional `PostgreSQL` surface.
-const OPTIONAL_FEATURE: &str = "postgres";
+/// Features that gate concrete durable-adapter entry points.
+const OPTIONAL_FEATURES: &[&str] = &["mysql", "postgres"];
 
 /// Every supported `oxide-batch` import path.
 ///
@@ -178,6 +178,9 @@ mod resolves {
         ScopedFactoryContext, ScopedFactoryError,
     };
 
+    #[cfg(feature = "mysql")]
+    pub use oxide_batch::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};
+
     #[cfg(feature = "postgres")]
     pub use oxide_batch::{
         CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,
@@ -230,14 +233,13 @@ fn facade_import_paths_resolve_unchanged_after_each_stage() -> Result<(), Box<dy
 /// statements, and `pub const NAME`. A `#[cfg(feature = "..")]` attribute on
 /// the preceding line gates the statement that follows it.
 fn exports(source: &str) -> BTreeSet<String> {
-    let gate = format!("#[cfg(feature = \"{OPTIONAL_FEATURE}\")]");
     let mut found = BTreeSet::new();
     let mut lines = source.lines().map(str::trim).peekable();
-    let mut gated = false;
+    let mut gated = None;
 
     while let Some(line) = lines.next() {
-        if line == gate {
-            gated = true;
+        if let Some(feature) = feature_gate(line) {
+            gated = Some(feature);
             continue;
         }
 
@@ -261,7 +263,7 @@ fn exports(source: &str) -> BTreeSet<String> {
             continue;
         }
 
-        gated = false;
+        gated = None;
     }
 
     found
@@ -291,11 +293,18 @@ fn names(statement: &str) -> Vec<String> {
 }
 
 /// Renders one snapshot entry.
-fn entry(name: &str, gated: bool) -> String {
-    if gated {
-        format!("oxide_batch::{name} [{OPTIONAL_FEATURE}]")
-    } else {
-        format!("oxide_batch::{name}")
+fn feature_gate(line: &str) -> Option<&'static str> {
+    OPTIONAL_FEATURES
+        .iter()
+        .copied()
+        .find(|feature| line == format!("#[cfg(feature = \"{feature}\")]"))
+}
+
+/// Renders one snapshot entry.
+fn entry(name: &str, gated: Option<&str>) -> String {
+    match gated {
+        Some(feature) => format!("oxide_batch::{name} [{feature}]"),
+        None => format!("oxide_batch::{name}"),
     }
 }
 
