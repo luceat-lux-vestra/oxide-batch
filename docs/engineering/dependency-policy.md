@@ -104,9 +104,10 @@ maintainer reviews unusual packaging or generated/native components.
   `deny.toml` together and must not be disguised as an indefinitely renewed
   exception.
 
-The current exception registry is empty. Introducing an exception therefore
-requires both the `deny.toml` policy change and its structured registry entry in
-the same reviewed pull request.
+The exception registry is expected to be empty in the steady state. Any active
+entry is a temporary, owned risk decision and requires both the `deny.toml`
+policy change and its structured registry entry in the same reviewed pull
+request.
 
 ## Supply-chain control roles
 

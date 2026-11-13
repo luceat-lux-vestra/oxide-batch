@@ -1,4 +1,12 @@
 {
   "schema_version": 1,
-  "exceptions": []
+  "exceptions": [
+    {
+      "kind": "advisory",
+      "target": "RUSTSEC-2026-0459",
+      "owner": "luceat-lux-vestra",
+      "rationale": "SQLx 0.9.0 requires libsqlite3-sys <0.38.0. The OxideBatch sqlite facade enables only sqlx/sqlite-unbundled, so the advisory's bundled vulnerable SQLite copy is not linked; system SQLite patching remains a deployment security responsibility. Track upstream compatibility and removal under #656.",
+      "expires": "2027-02-12"
+    }
+  ]
 }

@@ -32,8 +32,8 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations-sqlite");
 /// The connection string is retained only for connection establishment and is
 /// never rendered by `Debug` or `Display` output.
 ///
-/// The `sqlite` facade feature uses SQLx's unbundled SQLite mode. The process
-/// therefore links the deployment's system SQLite library instead of SQLx's
+/// The `sqlite` facade feature uses `SQLx`'s unbundled `SQLite` mode. The process
+/// therefore links the deployment's system `SQLite` library instead of `SQLx`'s
 /// bundled C source; keeping that system library security-patched is an
 /// operational prerequisite.
 #[derive(Clone)]
@@ -43,7 +43,7 @@ pub struct SqliteConfig {
 }
 
 impl SqliteConfig {
-    /// Builds the default configuration for a SQLite repository.
+    /// Builds the default configuration for a `SQLite` repository.
     ///
     /// # Errors
     ///
@@ -102,7 +102,7 @@ impl fmt::Debug for SqliteConfig {
     }
 }
 
-/// Value-redacted SQLite adapter configuration error.
+/// Value-redacted `SQLite` adapter configuration error.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum SqliteConfigError {
@@ -128,7 +128,7 @@ impl fmt::Display for SqliteConfigError {
 
 impl Error for SqliteConfigError {}
 
-/// Applies the immutable SQLite metadata migrations for this adapter.
+/// Applies the immutable `SQLite` metadata migrations for this adapter.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SqliteMigrator;
 
@@ -196,7 +196,7 @@ impl SqliteMigrator {
 /// This concrete adapter sits below the database-neutral repository SPI. Its
 /// initial descriptor deliberately declares no optional capabilities.
 ///
-/// SQLite uses a serialized-writer profile: each repository unit of work starts
+/// `SQLite` uses a serialized-writer profile: each repository unit of work starts
 /// with `BEGIN IMMEDIATE`, and the default pool has one connection. Raising the
 /// pool ceiling permits concurrent readers and queued writers but does not claim
 /// server-database write concurrency.
