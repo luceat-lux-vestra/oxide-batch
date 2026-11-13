@@ -6865,9 +6865,11 @@ impl BusinessTransaction for PostgresChunkTransaction {
                             .as_timestamp_tz()
                             .ok_or(BusinessTransactionError::Rejected)?,
                     ),
-                    BusinessValueKind::Decimal => {
-                        query.bind(value.as_decimal().ok_or(BusinessTransactionError::Rejected)?)
-                    }
+                    BusinessValueKind::Decimal => query.bind(
+                        value
+                            .as_decimal()
+                            .ok_or(BusinessTransactionError::Rejected)?,
+                    ),
                     BusinessValueKind::Uuid => {
                         query.bind(value.as_uuid().ok_or(BusinessTransactionError::Rejected)?)
                     }

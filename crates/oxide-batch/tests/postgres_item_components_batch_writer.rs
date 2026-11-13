@@ -36,8 +36,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use oxide_batch::item_components::{PostgresBatchMode, PostgresBatchWriter, postgres_batch_writer};
 use oxide_batch::{
     BusinessValue, BusinessValueKind, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts,
-    ChunkDeliveryMode,
-    ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
+    ChunkDeliveryMode, ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
     ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, Clock,
     ComponentRevision, DefinitionRevision, ExecutionContext, FailureCategory, ItemProcessor,
     ItemReader, JobLauncher, JobName, JobParameters, JobRepository, NoopChunkCompletion,
