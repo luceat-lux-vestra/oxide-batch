@@ -321,6 +321,10 @@ oxide_batch::MetricUnit
 oxide_batch::MissingParameterPolicy
 oxide_batch::MonotonicClock
 oxide_batch::MonotonicInstant
+oxide_batch::MysqlConfig [mysql]
+oxide_batch::MysqlConfigError [mysql]
+oxide_batch::MysqlJobRepository [mysql]
+oxide_batch::MysqlMigrator [mysql]
 oxide_batch::NameKind
 oxide_batch::NestedFlow
 oxide_batch::NestedJobLink

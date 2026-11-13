@@ -5,12 +5,16 @@
 //! `PostgreSQL` implementation behind the `postgres` feature.
 
 mod memory;
+#[cfg(feature = "mysql")]
+mod mysql;
 #[cfg(feature = "postgres")]
 pub(crate) mod postgres;
 #[cfg(feature = "postgres")]
 mod scope_postgres;
 
 pub use memory::{InMemoryExplorer, InMemoryJobRepository};
+#[cfg(feature = "mysql")]
+pub use mysql::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};
 #[cfg(feature = "postgres")]
 pub use postgres::{
     CaCertificate, PostgresChunkStateError, PostgresChunkStateProvider,

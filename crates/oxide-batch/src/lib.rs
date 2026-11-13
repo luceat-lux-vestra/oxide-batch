@@ -575,6 +575,8 @@ pub use repository::{
     PostgresExplorer, PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
 };
 pub use repository::{InMemoryExplorer, InMemoryJobRepository};
+#[cfg(feature = "mysql")]
+pub use repository::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};
 pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
     LaunchReport, StopPollInterval, StopSource, StopTiming, StopToken, Tasklet, TaskletContext,

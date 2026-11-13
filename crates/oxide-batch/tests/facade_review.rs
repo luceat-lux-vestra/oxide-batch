@@ -114,7 +114,9 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // interceptor traits and registrations, redacted failure/context values,
     // policy outcome, and the bounded secondary-failure ceiling.
     ("repeat_runtime", 14),
-    ("repository", 14),
+    // #654 adds four concrete MySQL-protocol adapter entry points while the
+    // repository SPI itself remains driver-neutral.
+    ("repository", 18),
     ("runtime", 18),
     // #277 exposes only process-local live-scope assembly contracts: opaque
     // handles, explicit factories/registrations, value-redacted errors, and the
@@ -134,8 +136,8 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
 /// The names the reviewed surface exports outside a re-export group.
 const REVIEWED_CONSTANTS: usize = 1;
 
-/// The names the optional `postgres` feature contributes.
-const REVIEWED_OPTIONAL: usize = 12;
+/// Reviewed concrete-adapter entry points by feature.
+const REVIEWED_OPTIONAL: &[(&str, usize)] = &[("mysql", 4), ("postgres", 12)];
 
 #[test]
 fn debug_output_redacts_every_sensitive_payload_class() -> Result<(), Box<dyn Error>> {
@@ -228,10 +230,17 @@ fn public_api_snapshot_matches_the_reviewed_preview_surface() -> Result<(), Box<
     )?;
 
     let entries: Vec<&str> = snapshot.lines().filter(|line| !line.is_empty()).collect();
-    let optional = entries
+    let optional = REVIEWED_OPTIONAL
         .iter()
-        .filter(|entry| entry.ends_with("[postgres]"))
-        .count();
+        .map(|(feature, expected)| {
+            let suffix = format!("[{feature}]");
+            let actual = entries
+                .iter()
+                .filter(|entry| entry.ends_with(&suffix))
+                .count();
+            (*feature, *expected, actual)
+        })
+        .collect::<Vec<_>>();
     let reviewed: usize = REVIEWED_SURFACE
         .iter()
         .map(|(_, count)| count)
@@ -246,11 +255,12 @@ fn public_api_snapshot_matches_the_reviewed_preview_surface() -> Result<(), Box<
          the snapshot",
         entries.len(),
     );
-    assert_eq!(
-        optional, REVIEWED_OPTIONAL,
-        "the optional adapter surface is the only feature-gated boundary the \
-         preview claims",
-    );
+    for (feature, expected, actual) in optional {
+        assert_eq!(
+            actual, expected,
+            "the reviewed {feature} adapter surface has {actual} names, expected {expected}",
+        );
+    }
 
     let delivered = groups(&fs::read_to_string(
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -402,28 +412,38 @@ fn envelope(format: &str) -> Vec<u8> {
     .expect("a static envelope serializes")
 }
 
-/// Renders the credential classes the optional adapter contributes.
-#[cfg(feature = "postgres")]
+/// Renders credential-bearing configuration classes without leaking values.
 fn credential_classes() -> Result<Vec<Rendered>, Box<dyn Error>> {
-    use oxide_batch::{CaCertificate, PostgresConfig, TlsMode};
+    let mut classes = Vec::new();
 
-    let connection_string = format!("postgres://runtime:{SENTINEL}@db.internal/metadata");
-    let tls_mode = TlsMode::VerifyFull {
-        ca_certificate: Some(CaCertificate::new(SENTINEL.as_bytes().to_vec())?),
-    };
+    #[cfg(feature = "mysql")]
+    {
+        use oxide_batch::MysqlConfig;
 
-    Ok(vec![
-        (
-            "connection string",
+        let connection_string = format!("mysql://runtime:{SENTINEL}@db.internal/metadata");
+        classes.push((
+            "MySQL connection string",
+            Withheld::Marked,
+            format!("{:?}", MysqlConfig::new(connection_string)?),
+        ));
+    }
+
+    #[cfg(feature = "postgres")]
+    {
+        use oxide_batch::{CaCertificate, PostgresConfig, TlsMode};
+
+        let connection_string = format!("postgres://runtime:{SENTINEL}@db.internal/metadata");
+        let tls_mode = TlsMode::VerifyFull {
+            ca_certificate: Some(CaCertificate::new(SENTINEL.as_bytes().to_vec())?),
+        };
+
+        classes.push((
+            "PostgreSQL connection string",
             Withheld::Marked,
             format!("{:?}", PostgresConfig::new(connection_string)?),
-        ),
-        ("certificate", Withheld::Marked, format!("{tls_mode:?}")),
-    ])
-}
+        ));
+        classes.push(("certificate", Withheld::Marked, format!("{tls_mode:?}")));
+    }
 
-/// The credential classes are unreachable without the optional adapter.
-#[cfg(not(feature = "postgres"))]
-fn credential_classes() -> Result<Vec<Rendered>, Box<dyn Error>> {
-    Ok(Vec::new())
+    Ok(classes)
 }
