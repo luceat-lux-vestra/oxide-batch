@@ -35,7 +35,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oxide_batch::item_components::{PostgresBatchMode, PostgresBatchWriter, postgres_batch_writer};
 use oxide_batch::{
-    BusinessValue, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
+    BusinessValue, BusinessValueKind, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts,
+    ChunkDeliveryMode,
     ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
     ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, Clock,
     ComponentRevision, DefinitionRevision, ExecutionContext, FailureCategory, ItemProcessor,
@@ -340,6 +341,141 @@ fn per_row_statements_write_every_item() -> Result<(), Box<dyn Error>> {
             ChunkExecutionOutcome::Completed
         );
         assert_eq!(business_items(&runtime_url, JOB).await?, [1, 2, 3]);
+
+        repository.close().await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn portable_typed_values_write_real_postgres_columns_without_caller_casts()
+-> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_218_portable_typed_values";
+        const TABLE: &str = "oxide_batch_business.batch_writer_typed_output";
+
+        prepare_business_fixture(&runtime_url).await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&runtime_url)
+            .await?;
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE TABLE IF NOT EXISTS {TABLE} (\
+             job_name text PRIMARY KEY, created_at timestamptz NOT NULL, business_date date NOT NULL, \
+             local_time time NOT NULL, local_timestamp timestamp NOT NULL, amount numeric NOT NULL, \
+             external_id uuid NOT NULL, optional_created_at timestamptz NULL)"
+        )))
+        .execute(&pool)
+        .await?;
+        sqlx::query(AssertSqlSafe(format!("DELETE FROM {TABLE} WHERE job_name = $1")))
+            .bind(JOB)
+            .execute(&pool)
+            .await?;
+        pool.close().await;
+
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_mins(15))),
+        )
+        .await?;
+        let scope = create_started_chunk_scope(&repository, JOB).await?;
+        let manager = postgres_chunk_transactions(&repository);
+        let mut transaction = manager.begin_for(scope).await?;
+
+        #[derive(Clone, Copy)]
+        struct TypedRow {
+            created_at: &'static str,
+            business_date: &'static str,
+            local_time: &'static str,
+            local_timestamp: &'static str,
+            amount: &'static str,
+            external_id: &'static str,
+        }
+
+        let row = TypedRow {
+            created_at: "2026-01-02T03:04:05.006+09:00",
+            business_date: "2026-01-02",
+            local_time: "03:04:05.006",
+            local_timestamp: "2026-01-02T03:04:05.006",
+            amount: "1234567890.0123",
+            external_id: "123e4567-e89b-12d3-a456-426614174000",
+        };
+        {
+            let business = transaction
+                .business_transaction()
+                .ok_or("expected an enlisted business transaction")?;
+            let writer = postgres_batch_writer(
+                format!(
+                    "INSERT INTO {TABLE} (job_name, created_at, business_date, local_time, \
+                     local_timestamp, amount, external_id, optional_created_at) VALUES"
+                ),
+                None::<&str>,
+                8,
+                PostgresBatchMode::multi_row_values(),
+                move |item: &TypedRow| {
+                    vec![
+                        BusinessValue::text(JOB),
+                        BusinessValue::timestamp_tz(item.created_at),
+                        BusinessValue::date(item.business_date),
+                        BusinessValue::time(item.local_time),
+                        BusinessValue::timestamp(item.local_timestamp),
+                        BusinessValue::decimal(item.amount),
+                        BusinessValue::uuid(item.external_id),
+                        BusinessValue::null_of(BusinessValueKind::TimestampTz),
+                    ]
+                },
+            )?;
+            let (_source, token) = StopSource::new();
+            let outcome = oxide_batch::ItemWriter::write(
+                &writer,
+                &[row],
+                WriteContext::enlisted(&token, business),
+            )
+            .await?;
+            assert_eq!(outcome, WriteOutcome::Written);
+        }
+
+        let counts = ChunkCounts::new(
+            oxide_batch::ChunkCount::new(1),
+            oxide_batch::ChunkCount::new(1),
+            oxide_batch::ChunkCount::new(1),
+            oxide_batch::ChunkCount::ZERO,
+        )?;
+        transaction
+            .commit(counts, oxide_batch::ChunkFaultProgress::NONE)
+            .await?;
+
+        let pool = PgPoolOptions::new()
+            .max_connections(1)
+            .connect(&runtime_url)
+            .await?;
+        let observed: (bool, bool, bool, bool, bool, bool, bool) = sqlx::query_as(
+            "SELECT created_at = TIMESTAMPTZ '2026-01-02T03:04:05.006+09:00', \
+             business_date = DATE '2026-01-02', local_time = TIME '03:04:05.006', \
+             local_timestamp = TIMESTAMP '2026-01-02T03:04:05.006', \
+             amount = NUMERIC '1234567890.0123', \
+             external_id = UUID '123e4567-e89b-12d3-a456-426614174000', \
+             optional_created_at IS NULL \
+             FROM oxide_batch_business.batch_writer_typed_output WHERE job_name = $1",
+        )
+        .bind(JOB)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(observed, (true, true, true, true, true, true, true));
+        sqlx::query(AssertSqlSafe(format!("DELETE FROM {TABLE} WHERE job_name = $1")))
+            .bind(JOB)
+            .execute(&pool)
+            .await?;
+        pool.close().await;
 
         repository.close().await?;
         remove_job_rows(&runtime_url, JOB).await?;

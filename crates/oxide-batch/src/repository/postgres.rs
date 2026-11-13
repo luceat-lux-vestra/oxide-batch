@@ -6849,6 +6849,28 @@ impl BusinessTransaction for PostgresChunkTransaction {
                     BusinessValueKind::Bool => {
                         query.bind(value.as_bool().ok_or(BusinessTransactionError::Rejected)?)
                     }
+                    BusinessValueKind::Date => {
+                        query.bind(value.as_date().ok_or(BusinessTransactionError::Rejected)?)
+                    }
+                    BusinessValueKind::Time => {
+                        query.bind(value.as_time().ok_or(BusinessTransactionError::Rejected)?)
+                    }
+                    BusinessValueKind::Timestamp => query.bind(
+                        value
+                            .as_timestamp()
+                            .ok_or(BusinessTransactionError::Rejected)?,
+                    ),
+                    BusinessValueKind::TimestampTz => query.bind(
+                        value
+                            .as_timestamp_tz()
+                            .ok_or(BusinessTransactionError::Rejected)?,
+                    ),
+                    BusinessValueKind::Decimal => {
+                        query.bind(value.as_decimal().ok_or(BusinessTransactionError::Rejected)?)
+                    }
+                    BusinessValueKind::Uuid => {
+                        query.bind(value.as_uuid().ok_or(BusinessTransactionError::Rejected)?)
+                    }
                     BusinessValueKind::Null => query.bind(Option::<String>::None),
                 };
             }

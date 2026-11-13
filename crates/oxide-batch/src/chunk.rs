@@ -104,7 +104,11 @@ pub trait ItemProcessor<I, O>: Send + Sync {
     ) -> impl Future<Output = Result<ProcessOutcome<O>, ProcessorError>> + Send + 'a;
 }
 
-/// A stable bound-value type for enlisted business statements.
+/// A stable, driver-neutral bound-value type for enlisted business statements.
+///
+/// Temporal, decimal, and UUID variants carry framework-owned semantic tags and
+/// lexical values. Database-specific components translate those tags into their
+/// own bind/cast representation; driver types never cross this boundary.
 #[derive(Clone, Copy, Eq, PartialEq)]
 pub struct BusinessValue<'a>(BusinessValueInner<'a>);
 
@@ -114,7 +118,13 @@ enum BusinessValueInner<'a> {
     Bytes(&'a [u8]),
     I64(i64),
     Bool(bool),
-    Null,
+    Date(&'a str),
+    Time(&'a str),
+    Timestamp(&'a str),
+    TimestampTz(&'a str),
+    Decimal(&'a str),
+    Uuid(&'a str),
+    Null(Option<BusinessValueKind>),
 }
 
 impl<'a> BusinessValue<'a> {
@@ -142,10 +152,63 @@ impl<'a> BusinessValue<'a> {
         Self(BusinessValueInner::Bool(value))
     }
 
-    /// Constructs a database null value.
+    /// Constructs an ISO-8601 calendar date (`YYYY-MM-DD`).
+    #[must_use]
+    pub const fn date(value: &'a str) -> Self {
+        Self(BusinessValueInner::Date(value))
+    }
+
+    /// Constructs an ISO-8601 local time (`HH:MM:SS[.fraction]`) with no offset.
+    #[must_use]
+    pub const fn time(value: &'a str) -> Self {
+        Self(BusinessValueInner::Time(value))
+    }
+
+    /// Constructs an ISO-8601 local timestamp
+    /// (`YYYY-MM-DDTHH:MM:SS[.fraction]`) with no offset.
+    #[must_use]
+    pub const fn timestamp(value: &'a str) -> Self {
+        Self(BusinessValueInner::Timestamp(value))
+    }
+
+    /// Constructs an RFC 3339 timestamp carrying an explicit UTC offset.
+    ///
+    /// This is the portable instant-bearing timestamp kind. A concrete adapter
+    /// maps it to its own timestamp-with-time-zone representation.
+    #[must_use]
+    pub const fn timestamp_tz(value: &'a str) -> Self {
+        Self(BusinessValueInner::TimestampTz(value))
+    }
+
+    /// Constructs a base-10 decimal lexical value.
+    ///
+    /// Concrete adapters must reject malformed or unsupported precision rather
+    /// than silently reinterpret the value.
+    #[must_use]
+    pub const fn decimal(value: &'a str) -> Self {
+        Self(BusinessValueInner::Decimal(value))
+    }
+
+    /// Constructs a canonical hyphenated UUID lexical value.
+    #[must_use]
+    pub const fn uuid(value: &'a str) -> Self {
+        Self(BusinessValueInner::Uuid(value))
+    }
+
+    /// Constructs an untyped database null value.
     #[must_use]
     pub const fn null() -> Self {
-        Self(BusinessValueInner::Null)
+        Self(BusinessValueInner::Null(None))
+    }
+
+    /// Constructs a database null carrying a portable target-type hint.
+    ///
+    /// The hint lets database components preserve typed-null semantics without
+    /// exposing a concrete driver type. Passing `BusinessValueKind::Null` is
+    /// equivalent to an untyped null.
+    #[must_use]
+    pub const fn null_of(kind: BusinessValueKind) -> Self {
+        Self(BusinessValueInner::Null(Some(kind)))
     }
 
     /// Returns the stable value kind.
@@ -156,7 +219,13 @@ impl<'a> BusinessValue<'a> {
             BusinessValueInner::Bytes(_) => BusinessValueKind::Bytes,
             BusinessValueInner::I64(_) => BusinessValueKind::I64,
             BusinessValueInner::Bool(_) => BusinessValueKind::Bool,
-            BusinessValueInner::Null => BusinessValueKind::Null,
+            BusinessValueInner::Date(_) => BusinessValueKind::Date,
+            BusinessValueInner::Time(_) => BusinessValueKind::Time,
+            BusinessValueInner::Timestamp(_) => BusinessValueKind::Timestamp,
+            BusinessValueInner::TimestampTz(_) => BusinessValueKind::TimestampTz,
+            BusinessValueInner::Decimal(_) => BusinessValueKind::Decimal,
+            BusinessValueInner::Uuid(_) => BusinessValueKind::Uuid,
+            BusinessValueInner::Null(_) => BusinessValueKind::Null,
         }
     }
 
@@ -195,6 +264,71 @@ impl<'a> BusinessValue<'a> {
             _ => None,
         }
     }
+
+    /// Borrows the calendar-date lexical value when present.
+    #[must_use]
+    pub const fn as_date(self) -> Option<&'a str> {
+        match self.0 {
+            BusinessValueInner::Date(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Borrows the local-time lexical value when present.
+    #[must_use]
+    pub const fn as_time(self) -> Option<&'a str> {
+        match self.0 {
+            BusinessValueInner::Time(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Borrows the local-timestamp lexical value when present.
+    #[must_use]
+    pub const fn as_timestamp(self) -> Option<&'a str> {
+        match self.0 {
+            BusinessValueInner::Timestamp(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Borrows the offset-bearing timestamp lexical value when present.
+    #[must_use]
+    pub const fn as_timestamp_tz(self) -> Option<&'a str> {
+        match self.0 {
+            BusinessValueInner::TimestampTz(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Borrows the decimal lexical value when present.
+    #[must_use]
+    pub const fn as_decimal(self) -> Option<&'a str> {
+        match self.0 {
+            BusinessValueInner::Decimal(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Borrows the UUID lexical value when present.
+    #[must_use]
+    pub const fn as_uuid(self) -> Option<&'a str> {
+        match self.0 {
+            BusinessValueInner::Uuid(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Returns the target kind carried by a typed null, when present.
+    #[must_use]
+    pub const fn null_kind(self) -> Option<BusinessValueKind> {
+        match self.0 {
+            BusinessValueInner::Null(None)
+            | BusinessValueInner::Null(Some(BusinessValueKind::Null)) => None,
+            BusinessValueInner::Null(Some(kind)) => Some(kind),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Debug for BusinessValue<'_> {
@@ -219,6 +353,18 @@ pub enum BusinessValueKind {
     I64,
     /// Boolean.
     Bool,
+    /// ISO-8601 calendar date.
+    Date,
+    /// ISO-8601 local time without an offset.
+    Time,
+    /// ISO-8601 local timestamp without an offset.
+    Timestamp,
+    /// RFC 3339 timestamp carrying an explicit UTC offset.
+    TimestampTz,
+    /// Base-10 arbitrary-precision decimal lexical value.
+    Decimal,
+    /// Canonical hyphenated UUID lexical value.
+    Uuid,
     /// Database null.
     Null,
 }

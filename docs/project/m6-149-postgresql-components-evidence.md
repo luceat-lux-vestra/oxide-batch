@@ -582,10 +582,12 @@ evidence.
 ## Documented limitations (not silent gaps)
 
 - Keyset ordering-key columns support `Text` and `I64` only
-  (`KeysetColumnKind`) -- deliberately narrower than `BusinessValue`'s five
-  variants: a boolean key cannot give a strict total order past two
-  buckets, and a `NULL` key breaks row-value tuple comparison entirely.
-  `Bytes` (e.g. a `uuid`/`bytea` key) is not supported in this M6 slice. This
+  (`KeysetColumnKind`) -- deliberately narrower than the write-value
+  surface: a boolean key cannot give a strict total order past two buckets,
+  and a `NULL` key breaks row-value tuple comparison entirely. Additional
+  date/time/decimal/UUID write kinds introduced after M6 do not widen the
+  ordering-key contract. `Bytes` (e.g. a `uuid`/`bytea` key) is not
+  supported in this M6 slice. This
   is narrower than, and independent of, `PostgresRow`'s general
   value-reading coverage below -- it constrains only which columns may be
   declared as `KeysetColumn`s, not what `map_row` may read. `I64` covers
