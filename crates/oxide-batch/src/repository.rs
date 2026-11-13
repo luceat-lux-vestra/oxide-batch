@@ -9,10 +9,10 @@ mod memory;
 mod mysql;
 #[cfg(feature = "postgres")]
 pub(crate) mod postgres;
-#[cfg(feature = "sqlite")]
-mod sqlite;
 #[cfg(feature = "postgres")]
 mod scope_postgres;
+#[cfg(feature = "sqlite")]
+mod sqlite;
 
 pub use memory::{InMemoryExplorer, InMemoryJobRepository};
 #[cfg(feature = "mysql")]

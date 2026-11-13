@@ -6,20 +6,19 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde_json::{Map, Value, json};
 use sqlx::migrate::Migrator;
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
 use sqlx::pool::PoolConnection;
-use sqlx::{AssertSqlSafe, Connection, Sqlite, SqliteConnection, SqlitePool, Row};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteRow};
+use sqlx::{AssertSqlSafe, Connection, Row, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::{
     BatchStatus, BoxFuture, Clock, DefinitionIdentity, DefinitionUpgrade, ExecutionCounts,
     ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus,
     FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId,
-    JobInstance,
-    JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName, JobParameter, JobParameters,
-    JobRepository, LifecycleError, LifecycleTransition, ParameterName, ParameterRole,
-    ParameterValue, ParameterValueKind, RecoveryDecision, RecoveryRequest, RecoveryResult,
-    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
-    StepExecution, StepExecutionId, StepName,
+    JobInstance, JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName, JobParameter,
+    JobParameters, JobRepository, LifecycleError, LifecycleTransition, ParameterName,
+    ParameterRole, ParameterValue, ParameterValueKind, RecoveryDecision, RecoveryRequest,
+    RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
+    RepositoryUnitOfWork, StepExecution, StepExecutionId, StepName,
 };
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
@@ -32,6 +31,11 @@ static MIGRATOR: Migrator = sqlx::migrate!("./migrations-sqlite");
 ///
 /// The connection string is retained only for connection establishment and is
 /// never rendered by `Debug` or `Display` output.
+///
+/// The `sqlite` facade feature uses SQLx's unbundled SQLite mode. The process
+/// therefore links the deployment's system SQLite library instead of SQLx's
+/// bundled C source; keeping that system library security-patched is an
+/// operational prerequisite.
 #[derive(Clone)]
 pub struct SqliteConfig {
     connection_string: String,
@@ -334,10 +338,12 @@ impl SqliteUnitOfWork<'_> {
         let row = sqlx::query(AssertSqlSafe(job_execution_select(
             "WHERE execution.id = ?",
         )))
-        .bind(match sqlite_identifier(id.get(), IdentifierKind::JobExecution) {
-            Ok(value) => value,
-            Err(error) => return error,
-        })
+        .bind(
+            match sqlite_identifier(id.get(), IdentifierKind::JobExecution) {
+                Ok(value) => value,
+                Err(error) => return error,
+            },
+        )
         .fetch_optional(&mut **connection)
         .await;
         match row {
@@ -365,10 +371,12 @@ impl SqliteUnitOfWork<'_> {
         let row = sqlx::query(AssertSqlSafe(step_execution_select(
             "WHERE execution.id = ?",
         )))
-        .bind(match sqlite_identifier(id.get(), IdentifierKind::StepExecution) {
-            Ok(value) => value,
-            Err(error) => return error,
-        })
+        .bind(
+            match sqlite_identifier(id.get(), IdentifierKind::StepExecution) {
+                Ok(value) => value,
+                Err(error) => return error,
+            },
+        )
         .fetch_optional(&mut **connection)
         .await;
         match row {
@@ -454,7 +462,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         Box::pin(async move {
             let instance: Option<i64> =
                 sqlx::query_scalar("SELECT id FROM ob_job_instance WHERE id = ?")
-                    .bind(sqlite_identifier(job_instance_id.get(), IdentifierKind::JobInstance)?)
+                    .bind(sqlite_identifier(
+                        job_instance_id.get(),
+                        IdentifierKind::JobInstance,
+                    )?)
                     .fetch_optional(&mut **self.connection()?)
                     .await
                     .map_err(|_| RepositoryError::Unavailable)?;
@@ -467,7 +478,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
             let row = sqlx::query(AssertSqlSafe(job_execution_select(
                 "WHERE execution.job_instance_id = ? ORDER BY execution.attempt DESC LIMIT 1",
             )))
-            .bind(sqlite_identifier(job_instance_id.get(), IdentifierKind::JobInstance)?)
+            .bind(sqlite_identifier(
+                job_instance_id.get(),
+                IdentifierKind::JobInstance,
+            )?)
             .fetch_optional(&mut **self.connection()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
@@ -507,7 +521,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
                  (job_instance_id, attempt, status, exit_code, created_ms, updated_ms, version) \
                  VALUES (?, ?, 'STARTING', 'UNKNOWN', ?, ?, 0)",
             )
-            .bind(sqlite_identifier(job_instance_id.get(), IdentifierKind::JobInstance)?)
+            .bind(sqlite_identifier(
+                job_instance_id.get(),
+                IdentifierKind::JobInstance,
+            )?)
             .bind(sqlite_i64(attempt)?)
             .bind(created_ms)
             .bind(created_ms)
@@ -546,7 +563,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         Box::pin(async move {
             let job: Option<i64> =
                 sqlx::query_scalar("SELECT id FROM ob_job_execution WHERE id = ?")
-                    .bind(sqlite_identifier(job_execution_id.get(), IdentifierKind::JobExecution)?)
+                    .bind(sqlite_identifier(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
                     .fetch_optional(&mut **self.connection()?)
                     .await
                     .map_err(|_| RepositoryError::Unavailable)?;
@@ -562,7 +582,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
                  (job_execution_id, step_name, status, exit_code, created_ms, updated_ms, version) \
                  VALUES (?, ?, 'STARTING', 'UNKNOWN', ?, ?, 0)",
             )
-            .bind(sqlite_identifier(job_execution_id.get(), IdentifierKind::JobExecution)?)
+            .bind(sqlite_identifier(
+                job_execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
             .bind(step_name.as_str())
             .bind(created_ms)
             .bind(created_ms)
@@ -737,7 +760,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         Box::pin(async move {
             let instance: Option<i64> =
                 sqlx::query_scalar("SELECT id FROM ob_job_instance WHERE id = ?")
-                    .bind(sqlite_identifier(job_instance_id.get(), IdentifierKind::JobInstance)?)
+                    .bind(sqlite_identifier(
+                        job_instance_id.get(),
+                        IdentifierKind::JobInstance,
+                    )?)
                     .fetch_optional(&mut **self.connection()?)
                     .await
                     .map_err(|_| RepositoryError::Unavailable)?;
@@ -749,7 +775,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
             let rows = sqlx::query(AssertSqlSafe(job_execution_select(
                 "WHERE execution.job_instance_id = ? ORDER BY execution.attempt",
             )))
-            .bind(sqlite_identifier(job_instance_id.get(), IdentifierKind::JobInstance)?)
+            .bind(sqlite_identifier(
+                job_instance_id.get(),
+                IdentifierKind::JobInstance,
+            )?)
             .fetch_all(&mut **self.connection()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
@@ -771,7 +800,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         Box::pin(async move {
             let job: Option<i64> =
                 sqlx::query_scalar("SELECT id FROM ob_job_execution WHERE id = ?")
-                    .bind(sqlite_identifier(job_execution_id.get(), IdentifierKind::JobExecution)?)
+                    .bind(sqlite_identifier(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
                     .fetch_optional(&mut **self.connection()?)
                     .await
                     .map_err(|_| RepositoryError::Unavailable)?;
@@ -783,7 +815,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
             let rows = sqlx::query(AssertSqlSafe(step_execution_select(
                 "WHERE execution.job_execution_id = ? ORDER BY execution.id",
             )))
-            .bind(sqlite_identifier(job_execution_id.get(), IdentifierKind::JobExecution)?)
+            .bind(sqlite_identifier(
+                job_execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
             .fetch_all(&mut **self.connection()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
@@ -921,7 +956,11 @@ async fn update_step_execution(
     .bind(metadata.status().to_string())
     .bind(metadata.exit_status().code().as_str())
     .bind(failure.map(|value| value.category().durable_code()))
-    .bind(failure.map(|value| sqlite_i64(value.failure_id().get())).transpose()?)
+    .bind(
+        failure
+            .map(|value| sqlite_i64(value.failure_id().get()))
+            .transpose()?,
+    )
     .bind(
         timestamps
             .started_at()
@@ -937,7 +976,10 @@ async fn update_step_execution(
     .bind(sqlite_i64(counts.rolled_back())?)
     .bind(system_time_millis(updated_at)?)
     .bind(sqlite_i64(execution.version().get())?)
-    .bind(sqlite_identifier(execution.id().get(), IdentifierKind::StepExecution)?)
+    .bind(sqlite_identifier(
+        execution.id().get(),
+        IdentifierKind::StepExecution,
+    )?)
     .bind(sqlite_i64(expected.get())?)
     .execute(connection)
     .await
@@ -964,7 +1006,11 @@ async fn update_execution(
         .bind(metadata.status().to_string())
         .bind(metadata.exit_status().code().as_str())
         .bind(failure.map(|value| value.category().durable_code()))
-        .bind(failure.map(|value| sqlite_i64(value.failure_id().get())).transpose()?)
+        .bind(
+            failure
+                .map(|value| sqlite_i64(value.failure_id().get()))
+                .transpose()?,
+        )
         .bind(
             timestamps
                 .started_at()

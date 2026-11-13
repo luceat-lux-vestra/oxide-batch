@@ -80,23 +80,26 @@ fn shared_core_repository_contract_passes_on_real_sqlite_files() -> Result<(), B
                     .lock()
                     .map_err(|_| RepositoryError::Unavailable)?
                     .push(path);
-                let config =
-                    SqliteConfig::new(url).map_err(|_| RepositoryError::Unavailable)?;
+                let config = SqliteConfig::new(url).map_err(|_| RepositoryError::Unavailable)?;
                 SqliteMigrator::migrate(&config).await?;
                 SqliteJobRepository::connect(config, Arc::new(FixedClock(UNIX_EPOCH))).await
             }
         })
         .await
     })?;
-    for path in paths.lock().map_err(|_| RepositoryError::Unavailable)?.iter() {
+    for path in paths
+        .lock()
+        .map_err(|_| RepositoryError::Unavailable)?
+        .iter()
+    {
         remove_database(path);
     }
     Ok(())
 }
 
 #[test]
-fn default_profile_is_single_connection_and_declares_no_optional_capabilities(
-) -> Result<(), Box<dyn Error>> {
+fn default_profile_is_single_connection_and_declares_no_optional_capabilities()
+-> Result<(), Box<dyn Error>> {
     let (path, url) = database();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -144,5 +147,15 @@ fn begin_immediate_serializes_competing_write_units() -> Result<(), Box<dyn Erro
         Ok::<(), Box<dyn Error>>(())
     })?;
     remove_database(&path);
+    Ok(())
+}
+
+#[test]
+fn facade_feature_keeps_sqlite_unbundled() -> Result<(), Box<dyn Error>> {
+    let manifest = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/Cargo.toml"))?;
+    assert!(
+        manifest.contains(r#"sqlite = ["dep:sqlx", "sqlx/sqlite-unbundled"]"#),
+        "the SQLite facade must remain on SQLx's unbundled path while RUSTSEC-2026-0459 is ignored"
+    );
     Ok(())
 }

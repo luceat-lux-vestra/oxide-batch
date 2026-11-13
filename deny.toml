@@ -2,7 +2,13 @@
 all-features = true
 
 [advisories]
-ignore = []
+ignore = [
+    # SQLx 0.9.0 requires libsqlite3-sys <0.38.0. OxideBatch enables only
+    # sqlx/sqlite-unbundled, so RUSTSEC-2026-0459's bundled vulnerable SQLite
+    # copy is not linked. System SQLite patching remains a deployment/security
+    # responsibility. Keep the facade feature guard in sqlite_repository_core.
+    "RUSTSEC-2026-0459",
+]
 
 [licenses]
 confidence-threshold = 0.8
