@@ -35,15 +35,18 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use oxide_batch::item_components::{PostgresBatchMode, PostgresBatchWriter, postgres_batch_writer};
 use oxide_batch::{
-    BusinessValue, BusinessValueKind, ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts,
-    ChunkDeliveryMode, ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
+    BusinessStatement, BusinessTransactionErrorKind, BusinessValue, BusinessValueKind,
+    ChunkCommitReceipt, ChunkComponentRevisions, ChunkCounts, ChunkDeliveryMode,
+    ChunkExecutionOutcome, ChunkJob, ChunkRestartContract, ChunkSize, ChunkStep,
     ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, Clock,
-    ComponentRevision, DefinitionRevision, ExecutionContext, FailureCategory, ItemProcessor,
-    ItemReader, JobLauncher, JobName, JobParameters, JobRepository, NoopChunkCompletion,
-    PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
-    PostgresConfig, PostgresConfigError, PostgresJobRepository, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext, ReadOutcome, ReaderError, SequentialIdGenerator, StateLimits,
+    ComponentRevision, DefinitionRevision, ExecutionContext, FailureCategory, FailureCode,
+    FailureOutcome, FailureProvenance, ItemProcessor, ItemReader, JobLauncher, JobName,
+    JobParameters, JobRepository, NoopChunkCompletion, PostgresChunkStateError,
+    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
+    PostgresConfigError, PostgresJobRepository, ProcessContext, ProcessOutcome, ProcessorError,
+    ReadContext, ReadOutcome, ReaderError, SequentialIdGenerator, SqlStateCode, StateLimits,
     StateSchemaId, StateSchemaVersion, StepName, StopSource, TlsMode, WriteContext, WriteOutcome,
+    WriterError,
 };
 use sqlx::AssertSqlSafe;
 use sqlx::postgres::PgPoolOptions;
@@ -475,6 +478,103 @@ fn portable_typed_values_write_real_postgres_columns_without_caller_casts()
             .execute(&pool)
             .await?;
         pool.close().await;
+
+        repository.close().await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })
+}
+
+#[test]
+fn business_transaction_provenance_survives_writer_mapping() -> Result<(), Box<dyn Error>> {
+    let sql_state = SqlStateCode::new("23505")
+        .ok_or_else(|| std::io::Error::other("valid SQLSTATE rejected"))?;
+    assert!(SqlStateCode::new("2350").is_none());
+    assert!(SqlStateCode::new("23505-secret").is_none());
+    assert!(SqlStateCode::new("23_05").is_none());
+
+    let provenance =
+        FailureProvenance::unknown().with_code(FailureCode::SqlState(sql_state));
+    let error = oxide_batch::BusinessTransactionError::with_provenance(
+        BusinessTransactionErrorKind::Infrastructure,
+        provenance,
+    );
+    let writer = WriterError::from_business_transaction(error);
+
+    assert_eq!(writer.category(), FailureCategory::TransientInfrastructure);
+    assert_eq!(writer.provenance(), Some(provenance));
+    assert_eq!(
+        writer.provenance().map(FailureProvenance::outcome),
+        Some(FailureOutcome::Unknown)
+    );
+    assert!(matches!(
+        writer.provenance().and_then(FailureProvenance::code),
+        Some(FailureCode::SqlState(code)) if code.matches("23505")
+    ));
+    Ok(())
+}
+
+#[test]
+fn postgres_unique_violation_exposes_bounded_sqlstate_without_driver_error()
+-> Result<(), Box<dyn Error>> {
+    let Some(runtime_url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        const JOB: &str = "postgres_220_sqlstate_provenance";
+        const SQL: &str =
+            "INSERT INTO oxide_batch_business.batch_writer_output (job_name, item) VALUES ($1, $2)";
+
+        prepare_business_fixture(&runtime_url).await?;
+        remove_job_rows(&runtime_url, JOB).await?;
+        let repository = PostgresJobRepository::connect(
+            plaintext_config(runtime_url.clone())?,
+            Arc::new(FixedClock(UNIX_EPOCH + Duration::from_mins(15))),
+        )
+        .await?;
+        let scope = create_started_chunk_scope(&repository, JOB).await?;
+        let manager = postgres_chunk_transactions(&repository);
+        let mut transaction = manager.begin_for(scope).await?;
+
+        {
+            let business = transaction
+                .business_transaction()
+                .ok_or("expected an enlisted business transaction")?;
+            let first_values = [BusinessValue::text(JOB), BusinessValue::i64(7)];
+            business
+                .execute(BusinessStatement::new(SQL, &first_values))
+                .await?;
+
+            let duplicate_values = [BusinessValue::text(JOB), BusinessValue::i64(7)];
+            let error = match business
+                .execute(BusinessStatement::new(SQL, &duplicate_values))
+                .await
+            {
+                Ok(_) => return Err("duplicate business key unexpectedly succeeded".into()),
+                Err(error) => error,
+            };
+
+            assert_eq!(error.kind(), BusinessTransactionErrorKind::Rejected);
+            assert_eq!(
+                error.provenance().outcome(),
+                FailureOutcome::KnownNotCommitted
+            );
+            assert!(matches!(
+                error.provenance().code(),
+                Some(FailureCode::SqlState(code)) if code.matches("23505")
+            ));
+
+            let writer = WriterError::from_business_transaction(error);
+            assert_eq!(writer.category(), FailureCategory::UserComponent);
+            assert_eq!(writer.provenance(), Some(error.provenance()));
+        }
+
+        transaction.rollback().await?;
+        assert!(business_items(&runtime_url, JOB).await?.is_empty());
 
         repository.close().await?;
         remove_job_rows(&runtime_url, JOB).await?;

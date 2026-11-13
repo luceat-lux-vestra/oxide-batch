@@ -68,17 +68,7 @@ impl PostgresBatchMode {
 }
 
 fn classify(error: BusinessTransactionError) -> WriterError {
-    match error {
-        BusinessTransactionError::Infrastructure => {
-            WriterError::with_category(FailureCategory::TransientInfrastructure)
-        }
-        BusinessTransactionError::Rejected => {
-            WriterError::with_category(FailureCategory::UserComponent)
-        }
-        BusinessTransactionError::Cancelled => {
-            WriterError::with_category(FailureCategory::Cancelled)
-        }
-    }
+    WriterError::from_business_transaction(error)
 }
 
 /// A bounded, same-resource enlisted `PostgreSQL` SQL batch writer. See the

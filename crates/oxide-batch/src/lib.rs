@@ -435,12 +435,13 @@ mod telemetry;
 
 pub use chunk::{
     BoxedProcessor, BoxedReader, BoxedWriter, BusinessStatement, BusinessTransaction,
-    BusinessTransactionError, BusinessValue, BusinessValueKind, BusinessWriteResult,
-    ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
+    BusinessTransactionError, BusinessTransactionErrorKind, BusinessValue, BusinessValueKind,
+    BusinessWriteResult, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
     ChunkCompletionOutcome, ChunkFaultProgress, ChunkTransaction, ChunkTransactionContext,
     ChunkTransactionError, ChunkTransactionManager, InheritedStepProgress, ItemProcessor,
     ItemReader, ItemWriter, ProcessContext, ProcessOutcome, ProcessorError, ReadContext,
-    ReadOutcome, ReaderError, WriteContext, WriteOutcome, WriterError,
+    FailureCode, FailureOutcome, FailureProvenance, ReadOutcome, ReaderError, SqlStateCode,
+    WriteContext, WriteOutcome, WriterError,
 };
 pub use chunk_builder::{ChunkPipelineBuilder, NoopChunkCompletion};
 pub use chunk_runtime::{
