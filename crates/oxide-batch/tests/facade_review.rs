@@ -65,7 +65,8 @@ enum Withheld {
 /// contributes. The totals are the review's enumeration: changing the surface
 /// without revisiting the review fails here, which is the point.
 const REVIEWED_SURFACE: &[(&str, usize)] = &[
-    ("chunk", 32),
+    // #220 adds five bounded, driver-neutral business-failure provenance types.
+    ("chunk", 37),
     ("chunk_builder", 2),
     ("chunk_runtime", 14),
     ("completion", 11),

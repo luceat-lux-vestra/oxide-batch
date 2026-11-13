@@ -19,6 +19,7 @@ oxide_batch::BoxedWriter
 oxide_batch::BusinessStatement
 oxide_batch::BusinessTransaction
 oxide_batch::BusinessTransactionError
+oxide_batch::BusinessTransactionErrorKind
 oxide_batch::BusinessValue
 oxide_batch::BusinessValueKind
 oxide_batch::BusinessWriteResult
@@ -155,7 +156,10 @@ oxide_batch::ExternalStateError
 oxide_batch::ExternalStateReference
 oxide_batch::ExternalStateStore
 oxide_batch::FailureCategory
+oxide_batch::FailureCode
 oxide_batch::FailureId
+oxide_batch::FailureOutcome
+oxide_batch::FailureProvenance
 oxide_batch::FailureSummary
 oxide_batch::FaultAction
 oxide_batch::FaultClassifier
@@ -498,6 +502,7 @@ oxide_batch::ShutdownTaskPhase
 oxide_batch::SkipCounts
 oxide_batch::SkipLimit
 oxide_batch::SkipListener
+oxide_batch::SqlStateCode
 oxide_batch::SplitBranch
 oxide_batch::SplitBudget
 oxide_batch::SplitNode
