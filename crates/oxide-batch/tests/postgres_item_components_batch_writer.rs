@@ -361,6 +361,16 @@ fn portable_typed_values_write_real_postgres_columns_without_caller_casts()
         const JOB: &str = "postgres_218_portable_typed_values";
         const TABLE: &str = "oxide_batch_business.batch_writer_typed_output";
 
+        #[derive(Clone, Copy)]
+        struct TypedRow {
+            created_at: &'static str,
+            business_date: &'static str,
+            local_time: &'static str,
+            local_timestamp: &'static str,
+            amount: &'static str,
+            external_id: &'static str,
+        }
+
         prepare_business_fixture(&runtime_url).await?;
         remove_job_rows(&runtime_url, JOB).await?;
         let pool = PgPoolOptions::new()
@@ -389,16 +399,6 @@ fn portable_typed_values_write_real_postgres_columns_without_caller_casts()
         let scope = create_started_chunk_scope(&repository, JOB).await?;
         let manager = postgres_chunk_transactions(&repository);
         let mut transaction = manager.begin_for(scope).await?;
-
-        #[derive(Clone, Copy)]
-        struct TypedRow {
-            created_at: &'static str,
-            business_date: &'static str,
-            local_time: &'static str,
-            local_timestamp: &'static str,
-            amount: &'static str,
-            external_id: &'static str,
-        }
 
         let row = TypedRow {
             created_at: "2026-01-02T03:04:05.006+09:00",
