@@ -27,7 +27,7 @@ const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 
 static MIGRATOR: Migrator = sqlx::migrate!("./migrations-mysql");
 
-/// Redacted configuration for the SQLx MySQL-protocol repository adapter.
+/// Redacted configuration for the `SQLx` `MySQL`-protocol repository adapter.
 ///
 /// The connection string is retained only for connection establishment and is
 /// never rendered by `Debug` or `Display` output.
@@ -98,7 +98,7 @@ impl fmt::Debug for MysqlConfig {
 pub enum MysqlConfigError {
     /// The connection string was empty.
     EmptyConnectionString,
-    /// SQLx rejected the connection-string shape.
+    /// `SQLx` rejected the connection-string shape.
     InvalidConnectionString,
     /// Pool size was outside 1 through 1024.
     PoolSize,
@@ -181,7 +181,7 @@ impl MysqlMigrator {
     }
 }
 
-/// Core durable `JobRepository` implementation for the SQLx MySQL protocol.
+/// Core durable `JobRepository` implementation for the `SQLx` `MySQL` protocol.
 ///
 /// This concrete adapter sits below the database-neutral repository SPI. Its
 /// initial descriptor deliberately declares no optional capabilities.
@@ -1189,7 +1189,7 @@ fn is_duplicate_key(error: &sqlx::Error) -> bool {
         .as_database_error()
         .and_then(sqlx::error::DatabaseError::code)
         .as_deref()
-        == Some("1062")
+        .is_some_and(|code| code == "23000" || code == "1062")
 }
 
 fn starting_metadata(created_at: SystemTime) -> Result<ExecutionMetadata, RepositoryError> {
