@@ -170,12 +170,12 @@ fn fixture_provenance_and_sentinel_policy_are_enforced() -> Result<(), Box<dyn E
 #[test]
 fn shared_repository_contract_runs_against_a_test_adapter() -> Result<(), Box<dyn Error>> {
     let first_id = NonZeroU64::new(100).ok_or(IdSequenceError::Exhausted)?;
-    run_repository_contract("in-memory", || {
+    futures_executor::block_on(run_repository_contract("in-memory", || async move {
         Ok(InMemoryJobRepository::new(
             Arc::new(ManualClock::new(UNIX_EPOCH)),
             Arc::new(DeterministicIds::new(first_id)),
         ))
-    })?;
+    }))?;
     Ok(())
 }
 

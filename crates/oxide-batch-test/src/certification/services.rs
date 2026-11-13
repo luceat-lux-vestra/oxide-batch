@@ -5,11 +5,11 @@
 //! and `LIFE-STOP-001` slices. They observe only the public service surface,
 //! so an adapter cannot pass them by exposing durable internals.
 
+use std::future::Future;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use futures_executor::block_on;
 use oxide_batch::{
     ActorRef, BatchStatus, Clock, ComponentRevision, CursorError, DefinitionIdentity,
     DefinitionRevision, ExecutionVersion, ExplorerError, ExplorerRepository, FailureCategory,
@@ -60,44 +60,128 @@ pub struct ServiceBackend<R, S> {
     pub clock: Arc<ContractClock>,
 }
 
-/// Runs the reusable M4 operator, explorer, and retention contract.
+/// Runs the bounded explorer-query capability contract.
 ///
-/// A fresh backend is constructed for each case, so registration order and
-/// state leakage cannot affect the result.
+/// Adapters may omit this group when they do not claim the corresponding
+/// explorer surface; unsupported reads remain fail-closed at the port.
 ///
 /// # Errors
 ///
-/// Returns [`RepositoryContractFailure`] with the stable case and backend
-/// names when construction, an operation, or an observation differs.
-pub fn run_service_contract<R, S, F>(
+/// Returns [`RepositoryContractFailure`] when any explorer case differs from
+/// the accepted public semantics.
+pub async fn run_explorer_contract<R, S, F, Fut>(
     backend: &'static str,
     mut factory: F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
-    keyset_traversal_returns_each_row_once(backend, &mut factory)?;
-    rows_created_after_traversal_start_are_not_returned(backend, &mut factory)?;
-    cursor_rejects_a_different_query_or_filter(backend, &mut factory)?;
-    corrupt_cursor_checksum_is_rejected(backend, &mut factory)?;
-    page_and_response_bounds_are_enforced(backend, &mut factory)?;
-    projection_excludes_parameter_and_context_values(backend, &mut factory)?;
-    replayed_operation_id_returns_the_recorded_outcome(backend, &mut factory)?;
-    operation_id_reuse_with_a_different_digest_is_rejected(backend, &mut factory)?;
-    operator_request_and_effect_commit_together(backend, &mut factory)?;
-    rejected_action_is_audited_without_an_effect(backend, &mut factory)?;
-    stale_expected_version_loses_the_compare_and_swap(backend, &mut factory)?;
-    abandon_requires_a_stopped_failed_or_recovered_execution(backend, &mut factory)?;
-    repeat_abandon_changes_nothing(backend, &mut factory)?;
-    abandoned_execution_rejects_restart(backend, &mut factory)?;
-    stop_on_a_stopping_or_terminal_execution_changes_nothing(backend, &mut factory)?;
-    held_instance_is_never_purged(backend, &mut factory)?;
-    running_stopping_or_unknown_execution_is_never_purged(backend, &mut factory)?;
-    stale_plan_digest_rejects_apply_without_deleting(backend, &mut factory)?;
-    purge_deletes_in_instance_owned_order_within_batch_bounds(backend, &mut factory)?;
-    interrupted_purge_leaves_completed_batches_durable(backend, &mut factory)
+    keyset_traversal_returns_each_row_once(backend, &mut factory).await?;
+    rows_created_after_traversal_start_are_not_returned(backend, &mut factory).await?;
+    cursor_rejects_a_different_query_or_filter(backend, &mut factory).await?;
+    corrupt_cursor_checksum_is_rejected(backend, &mut factory).await?;
+    page_and_response_bounds_are_enforced(backend, &mut factory).await?;
+    projection_excludes_parameter_and_context_values(backend, &mut factory).await
+}
+
+/// Runs operator idempotency and lifecycle-control capability contracts.
+///
+/// This group covers audited operation identity, stale compare-and-swap,
+/// abandon/restart behavior, and durable stop control.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] when any operator/control case differs
+/// from the accepted public semantics.
+pub async fn run_operator_control_contract<R, S, F, Fut>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository + Clone,
+    S: ExplorerRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
+{
+    replayed_operation_id_returns_the_recorded_outcome(backend, &mut factory).await?;
+    operation_id_reuse_with_a_different_digest_is_rejected(backend, &mut factory).await?;
+    operator_request_and_effect_commit_together(backend, &mut factory).await?;
+    rejected_action_is_audited_without_an_effect(backend, &mut factory).await?;
+    stale_expected_version_loses_the_compare_and_swap(backend, &mut factory).await?;
+    abandon_requires_a_stopped_failed_or_recovered_execution(backend, &mut factory).await?;
+    repeat_abandon_changes_nothing(backend, &mut factory).await?;
+    abandoned_execution_rejects_restart(backend, &mut factory).await?;
+    stop_on_a_stopping_or_terminal_execution_changes_nothing(backend, &mut factory).await
+}
+
+/// Runs retention/hold/purge capability contracts.
+///
+/// Adapters that do not declare retention purge should not run this group.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] when any retention case differs from
+/// the accepted public semantics.
+pub async fn run_retention_contract<R, S, F, Fut>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository + Clone,
+    S: ExplorerRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
+{
+    held_instance_is_never_purged(backend, &mut factory).await?;
+    running_stopping_or_unknown_execution_is_never_purged(backend, &mut factory).await?;
+    stale_plan_digest_rejects_apply_without_deleting(backend, &mut factory).await?;
+    purge_deletes_in_instance_owned_order_within_batch_bounds(backend, &mut factory).await?;
+    interrupted_purge_leaves_completed_batches_durable(backend, &mut factory).await
+}
+
+/// Runs every service contract group used by the in-memory and `PostgreSQL`
+/// reference adapters.
+///
+/// This aggregate is a full-capability equivalence/control suite, not the
+/// minimum portable adapter contract.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] when any included case differs from
+/// the accepted public semantics.
+pub async fn run_full_service_contract<R, S, F, Fut>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository + Clone,
+    S: ExplorerRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
+{
+    keyset_traversal_returns_each_row_once(backend, &mut factory).await?;
+    rows_created_after_traversal_start_are_not_returned(backend, &mut factory).await?;
+    cursor_rejects_a_different_query_or_filter(backend, &mut factory).await?;
+    corrupt_cursor_checksum_is_rejected(backend, &mut factory).await?;
+    page_and_response_bounds_are_enforced(backend, &mut factory).await?;
+    projection_excludes_parameter_and_context_values(backend, &mut factory).await?;
+    replayed_operation_id_returns_the_recorded_outcome(backend, &mut factory).await?;
+    operation_id_reuse_with_a_different_digest_is_rejected(backend, &mut factory).await?;
+    operator_request_and_effect_commit_together(backend, &mut factory).await?;
+    rejected_action_is_audited_without_an_effect(backend, &mut factory).await?;
+    stale_expected_version_loses_the_compare_and_swap(backend, &mut factory).await?;
+    abandon_requires_a_stopped_failed_or_recovered_execution(backend, &mut factory).await?;
+    repeat_abandon_changes_nothing(backend, &mut factory).await?;
+    abandoned_execution_rejects_restart(backend, &mut factory).await?;
+    stop_on_a_stopping_or_terminal_execution_changes_nothing(backend, &mut factory).await?;
+    held_instance_is_never_purged(backend, &mut factory).await?;
+    running_stopping_or_unknown_execution_is_never_purged(backend, &mut factory).await?;
+    stale_plan_digest_rejects_apply_without_deleting(backend, &mut factory).await?;
+    purge_deletes_in_instance_owned_order_within_batch_bounds(backend, &mut factory).await?;
+    interrupted_purge_leaves_completed_batches_durable(backend, &mut factory).await
 }
 
 const JOB: &str = "service_contract_job";
@@ -121,7 +205,7 @@ struct Fixture<R, S> {
     clock: Arc<ContractClock>,
 }
 
-fn fixture<R, S, F>(
+async fn fixture<R, S, F, Fut>(
     backend: &'static str,
     case: &'static str,
     factory: &mut F,
@@ -129,10 +213,13 @@ fn fixture<R, S, F>(
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     let clock = Arc::new(ContractClock::new(1_700_000_000_000));
-    let backend_under_test = factory(Arc::clone(&clock)).map_err(at!(backend, case))?;
+    let backend_under_test = factory(Arc::clone(&clock))
+        .await
+        .map_err(at!(backend, case))?;
     let repository = backend_under_test.repository;
     Ok(Fixture {
         operator: JobOperator::new(
@@ -188,7 +275,7 @@ fn reason() -> Result<ReasonCode, Box<dyn std::error::Error>> {
     Ok(ReasonCode::new("CONTRACT_CASE")?)
 }
 
-fn launch<R, S>(
+async fn launch<R, S>(
     fixture: &Fixture<R, S>,
     job: &str,
     discriminator: &str,
@@ -204,14 +291,14 @@ where
         instance_key(job, discriminator)?,
         definition(job)?,
     );
-    let outcome = block_on(fixture.operator.execute(&request))?;
+    let outcome = fixture.operator.execute(&request).await?;
     outcome
         .execution()
         .cloned()
         .ok_or_else(|| String::from("launch produced no execution").into())
 }
 
-fn transition<R, S>(
+async fn transition<R, S>(
     fixture: &Fixture<R, S>,
     execution: &JobExecution,
     target: BatchStatus,
@@ -229,14 +316,15 @@ where
     } else {
         LifecycleTransition::new(target, at)
     };
-    let mut unit = block_on(fixture.repository.begin())?;
-    let moved =
-        block_on(unit.transition_job_execution(execution.id(), execution.version(), requested))?;
-    block_on(unit.commit())?;
+    let mut unit = fixture.repository.begin().await?;
+    let moved = unit
+        .transition_job_execution(execution.id(), execution.version(), requested)
+        .await?;
+    unit.commit().await?;
     Ok(moved)
 }
 
-fn finish<R, S>(
+async fn finish<R, S>(
     fixture: &Fixture<R, S>,
     execution: &JobExecution,
     target: BatchStatus,
@@ -245,21 +333,22 @@ where
     R: JobRepository + Clone,
     S: ExplorerRepository,
 {
-    let started = transition(fixture, execution, BatchStatus::Started)?;
-    transition(fixture, &started, target)
+    let started = transition(fixture, execution, BatchStatus::Started).await?;
+    transition(fixture, &started, target).await
 }
 
-fn keyset_traversal_returns_each_row_once<R, S, F>(
+async fn keyset_traversal_returns_each_row_once<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "keyset_traversal_returns_each_row_once";
-    let fixture = fixture(backend, CASE, factory)?;
+    let fixture = fixture(backend, CASE, factory).await?;
     let mut expected = Vec::new();
     for index in 0..5 {
         let execution = launch(
@@ -268,10 +357,13 @@ where
             &format!("traversal-{index}"),
             &format!("traverse-{index}"),
         )
+        .await
         .map_err(at!(backend, CASE))?;
         expected.push(execution.job_instance_id());
     }
-    let observed = traverse_instances(&fixture, JOB, 2).map_err(at!(backend, CASE))?;
+    let observed = traverse_instances(&fixture, JOB, 2)
+        .await
+        .map_err(at!(backend, CASE))?;
     expected.sort_unstable();
     let mut sorted = observed.clone();
     sorted.sort_unstable();
@@ -290,7 +382,7 @@ where
     )
 }
 
-fn traverse_instances<R, S>(
+async fn traverse_instances<R, S>(
     fixture: &Fixture<R, S>,
     job: &str,
     page_size: u16,
@@ -304,7 +396,7 @@ where
     let mut request = PageRequest::first(size);
     let mut observed = Vec::new();
     loop {
-        let page = block_on(fixture.explorer.list_instances(&name, &request))?;
+        let page = fixture.explorer.list_instances(&name, &request).await?;
         for row in page.rows() {
             observed.push(row.id());
         }
@@ -316,17 +408,18 @@ where
     Ok(observed)
 }
 
-fn rows_created_after_traversal_start_are_not_returned<R, S, F>(
+async fn rows_created_after_traversal_start_are_not_returned<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "rows_created_after_traversal_start_are_not_returned";
-    let fixture = fixture(backend, CASE, factory)?;
+    let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..3 {
         launch(
             &fixture,
@@ -334,28 +427,29 @@ where
             &format!("ceiling-{index}"),
             &format!("ceiling-{index}"),
         )
+        .await
         .map_err(at!(backend, CASE))?;
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
-    let first = block_on(
-        fixture
-            .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    )
-    .map_err(at!(backend, CASE))?;
+    let first = fixture
+        .explorer
+        .list_instances(&name, &PageRequest::first(size))
+        .await
+        .map_err(at!(backend, CASE))?;
     let cursor = first
         .next_cursor()
         .cloned()
         .ok_or_else(|| String::from("first page carried no cursor"))
         .map_err(at!(backend, CASE))?;
-    let late = launch(&fixture, JOB, "ceiling-late", "ceiling-late").map_err(at!(backend, CASE))?;
-    let second = block_on(
-        fixture
-            .explorer
-            .list_instances(&name, &PageRequest::resume(size, cursor)),
-    )
-    .map_err(at!(backend, CASE))?;
+    let late = launch(&fixture, JOB, "ceiling-late", "ceiling-late")
+        .await
+        .map_err(at!(backend, CASE))?;
+    let second = fixture
+        .explorer
+        .list_instances(&name, &PageRequest::resume(size, cursor))
+        .await
+        .map_err(at!(backend, CASE))?;
     let returned = second
         .rows()
         .iter()
@@ -368,17 +462,18 @@ where
     )
 }
 
-fn cursor_rejects_a_different_query_or_filter<R, S, F>(
+async fn cursor_rejects_a_different_query_or_filter<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "cursor_rejects_a_different_query_or_filter";
-    let fixture = fixture(backend, CASE, factory)?;
+    let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..3 {
         launch(
             &fixture,
@@ -386,28 +481,29 @@ where
             &format!("mismatch-{index}"),
             &format!("mismatch-{index}"),
         )
+        .await
         .map_err(at!(backend, CASE))?;
     }
-    launch(&fixture, OTHER_JOB, "mismatch-other", "mismatch-other").map_err(at!(backend, CASE))?;
+    launch(&fixture, OTHER_JOB, "mismatch-other", "mismatch-other")
+        .await
+        .map_err(at!(backend, CASE))?;
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let other = JobName::new(OTHER_JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
-    let page = block_on(
-        fixture
-            .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    )
-    .map_err(at!(backend, CASE))?;
+    let page = fixture
+        .explorer
+        .list_instances(&name, &PageRequest::first(size))
+        .await
+        .map_err(at!(backend, CASE))?;
     let cursor = page
         .next_cursor()
         .cloned()
         .ok_or_else(|| String::from("first page carried no cursor"))
         .map_err(at!(backend, CASE))?;
-    let filtered = block_on(
-        fixture
-            .explorer
-            .list_instances(&other, &PageRequest::resume(size, cursor.clone())),
-    );
+    let filtered = fixture
+        .explorer
+        .list_instances(&other, &PageRequest::resume(size, cursor.clone()))
+        .await;
     ensure(
         matches!(
             filtered,
@@ -418,11 +514,10 @@ where
         "a cursor from another filter was accepted",
     )?;
     let resized = PageSize::new(3).map_err(at!(backend, CASE))?;
-    let sized = block_on(
-        fixture
-            .explorer
-            .list_instances(&name, &PageRequest::resume(resized, cursor)),
-    );
+    let sized = fixture
+        .explorer
+        .list_instances(&name, &PageRequest::resume(resized, cursor))
+        .await;
     ensure(
         matches!(
             sized,
@@ -434,17 +529,18 @@ where
     )
 }
 
-fn corrupt_cursor_checksum_is_rejected<R, S, F>(
+async fn corrupt_cursor_checksum_is_rejected<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "corrupt_cursor_checksum_is_rejected";
-    let fixture = fixture(backend, CASE, factory)?;
+    let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..3 {
         launch(
             &fixture,
@@ -452,16 +548,16 @@ where
             &format!("corrupt-{index}"),
             &format!("corrupt-{index}"),
         )
+        .await
         .map_err(at!(backend, CASE))?;
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
-    let page = block_on(
-        fixture
-            .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    )
-    .map_err(at!(backend, CASE))?;
+    let page = fixture
+        .explorer
+        .list_instances(&name, &PageRequest::first(size))
+        .await
+        .map_err(at!(backend, CASE))?;
     let cursor = page
         .next_cursor()
         .ok_or_else(|| String::from("first page carried no cursor"))
@@ -470,11 +566,10 @@ where
     let last = bytes.len() - 1;
     bytes[last] ^= 0xff;
     let corrupt = oxide_batch::Cursor::from_bytes(bytes).map_err(at!(backend, CASE))?;
-    let rejected = block_on(
-        fixture
-            .explorer
-            .list_instances(&name, &PageRequest::resume(size, corrupt)),
-    );
+    let rejected = fixture
+        .explorer
+        .list_instances(&name, &PageRequest::resume(size, corrupt))
+        .await;
     ensure(
         matches!(
             rejected,
@@ -486,17 +581,18 @@ where
     )
 }
 
-fn page_and_response_bounds_are_enforced<R, S, F>(
+async fn page_and_response_bounds_are_enforced<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "page_and_response_bounds_are_enforced";
-    let fixture = fixture(backend, CASE, factory)?;
+    let fixture = fixture(backend, CASE, factory).await?;
     ensure(
         matches!(
             PageSize::new(0),
@@ -522,16 +618,16 @@ where
             &format!("bounds-{index}"),
             &format!("bounds-{index}"),
         )
+        .await
         .map_err(at!(backend, CASE))?;
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
-    let page = block_on(
-        fixture
-            .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    )
-    .map_err(at!(backend, CASE))?;
+    let page = fixture
+        .explorer
+        .list_instances(&name, &PageRequest::first(size))
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         page.rows().len() <= 2,
         backend,
@@ -540,26 +636,28 @@ where
     )
 }
 
-fn projection_excludes_parameter_and_context_values<R, S, F>(
+async fn projection_excludes_parameter_and_context_values<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "projection_excludes_parameter_and_context_values";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution = launch(&fixture, JOB, SENTINEL, "redaction").map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, SENTINEL, "redaction")
+        .await
+        .map_err(at!(backend, CASE))?;
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(10).map_err(at!(backend, CASE))?;
-    let instances = block_on(
-        fixture
-            .explorer
-            .list_instances(&name, &PageRequest::first(size)),
-    )
-    .map_err(at!(backend, CASE))?;
+    let instances = fixture
+        .explorer
+        .list_instances(&name, &PageRequest::first(size))
+        .await
+        .map_err(at!(backend, CASE))?;
     let rendered = format!("{:?}", instances.rows());
     ensure(
         !rendered.contains(SENTINEL),
@@ -567,7 +665,10 @@ where
         CASE,
         "an instance projection exposed a parameter value",
     )?;
-    let projection = block_on(fixture.explorer.get_execution(execution.id()))
+    let projection = fixture
+        .explorer
+        .get_execution(execution.id())
+        .await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -591,25 +692,34 @@ where
     )
 }
 
-fn replayed_operation_id_returns_the_recorded_outcome<R, S, F>(
+async fn replayed_operation_id_returns_the_recorded_outcome<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "replayed_operation_id_returns_the_recorded_outcome";
-    let fixture = fixture(backend, CASE, factory)?;
+    let fixture = fixture(backend, CASE, factory).await?;
     let request = OperatorRequest::launch(
         OperationId::new("replay-1").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
         instance_key(JOB, "replay").map_err(at!(backend, CASE))?,
         definition(JOB).map_err(at!(backend, CASE))?,
     );
-    let first = block_on(fixture.operator.execute(&request)).map_err(at!(backend, CASE))?;
-    let second = block_on(fixture.operator.execute(&request)).map_err(at!(backend, CASE))?;
+    let first = fixture
+        .operator
+        .execute(&request)
+        .await
+        .map_err(at!(backend, CASE))?;
+    let second = fixture
+        .operator
+        .execute(&request)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         first.class() == OperatorOutcomeClass::Applied,
         backend,
@@ -640,12 +750,11 @@ where
         .ok_or_else(|| String::from("the launch recorded no instance"))
         .map_err(at!(backend, CASE))?;
     let size = PageSize::new(10).map_err(at!(backend, CASE))?;
-    let executions = block_on(
-        fixture
-            .explorer
-            .list_executions(instance, &PageRequest::first(size)),
-    )
-    .map_err(at!(backend, CASE))?;
+    let executions = fixture
+        .explorer
+        .list_executions(instance, &PageRequest::first(size))
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         executions.rows().len() == 1,
         backend,
@@ -654,25 +763,28 @@ where
     )
 }
 
-fn operation_id_reuse_with_a_different_digest_is_rejected<R, S, F>(
+async fn operation_id_reuse_with_a_different_digest_is_rejected<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "operation_id_reuse_with_a_different_digest_is_rejected";
-    let fixture = fixture(backend, CASE, factory)?;
-    launch(&fixture, JOB, "conflict-a", "conflict").map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    launch(&fixture, JOB, "conflict-a", "conflict")
+        .await
+        .map_err(at!(backend, CASE))?;
     let other = OperatorRequest::launch(
         OperationId::new("conflict").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
         instance_key(JOB, "conflict-b").map_err(at!(backend, CASE))?,
         definition(JOB).map_err(at!(backend, CASE))?,
     );
-    let rejected = block_on(fixture.operator.execute(&other));
+    let rejected = fixture.operator.execute(&other).await;
     ensure(
         matches!(rejected, Err(OperatorError::OperationIdConflict { .. })),
         backend,
@@ -681,25 +793,27 @@ where
     )
 }
 
-fn operator_request_and_effect_commit_together<R, S, F>(
+async fn operator_request_and_effect_commit_together<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "operator_request_and_effect_commit_together";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution = launch(&fixture, JOB, "audited", "audited").map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, "audited", "audited")
+        .await
+        .map_err(at!(backend, CASE))?;
     let size = PageSize::new(10).map_err(at!(backend, CASE))?;
-    let audit = block_on(
-        fixture
-            .explorer
-            .list_operator_requests(execution.id(), &PageRequest::first(size)),
-    )
-    .map_err(at!(backend, CASE))?;
+    let audit = fixture
+        .explorer
+        .list_operator_requests(execution.id(), &PageRequest::first(size))
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         audit.rows().len() == 1,
         backend,
@@ -721,19 +835,21 @@ where
     )
 }
 
-fn rejected_action_is_audited_without_an_effect<R, S, F>(
+async fn rejected_action_is_audited_without_an_effect<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "rejected_action_is_audited_without_an_effect";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution =
-        launch(&fixture, JOB, "rejected", "rejected-launch").map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, "rejected", "rejected-launch")
+        .await
+        .map_err(at!(backend, CASE))?;
     let request = OperatorRequest::abandon(
         OperationId::new("rejected-abandon").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
@@ -741,7 +857,11 @@ where
         execution.id(),
         execution.version(),
     );
-    let outcome = block_on(fixture.operator.execute(&request)).map_err(at!(backend, CASE))?;
+    let outcome = fixture
+        .operator
+        .execute(&request)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         outcome.class() == OperatorOutcomeClass::Rejected
             && matches!(
@@ -754,7 +874,10 @@ where
         CASE,
         "abandoning a starting execution was not rejected",
     )?;
-    let observed = block_on(fixture.explorer.get_execution(execution.id()))
+    let observed = fixture
+        .explorer
+        .get_execution(execution.id())
+        .await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -765,12 +888,11 @@ where
         "a rejected action changed durable state",
     )?;
     let size = PageSize::new(10).map_err(at!(backend, CASE))?;
-    let audit = block_on(
-        fixture
-            .explorer
-            .list_operator_requests(execution.id(), &PageRequest::first(size)),
-    )
-    .map_err(at!(backend, CASE))?;
+    let audit = fixture
+        .explorer
+        .list_operator_requests(execution.id(), &PageRequest::first(size))
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         audit
             .rows()
@@ -782,19 +904,24 @@ where
     )
 }
 
-fn stale_expected_version_loses_the_compare_and_swap<R, S, F>(
+async fn stale_expected_version_loses_the_compare_and_swap<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "stale_expected_version_loses_the_compare_and_swap";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution = launch(&fixture, JOB, "stale", "stale-launch").map_err(at!(backend, CASE))?;
-    let failed = finish(&fixture, &execution, BatchStatus::Failed).map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, "stale", "stale-launch")
+        .await
+        .map_err(at!(backend, CASE))?;
+    let failed = finish(&fixture, &execution, BatchStatus::Failed)
+        .await
+        .map_err(at!(backend, CASE))?;
     let request = OperatorRequest::abandon(
         OperationId::new("stale-abandon").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
@@ -802,7 +929,11 @@ where
         failed.id(),
         ExecutionVersion::new(failed.version().get().saturating_sub(1)),
     );
-    let outcome = block_on(fixture.operator.execute(&request)).map_err(at!(backend, CASE))?;
+    let outcome = fixture
+        .operator
+        .execute(&request)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         matches!(
             outcome.rejection(),
@@ -812,7 +943,10 @@ where
         CASE,
         "a stale expected version won its compare-and-swap",
     )?;
-    let observed = block_on(fixture.explorer.get_execution(failed.id()))
+    let observed = fixture
+        .explorer
+        .get_execution(failed.id())
+        .await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -824,32 +958,42 @@ where
     )
 }
 
-fn abandon_requires_a_stopped_failed_or_recovered_execution<R, S, F>(
+async fn abandon_requires_a_stopped_failed_or_recovered_execution<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "abandon_requires_a_stopped_failed_or_recovered_execution";
-    let fixture = fixture(backend, CASE, factory)?;
-    let running =
-        launch(&fixture, JOB, "abandon-running", "abandon-running").map_err(at!(backend, CASE))?;
-    let started =
-        transition(&fixture, &running, BatchStatus::Started).map_err(at!(backend, CASE))?;
-    let rejected = abandon(&fixture, &started, "abandon-active").map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let running = launch(&fixture, JOB, "abandon-running", "abandon-running")
+        .await
+        .map_err(at!(backend, CASE))?;
+    let started = transition(&fixture, &running, BatchStatus::Started)
+        .await
+        .map_err(at!(backend, CASE))?;
+    let rejected = abandon(&fixture, &started, "abandon-active")
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         rejected.class() == OperatorOutcomeClass::Rejected,
         backend,
         CASE,
         "an active execution was abandoned",
     )?;
-    let stoppable =
-        launch(&fixture, JOB, "abandon-stopped", "abandon-stopped").map_err(at!(backend, CASE))?;
-    let stopped = finish(&fixture, &stoppable, BatchStatus::Stopped).map_err(at!(backend, CASE))?;
-    let accepted = abandon(&fixture, &stopped, "abandon-ok").map_err(at!(backend, CASE))?;
+    let stoppable = launch(&fixture, JOB, "abandon-stopped", "abandon-stopped")
+        .await
+        .map_err(at!(backend, CASE))?;
+    let stopped = finish(&fixture, &stoppable, BatchStatus::Stopped)
+        .await
+        .map_err(at!(backend, CASE))?;
+    let accepted = abandon(&fixture, &stopped, "abandon-ok")
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         accepted.class() == OperatorOutcomeClass::Applied
             && accepted.record().prior_status() == Some(BatchStatus::Stopped)
@@ -862,7 +1006,7 @@ where
     )
 }
 
-fn abandon<R, S>(
+async fn abandon<R, S>(
     fixture: &Fixture<R, S>,
     execution: &JobExecution,
     operation: &str,
@@ -878,36 +1022,48 @@ where
         execution.id(),
         execution.version(),
     );
-    Ok(block_on(fixture.operator.execute(&request))?)
+    Ok(fixture.operator.execute(&request).await?)
 }
 
-fn repeat_abandon_changes_nothing<R, S, F>(
+async fn repeat_abandon_changes_nothing<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "repeat_abandon_changes_nothing";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution = launch(&fixture, JOB, "repeat", "repeat-launch").map_err(at!(backend, CASE))?;
-    let failed = finish(&fixture, &execution, BatchStatus::Failed).map_err(at!(backend, CASE))?;
-    let first = abandon(&fixture, &failed, "repeat-abandon-1").map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, "repeat", "repeat-launch")
+        .await
+        .map_err(at!(backend, CASE))?;
+    let failed = finish(&fixture, &execution, BatchStatus::Failed)
+        .await
+        .map_err(at!(backend, CASE))?;
+    let first = abandon(&fixture, &failed, "repeat-abandon-1")
+        .await
+        .map_err(at!(backend, CASE))?;
     let abandoned = first
         .execution()
         .cloned()
         .ok_or_else(|| String::from("abandon returned no execution"))
         .map_err(at!(backend, CASE))?;
-    let second = abandon(&fixture, &abandoned, "repeat-abandon-2").map_err(at!(backend, CASE))?;
+    let second = abandon(&fixture, &abandoned, "repeat-abandon-2")
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         second.class() == OperatorOutcomeClass::Applied && !second.changed_state(),
         backend,
         CASE,
         "a repeated abandon changed durable state",
     )?;
-    let observed = block_on(fixture.explorer.get_execution(abandoned.id()))
+    let observed = fixture
+        .explorer
+        .get_execution(abandoned.id())
+        .await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -919,28 +1075,38 @@ where
     )
 }
 
-fn abandoned_execution_rejects_restart<R, S, F>(
+async fn abandoned_execution_rejects_restart<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "abandoned_execution_rejects_restart";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution =
-        launch(&fixture, JOB, "no-restart", "no-restart-launch").map_err(at!(backend, CASE))?;
-    let failed = finish(&fixture, &execution, BatchStatus::Failed).map_err(at!(backend, CASE))?;
-    abandon(&fixture, &failed, "no-restart-abandon").map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, "no-restart", "no-restart-launch")
+        .await
+        .map_err(at!(backend, CASE))?;
+    let failed = finish(&fixture, &execution, BatchStatus::Failed)
+        .await
+        .map_err(at!(backend, CASE))?;
+    abandon(&fixture, &failed, "no-restart-abandon")
+        .await
+        .map_err(at!(backend, CASE))?;
     let restart = OperatorRequest::restart(
         OperationId::new("no-restart-restart").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
         failed.job_instance_id(),
         definition(JOB).map_err(at!(backend, CASE))?,
     );
-    let outcome = block_on(fixture.operator.execute(&restart)).map_err(at!(backend, CASE))?;
+    let outcome = fixture
+        .operator
+        .execute(&restart)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         outcome.class() == OperatorOutcomeClass::Rejected,
         backend,
@@ -949,36 +1115,48 @@ where
     )
 }
 
-fn stop_on_a_stopping_or_terminal_execution_changes_nothing<R, S, F>(
+async fn stop_on_a_stopping_or_terminal_execution_changes_nothing<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "stop_on_a_stopping_or_terminal_execution_changes_nothing";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution = launch(&fixture, JOB, "stop", "stop-launch").map_err(at!(backend, CASE))?;
-    let started =
-        transition(&fixture, &execution, BatchStatus::Started).map_err(at!(backend, CASE))?;
-    let stopping =
-        transition(&fixture, &started, BatchStatus::Stopping).map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, "stop", "stop-launch")
+        .await
+        .map_err(at!(backend, CASE))?;
+    let started = transition(&fixture, &execution, BatchStatus::Started)
+        .await
+        .map_err(at!(backend, CASE))?;
+    let stopping = transition(&fixture, &started, BatchStatus::Stopping)
+        .await
+        .map_err(at!(backend, CASE))?;
     let request = OperatorRequest::stop(
         OperationId::new("stop-repeat").map_err(at!(backend, CASE))?,
         actor().map_err(at!(backend, CASE))?,
         stopping.id(),
         stopping.version(),
     );
-    let outcome = block_on(fixture.operator.execute(&request)).map_err(at!(backend, CASE))?;
+    let outcome = fixture
+        .operator
+        .execute(&request)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         outcome.class() == OperatorOutcomeClass::Applied && !outcome.changed_state(),
         backend,
         CASE,
         "a stop request on a stopping execution changed durable state",
     )?;
-    let observed = block_on(fixture.explorer.get_execution(stopping.id()))
+    let observed = fixture
+        .explorer
+        .get_execution(stopping.id())
+        .await
         .map_err(at!(backend, CASE))?
         .ok_or_else(|| String::from("execution projection was absent"))
         .map_err(at!(backend, CASE))?;
@@ -1001,26 +1179,34 @@ fn purge_request(job: &str) -> Result<PurgePlanRequest, Box<dyn std::error::Erro
     )?)
 }
 
-fn held_instance_is_never_purged<R, S, F>(
+async fn held_instance_is_never_purged<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "held_instance_is_never_purged";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution = launch(&fixture, JOB, "held", "held-launch").map_err(at!(backend, CASE))?;
-    finish(&fixture, &execution, BatchStatus::Completed).map_err(at!(backend, CASE))?;
-    let report = block_on(fixture.retention.place_hold(
-        OperationId::new("held-hold").map_err(at!(backend, CASE))?,
-        actor().map_err(at!(backend, CASE))?,
-        reason().map_err(at!(backend, CASE))?,
-        execution.job_instance_id(),
-    ))
-    .map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, "held", "held-launch")
+        .await
+        .map_err(at!(backend, CASE))?;
+    finish(&fixture, &execution, BatchStatus::Completed)
+        .await
+        .map_err(at!(backend, CASE))?;
+    let report = fixture
+        .retention
+        .place_hold(
+            OperationId::new("held-hold").map_err(at!(backend, CASE))?,
+            actor().map_err(at!(backend, CASE))?,
+            reason().map_err(at!(backend, CASE))?,
+            execution.job_instance_id(),
+        )
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         report.outcome() == RetentionOutcome::Applied && report.hold().is_some(),
         backend,
@@ -1028,12 +1214,11 @@ where
         "the hold was not applied",
     )?;
     fixture.clock.advance(Duration::from_hours(2));
-    let plan = block_on(
-        fixture
-            .retention
-            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?),
-    )
-    .map_err(at!(backend, CASE))?;
+    let plan = fixture
+        .retention
+        .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         plan.candidates()
             .iter()
@@ -1044,26 +1229,30 @@ where
     )
 }
 
-fn running_stopping_or_unknown_execution_is_never_purged<R, S, F>(
+async fn running_stopping_or_unknown_execution_is_never_purged<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "running_stopping_or_unknown_execution_is_never_purged";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution = launch(&fixture, JOB, "active", "active-launch").map_err(at!(backend, CASE))?;
-    transition(&fixture, &execution, BatchStatus::Started).map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, "active", "active-launch")
+        .await
+        .map_err(at!(backend, CASE))?;
+    transition(&fixture, &execution, BatchStatus::Started)
+        .await
+        .map_err(at!(backend, CASE))?;
     fixture.clock.advance(Duration::from_hours(2));
-    let plan = block_on(
-        fixture
-            .retention
-            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?),
-    )
-    .map_err(at!(backend, CASE))?;
+    let plan = fixture
+        .retention
+        .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         plan.is_empty(),
         backend,
@@ -1072,40 +1261,48 @@ where
     )
 }
 
-fn stale_plan_digest_rejects_apply_without_deleting<R, S, F>(
+async fn stale_plan_digest_rejects_apply_without_deleting<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "stale_plan_digest_rejects_apply_without_deleting";
-    let fixture = fixture(backend, CASE, factory)?;
-    let execution =
-        launch(&fixture, JOB, "stale-plan", "stale-plan-launch").map_err(at!(backend, CASE))?;
-    let failed = finish(&fixture, &execution, BatchStatus::Failed).map_err(at!(backend, CASE))?;
+    let fixture = fixture(backend, CASE, factory).await?;
+    let execution = launch(&fixture, JOB, "stale-plan", "stale-plan-launch")
+        .await
+        .map_err(at!(backend, CASE))?;
+    let failed = finish(&fixture, &execution, BatchStatus::Failed)
+        .await
+        .map_err(at!(backend, CASE))?;
     fixture.clock.advance(Duration::from_hours(2));
-    let plan = block_on(
-        fixture
-            .retention
-            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?),
-    )
-    .map_err(at!(backend, CASE))?;
+    let plan = fixture
+        .retention
+        .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         !plan.is_empty(),
         backend,
         CASE,
         "the plan observed no candidate",
     )?;
-    abandon(&fixture, &failed, "stale-plan-abandon").map_err(at!(backend, CASE))?;
-    let applied = block_on(fixture.retention.apply_purge(
-        OperationId::new("stale-plan-apply").map_err(at!(backend, CASE))?,
-        actor().map_err(at!(backend, CASE))?,
-        reason().map_err(at!(backend, CASE))?,
-        &plan,
-    ));
+    abandon(&fixture, &failed, "stale-plan-abandon")
+        .await
+        .map_err(at!(backend, CASE))?;
+    let applied = fixture
+        .retention
+        .apply_purge(
+            OperationId::new("stale-plan-apply").map_err(at!(backend, CASE))?,
+            actor().map_err(at!(backend, CASE))?,
+            reason().map_err(at!(backend, CASE))?,
+            &plan,
+        )
+        .await;
     ensure(
         matches!(
             applied,
@@ -1115,8 +1312,11 @@ where
         CASE,
         "a stale plan was applied",
     )?;
-    let observed =
-        block_on(fixture.explorer.get_execution(failed.id())).map_err(at!(backend, CASE))?;
+    let observed = fixture
+        .explorer
+        .get_execution(failed.id())
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         observed.is_some(),
         backend,
@@ -1125,17 +1325,18 @@ where
     )
 }
 
-fn purge_deletes_in_instance_owned_order_within_batch_bounds<R, S, F>(
+async fn purge_deletes_in_instance_owned_order_within_batch_bounds<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "purge_deletes_in_instance_owned_order_within_batch_bounds";
-    let fixture = fixture(backend, CASE, factory)?;
+    let fixture = fixture(backend, CASE, factory).await?;
     let mut executions = Vec::new();
     for index in 0..2 {
         let execution = launch(
@@ -1144,30 +1345,35 @@ where
             &format!("purge-{index}"),
             &format!("purge-{index}"),
         )
+        .await
         .map_err(at!(backend, CASE))?;
-        finish(&fixture, &execution, BatchStatus::Completed).map_err(at!(backend, CASE))?;
+        finish(&fixture, &execution, BatchStatus::Completed)
+            .await
+            .map_err(at!(backend, CASE))?;
         executions.push(execution);
     }
     fixture.clock.advance(Duration::from_hours(2));
-    let plan = block_on(
-        fixture
-            .retention
-            .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?),
-    )
-    .map_err(at!(backend, CASE))?;
+    let plan = fixture
+        .retention
+        .plan_purge(&purge_request(JOB).map_err(at!(backend, CASE))?)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         plan.candidates().len() == 2 && plan.counts().job_executions() == 2,
         backend,
         CASE,
         "the plan did not observe both candidates",
     )?;
-    let report = block_on(fixture.retention.apply_purge(
-        OperationId::new("purge-apply").map_err(at!(backend, CASE))?,
-        actor().map_err(at!(backend, CASE))?,
-        reason().map_err(at!(backend, CASE))?,
-        &plan,
-    ))
-    .map_err(at!(backend, CASE))?;
+    let report = fixture
+        .retention
+        .apply_purge(
+            OperationId::new("purge-apply").map_err(at!(backend, CASE))?,
+            actor().map_err(at!(backend, CASE))?,
+            reason().map_err(at!(backend, CASE))?,
+            &plan,
+        )
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         report.outcome() == RetentionOutcome::Applied
             && report.counts().job_executions() == 2
@@ -1178,8 +1384,11 @@ where
         "the applied batch did not delete its planned rows",
     )?;
     for execution in &executions {
-        let observed =
-            block_on(fixture.explorer.get_execution(execution.id())).map_err(at!(backend, CASE))?;
+        let observed = fixture
+            .explorer
+            .get_execution(execution.id())
+            .await
+            .map_err(at!(backend, CASE))?;
         ensure(
             observed.is_none(),
             backend,
@@ -1190,17 +1399,18 @@ where
     Ok(())
 }
 
-fn interrupted_purge_leaves_completed_batches_durable<R, S, F>(
+async fn interrupted_purge_leaves_completed_batches_durable<R, S, F, Fut>(
     backend: &'static str,
     factory: &mut F,
 ) -> Result<(), RepositoryContractFailure>
 where
     R: JobRepository + Clone,
     S: ExplorerRepository,
-    F: FnMut(Arc<ContractClock>) -> Result<ServiceBackend<R, S>, RepositoryError>,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<ServiceBackend<R, S>, RepositoryError>>,
 {
     const CASE: &str = "interrupted_purge_leaves_completed_batches_durable";
-    let fixture = fixture(backend, CASE, factory)?;
+    let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..2 {
         let execution = launch(
             &fixture,
@@ -1208,8 +1418,11 @@ where
             &format!("batch-{index}"),
             &format!("batch-{index}"),
         )
+        .await
         .map_err(at!(backend, CASE))?;
-        finish(&fixture, &execution, BatchStatus::Completed).map_err(at!(backend, CASE))?;
+        finish(&fixture, &execution, BatchStatus::Completed)
+            .await
+            .map_err(at!(backend, CASE))?;
     }
     fixture.clock.advance(Duration::from_hours(2));
     let bounded = PurgePlanRequest::new(
@@ -1219,7 +1432,11 @@ where
         PurgeBatchBound::new(1).map_err(at!(backend, CASE))?,
     )
     .map_err(at!(backend, CASE))?;
-    let first = block_on(fixture.retention.plan_purge(&bounded)).map_err(at!(backend, CASE))?;
+    let first = fixture
+        .retention
+        .plan_purge(&bounded)
+        .await
+        .map_err(at!(backend, CASE))?;
     ensure(
         first.candidates().len() == 1,
         backend,
@@ -1232,14 +1449,21 @@ where
         .map(PurgeCandidate::job_execution_id)
         .ok_or_else(|| String::from("the plan observed no candidate"))
         .map_err(at!(backend, CASE))?;
-    block_on(fixture.retention.apply_purge(
-        OperationId::new("batch-apply-1").map_err(at!(backend, CASE))?,
-        actor().map_err(at!(backend, CASE))?,
-        reason().map_err(at!(backend, CASE))?,
-        &first,
-    ))
-    .map_err(at!(backend, CASE))?;
-    let second = block_on(fixture.retention.plan_purge(&bounded)).map_err(at!(backend, CASE))?;
+    fixture
+        .retention
+        .apply_purge(
+            OperationId::new("batch-apply-1").map_err(at!(backend, CASE))?,
+            actor().map_err(at!(backend, CASE))?,
+            reason().map_err(at!(backend, CASE))?,
+            &first,
+        )
+        .await
+        .map_err(at!(backend, CASE))?;
+    let second = fixture
+        .retention
+        .plan_purge(&bounded)
+        .await
+        .map_err(at!(backend, CASE))?;
     let remaining = second
         .candidates()
         .first()
@@ -1252,7 +1476,10 @@ where
         CASE,
         "a completed batch was replanned",
     )?;
-    let gone: Option<JobExecutionId> = block_on(fixture.explorer.get_execution(purged))
+    let gone: Option<JobExecutionId> = fixture
+        .explorer
+        .get_execution(purged)
+        .await
         .map_err(at!(backend, CASE))?
         .map(|projection| projection.id());
     ensure(

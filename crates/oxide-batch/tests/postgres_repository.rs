@@ -389,22 +389,25 @@ fn shared_repository_contract_passes_on_postgres() -> Result<(), Box<dyn Error>>
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let _runtime_guard = runtime.enter();
-    run_repository_contract("postgres", || {
-        runtime
-            .block_on(async {
+    runtime.block_on(async {
+        run_repository_contract("postgres", || {
+            let url = url.clone();
+            async move {
                 remove_contract_rows(&url)
                     .await
                     .map_err(|_| RepositoryError::Unavailable)?;
                 PostgresJobRepository::connect(
-                    plaintext_config(url.clone()).map_err(|_| RepositoryError::Unavailable)?,
+                    plaintext_config(url).map_err(|_| RepositoryError::Unavailable)?,
                     Arc::new(FixedClock(UNIX_EPOCH)),
                 )
                 .await
-            })
-            .map_err(|_| RepositoryError::Unavailable)
+                .map_err(|_| RepositoryError::Unavailable)
+            }
+        })
+        .await?;
+        remove_contract_rows(&url).await?;
+        Ok::<(), Box<dyn Error>>(())
     })?;
-    runtime.block_on(remove_contract_rows(&url))?;
     Ok(())
 }
 
@@ -461,26 +464,30 @@ fn shared_service_contract_passes_on_postgres() -> Result<(), Box<dyn Error>> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let _runtime_guard = runtime.enter();
-    run_service_contract("postgres", |clock| {
-        runtime.block_on(async {
-            remove_service_rows(&url)
-                .await
-                .map_err(|_| RepositoryError::Unavailable)?;
-            let repository = PostgresJobRepository::connect(
-                plaintext_config(url.clone()).map_err(|_| RepositoryError::Unavailable)?,
-                Arc::clone(&clock) as Arc<dyn Clock>,
-            )
-            .await?;
-            let explorer = PostgresExplorer::new(repository.clone());
-            Ok(ServiceBackend {
-                repository,
-                explorer,
-                clock,
-            })
+    runtime.block_on(async {
+        run_service_contract("postgres", |clock| {
+            let url = url.clone();
+            async move {
+                remove_service_rows(&url)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                let repository = PostgresJobRepository::connect(
+                    plaintext_config(url).map_err(|_| RepositoryError::Unavailable)?,
+                    Arc::clone(&clock) as Arc<dyn Clock>,
+                )
+                .await?;
+                let explorer = PostgresExplorer::new(repository.clone());
+                Ok(ServiceBackend {
+                    repository,
+                    explorer,
+                    clock,
+                })
+            }
         })
+        .await?;
+        remove_service_rows(&url).await?;
+        Ok::<(), Box<dyn Error>>(())
     })?;
-    runtime.block_on(remove_service_rows(&url))?;
     Ok(())
 }
 

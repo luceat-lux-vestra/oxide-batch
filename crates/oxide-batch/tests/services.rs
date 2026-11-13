@@ -1,11 +1,12 @@
 //! Bounded operator, explorer, and retention service behavior.
 
-#[allow(dead_code, unused_imports)]
-#[path = "contract/mod.rs"]
-mod contract;
 #[allow(dead_code)]
 #[path = "support/ids.rs"]
 mod ids;
+
+#[allow(dead_code, unused_imports)]
+#[path = "contract/mod.rs"]
+mod contract;
 
 use std::error::Error;
 use std::num::NonZeroU64;
@@ -56,7 +57,9 @@ fn backend(
 
 #[test]
 fn shared_service_contract_passes_in_memory() -> Result<(), Box<dyn Error>> {
-    run_service_contract("in-memory", backend)?;
+    block_on(run_service_contract("in-memory", |clock| async move {
+        backend(clock)
+    }))?;
     Ok(())
 }
 

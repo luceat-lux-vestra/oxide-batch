@@ -6,11 +6,16 @@
 //! own dependency/resource boundary independent of the production runtime,
 //! and it consumes only `oxide-batch`'s public contracts.
 //!
-//! `oxide-batch` never depends on this crate, and its facade never
-//! re-exports it.
+//! `oxide-batch` never depends on this crate, and its facade never re-exports
+//! it. Workspace facade integration tests compile the certification source
+//! through an internal test-only path so built-in adapters exercise the same
+//! contracts exposed to external adapter tests.
 //!
 //! ## What this crate provides
 //!
+//! - [`certification`]: reusable repository, explorer, operator, and
+//!   retention contract runners for adapter certification. Passing these
+//!   contracts is evidence, not by itself an `OxideBatch` support claim.
 //! - [`ManualClock`] and [`DeterministicIds`]: deterministic implementations
 //!   of the framework's own [`Clock`](oxide_batch::Clock) and
 //!   [`IdGenerator`](oxide_batch::IdGenerator) ports.
@@ -42,6 +47,7 @@
 //! None of the above leaks a `SQLx`, Tokio runtime-handle, or other
 //! database-driver concrete type in its public API.
 
+pub mod certification;
 mod clock;
 mod defaults;
 mod ids;
