@@ -549,12 +549,11 @@ fn postgres_unique_violation_exposes_bounded_sqlstate_without_driver_error()
                 .await?;
 
             let duplicate_values = [BusinessValue::text(JOB), BusinessValue::i64(7)];
-            let error = match business
+            let Err(error) = business
                 .execute(BusinessStatement::new(SQL, &duplicate_values))
                 .await
-            {
-                Ok(_) => return Err("duplicate business key unexpectedly succeeded".into()),
-                Err(error) => error,
+            else {
+                return Err("duplicate business key unexpectedly succeeded".into());
             };
 
             assert_eq!(error.kind(), BusinessTransactionErrorKind::Rejected);
