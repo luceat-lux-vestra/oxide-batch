@@ -42,8 +42,7 @@ mod resolves {
         BackoffOutcome, BackoffPolicy, BackoffSleeper, BatchStatus, BeforeCallbackOutcome,
         BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, BoxFuture, BoxedProcessor,
         BoxedReader, BoxedStream, BoxedWriter, BusinessStatement, BusinessTransaction,
-        BusinessTransactionError, BusinessTransactionErrorKind, BusinessValue, BusinessValueKind,
-        BusinessWriteResult,
+        BusinessTransactionError, BusinessValue, BusinessValueKind, BusinessWriteResult,
         Checkpoint, ChecksumAlgorithm, ChunkAttemptOutcome, ChunkCommitReceipt, ChunkCompletion,
         ChunkCompletionContext, ChunkCompletionError, ChunkCompletionOutcome,
         ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkError,
@@ -75,8 +74,8 @@ mod resolves {
         ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitPattern,
         ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository, ExportError,
         ExportFlushReport, ExportQueueBound, ExporterConfigurationError, ExternalStateError,
-        ExternalStateReference, ExternalStateStore, FailureCategory, FailureCode, FailureId,
-        FailureOutcome, FailureProvenance, FailureSummary, FaultAction, FaultClassifier, FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase,
+        ExternalStateReference, ExternalStateStore, FailureCategory, FailureId, FailureSummary,
+        FaultAction, FaultClassifier, FaultDecision, FaultDescriptor, FaultEvidence, FaultPhase,
         FaultPolicy, FaultPolicyError, FaultProgress, FaultRule, FaultRuntime, FaultStateEntry,
         FaultStateEnvelope, FaultStateError, FaultStateFormatError, FaultStateStore, FlowDecision,
         FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowEvent, FlowEventKind,
@@ -137,7 +136,7 @@ mod resolves {
         SequentialIdGenerator, ShutdownCoordinator, ShutdownDeadline, ShutdownError,
         ShutdownHookError, ShutdownHookStatus, ShutdownReport, ShutdownRequest, ShutdownSignal,
         ShutdownTaskPhase, SkipCounts, SkipLimit, SkipListener, SplitBranch, SplitBudget,
-        SplitNode, SqlStateCode, StaleThreshold, StartControls, StartLimit, StateCodecError,
+        SplitNode, StaleThreshold, StartControls, StartLimit, StateCodecError,
         StateEnvelopeDescriptor, StateError, StateLimits, StateSchemaId, StateSchemaUpgrade,
         StateSchemaVersion, StateSensitivity, StepComponents, StepDefinitionUpgrade, StepExecution,
         StepExecutionId, StepExecutionListener, StepExecutionProjection, StepName, StepNode,
@@ -154,6 +153,9 @@ mod resolves {
         TimeCompletionPolicy, UnjoinedPhase, VERSION, VersionedStateCodec, WriteContext,
         WriteListener, WriteOutcome, WriterError, aggregate_step_partitions,
         completion_policy_revision,
+    };
+    pub use oxide_batch::{
+        BusinessTransactionErrorKind, FailureCode, FailureOutcome, FailureProvenance, SqlStateCode,
     };
     pub use oxide_batch::{
         DefinitionRevisionProjection, DefinitionUpgradeProjection, ForkLineageProjection,
