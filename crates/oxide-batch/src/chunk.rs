@@ -949,9 +949,7 @@ impl fmt::Display for BusinessTransactionError {
             BusinessTransactionErrorKind::Infrastructure => {
                 "business transaction infrastructure failed"
             }
-            BusinessTransactionErrorKind::Rejected => {
-                "business transaction statement was rejected"
-            }
+            BusinessTransactionErrorKind::Rejected => "business transaction statement was rejected",
             BusinessTransactionErrorKind::Cancelled => {
                 "business transaction operation was cancelled"
             }

@@ -493,8 +493,7 @@ fn business_transaction_provenance_survives_writer_mapping() -> Result<(), Box<d
     assert!(SqlStateCode::new("23505-secret").is_none());
     assert!(SqlStateCode::new("23_05").is_none());
 
-    let provenance =
-        FailureProvenance::unknown().with_code(FailureCode::SqlState(sql_state));
+    let provenance = FailureProvenance::unknown().with_code(FailureCode::SqlState(sql_state));
     let error = oxide_batch::BusinessTransactionError::with_provenance(
         BusinessTransactionErrorKind::Infrastructure,
         provenance,
