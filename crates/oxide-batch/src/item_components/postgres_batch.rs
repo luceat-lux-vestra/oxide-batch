@@ -268,8 +268,8 @@ where
 /// `"ON CONFLICT (a) DO NOTHING"`); `bind` extracts one row's separately
 /// bound parameter values from an item, in the same order `insert_prefix`'s
 /// column list expects. Portable date/time/timestamp/decimal/UUID kinds are
-/// translated internally to PostgreSQL casts on generated placeholders;
-/// callers do not supply PostgreSQL type names or driver values.
+/// translated internally to `PostgreSQL` casts on generated placeholders;
+/// callers do not supply `PostgreSQL` type names or driver values.
 ///
 /// # Errors
 ///

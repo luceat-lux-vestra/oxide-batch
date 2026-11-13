@@ -323,8 +323,7 @@ impl<'a> BusinessValue<'a> {
     #[must_use]
     pub const fn null_kind(self) -> Option<BusinessValueKind> {
         match self.0 {
-            BusinessValueInner::Null(None)
-            | BusinessValueInner::Null(Some(BusinessValueKind::Null)) => None,
+            BusinessValueInner::Null(None | Some(BusinessValueKind::Null)) => None,
             BusinessValueInner::Null(Some(kind)) => Some(kind),
             _ => None,
         }
