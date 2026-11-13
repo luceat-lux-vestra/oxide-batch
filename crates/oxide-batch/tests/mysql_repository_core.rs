@@ -1,4 +1,4 @@
-//! Core repository certification for the SQLx MySQL-protocol adapter family.
+//! Core repository certification for the `SQLx` `MySQL`-protocol adapter family.
 
 #![cfg(feature = "mysql")]
 

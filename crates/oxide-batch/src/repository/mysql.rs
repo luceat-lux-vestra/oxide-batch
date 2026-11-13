@@ -229,7 +229,7 @@ impl MysqlJobRepository {
             .acquire()
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-        if sqlx::query("BEGIN")
+        if sqlx::raw_sql("START TRANSACTION")
             .execute(&mut *connection)
             .await
             .is_err()
@@ -796,7 +796,7 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
     {
         Box::pin(async move {
             let mut connection = self.connection.take().ok_or(RepositoryError::Unavailable)?;
-            if sqlx::query("COMMIT")
+            if sqlx::raw_sql("COMMIT")
                 .execute(&mut *connection)
                 .await
                 .is_err()
@@ -814,7 +814,7 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
     {
         Box::pin(async move {
             let mut connection = self.connection.take().ok_or(RepositoryError::Unavailable)?;
-            if sqlx::query("ROLLBACK")
+            if sqlx::raw_sql("ROLLBACK")
                 .execute(&mut *connection)
                 .await
                 .is_err()
