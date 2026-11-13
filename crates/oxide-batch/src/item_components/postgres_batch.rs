@@ -377,9 +377,7 @@ mod tests {
         ];
         assert_eq!(
             writer.insert_sql(&values),
-            "INSERT INTO t (d, tm, ts, tstz, amount, external_id, optional_tstz) VALUES \\
-             ($1::date, $2::time, $3::timestamp, $4::timestamptz, $5::numeric, $6::uuid, \\
-             $7::timestamptz)"
+            "INSERT INTO t (d, tm, ts, tstz, amount, external_id, optional_tstz) VALUES ($1::date, $2::time, $3::timestamp, $4::timestamptz, $5::numeric, $6::uuid, $7::timestamptz)"
         );
     }
     #[test]
