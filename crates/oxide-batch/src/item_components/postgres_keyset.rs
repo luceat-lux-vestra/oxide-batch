@@ -113,7 +113,7 @@ use crate::{
 /// strictly-unique keyset used to restart a [`super::postgres_cursor`] or
 /// [`super::postgres_paging`] reader without `OFFSET`.
 ///
-/// Deliberately narrower than [`crate::BusinessValueKind`]'s five variants:
+/// Deliberately narrower than the write-value surface:
 /// a boolean key cannot give a strict total order past two buckets and a
 /// `NULL` key breaks row-value tuple comparison, so neither is valid
 /// ordering-key material. `Bytes` (e.g. a `uuid`/`bytea` key) is not

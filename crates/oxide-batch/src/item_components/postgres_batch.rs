@@ -129,16 +129,50 @@ pub struct PostgresBatchWriter<I> {
     bind: Box<dyn for<'a> Fn(&'a I) -> Vec<BusinessValue<'a>> + Send + Sync>,
 }
 
+fn postgres_type_name(kind: crate::BusinessValueKind) -> Option<&'static str> {
+    match kind {
+        crate::BusinessValueKind::Text => Some("text"),
+        crate::BusinessValueKind::Bytes => Some("bytea"),
+        crate::BusinessValueKind::I64 => Some("bigint"),
+        crate::BusinessValueKind::Bool => Some("boolean"),
+        crate::BusinessValueKind::Date => Some("date"),
+        crate::BusinessValueKind::Time => Some("time"),
+        crate::BusinessValueKind::Timestamp => Some("timestamp"),
+        crate::BusinessValueKind::TimestampTz => Some("timestamptz"),
+        crate::BusinessValueKind::Decimal => Some("numeric"),
+        crate::BusinessValueKind::Uuid => Some("uuid"),
+        crate::BusinessValueKind::Null => None,
+    }
+}
+
+fn postgres_placeholder(index: usize, value: BusinessValue<'_>) -> String {
+    let cast = match value.kind() {
+        crate::BusinessValueKind::Date
+        | crate::BusinessValueKind::Time
+        | crate::BusinessValueKind::Timestamp
+        | crate::BusinessValueKind::TimestampTz
+        | crate::BusinessValueKind::Decimal
+        | crate::BusinessValueKind::Uuid => postgres_type_name(value.kind()),
+        crate::BusinessValueKind::Null => value.null_kind().and_then(postgres_type_name),
+        _ => None,
+    };
+    match cast {
+        Some(kind) => format!("${index}::{kind}"),
+        None => format!("${index}"),
+    }
+}
 impl<I> PostgresBatchWriter<I> {
-    /// Builds the fixed `INSERT` text for `row_count` rows worth of
-    /// placeholders, starting at `$1`.
-    fn insert_sql(&self, row_count: usize) -> String {
+    /// Builds the fixed `INSERT` text for the supplied row values, starting
+    /// placeholders at `$1`.
+    fn insert_sql(&self, values: &[BusinessValue<'_>]) -> String {
         let mut param = 1usize;
-        let rows = (0..row_count)
-            .map(|_| {
-                let placeholders = (0..self.columns_per_row)
-                    .map(|_| {
-                        let placeholder = format!("${param}");
+        let rows = values
+            .chunks(self.columns_per_row)
+            .map(|row| {
+                let placeholders = row
+                    .iter()
+                    .map(|value| {
+                        let placeholder = postgres_placeholder(param, *value);
                         param += 1;
                         placeholder
                     })
@@ -169,7 +203,7 @@ impl<I> PostgresBatchWriter<I> {
             if values.len() != chunk.len() * self.columns_per_row {
                 return Err(WriterError::with_category(FailureCategory::Invariant));
             }
-            let text = self.insert_sql(chunk.len());
+            let text = self.insert_sql(&values);
             let statement = BusinessStatement::new(&text, &values);
             transaction.execute(statement).await.map_err(classify)?;
         }
@@ -181,12 +215,12 @@ impl<I> PostgresBatchWriter<I> {
         transaction: &mut dyn BusinessTransaction,
         items: &'a [I],
     ) -> Result<WriteOutcome, WriterError> {
-        let text = self.insert_sql(1);
         for (index, item) in items.iter().enumerate() {
             let values = (self.bind)(item);
             if values.len() != self.columns_per_row {
                 return Err(WriterError::with_category(FailureCategory::Invariant));
             }
+            let text = self.insert_sql(&values);
             let statement = BusinessStatement::new(&text, &values);
             transaction
                 .execute(statement)
@@ -233,7 +267,9 @@ where
 /// calling Rust code (e.g. `"INSERT INTO t (a, b) VALUES"` and
 /// `"ON CONFLICT (a) DO NOTHING"`); `bind` extracts one row's separately
 /// bound parameter values from an item, in the same order `insert_prefix`'s
-/// column list expects.
+/// column list expects. Portable date/time/timestamp/decimal/UUID kinds are
+/// translated internally to `PostgreSQL` casts on generated placeholders;
+/// callers do not supply `PostgreSQL` type names or driver values.
 ///
 /// # Errors
 ///
@@ -290,9 +326,16 @@ mod tests {
     #[test]
     fn insert_sql_places_one_placeholder_group_per_row() {
         let writer = writer(PostgresBatchMode::multi_row_values());
-        assert_eq!(writer.insert_sql(1), "INSERT INTO t (id) VALUES ($1)");
         assert_eq!(
-            writer.insert_sql(3),
+            writer.insert_sql(&[BusinessValue::i64(1)]),
+            "INSERT INTO t (id) VALUES ($1)"
+        );
+        assert_eq!(
+            writer.insert_sql(&[
+                BusinessValue::i64(1),
+                BusinessValue::i64(2),
+                BusinessValue::i64(3),
+            ]),
             "INSERT INTO t (id) VALUES ($1), ($2), ($3)"
         );
     }
@@ -308,11 +351,35 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            writer.insert_sql(1),
+            writer.insert_sql(&[BusinessValue::i64(1)]),
             "INSERT INTO t (id) VALUES ($1) ON CONFLICT (id) DO NOTHING"
         );
     }
 
+    #[test]
+    fn insert_sql_casts_portable_typed_values_without_driver_types() {
+        let writer = postgres_batch_writer(
+            "INSERT INTO t (d, tm, ts, tstz, amount, external_id, optional_tstz) VALUES",
+            None::<&str>,
+            7,
+            PostgresBatchMode::multi_row_values(),
+            |_item: &()| Vec::new(),
+        )
+        .unwrap();
+        let values = [
+            BusinessValue::date("2026-01-02"),
+            BusinessValue::time("03:04:05.006"),
+            BusinessValue::timestamp("2026-01-02T03:04:05.006"),
+            BusinessValue::timestamp_tz("2026-01-02T03:04:05.006+09:00"),
+            BusinessValue::decimal("1234567890.0123"),
+            BusinessValue::uuid("123e4567-e89b-12d3-a456-426614174000"),
+            BusinessValue::null_of(crate::BusinessValueKind::TimestampTz),
+        ];
+        assert_eq!(
+            writer.insert_sql(&values),
+            "INSERT INTO t (d, tm, ts, tstz, amount, external_id, optional_tstz) VALUES ($1::date, $2::time, $3::timestamp, $4::timestamptz, $5::numeric, $6::uuid, $7::timestamptz)"
+        );
+    }
     #[test]
     fn zero_columns_per_row_is_rejected() {
         let result = postgres_batch_writer(
