@@ -970,8 +970,7 @@ fn decode_job_instance(row: &MySqlRow) -> Result<JobInstance, RepositoryError> {
     let encoded = row
         .try_get::<String, _>("identifying_parameters")
         .map_err(|_| RepositoryError::Unavailable)?;
-    let value: Value =
-        serde_json::from_str(&encoded).map_err(|_| RepositoryError::Unavailable)?;
+    let value: Value = serde_json::from_str(&encoded).map_err(|_| RepositoryError::Unavailable)?;
     let parameters = decode_identifying_parameters(&value)?;
     Ok(JobInstance::new(
         id,
@@ -1130,9 +1129,9 @@ fn decode_identifying_parameters(value: &Value) -> Result<JobParameters, Reposit
             }
             "i64" => ParameterValue::from(raw_value.as_i64().ok_or(RepositoryError::Unavailable)?),
             "u64" => ParameterValue::from(raw_value.as_u64().ok_or(RepositoryError::Unavailable)?),
-            "bool" => ParameterValue::from(
-                raw_value.as_bool().ok_or(RepositoryError::Unavailable)?,
-            ),
+            "bool" => {
+                ParameterValue::from(raw_value.as_bool().ok_or(RepositoryError::Unavailable)?)
+            }
             _ => return Err(RepositoryError::Unavailable),
         };
         parameters.insert(
@@ -1182,7 +1181,7 @@ fn is_missing_table(error: &sqlx::Error) -> bool {
         .as_database_error()
         .and_then(sqlx::error::DatabaseError::code)
         .as_deref()
-        == Some("1146")
+        .is_some_and(|code| code == "42S02" || code == "1146")
 }
 
 fn is_duplicate_key(error: &sqlx::Error) -> bool {

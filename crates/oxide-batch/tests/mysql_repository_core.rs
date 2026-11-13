@@ -11,9 +11,7 @@ use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use contract::run_core_repository_contract;
-use oxide_batch::{
-    Clock, MysqlConfig, MysqlJobRepository, MysqlMigrator, RepositoryError,
-};
+use oxide_batch::{Clock, MysqlConfig, MysqlJobRepository, MysqlMigrator, RepositoryError};
 use sqlx::mysql::MySqlPoolOptions;
 
 #[derive(Clone, Copy)]
@@ -56,11 +54,9 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
     )
     .execute(&pool)
     .await?;
-    sqlx::query(
-        "DELETE FROM ob_job_instance WHERE job_name = 'repository_contract_job'",
-    )
-    .execute(&pool)
-    .await?;
+    sqlx::query("DELETE FROM ob_job_instance WHERE job_name = 'repository_contract_job'")
+        .execute(&pool)
+        .await?;
     pool.close().await;
     Ok(())
 }
@@ -88,8 +84,7 @@ fn migration_is_idempotent_for_mysql_protocol_family() -> Result<(), Box<dyn Err
 }
 
 #[test]
-fn shared_core_repository_contract_passes_on_mysql_protocol_family(
-) -> Result<(), Box<dyn Error>> {
+fn shared_core_repository_contract_passes_on_mysql_protocol_family() -> Result<(), Box<dyn Error>> {
     let Some(url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_MYSQL_TEST_URL is not set");
         return Ok(());

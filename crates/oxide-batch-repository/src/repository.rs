@@ -2056,9 +2056,7 @@ impl fmt::Display for RepositoryError {
     #[allow(clippy::too_many_lines)]
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SchemaUninitialized => {
-                formatter.write_str("metadata schema is not initialized")
-            }
+            Self::SchemaUninitialized => formatter.write_str("metadata schema is not initialized"),
             Self::MigrationRequired { current, supported } => write!(
                 formatter,
                 "metadata schema version {current} requires migration to {supported}"
@@ -2283,9 +2281,8 @@ impl fmt::Display for RepositoryError {
             Self::ConcurrentModification => {
                 formatter.write_str("repository unit of work is based on a stale snapshot")
             }
-            Self::CommitOutcomeUnknown => formatter.write_str(
-                "commit outcome is unknown; inspect durable metadata before recovery",
-            ),
+            Self::CommitOutcomeUnknown => formatter
+                .write_str("commit outcome is unknown; inspect durable metadata before recovery"),
             Self::Unavailable => formatter.write_str("repository is unavailable"),
         }
     }

@@ -234,7 +234,10 @@ fn public_api_snapshot_matches_the_reviewed_preview_surface() -> Result<(), Box<
         .iter()
         .map(|(feature, expected)| {
             let suffix = format!("[{feature}]");
-            let actual = entries.iter().filter(|entry| entry.ends_with(&suffix)).count();
+            let actual = entries
+                .iter()
+                .filter(|entry| entry.ends_with(&suffix))
+                .count();
             (*feature, *expected, actual)
         })
         .collect::<Vec<_>>();
@@ -439,11 +442,7 @@ fn credential_classes() -> Result<Vec<Rendered>, Box<dyn Error>> {
             Withheld::Marked,
             format!("{:?}", PostgresConfig::new(connection_string)?),
         ));
-        classes.push((
-            "certificate",
-            Withheld::Marked,
-            format!("{tls_mode:?}"),
-        ));
+        classes.push(("certificate", Withheld::Marked, format!("{tls_mode:?}")));
     }
 
     Ok(classes)

@@ -730,7 +730,7 @@ jobs:
     timeout-minutes: 20
     services:
       mysql:
-        image: mysql:8.4.13 # zizmor: ignore[unpinned-images]
+        image: mysql:8.4.13@sha256:f4539b86c82f2c168fc95b439448bde3b9f48e8460344ce41e39081867d2b58e # zizmor: ignore[unpinned-images]
         env:
           MYSQL_ROOT_PASSWORD: root
           MYSQL_ROOT_HOST: "%"
@@ -767,7 +767,7 @@ jobs:
     timeout-minutes: 20
     services:
       mariadb:
-        image: mariadb:11.8.9 # zizmor: ignore[unpinned-images]
+        image: mariadb:11.8.9@sha256:5578b77f7f2cbfad1ba71619b080dcfb5cf84e99b5293059afbe6cbca9a7ad0d # zizmor: ignore[unpinned-images]
         env:
           MARIADB_ROOT_PASSWORD: root
           MARIADB_ROOT_HOST: "%"
