@@ -3,13 +3,18 @@ run-name: CodeQL source ${{ inputs.candidate_sha || github.sha }}
 
 # Full CodeQL runs only on weekly schedule or trusted explicit dispatch.
 # Routine PR/push analysis stays retired; release dispatch may scan a historical
-# immutable protected-main ancestor without trusting an arbitrary branch SHA.
+# immutable protected-main ancestor or the single frozen protected M7 recovery lineage.
 on:
   workflow_dispatch:
     inputs:
       candidate_sha:
-        description: "Exact 40-character protected main SHA to scan"
+        description: "Exact 40-character trusted release-source SHA to scan"
         required: true
+        type: string
+      release_tag:
+        description: "Optional release tag; only v0.7.0 enables the frozen M7 recovery lineage"
+        required: false
+        default: ""
         type: string
   schedule:
     - cron: "47 18 * * 1"
@@ -62,10 +67,11 @@ jobs:
     timeout-minutes: 30
     permissions:
       actions: read # Read workflow/run identity while validating exact-source evidence.
-      contents: read # Check out and compare the immutable protected-main candidate.
+      contents: read # Check out and authorize the exact immutable release source.
       security-events: write # Upload scheduled CodeQL findings to code scanning.
     env:
       EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}
     strategy:
       fail-fast: false
       matrix:
@@ -78,39 +84,48 @@ jobs:
             os: ubuntu-24.04-arm
 
     steps:
-      - name: Require exact protected-main source for full CodeQL evidence
+      - name: Require trusted main workflow authority
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Exact 40-character SHA required"; exit 1; }
           [[ "$GITHUB_REF" == "refs/heads/main" ]] || { echo "::error::Trusted main workflow only"; exit 1; }
           if [[ "$GITHUB_EVENT_NAME" == schedule ]]; then
             [[ "$GITHUB_SHA" == "$EXPECTED_SHA" ]] || exit 1
+            [[ -z "$RELEASE_TAG" ]] || exit 1
           else
             [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]] || exit 1
           fi
-          remote_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          compare="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${EXPECTED_SHA}...${remote_main}")"
-          jq -e --arg sha "$EXPECTED_SHA" '
-            (.status == "ahead" or .status == "identical")
-            and .base_commit.sha == $sha and .merge_base_commit.sha == $sha
-          ' <<<"$compare" >/dev/null || { echo "::error::Not a protected-main ancestor"; exit 1; }
 
-      - name: Checkout repository
+      - name: Checkout exact candidate source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           fetch-depth: 0
           ref: ${{ env.EXPECTED_SHA }}
 
-      - name: Verify scanned source checkout and ancestry
+      - name: Check out trusted release source policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          ref: ${{ github.sha }}
+          path: .release-security
+          sparse-checkout: |
+            .github/scripts
+
+      - name: Authorize exact source against trusted policy
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" ]] || exit 1
-          git fetch --no-tags origin main
-          git merge-base --is-ancestor "$EXPECTED_SHA" FETCH_HEAD
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_SHA" ]] || { echo "::error::Wrong candidate checkout"; exit 1; }
+          cp .release-security/.github/scripts/check_release_codeql.py "$RUNNER_TEMP/check_release_codeql.py"
+          rm -rf .release-security
+          args=(--source-only --sha "$EXPECTED_SHA")
+          if [[ -n "$RELEASE_TAG" ]]; then
+            args+=(--tag "$RELEASE_TAG")
+          fi
+          python3 "$RUNNER_TEMP/check_release_codeql.py" "${args[@]}"
 
       - name: Record exact source identity
         env:
@@ -178,6 +193,8 @@ jobs:
             --sarif-dir "$SARIF_DIR" \
             --language "$CODEQL_LANGUAGE" \
             --candidate-sha "$EXPECTED_SHA"
-          remote_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          compare="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${EXPECTED_SHA}...${remote_main}")"
-          jq -e --arg sha "$EXPECTED_SHA" '(.status == "ahead" or .status == "identical") and .merge_base_commit.sha == $sha and .base_commit.sha == $sha' <<<"$compare" >/dev/null || exit 1
+          args=(--source-only --sha "$EXPECTED_SHA")
+          if [[ -n "$RELEASE_TAG" ]]; then
+            args+=(--tag "$RELEASE_TAG")
+          fi
+          python3 "$RUNNER_TEMP/check_release_codeql.py" "${args[@]}"
