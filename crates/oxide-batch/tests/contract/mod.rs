@@ -11,6 +11,6 @@ mod components;
 pub use certification::{
     ContractClock, ServiceBackend, run_core_repository_contract,
     run_full_repository_contract as run_repository_contract,
-    run_full_service_contract as run_service_contract,
+    run_full_service_contract as run_service_contract, run_runnable_core_repository_contract,
 };
 pub use components::run_component_contract;
