@@ -709,7 +709,7 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
                 .await
                 .map_err(|_| RepositoryError::Unavailable)?;
 
-            let starts = sqlx::query_scalar::<_, u64>(
+            let starts = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM ob_step_execution step                  JOIN ob_job_execution job ON job.id = step.job_execution_id                  WHERE job.job_instance_id = ? AND step.step_logical_id = ?",
             )
             .bind(instance_id)
@@ -717,6 +717,7 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
             .fetch_one(&mut **self.connection()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
+            let starts = u64::try_from(starts).map_err(|_| RepositoryError::FlowStateCorrupt)?;
             if starts >= u64::from(start_limit.get()) {
                 return Err(RepositoryError::StartLimitExceeded {
                     instance_id: JobInstanceId::new(instance_id)?,
@@ -1031,13 +1032,15 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
 
-            let existing = sqlx::query_scalar::<_, u64>(
+            let existing = sqlx::query_scalar::<_, i64>(
                 "SELECT COUNT(*) FROM ob_flow_decision WHERE job_execution_id = ?",
             )
             .bind(request.job_execution_id().get())
             .fetch_one(&mut **self.connection()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
+            let existing =
+                u64::try_from(existing).map_err(|_| RepositoryError::FlowStateCorrupt)?;
             let advanced = manifest
                 .get("format")
                 .and_then(Value::as_u64)
@@ -1054,7 +1057,7 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
             }
 
             if let Some(step_id) = request.source_step_execution_id() {
-                let valid = sqlx::query_scalar::<_, u64>(
+                let valid = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM ob_step_execution source                      JOIN ob_job_execution source_job ON source_job.id = source.job_execution_id                      JOIN ob_job_execution target_job ON target_job.id = ?                      WHERE source.id = ?                        AND source_job.job_instance_id = target_job.job_instance_id                        AND source.step_logical_id = ?",
                 )
                 .bind(request.job_execution_id().get())
@@ -1076,7 +1079,7 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
             }
 
             if let Some(reused_id) = request.reused_decision_id() {
-                let valid = sqlx::query_scalar::<_, u64>(
+                let valid = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM ob_flow_decision prior                      JOIN ob_job_execution prior_job ON prior_job.id = prior.job_execution_id                      JOIN ob_job_execution target_job ON target_job.id = ?                      WHERE prior.id = ?                        AND prior_job.job_instance_id = target_job.job_instance_id                        AND prior.source_node_id = ?                        AND prior.plan_fingerprint = ?                        AND prior.input_digest = ?                        AND prior.observed_outcome = ?                        AND prior.target_node_id <=> ?                        AND prior.terminal_kind <=> ?",
                 )
                 .bind(request.job_execution_id().get())
