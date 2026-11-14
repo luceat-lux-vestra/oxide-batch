@@ -448,9 +448,23 @@ for title, mutated, diagnostic in (
         "manual dispatch must always enter the full CodeQL matrix",
     ),
     (
-        "weaken protected-main ancestry",
-        activated_codeql.replace(".merge_base_commit.sha == $sha", ".merge_base_commit.sha != $sha", 1),
-        "candidate ancestry must be checked before and after CodeQL analysis",
+        "detach trusted source policy from workflow SHA",
+        activated_codeql.replace("          ref: ${{ github.sha }}\n", "          ref: main\n", 1),
+        "ref: ${{ github.sha }}",
+    ),
+    (
+        "remove one source-authority recheck",
+        activated_codeql.replace(
+            '          python3 "$RUNNER_TEMP/check_release_codeql.py" "${args[@]}"\n',
+            "",
+            1,
+        ),
+        "candidate source authority must be checked before and after CodeQL analysis",
+    ),
+    (
+        "remove recovery tag input",
+        activated_codeql.replace("      release_tag:\n", "      removed_release_tag:\n", 1),
+        "full scan event contract missing: release_tag:",
     ),
     (
         "drop Rust full analysis",
