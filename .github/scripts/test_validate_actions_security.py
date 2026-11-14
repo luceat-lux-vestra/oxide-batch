@@ -484,9 +484,11 @@ print("Activated weekly/manual CodeQL security contract: PASS")
 ACTIVE_PR_CI = ROOT / ".github/workflows/pr-ci.yml"
 activated_pr_ci = ACTIVE_PR_CI.read_text(encoding="utf-8")
 assert MODULE.check_codeql_pr_runtime_contract_text(activated_pr_ci, activated_codeql) == []
-RUNTIME_PIN = "9b3254085494b55a0f7c4c2b3d2d52cc712ce370"
 runtime_job = MODULE._job_block(activated_pr_ci, "codeql-runtime")
 assert runtime_job is not None
+runtime_pin_errors = []
+RUNTIME_PIN = MODULE._immutable_codeql_pin(runtime_job, "init", "PR CodeQL test fixture", runtime_pin_errors)
+assert RUNTIME_PIN is not None and runtime_pin_errors == []
 assert "      contents: read\n" in runtime_job
 runtime_write = runtime_job.replace("      contents: read\n", "      contents: write\n", 1)
 runtime_duplicate = runtime_job.replace(
