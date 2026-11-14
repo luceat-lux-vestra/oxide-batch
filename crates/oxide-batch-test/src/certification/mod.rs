@@ -115,7 +115,7 @@ where
     Fut: Future<Output = Result<R, RepositoryError>>,
 {
     run_core_repository_contract(backend, || {
-        factory(Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS)))
+        factory(Arc::new(ContractClock::new(PRIMITIVE_CLOCK_MILLIS)))
     })
     .await?;
     runnable_flow_completes_without_optional_capabilities(backend, &mut factory).await?;
@@ -127,6 +127,7 @@ where
     completed_step_and_decision_are_reused_on_failed_restart(backend, &mut factory).await
 }
 
+const PRIMITIVE_CLOCK_MILLIS: u64 = 0;
 const RUNNABLE_CLOCK_MILLIS: u64 = 10_000;
 const RUNNABLE_JOB_NAME: &str = "repository_contract_job";
 const RUNNABLE_NODE_ID: &str = "only";
