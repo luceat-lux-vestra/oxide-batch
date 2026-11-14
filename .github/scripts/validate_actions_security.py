@@ -337,7 +337,7 @@ def _job_block(text: str, job_id: str) -> str | None:
 def check_codeql_weekly_manual_contract_text(
     text: str, path: Path = Path(".github/workflows/codeql.yml")
 ) -> list[str]:
-    """Require weekly/manual full scans with bounded historical-main support."""
+    """Require weekly/manual full scans with trusted-main source authorization."""
     violations: list[str] = []
     event_match = re.search(
         r"(?ms)^on:\n(?P<body>.*?)(?=^permissions:\n)",
@@ -356,6 +356,9 @@ def check_codeql_weekly_manual_contract_text(
         "inputs:",
         "candidate_sha:",
         "required: true",
+        "release_tag:",
+        "required: false",
+        'default: ""',
     ):
         if fragment not in event_block:
             violations.append(f"{path}: full scan event contract missing: {fragment}")
@@ -400,14 +403,17 @@ def check_codeql_weekly_manual_contract_text(
             "name: Analyze (${{ matrix.language }})",
             "security-events: write",
             "EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}",
+            "RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}",
             '[[ "$GITHUB_REF" == "refs/heads/main" ]]',
             '[[ "$GITHUB_SHA" == "$EXPECTED_SHA" ]]',
             '[[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]',
-            'compare/${EXPECTED_SHA}...${remote_main}',
-            '.base_commit.sha == $sha',
-            '.merge_base_commit.sha == $sha',
             'ref: ${{ env.EXPECTED_SHA }}',
-            'git merge-base --is-ancestor "$EXPECTED_SHA" FETCH_HEAD',
+            "Check out trusted release source policy",
+            'ref: ${{ github.sha }}',
+            "path: .release-security",
+            ".release-security/.github/scripts/check_release_codeql.py",
+            'args=(--source-only --sha "$EXPECTED_SHA")',
+            'args+=(--tag "$RELEASE_TAG")',
             "source-identity.json",
             "release-codeql-source-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
             "github/codeql-action/init@",
@@ -426,12 +432,25 @@ def check_codeql_weekly_manual_contract_text(
                 violations.append(f"{path}: full CodeQL {language} matrix entry missing")
         if analyze.count("build-mode: none") != 2:
             violations.append(f"{path}: Actions/Rust CodeQL must both use build-mode none")
-        if analyze.count(".merge_base_commit.sha == $sha") != 2:
+        if analyze.count('python3 "$RUNNER_TEMP/check_release_codeql.py"') != 2:
             violations.append(
-                f"{path}: candidate ancestry must be checked before and after CodeQL analysis"
+                f"{path}: candidate source authority must be checked before and after CodeQL analysis"
             )
         if analyze.count("retention-days: 30") != 2:
             violations.append(f"{path}: SARIF and source identity retention must both be 30 days")
+        if "refs/heads/release/0.7" in analyze:
+            violations.append(
+                f"{path}: frozen recovery lineage must remain delegated to the trusted verifier"
+            )
+        if (
+            analyze.find("Check out trusted release source policy")
+            > analyze.find("Authorize exact source against trusted policy")
+            or analyze.find("Authorize exact source against trusted policy")
+            > analyze.find("Initialize CodeQL")
+        ):
+            violations.append(
+                f"{path}: trusted source authorization must complete before CodeQL initialization"
+            )
         if any(token in analyze for token in ("pull_request", "head_repo", "run_rust=false")):
             violations.append(
                 f"{path}: full CodeQL matrix must not use PR source or PR-derived conditional routing"
