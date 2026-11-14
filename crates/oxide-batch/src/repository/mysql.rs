@@ -12,13 +12,13 @@ use sqlx::{AssertSqlSafe, Connection, MySql, MySqlConnection, MySqlPool, Row};
 
 use crate::{
     BatchStatus, BoxFuture, Clock, DefinitionIdentity, DefinitionUpgrade, ExecutionCounts,
-    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, FlowDecision,
-    FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTarget,
-    FlowTransitionKind, FailureCategory, FailureId, FailureSummary, JobExecution, JobExecutionId,
-    JobInstance, JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName, JobParameter,
-    JobParameters, JobRepository, LifecycleError, LifecycleTransition, NodeId, ParameterName,
-    ParameterRole, ParameterValue, ParameterValueKind, RecoveryDecision, RecoveryRequest,
-    RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
+    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus,
+    FailureCategory, FailureId, FailureSummary, FlowDecision, FlowDecisionId, FlowDecisionRequest,
+    FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind, JobExecution,
+    JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName,
+    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition, NodeId,
+    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, RecoveryDecision,
+    RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
     RepositoryUnitOfWork, StartLimit, StepExecution, StepExecutionId, StepName, TerminalKind,
 };
 
@@ -559,16 +559,15 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
         definition: &'a DefinitionIdentity,
     ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
         Box::pin(async move {
-            let instance = sqlx::query(
-                "SELECT id, job_name FROM ob_job_instance WHERE id = ? FOR UPDATE",
-            )
-            .bind(job_instance_id.get())
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?
-            .ok_or(RepositoryError::JobInstanceNotFound {
-                id: job_instance_id,
-            })?;
+            let instance =
+                sqlx::query("SELECT id, job_name FROM ob_job_instance WHERE id = ? FOR UPDATE")
+                    .bind(job_instance_id.get())
+                    .fetch_optional(&mut **self.connection()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?
+                    .ok_or(RepositoryError::JobInstanceNotFound {
+                        id: job_instance_id,
+                    })?;
             let job_name = JobName::new(
                 instance
                     .try_get::<String, _>("job_name")
@@ -692,27 +691,23 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
         start_limit: StartLimit,
     ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
         Box::pin(async move {
-            let row = sqlx::query(
-                "SELECT job_instance_id FROM ob_job_execution WHERE id = ?",
-            )
-            .bind(job_execution_id.get())
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?
-            .ok_or(RepositoryError::JobExecutionNotFound {
-                id: job_execution_id,
-            })?;
+            let row = sqlx::query("SELECT job_instance_id FROM ob_job_execution WHERE id = ?")
+                .bind(job_execution_id.get())
+                .fetch_optional(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+                .ok_or(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                })?;
             let instance_id = row
                 .try_get::<u64, _>("job_instance_id")
                 .map_err(|_| RepositoryError::Unavailable)?;
 
-            sqlx::query_scalar::<_, u64>(
-                "SELECT id FROM ob_job_instance WHERE id = ? FOR UPDATE",
-            )
-            .bind(instance_id)
-            .fetch_one(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            sqlx::query_scalar::<_, u64>("SELECT id FROM ob_job_instance WHERE id = ? FOR UPDATE")
+                .bind(instance_id)
+                .fetch_one(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
 
             let starts = sqlx::query_scalar::<_, u64>(
                 "SELECT COUNT(*) FROM ob_step_execution step                  JOIN ob_job_execution job ON job.id = step.job_execution_id                  WHERE job.job_instance_id = ? AND step.step_logical_id = ?",
@@ -974,13 +969,12 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
         node_id: &'a NodeId,
     ) -> BoxFuture<'a, Result<Option<FlowStepState>, RepositoryError>> {
         Box::pin(async move {
-            let exists = sqlx::query_scalar::<_, u64>(
-                "SELECT id FROM ob_job_instance WHERE id = ?",
-            )
-            .bind(job_instance_id.get())
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            let exists =
+                sqlx::query_scalar::<_, u64>("SELECT id FROM ob_job_instance WHERE id = ?")
+                    .bind(job_instance_id.get())
+                    .fetch_optional(&mut **self.connection()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
             if exists.is_none() {
                 return Err(RepositoryError::JobInstanceNotFound {
                     id: job_instance_id,
@@ -1031,8 +1025,8 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
                 .try_get::<Option<String>, _>("manifest")
                 .map_err(|_| RepositoryError::FlowStateCorrupt)?
                 .ok_or(RepositoryError::FlowStateCorrupt)?;
-            let manifest: Value =
-                serde_json::from_str(&manifest_text).map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            let manifest: Value = serde_json::from_str(&manifest_text)
+                .map_err(|_| RepositoryError::FlowStateCorrupt)?;
             if !crate::flow::decision_matches_manifest(&manifest, request) {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
@@ -1171,13 +1165,12 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
         job_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
         Box::pin(async move {
-            let exists = sqlx::query_scalar::<_, u64>(
-                "SELECT id FROM ob_job_execution WHERE id = ?",
-            )
-            .bind(job_execution_id.get())
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            let exists =
+                sqlx::query_scalar::<_, u64>("SELECT id FROM ob_job_execution WHERE id = ?")
+                    .bind(job_execution_id.get())
+                    .fetch_optional(&mut **self.connection()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
             if exists.is_none() {
                 return Err(RepositoryError::JobExecutionNotFound {
                     id: job_execution_id,
