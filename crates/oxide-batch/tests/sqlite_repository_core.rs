@@ -16,6 +16,7 @@ use contract::run_runnable_core_repository_contract;
 use oxide_batch::{
     Clock, JobRepository, RepositoryError, SqliteConfig, SqliteJobRepository, SqliteMigrator,
 };
+use sqlx::Connection;
 
 static NEXT_DATABASE: AtomicU64 = AtomicU64::new(1);
 
@@ -84,23 +85,27 @@ fn migration_upgrades_existing_bootstrap_sqlite_schema() -> Result<(), Box<dyn E
         donor.close().await;
 
         std::fs::File::create(&target_path)?;
-        let target = sqlx::SqlitePool::connect(&target_url).await?;
-        sqlx::raw_sql(&migration_table_ddl).execute(&target).await?;
+        let mut target = sqlx::SqliteConnection::connect(&target_url).await?;
+        sqlx::raw_sql(&migration_table_ddl)
+            .execute(&mut target)
+            .await?;
         sqlx::raw_sql(include_str!("../migrations-sqlite/0001_core_metadata.sql"))
-            .execute(&target)
+            .execute(&mut target)
             .await?;
         sqlx::query("ATTACH DATABASE ? AS donor")
             .bind(donor_path.to_string_lossy().as_ref())
-            .execute(&target)
+            .execute(&mut target)
             .await?;
         sqlx::query(
             "INSERT INTO _sqlx_migrations \
              SELECT * FROM donor._sqlx_migrations WHERE version = 1",
         )
-        .execute(&target)
+        .execute(&mut target)
         .await?;
-        sqlx::query("DETACH DATABASE donor").execute(&target).await?;
-        target.close().await;
+        sqlx::query("DETACH DATABASE donor")
+            .execute(&mut target)
+            .await?;
+        target.close().await?;
 
         let target_config = SqliteConfig::new(target_url.clone())?;
         assert_eq!(
