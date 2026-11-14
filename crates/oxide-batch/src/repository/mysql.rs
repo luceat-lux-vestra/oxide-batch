@@ -1734,3 +1734,27 @@ fn decode_status(value: &str) -> Result<BatchStatus, RepositoryError> {
         _ => Err(RepositoryError::Unavailable),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn schema_version_guard_requires_runnable_core_schema() {
+        assert!(matches!(
+            verify_schema_version(1),
+            Err(RepositoryError::MigrationRequired {
+                current: 1,
+                supported: 2
+            })
+        ));
+        assert!(verify_schema_version(2).is_ok());
+        assert!(matches!(
+            verify_schema_version(3),
+            Err(RepositoryError::NewerSchema {
+                current: 3,
+                supported: 2
+            })
+        ));
+    }
+}
