@@ -62,10 +62,11 @@ fails explicitly; it does not degrade the delivery guarantee.
 
 The mandatory runnable core is below optional capability negotiation. A
 repository described as runnable core must execute an ordinary one-step tasklet
-flow with zero optional capability declarations, including exact
-execution-bound definition identity, strict same-definition failed/stopped
-restart, logical flow-step/start-limit authority, and durable flow-decision
-authority. The richer named registry/artifact/compatible-upgrade/fork surface
+flow with zero optional capability declarations, including execution-bound
+definition records, manifest-digest-authoritative failed/stopped restart,
+revision-label compatibility, logical flow-step/start-limit authority, and
+durable flow-decision authority. Per ADR-0004, the application revision is an
+audit label; the canonical manifest digest is the machine compatibility value. The richer named registry/artifact/compatible-upgrade/fork surface
 remains the optional `DefinitionRegistry` capability.
 
 During the M8 migration, `run_core_repository_contract` names the earlier

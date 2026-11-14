@@ -1911,7 +1911,8 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                             instance_id: job_instance_id,
                         },
                     )?;
-                let definition_changed = previous_definition != &definition;
+                let definition_changed =
+                    previous_definition.manifest_digest() != definition.manifest_digest();
                 if definition_changed {
                     let upgrade = selected_upgrade.as_ref().ok_or(
                         RepositoryError::IncompatibleDefinition {

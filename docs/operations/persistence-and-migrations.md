@@ -23,8 +23,9 @@ M8 uses four deliberately different terms:
 - **implemented bootstrap adapter:** code exists and passes the primitive
   repository contract;
 - **runnable-core certified adapter:** an ordinary tasklet `FlowLauncher`,
-  exact-definition strict restart, logical flow-step/start-limit authority, and
-  durable decision reuse pass the portable runnable-core contract;
+  manifest-digest strict restart, revision-label compatibility, logical
+  flow-step/start-limit authority, and durable decision reuse pass the portable
+  runnable-core contract;
 - **capability-certified adapter:** one or more additional named capability
   suites pass;
 - **release-backed supported adapter:** named database/client/configuration

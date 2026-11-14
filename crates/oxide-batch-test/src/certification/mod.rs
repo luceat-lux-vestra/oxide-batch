@@ -90,8 +90,8 @@ where
 /// in-memory-only capability flags.
 ///
 /// The profile composes [`run_core_repository_contract`] and additionally
-/// proves exact execution-bound definition identity, failed/stopped strict
-/// restart, logical flow-step/start-limit authority, and durable flow-decision
+/// proves execution-bound manifest identity, failed/stopped strict restart,
+/// revision-label compatibility, logical flow-step/start-limit authority, and durable flow-decision
 /// reuse. It deliberately does not certify checkpoint/context payload restart,
 /// migrations, crash/unknown-outcome injection, backup/restore, resource
 /// bounds, TLS/authentication, or any optional capability group; those remain
@@ -121,6 +121,7 @@ where
     runnable_flow_completes_without_optional_capabilities(backend, &mut factory).await?;
     failed_same_definition_restart_reexecutes_failed_step(backend, &mut factory).await?;
     stopped_same_definition_restart_reexecutes_stopped_step(backend, &mut factory).await?;
+    revision_label_change_with_same_manifest_restarts(backend, &mut factory).await?;
     incompatible_definition_restart_creates_no_attempt(backend, &mut factory).await?;
     same_revision_manifest_drift_creates_no_attempt(backend, &mut factory).await?;
     start_limit_remains_instance_wide_across_restart(backend, &mut factory).await?;
@@ -506,6 +507,87 @@ where
         .map_err(|error| contract_failure(backend, CASE, error))
 }
 
+async fn revision_label_change_with_same_manifest_restarts<R, F, Fut>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    const CASE: &str = "runnable_core_revision_label_change_preserves_manifest_restart";
+    let clock = Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS));
+    let repository = RunnableCoreRepository::new(
+        factory(Arc::clone(&clock))
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let first_job = runnable_job(
+        "audit-v1",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::clone(&calls),
+        RunnableTaskletBehavior::FailOnce,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let second_job = runnable_job(
+        "audit-v2",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::clone(&calls),
+        RunnableTaskletBehavior::FailOnce,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        first_job.compiled_plan().definition_identity().manifest_digest()
+            == second_job.compiled_plan().definition_identity().manifest_digest()
+            && first_job.compiled_plan().definition_identity()
+                != second_job.compiled_plan().definition_identity(),
+        backend,
+        CASE,
+        "fixture did not isolate an audit-revision change from manifest identity",
+    )?;
+
+    let parameters = JobParameters::new();
+    let ids = runnable_ids();
+    let (_, first_stop) = StopSource::new();
+    let first = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&first_job, &parameters, &first_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        matches!(first.outcome(), FlowExecutionOutcome::Failed(_)),
+        backend,
+        CASE,
+        "fixture did not create a failed restart source",
+    )?;
+
+    clock.advance(Duration::from_secs(1));
+    let (_, second_stop) = StopSource::new();
+    let second = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&second_job, &parameters, &second_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        second.outcome() == &FlowExecutionOutcome::Completed,
+        backend,
+        CASE,
+        "same manifest with a new audit revision was rejected",
+    )?;
+    ensure(
+        first.instance().id() == second.instance().id()
+            && first.job_execution().id() != second.job_execution().id()
+            && calls.load(Ordering::SeqCst) == 2,
+        backend,
+        CASE,
+        "revision-label restart did not create the expected second attempt",
+    )
+}
+
 async fn incompatible_definition_restart_creates_no_attempt<R, F, Fut>(
     backend: &'static str,
     factory: &mut F,
@@ -548,7 +630,7 @@ where
     let second_calls = Arc::new(AtomicUsize::new(0));
     let incompatible = runnable_job(
         "definition-v2",
-        "tasklet-v1",
+        "tasklet-v2",
         TerminalKind::Complete,
         StartControls::default(),
         Arc::clone(&second_calls),
@@ -569,7 +651,7 @@ where
         ),
         backend,
         CASE,
-        "different definition identity was accepted as a strict restart",
+        "different manifest identity was accepted as a strict restart",
     )?;
     ensure(
         second_calls.load(Ordering::SeqCst) == 0,

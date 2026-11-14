@@ -35,8 +35,8 @@ migrate:
 - `run_core_repository_contract` is the primitive/bootstrap subset for
   identity, execution graph, lifecycle CAS, completion guards, and rollback;
 - `run_runnable_core_repository_contract` composes that subset and proves an
-  ordinary one-step tasklet `FlowLauncher`, exact definition-bound strict
-  restart, logical flow-step/start-limit authority, and durable decision reuse
+  ordinary one-step tasklet `FlowLauncher`, manifest-bound strict restart,
+  revision-label compatibility, logical flow-step/start-limit authority, and durable decision reuse
   while optional capability declarations are masked to zero.
 
 Optional definition-registry, partition, explorer, operator/control, and
