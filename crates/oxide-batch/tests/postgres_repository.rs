@@ -87,6 +87,10 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
          JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
          WHERE instance.job_name = 'repository_contract_job')",
+        "DELETE FROM oxide_batch.ob_flow_decision WHERE job_execution_id IN (\
+         SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = 'repository_contract_job')",
         "DELETE FROM oxide_batch.ob_step_execution WHERE job_execution_id IN (\
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
          JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
