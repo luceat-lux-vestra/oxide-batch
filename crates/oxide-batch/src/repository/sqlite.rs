@@ -13,15 +13,16 @@ use sqlx::{AssertSqlSafe, Connection, Row, Sqlite, SqliteConnection, SqlitePool}
 use crate::{
     BatchStatus, BoxFuture, Clock, DefinitionIdentity, DefinitionUpgrade, ExecutionCounts,
     ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus,
-    FailureCategory, FailureId, FailureSummary, IdentifierKind, JobExecution, JobExecutionId,
-    JobInstance, JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName, JobParameter,
-    JobParameters, JobRepository, LifecycleError, LifecycleTransition, ParameterName,
-    ParameterRole, ParameterValue, ParameterValueKind, RecoveryDecision, RecoveryRequest,
-    RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
-    RepositoryUnitOfWork, StepExecution, StepExecutionId, StepName,
+    FailureCategory, FailureId, FailureSummary, FlowDecision, FlowDecisionId, FlowDecisionRequest,
+    FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind, IdentifierKind,
+    JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobInstanceSelection,
+    JobName, JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
+    NodeId, ParameterName, ParameterRole, ParameterValue, ParameterValueKind, RecoveryDecision,
+    RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
+    RepositoryUnitOfWork, StartLimit, StepExecution, StepExecutionId, StepName, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 1;
+const SUPPORTED_SCHEMA_VERSION: u32 = 2;
 const MAX_POOL_SIZE: u32 = 16;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
 
@@ -298,6 +299,67 @@ impl SqliteUnitOfWork<'_> {
         self.connection.as_mut().ok_or(RepositoryError::Unavailable)
     }
 
+    async fn ensure_core_definition(
+        &mut self,
+        job_name: &JobName,
+        definition: &DefinitionIdentity,
+    ) -> Result<i64, RepositoryError> {
+        let manifest = std::str::from_utf8(definition.canonical_manifest())
+            .map_err(|_| RepositoryError::Unavailable)?;
+        let created_ms = system_time_millis(self.repository.clock.now())?;
+        let inserted = sqlx::query(
+            "INSERT INTO ob_core_job_definition \
+             (job_name, definition_revision, manifest_format, manifest_digest, manifest, created_ms) \
+             VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(job_name.as_str())
+        .bind(definition.revision().as_str())
+        .bind(i64::from(definition.manifest_format()))
+        .bind(&definition.manifest_digest()[..])
+        .bind(manifest)
+        .bind(created_ms)
+        .execute(&mut **self.connection()?)
+        .await;
+
+        match inserted {
+            Ok(result) => {
+                let id = result.last_insert_rowid();
+                if id <= 0 {
+                    return Err(RepositoryError::Unavailable);
+                }
+                Ok(id)
+            }
+            Err(error) if is_duplicate_key(&error) => {
+                let row = sqlx::query(
+                    "SELECT id, manifest_digest FROM ob_core_job_definition \
+                     WHERE job_name = ? AND definition_revision = ?",
+                )
+                .bind(job_name.as_str())
+                .bind(definition.revision().as_str())
+                .fetch_one(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                let digest = row
+                    .try_get::<Vec<u8>, _>("manifest_digest")
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                if digest.as_slice() != definition.manifest_digest() {
+                    return Err(RepositoryError::DefinitionDrift {
+                        job_name: job_name.clone(),
+                        revision: definition.revision().clone(),
+                    });
+                }
+                let id = row
+                    .try_get::<i64, _>("id")
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                if id <= 0 {
+                    return Err(RepositoryError::Unavailable);
+                }
+                Ok(id)
+            }
+            Err(_) => Err(RepositoryError::Unavailable),
+        }
+    }
+
     async fn job_execution(
         &mut self,
         id: JobExecutionId,
@@ -545,13 +607,133 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
 
     fn create_job_execution_with_definition<'a>(
         &'a mut self,
-        _job_instance_id: JobInstanceId,
-        _definition: &'a DefinitionIdentity,
+        job_instance_id: JobInstanceId,
+        definition: &'a DefinitionIdentity,
     ) -> BoxFuture<'a, Result<JobExecution, RepositoryError>> {
-        Box::pin(async {
-            Err(RepositoryError::UnsupportedCapability {
-                capability: RepositoryCapability::DefinitionRegistry,
-            })
+        Box::pin(async move {
+            // BEGIN IMMEDIATE already owns SQLite's serialized writer boundary.
+            let instance = sqlx::query("SELECT id, job_name FROM ob_job_instance WHERE id = ?")
+                .bind(sqlite_identifier(
+                    job_instance_id.get(),
+                    IdentifierKind::JobInstance,
+                )?)
+                .fetch_optional(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+                .ok_or(RepositoryError::JobInstanceNotFound {
+                    id: job_instance_id,
+                })?;
+            let job_name = JobName::new(
+                instance
+                    .try_get::<String, _>("job_name")
+                    .map_err(|_| RepositoryError::Unavailable)?,
+            )?;
+            if let Some(actual) = definition.job_name()
+                && actual != &job_name
+            {
+                return Err(RepositoryError::DefinitionJobMismatch {
+                    expected: job_name,
+                    actual: actual.clone(),
+                });
+            }
+            let definition_id = self.ensure_core_definition(&job_name, definition).await?;
+
+            let row = sqlx::query(AssertSqlSafe(job_execution_select(
+                "WHERE execution.job_instance_id = ? ORDER BY execution.attempt DESC LIMIT 1",
+            )))
+            .bind(sqlite_identifier(
+                job_instance_id.get(),
+                IdentifierKind::JobInstance,
+            )?)
+            .fetch_optional(&mut **self.connection()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+
+            let mut attempt = 1_u64;
+            if let Some(row) = row {
+                let latest = decode_job_execution(&row)?;
+                attempt = read_u64(&row, "attempt")?
+                    .checked_add(1)
+                    .ok_or(RepositoryError::Unavailable)?;
+                match latest.metadata().status() {
+                    BatchStatus::Stopped | BatchStatus::Failed => {}
+                    BatchStatus::Completed => {
+                        return Err(RepositoryError::CompletedInstance {
+                            id: job_instance_id,
+                        });
+                    }
+                    BatchStatus::Abandoned => {
+                        return Err(RepositoryError::AbandonedInstance {
+                            id: job_instance_id,
+                        });
+                    }
+                    status => {
+                        return Err(RepositoryError::ExecutionAlreadyActive {
+                            instance_id: job_instance_id,
+                            execution_id: latest.id(),
+                            status,
+                        });
+                    }
+                }
+
+                let previous_digest = sqlx::query_scalar::<_, Option<Vec<u8>>>(
+                    "SELECT definition.manifest_digest \
+                     FROM ob_job_execution execution \
+                     LEFT JOIN ob_core_job_definition definition \
+                       ON definition.id = execution.definition_id \
+                     WHERE execution.id = ?",
+                )
+                .bind(sqlite_identifier(
+                    latest.id().get(),
+                    IdentifierKind::JobExecution,
+                )?)
+                .fetch_one(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+                .ok_or(RepositoryError::IncompatibleDefinition {
+                    instance_id: job_instance_id,
+                })?;
+                if previous_digest.as_slice() != definition.manifest_digest() {
+                    return Err(RepositoryError::IncompatibleDefinition {
+                        instance_id: job_instance_id,
+                    });
+                }
+            }
+
+            let created_at = self.repository.clock.now();
+            let created_ms = system_time_millis(created_at)?;
+            let result = sqlx::query(
+                "INSERT INTO ob_job_execution \
+                 (job_instance_id, definition_id, attempt, status, exit_code, \
+                  created_ms, updated_ms, version) \
+                 VALUES (?, ?, ?, 'STARTING', 'UNKNOWN', ?, ?, 0)",
+            )
+            .bind(sqlite_identifier(
+                job_instance_id.get(),
+                IdentifierKind::JobInstance,
+            )?)
+            .bind(definition_id)
+            .bind(sqlite_i64(attempt)?)
+            .bind(created_ms)
+            .bind(created_ms)
+            .execute(&mut **self.connection()?)
+            .await
+            .map_err(|error| {
+                if is_duplicate_key(&error) {
+                    RepositoryError::ConcurrentModification
+                } else {
+                    RepositoryError::Unavailable
+                }
+            })?;
+            let id = JobExecutionId::new(rowid_u64(
+                result.last_insert_rowid(),
+                IdentifierKind::JobExecution,
+            )?)?;
+            Ok(JobExecution::new(
+                id,
+                job_instance_id,
+                starting_metadata(created_at)?,
+            ))
         })
     }
 
@@ -561,37 +743,87 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         step_name: &'a StepName,
     ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
         Box::pin(async move {
-            let job: Option<i64> =
-                sqlx::query_scalar("SELECT id FROM ob_job_execution WHERE id = ?")
-                    .bind(sqlite_identifier(
-                        job_execution_id.get(),
-                        IdentifierKind::JobExecution,
-                    )?)
-                    .fetch_optional(&mut **self.connection()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?;
-            if job.is_none() {
-                return Err(RepositoryError::JobExecutionNotFound {
+            let node_id =
+                NodeId::new(step_name.as_str()).map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            self.create_flow_step_execution(
+                job_execution_id,
+                step_name,
+                &node_id,
+                StartLimit::UNRESTRICTED,
+            )
+            .await
+        })
+    }
+
+    fn create_flow_step_execution<'a>(
+        &'a mut self,
+        job_execution_id: JobExecutionId,
+        step_name: &'a StepName,
+        node_id: &'a NodeId,
+        start_limit: StartLimit,
+    ) -> BoxFuture<'a, Result<StepExecution, RepositoryError>> {
+        Box::pin(async move {
+            let row = sqlx::query("SELECT job_instance_id FROM ob_job_execution WHERE id = ?")
+                .bind(sqlite_identifier(
+                    job_execution_id.get(),
+                    IdentifierKind::JobExecution,
+                )?)
+                .fetch_optional(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+                .ok_or(RepositoryError::JobExecutionNotFound {
                     id: job_execution_id,
+                })?;
+            let instance_db = row
+                .try_get::<i64, _>("job_instance_id")
+                .map_err(|_| RepositoryError::Unavailable)?;
+            let instance_id =
+                u64::try_from(instance_db).map_err(|_| RepositoryError::FlowStateCorrupt)?;
+
+            let starts = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM ob_step_execution step \
+                 JOIN ob_job_execution job ON job.id = step.job_execution_id \
+                 WHERE job.job_instance_id = ? AND step.step_logical_id = ?",
+            )
+            .bind(instance_db)
+            .bind(node_id.as_str())
+            .fetch_one(&mut **self.connection()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let starts = u64::try_from(starts).map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            if starts >= u64::from(start_limit.get()) {
+                return Err(RepositoryError::StartLimitExceeded {
+                    instance_id: JobInstanceId::new(instance_id)?,
+                    node_id: node_id.clone(),
+                    limit: start_limit,
                 });
             }
+
             let created_at = self.repository.clock.now();
             let created_ms = system_time_millis(created_at)?;
             let result = sqlx::query(
                 "INSERT INTO ob_step_execution \
-                 (job_execution_id, step_name, status, exit_code, created_ms, updated_ms, version) \
-                 VALUES (?, ?, 'STARTING', 'UNKNOWN', ?, ?, 0)",
+                 (job_execution_id, step_name, step_logical_id, status, exit_code, \
+                  created_ms, updated_ms, version) \
+                 VALUES (?, ?, ?, 'STARTING', 'UNKNOWN', ?, ?, 0)",
             )
             .bind(sqlite_identifier(
                 job_execution_id.get(),
                 IdentifierKind::JobExecution,
             )?)
             .bind(step_name.as_str())
+            .bind(node_id.as_str())
             .bind(created_ms)
             .bind(created_ms)
             .execute(&mut **self.connection()?)
             .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            .map_err(|error| {
+                if is_duplicate_key(&error) {
+                    RepositoryError::ConcurrentModification
+                } else {
+                    RepositoryError::Unavailable
+                }
+            })?;
             let id = StepExecutionId::new(rowid_u64(
                 result.last_insert_rowid(),
                 IdentifierKind::StepExecution,
@@ -826,6 +1058,304 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         })
     }
 
+    fn latest_flow_step<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<FlowStepState>, RepositoryError>> {
+        Box::pin(async move {
+            let exists: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM ob_job_instance WHERE id = ?")
+                    .bind(sqlite_identifier(
+                        job_instance_id.get(),
+                        IdentifierKind::JobInstance,
+                    )?)
+                    .fetch_optional(&mut **self.connection()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+            if exists.is_none() {
+                return Err(RepositoryError::JobInstanceNotFound {
+                    id: job_instance_id,
+                });
+            }
+            let row = sqlx::query(AssertSqlSafe(step_execution_select(
+                "JOIN ob_job_execution job ON job.id = execution.job_execution_id \
+                 WHERE job.job_instance_id = ? AND execution.step_logical_id = ? \
+                 ORDER BY job.attempt DESC, execution.id DESC LIMIT 1",
+            )))
+            .bind(sqlite_identifier(
+                job_instance_id.get(),
+                IdentifierKind::JobInstance,
+            )?)
+            .bind(node_id.as_str())
+            .fetch_optional(&mut **self.connection()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.map(|row| {
+                Ok(FlowStepState::new(
+                    node_id.clone(),
+                    decode_step_execution(&row)?,
+                    None,
+                ))
+            })
+            .transpose()
+        })
+    }
+
+    fn append_flow_decision<'a>(
+        &'a mut self,
+        request: &'a FlowDecisionRequest,
+    ) -> BoxFuture<'a, Result<FlowDecision, RepositoryError>> {
+        Box::pin(async move {
+            let row = sqlx::query(
+                "SELECT definition.manifest_digest, definition.manifest \
+                 FROM ob_job_execution execution \
+                 JOIN ob_core_job_definition definition ON definition.id = execution.definition_id \
+                 WHERE execution.id = ?",
+            )
+            .bind(sqlite_identifier(
+                request.job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .fetch_optional(&mut **self.connection()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: request.job_execution_id(),
+            })?;
+            let fingerprint = row
+                .try_get::<Vec<u8>, _>("manifest_digest")
+                .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            if fingerprint.as_slice() != request.plan_fingerprint() {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            let manifest_text = row
+                .try_get::<String, _>("manifest")
+                .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            let manifest: Value = serde_json::from_str(&manifest_text)
+                .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            if !crate::flow::decision_matches_manifest(&manifest, request) {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+
+            let existing = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM ob_flow_decision WHERE job_execution_id = ?",
+            )
+            .bind(sqlite_identifier(
+                request.job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .fetch_one(&mut **self.connection()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            let existing =
+                u64::try_from(existing).map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            let advanced = manifest
+                .get("format")
+                .and_then(Value::as_u64)
+                .is_some_and(|format| {
+                    format == u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW)
+                });
+            if !advanced
+                && request.sequence().get()
+                    != existing
+                        .checked_add(1)
+                        .ok_or(RepositoryError::FlowStateCorrupt)?
+            {
+                return Err(RepositoryError::ConcurrentModification);
+            }
+
+            if let Some(step_id) = request.source_step_execution_id() {
+                let valid = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM ob_step_execution source \
+                     JOIN ob_job_execution source_job ON source_job.id = source.job_execution_id \
+                     JOIN ob_job_execution target_job ON target_job.id = ? \
+                     WHERE source.id = ? \
+                       AND source_job.job_instance_id = target_job.job_instance_id \
+                       AND source.step_logical_id = ?",
+                )
+                .bind(sqlite_identifier(
+                    request.job_execution_id().get(),
+                    IdentifierKind::JobExecution,
+                )?)
+                .bind(sqlite_identifier(step_id.get(), IdentifierKind::StepExecution)?)
+                .bind(request.source_node_id().as_str())
+                .fetch_one(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if valid != 1 {
+                    return Err(RepositoryError::FlowStateCorrupt);
+                }
+            } else if !matches!(
+                request.kind(),
+                FlowTransitionKind::Decider
+                    | FlowTransitionKind::SplitAggregate
+                    | FlowTransitionKind::NestedJobExit
+            ) {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+
+            if let Some(reused_id) = request.reused_decision_id() {
+                let valid = sqlx::query_scalar::<_, i64>(
+                    "SELECT COUNT(*) FROM ob_flow_decision prior \
+                     JOIN ob_job_execution prior_job ON prior_job.id = prior.job_execution_id \
+                     JOIN ob_job_execution target_job ON target_job.id = ? \
+                     WHERE prior.id = ? \
+                       AND prior_job.job_instance_id = target_job.job_instance_id \
+                       AND prior.source_node_id = ? \
+                       AND prior.plan_fingerprint = ? \
+                       AND prior.input_digest = ? \
+                       AND prior.observed_outcome = ? \
+                       AND prior.target_node_id IS ? \
+                       AND prior.terminal_kind IS ?",
+                )
+                .bind(sqlite_identifier(
+                    request.job_execution_id().get(),
+                    IdentifierKind::JobExecution,
+                )?)
+                .bind(sqlite_identifier(reused_id.get(), IdentifierKind::FlowDecision)?)
+                .bind(request.source_node_id().as_str())
+                .bind(&request.plan_fingerprint()[..])
+                .bind(&request.input_digest()[..])
+                .bind(request.observed_outcome().as_str())
+                .bind(flow_target_node(request.target()))
+                .bind(flow_terminal_code(request.target())?)
+                .fetch_one(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                if valid != 1 {
+                    return Err(RepositoryError::FlowStateCorrupt);
+                }
+            }
+
+            let source_step_execution_id = request
+                .source_step_execution_id()
+                .map(|id| sqlite_identifier(id.get(), IdentifierKind::StepExecution))
+                .transpose()?;
+            let reused_decision_id = request
+                .reused_decision_id()
+                .map(|id| sqlite_identifier(id.get(), IdentifierKind::FlowDecision))
+                .transpose()?;
+            let result = sqlx::query(
+                "INSERT INTO ob_flow_decision \
+                 (job_execution_id, source_step_execution_id, reused_decision_id, sequence, \
+                  source_node_id, observed_outcome, target_node_id, transition_kind, \
+                  terminal_kind, plan_fingerprint, input_digest, decided_ms) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(sqlite_identifier(
+                request.job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .bind(source_step_execution_id)
+            .bind(reused_decision_id)
+            .bind(sqlite_identifier(
+                request.sequence().get(),
+                IdentifierKind::FlowDecisionSequence,
+            )?)
+            .bind(request.source_node_id().as_str())
+            .bind(request.observed_outcome().as_str())
+            .bind(flow_target_node(request.target()))
+            .bind(request.kind().durable_code())
+            .bind(flow_terminal_code(request.target())?)
+            .bind(&request.plan_fingerprint()[..])
+            .bind(&request.input_digest()[..])
+            .bind(system_time_millis(request.decided_at())?)
+            .execute(&mut **self.connection()?)
+            .await
+            .map_err(|error| {
+                if is_duplicate_key(&error) {
+                    RepositoryError::ConcurrentModification
+                } else {
+                    RepositoryError::Unavailable
+                }
+            })?;
+            let id = FlowDecisionId::new(rowid_u64(
+                result.last_insert_rowid(),
+                IdentifierKind::FlowDecision,
+            )?)?;
+            Ok(request.materialize(id))
+        })
+    }
+
+    fn find_reusable_flow_decision<'a>(
+        &'a mut self,
+        job_instance_id: JobInstanceId,
+        node_id: &'a NodeId,
+        plan_fingerprint: &'a [u8; 32],
+        input_digest: &'a [u8; 32],
+        kind: FlowTransitionKind,
+    ) -> BoxFuture<'a, Result<Option<FlowDecision>, RepositoryError>> {
+        Box::pin(async move {
+            let exists: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM ob_job_instance WHERE id = ?")
+                    .bind(sqlite_identifier(
+                        job_instance_id.get(),
+                        IdentifierKind::JobInstance,
+                    )?)
+                    .fetch_optional(&mut **self.connection()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+            if exists.is_none() {
+                return Err(RepositoryError::JobInstanceNotFound {
+                    id: job_instance_id,
+                });
+            }
+            let row = sqlx::query(AssertSqlSafe(flow_decision_select(
+                "JOIN ob_job_execution flow_job ON flow_job.id = decision.job_execution_id \
+                 WHERE flow_job.job_instance_id = ? AND decision.source_node_id = ? \
+                   AND decision.plan_fingerprint = ? AND decision.input_digest = ? \
+                   AND decision.transition_kind = ? \
+                 ORDER BY flow_job.attempt DESC, decision.sequence DESC LIMIT 1",
+            )))
+            .bind(sqlite_identifier(
+                job_instance_id.get(),
+                IdentifierKind::JobInstance,
+            )?)
+            .bind(node_id.as_str())
+            .bind(&plan_fingerprint[..])
+            .bind(&input_digest[..])
+            .bind(kind.durable_code())
+            .fetch_optional(&mut **self.connection()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            row.map(|row| decode_flow_decision(&row)).transpose()
+        })
+    }
+
+    fn flow_decisions(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
+        Box::pin(async move {
+            let exists: Option<i64> =
+                sqlx::query_scalar("SELECT id FROM ob_job_execution WHERE id = ?")
+                    .bind(sqlite_identifier(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .fetch_optional(&mut **self.connection()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+            if exists.is_none() {
+                return Err(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                });
+            }
+            let rows = sqlx::query(AssertSqlSafe(flow_decision_select(
+                "WHERE decision.job_execution_id = ? ORDER BY decision.sequence",
+            )))
+            .bind(sqlite_identifier(
+                job_execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .fetch_all(&mut **self.connection()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            rows.iter().map(decode_flow_decision).collect()
+        })
+    }
+
     fn recover_job_execution<'a>(
         &'a mut self,
         _id: JobExecutionId,
@@ -892,6 +1422,100 @@ impl Drop for SqliteUnitOfWork<'_> {
             connection.close_on_drop();
         }
     }
+}
+
+fn flow_decision_select(suffix: &str) -> String {
+    format!(
+        "SELECT decision.id, decision.job_execution_id, \
+         decision.source_step_execution_id, decision.reused_decision_id, \
+         decision.sequence, decision.source_node_id, decision.observed_outcome, \
+         decision.target_node_id, decision.transition_kind, decision.terminal_kind, \
+         decision.plan_fingerprint, decision.input_digest, decision.decided_ms \
+         FROM ob_flow_decision decision {suffix}"
+    )
+}
+
+fn flow_target_node(target: &FlowTarget) -> Option<&str> {
+    match target {
+        FlowTarget::Node(node) => Some(node.as_str()),
+        FlowTarget::Terminal(_) => None,
+    }
+}
+
+fn flow_terminal_code(target: &FlowTarget) -> Result<Option<&'static str>, RepositoryError> {
+    Ok(match target {
+        FlowTarget::Node(_) => None,
+        FlowTarget::Terminal(TerminalKind::Complete) => Some("COMPLETE"),
+        FlowTarget::Terminal(TerminalKind::Fail) => Some("FAIL"),
+        FlowTarget::Terminal(TerminalKind::Stop) => Some("STOP"),
+        FlowTarget::Terminal(_) => return Err(RepositoryError::Unavailable),
+    })
+}
+
+fn decode_flow_decision(row: &SqliteRow) -> Result<FlowDecision, RepositoryError> {
+    let id = FlowDecisionId::new(read_u64(row, "id")?)?;
+    let job_execution_id = JobExecutionId::new(read_u64(row, "job_execution_id")?)?;
+    let sequence = FlowDecisionSequence::new(read_u64(row, "sequence")?)
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let source_node_id = NodeId::new(
+        row.try_get::<String, _>("source_node_id")
+            .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+    )
+    .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let source_step_execution_id = read_optional_u64(row, "source_step_execution_id")?
+        .map(StepExecutionId::new)
+        .transpose()?;
+    let reused_decision_id = read_optional_u64(row, "reused_decision_id")?
+        .map(FlowDecisionId::new)
+        .transpose()?;
+    let kind = FlowTransitionKind::from_durable_code(
+        &row.try_get::<String, _>("transition_kind")
+            .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+    )
+    .ok_or(RepositoryError::FlowStateCorrupt)?;
+    let observed_outcome = ExitCode::new(
+        row.try_get::<String, _>("observed_outcome")
+            .map_err(|_| RepositoryError::FlowStateCorrupt)?,
+    )?;
+    let target_node = row
+        .try_get::<Option<String>, _>("target_node_id")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let terminal = row
+        .try_get::<Option<String>, _>("terminal_kind")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let target = match (target_node, terminal.as_deref()) {
+        (Some(node), None) => {
+            FlowTarget::Node(NodeId::new(node).map_err(|_| RepositoryError::FlowStateCorrupt)?)
+        }
+        (None, Some("COMPLETE")) => FlowTarget::Terminal(TerminalKind::Complete),
+        (None, Some("FAIL")) => FlowTarget::Terminal(TerminalKind::Fail),
+        (None, Some("STOP")) => FlowTarget::Terminal(TerminalKind::Stop),
+        _ => return Err(RepositoryError::FlowStateCorrupt),
+    };
+    let fingerprint: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("plan_fingerprint")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let input_digest: [u8; 32] = row
+        .try_get::<Vec<u8>, _>("input_digest")
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?
+        .try_into()
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    Ok(FlowDecision::new(
+        id,
+        job_execution_id,
+        sequence,
+        source_node_id,
+        source_step_execution_id,
+        kind,
+        observed_outcome,
+        target,
+        fingerprint,
+        input_digest,
+        reused_decision_id,
+        millis_system_time(read_i64(row, "decided_ms")?)?,
+    ))
 }
 
 fn job_execution_select(suffix: &str) -> String {
@@ -1327,5 +1951,29 @@ fn decode_status(value: &str) -> Result<BatchStatus, RepositoryError> {
         "ABANDONED" => Ok(BatchStatus::Abandoned),
         "UNKNOWN" => Ok(BatchStatus::Unknown),
         _ => Err(RepositoryError::Unavailable),
+    }
+}
+
+#[cfg(test)]
+mod runnable_core_schema_tests {
+    use super::*;
+
+    #[test]
+    fn runnable_core_schema_version_guard_is_fail_closed() {
+        assert_eq!(
+            verify_schema_version(1),
+            Err(RepositoryError::MigrationRequired {
+                current: 1,
+                supported: 2,
+            })
+        );
+        assert_eq!(verify_schema_version(2), Ok(()));
+        assert_eq!(
+            verify_schema_version(3),
+            Err(RepositoryError::NewerSchema {
+                current: 3,
+                supported: 2,
+            })
+        );
     }
 }
