@@ -463,7 +463,7 @@ for title, mutated, diagnostic in (
     ),
     (
         "remove recovery tag input",
-        activated_codeql.replace("      release_tag:\n", "      removed_release_tag:\n", 1),
+        activated_codeql.replace("      release_tag:\n", "      removed_tag:\n", 1),
         "full scan event contract missing: release_tag:",
     ),
     (
