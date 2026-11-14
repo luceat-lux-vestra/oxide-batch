@@ -6,10 +6,10 @@
 #[path = "contract/mod.rs"]
 mod contract;
 
-use std::error::Error;
 use contract::run_runnable_core_repository_contract;
 use oxide_batch::{MysqlConfig, MysqlJobRepository, MysqlMigrator, RepositoryError};
 use sqlx::mysql::MySqlPoolOptions;
+use std::error::Error;
 
 fn runtime_url() -> Option<String> {
     std::env::var("OXIDEBATCH_MYSQL_TEST_URL").ok()
@@ -92,7 +92,8 @@ fn migration_is_idempotent_for_mysql_protocol_family() -> Result<(), Box<dyn Err
 }
 
 #[test]
-fn runnable_core_repository_contract_passes_on_mysql_protocol_family() -> Result<(), Box<dyn Error>> {
+fn runnable_core_repository_contract_passes_on_mysql_protocol_family() -> Result<(), Box<dyn Error>>
+{
     let Some(url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_MYSQL_TEST_URL is not set");
         return Ok(());
