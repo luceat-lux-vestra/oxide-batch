@@ -12,7 +12,10 @@ use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use contract::{ServiceBackend, run_repository_contract, run_service_contract};
+use contract::{
+    ServiceBackend, run_repository_contract, run_runnable_core_repository_contract,
+    run_service_contract,
+};
 use oxide_batch::{
     BackoffPolicy, BatchStatus, BoxFuture, BusinessStatement, BusinessValue, CaCertificate,
     Checkpoint, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext, ChunkCompletionError,
@@ -81,6 +84,10 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
          JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
          WHERE instance.job_name = 'repository_contract_job')",
         "DELETE FROM oxide_batch.ob_recovery_decision WHERE job_execution_id IN (\
+         SELECT execution.id FROM oxide_batch.ob_job_execution execution \
+         JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = 'repository_contract_job')",
+        "DELETE FROM oxide_batch.ob_flow_decision WHERE job_execution_id IN (\
          SELECT execution.id FROM oxide_batch.ob_job_execution execution \
          JOIN oxide_batch.ob_job_instance instance ON instance.id = execution.job_instance_id \
          WHERE instance.job_name = 'repository_contract_job')",
@@ -375,6 +382,37 @@ fn definition_registry_concurrent_artifact_binding_has_one_durable_winner()
 
         repository.close().await?;
         remove_job_rows(&url, JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn shared_runnable_core_repository_contract_passes_on_postgres() -> Result<(), Box<dyn Error>> {
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        run_runnable_core_repository_contract("postgres-runnable-core", |clock| {
+            let url = url.clone();
+            async move {
+                remove_contract_rows(&url)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                PostgresJobRepository::connect(
+                    plaintext_config(url).map_err(|_| RepositoryError::Unavailable)?,
+                    clock,
+                )
+                .await
+                .map_err(|_| RepositoryError::Unavailable)
+            }
+        })
+        .await?;
+        remove_contract_rows(&url).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())

@@ -10,7 +10,9 @@ use std::num::NonZeroU64;
 use std::sync::{Arc, mpsc};
 use std::time::{Duration, UNIX_EPOCH};
 
-use contract::{run_component_contract, run_repository_contract};
+use contract::{
+    run_component_contract, run_repository_contract, run_runnable_core_repository_contract,
+};
 use oxide_batch::InMemoryJobRepository;
 use support::{
     BoundedTimeout, BoundedTimeoutError, ControlledBackoff, DeterministicIds, DiagnosticContext,
@@ -176,6 +178,22 @@ fn shared_repository_contract_runs_against_a_test_adapter() -> Result<(), Box<dy
             Arc::new(DeterministicIds::new(first_id)),
         ))
     }))?;
+    Ok(())
+}
+
+#[test]
+fn shared_runnable_core_contract_runs_against_the_in_memory_reference() -> Result<(), Box<dyn Error>>
+{
+    let first_id = NonZeroU64::new(10_000).ok_or(IdSequenceError::Exhausted)?;
+    futures_executor::block_on(run_runnable_core_repository_contract(
+        "in-memory-runnable-core",
+        |clock| async move {
+            Ok(InMemoryJobRepository::new(
+                clock,
+                Arc::new(DeterministicIds::new(first_id)),
+            ))
+        },
+    ))?;
     Ok(())
 }
 

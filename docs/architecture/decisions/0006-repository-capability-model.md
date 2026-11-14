@@ -53,9 +53,24 @@ resource evidence. Their existence cannot reduce the PostgreSQL fast path.
 - capabilities and selected delivery mode affect plan validation and may affect
   definition identity;
 - every adapter carries a significant certification and support obligation;
-- PostgreSQL remains the only currently implemented durable adapter;
+- at ADR acceptance time, PostgreSQL was the only implemented durable adapter;
 - future schemas may add effect, retention, lease, or capability metadata
   through forward migrations.
+
+### Current implementation status
+
+As of the M8 runnable-core reconciliation (#659), PostgreSQL remains the
+reference, capability-rich, release-backed supported durable adapter.
+MySQL/MariaDB and SQLite have first-party bootstrap-core implementations but
+have not yet passed the additive runnable-core profile or support-promotion
+evidence. SQL Server and MongoDB remain planned.
+
+The current M8 sequencing also defers structural splitting of
+`RepositoryUnitOfWork` while adapters are brought to the runnable-core
+boundary. It remains the adapter-owned atomic transaction aggregate; database
+portability may not use that deferral to add a generic SQL abstraction or
+silently expand optional capability families. Explorer remains a separate
+bounded read port.
 
 ## Alternatives considered
 

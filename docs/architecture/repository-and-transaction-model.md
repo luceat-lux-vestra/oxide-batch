@@ -8,7 +8,13 @@
 
 This document is the canonical target architecture for repository services,
 adapter capabilities, metadata transactions, and business-effect delivery.
-PostgreSQL remains the current reference and only implemented durable adapter.
+
+PostgreSQL remains the reference, capability-rich, release-backed supported
+durable adapter. MySQL/MariaDB and SQLite now have first-party
+**bootstrap-core implementations**: they pass the primitive repository
+contract but are not yet runnable-core certified or support-promoted. SQL
+Server and MongoDB remain planned M8 targets until their own implementation and
+evidence land. A code-bearing bootstrap adapter is not a support claim.
 
 ## Service boundaries
 
@@ -53,6 +59,21 @@ Adapters publish a versioned descriptor covering:
 Plan compilation evaluates static capabilities. Connection/launch time
 negotiation validates actual deployed capabilities. A missing requirement
 fails explicitly; it does not degrade the delivery guarantee.
+
+The mandatory runnable core is below optional capability negotiation. A
+repository described as runnable core must execute an ordinary one-step tasklet
+flow with zero optional capability declarations, including execution-bound
+definition records, manifest-digest-authoritative failed/stopped restart,
+revision-label compatibility, logical flow-step/start-limit authority, and
+durable flow-decision authority. Per ADR-0004, the application revision is an
+audit label; the canonical manifest digest is the machine compatibility value. The richer named registry/artifact/compatible-upgrade/fork surface
+remains the optional `DefinitionRegistry` capability.
+
+During the M8 migration, `run_core_repository_contract` names the earlier
+primitive/bootstrap subset; `run_runnable_core_repository_contract` is the
+portable execution contract. Neither contract alone is a release support
+badge: checkpoint/context payload restart and the applicable operational
+evidence remain additional support requirements.
 
 ## Transaction and delivery modes
 

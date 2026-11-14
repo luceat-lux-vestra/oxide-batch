@@ -213,6 +213,18 @@ database, and configuration versions and pass the applicable evidence below.
 
 ### Core repository certification
 
+M8 distinguishes the additive **runnable-core** execution profile from the
+complete support-level core evidence below. The runnable profile composes the
+legacy primitive/bootstrap contract with an ordinary one-step tasklet
+`FlowLauncher`, manifest-digest-authoritative failed/stopped restart,
+revision-label compatibility, logical flow-step/start-limit authority, and
+durable decision reuse while optional
+capability declarations are masked to zero. It is necessary before another
+first-party adapter implementation is treated as runnable, but is not
+sufficient for support promotion.
+
+The support-level core certification remains:
+
 1. schema initialization and current-version readback;
 2. older supported schema upgrade and newer-schema rejection;
 3. unique logical instance under concurrent duplicate launch;

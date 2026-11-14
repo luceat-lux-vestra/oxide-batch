@@ -10,14 +10,28 @@ owns accepted target port boundaries and delivery capabilities.
 
 ## Current and target scope
 
-PostgreSQL and the OxideBatch-owned schema remain the only implemented durable
-repository and reference profile under
+PostgreSQL and the OxideBatch-owned schema remain the reference semantic and
+release-backed supported durable profile under
 [ADR-0006](../architecture/decisions/0006-repository-capability-model.md).
-[RFC-0007](../rfcs/0007-repository-services-and-capabilities.md) accepts
-additional relational adapters and capability negotiation as target scope.
-Planning text for those adapters does not constitute support.
+MySQL/MariaDB and SQLite now have first-party bootstrap-core implementations,
+but they are not yet runnable-core certified or support-promoted. SQL Server
+and MongoDB remain planned M8 targets. Planning text or a primitive contract
+pass does not constitute support.
 
-The PostgreSQL implementation is the reference semantic profile. A future
+M8 uses four deliberately different terms:
+
+- **implemented bootstrap adapter:** code exists and passes the primitive
+  repository contract;
+- **runnable-core certified adapter:** an ordinary tasklet `FlowLauncher`,
+  manifest-digest strict restart, revision-label compatibility, logical
+  flow-step/start-limit authority, and durable decision reuse pass the portable
+  runnable-core contract;
+- **capability-certified adapter:** one or more additional named capability
+  suites pass;
+- **release-backed supported adapter:** named database/client/configuration
+  versions appear in the support matrix with all required operational evidence.
+
+The PostgreSQL implementation remains the reference semantic profile. Another
 adapter may use different SQL, keys, locking, or migration machinery, but it
 must preserve every capability it claims and disclose every limitation. A
 lowest-common-denominator abstraction must not remove a certified PostgreSQL
@@ -44,7 +58,9 @@ semantics.
 ## Adapter support and certification
 
 The accepted relational program evaluates PostgreSQL, MySQL/MariaDB, SQLite,
-SQL Server, Oracle, DB2, and HANA. Each promoted adapter must pass:
+SQL Server, Oracle, DB2, and HANA. The additive runnable-core contract is a
+pre-support execution gate; it does not replace checkpoint/context restart or
+the broader operational matrix below. Each promoted adapter must pass:
 
 - the shared repository, explorer, operator, definition, retention, and
   migration contract suites;

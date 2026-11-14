@@ -24,26 +24,39 @@ pub use services::{
 use std::error::Error;
 use std::fmt;
 use std::future::Future;
+use std::num::NonZeroU64;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, UNIX_EPOCH};
 
 use oxide_batch::{
-    BatchStatus, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade, DefinitionRevision,
-    DefinitionStateKind, DefinitionStateTransform, DefinitionStateTransformError,
-    DefinitionStateTransformId, DefinitionStateTransformer, DefinitionUpgrade,
-    DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision, DomainError,
-    ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus, FailureCategory, FailureId,
-    FailureSummary, JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository,
-    LifecycleError, LifecycleTransition, NodeId, ParameterName, ParameterRole, ParameterValue,
-    PartitionKey, PartitionPlanEntry, RepositoryError, StartLimit, StateLimits, StateSchemaId,
-    StateSchemaVersion, StepName,
+    BatchStatus, BoxFuture, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade,
+    DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
+    DefinitionStateTransformError, DefinitionStateTransformId, DefinitionStateTransformer,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
+    DomainError, ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus, FailureCategory,
+    FailureId, FailureSummary, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher,
+    FlowNode, FlowRuntimeError, FlowTarget, FlowTransitionKind, JobInstanceKey, JobName,
+    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition, NodeId,
+    ParameterName, ParameterRole, ParameterValue, PartitionKey, PartitionPlanEntry,
+    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    SequentialIdGenerator, StartControls, StartLimit, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
+    TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
-/// Runs the mandatory portable repository contract.
+/// Runs the primitive/bootstrap portable repository contract.
 ///
-/// This group contains only semantics required of every durable
-/// `JobRepository`: logical-instance identity, execution graph identity,
-/// lifecycle compare-and-swap, completion/relaunch policy, and rollback
-/// visibility. Optional repository capabilities are certified by separate
+/// This legacy group proves low-level identity, execution graph, lifecycle
+/// compare-and-swap, completion/relaunch policy, and rollback visibility. It is
+/// retained as additive migration evidence for adapters that predate the
+/// runnable-core profile.
+///
+/// Passing this group alone does **not** prove that an ordinary
+/// [`FlowLauncher`] can execute or restart against the adapter and is therefore
+/// insufficient for a runnable-core or support claim. Use
+/// [`run_runnable_core_repository_contract`] for that portable execution
+/// boundary. Optional repository capabilities remain certified by separate
 /// runners.
 ///
 /// # Errors
@@ -65,6 +78,856 @@ where
     completed_instance_rejects_another_execution(backend, &mut factory).await?;
     stale_transition_is_typed_and_atomic(backend, &mut factory).await?;
     rollback_discards_staged_metadata(backend, &mut factory).await
+}
+
+/// Runs the portable runnable-core repository contract.
+///
+/// Runnable core is intentionally stronger than the primitive/bootstrap
+/// contract: an ordinary one-step tasklet [`FlowLauncher`] must execute and
+/// restart while the repository advertises zero optional capabilities. The
+/// runner masks optional capability declarations from the concrete reference
+/// adapter so a passing result cannot accidentally depend on `PostgreSQL`- or
+/// in-memory-only capability flags.
+///
+/// The profile composes [`run_core_repository_contract`] and additionally
+/// proves execution-bound manifest identity, failed/stopped strict restart,
+/// revision-label compatibility, logical flow-step/start-limit authority, and durable flow-decision
+/// reuse. It deliberately does not certify checkpoint/context payload restart,
+/// migrations, crash/unknown-outcome injection, backup/restore, resource
+/// bounds, TLS/authentication, or any optional capability group; those remain
+/// required separately before a support promotion.
+///
+/// The factory receives the deterministic clock shared by the concrete
+/// repository and the launcher fixture.
+///
+/// # Errors
+///
+/// Returns [`RepositoryContractFailure`] with the stable case and backend names
+/// when construction, runtime traversal, restart behavior, or durable
+/// inspection differs from the runnable-core contract.
+pub async fn run_runnable_core_repository_contract<R, F, Fut>(
+    backend: &'static str,
+    mut factory: F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    run_core_repository_contract(backend, || {
+        factory(Arc::new(ContractClock::new(PRIMITIVE_CLOCK_MILLIS)))
+    })
+    .await?;
+    runnable_flow_completes_without_optional_capabilities(backend, &mut factory).await?;
+    failed_same_definition_restart_reexecutes_failed_step(backend, &mut factory).await?;
+    stopped_same_definition_restart_reexecutes_stopped_step(backend, &mut factory).await?;
+    revision_label_change_with_same_manifest_restarts(backend, &mut factory).await?;
+    incompatible_definition_restart_creates_no_attempt(backend, &mut factory).await?;
+    same_revision_manifest_drift_creates_no_attempt(backend, &mut factory).await?;
+    start_limit_remains_instance_wide_across_restart(backend, &mut factory).await?;
+    completed_step_and_decision_are_reused_on_failed_restart(backend, &mut factory).await
+}
+
+const PRIMITIVE_CLOCK_MILLIS: u64 = 0;
+const RUNNABLE_CLOCK_MILLIS: u64 = 10_000;
+const RUNNABLE_JOB_NAME: &str = "repository_contract_job";
+const RUNNABLE_NODE_ID: &str = "only";
+const RUNNABLE_STEP_NAME: &str = "only";
+
+struct RunnableCoreRepository<R> {
+    inner: R,
+}
+
+impl<R> RunnableCoreRepository<R> {
+    const fn new(inner: R) -> Self {
+        Self { inner }
+    }
+}
+
+impl<R> JobRepository for RunnableCoreRepository<R>
+where
+    R: JobRepository,
+{
+    fn connection_capacity(&self) -> u32 {
+        self.inner.connection_capacity()
+    }
+
+    fn descriptor(&self) -> RepositoryDescriptor {
+        RepositoryDescriptor::new(
+            self.inner.descriptor().schema_version(),
+            std::iter::empty::<RepositoryCapability>(),
+        )
+    }
+
+    fn begin<'a>(
+        &'a self,
+    ) -> BoxFuture<'a, Result<Box<dyn RepositoryUnitOfWork + 'a>, RepositoryError>> {
+        self.inner.begin()
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RunnableTaskletBehavior {
+    Complete,
+    Fail,
+    FailOnce,
+    StopOnce,
+}
+
+struct RunnableTasklet {
+    calls: Arc<AtomicUsize>,
+    behavior: RunnableTaskletBehavior,
+}
+
+impl Tasklet for RunnableTasklet {
+    fn execute<'a>(
+        &'a self,
+        _context: TaskletContext<'a>,
+    ) -> BoxFuture<'a, Result<TaskletOutcome, TaskletError>> {
+        Box::pin(async move {
+            let call = self.calls.fetch_add(1, Ordering::SeqCst);
+            match self.behavior {
+                RunnableTaskletBehavior::Complete => Ok(TaskletOutcome::Completed),
+                RunnableTaskletBehavior::Fail => Err(TaskletError::new()),
+                RunnableTaskletBehavior::FailOnce if call == 0 => Err(TaskletError::new()),
+                RunnableTaskletBehavior::StopOnce if call == 0 => Ok(TaskletOutcome::Stopped),
+                RunnableTaskletBehavior::FailOnce | RunnableTaskletBehavior::StopOnce => {
+                    Ok(TaskletOutcome::Completed)
+                }
+            }
+        })
+    }
+}
+
+fn runnable_job(
+    revision: &str,
+    component_revision: &str,
+    terminal: TerminalKind,
+    controls: StartControls,
+    calls: Arc<AtomicUsize>,
+    behavior: RunnableTaskletBehavior,
+) -> Result<FlowJob, Box<dyn Error>> {
+    let job_name = JobName::new(RUNNABLE_JOB_NAME)?;
+    let node = NodeId::new(RUNNABLE_NODE_ID)?;
+    let step_name = StepName::new(RUNNABLE_STEP_NAME)?;
+    let plan = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(
+            StepNode::new(
+                node.clone(),
+                step_name.clone(),
+                StepComponents::Tasklet(ComponentRevision::new(component_revision)?),
+            )
+            .with_start_controls(controls),
+        ))
+        .with_sequence(node.clone(), FlowTarget::Terminal(terminal))?
+        .compile(&job_name, DefinitionRevision::new(revision)?)?;
+    Ok(FlowJob::new(job_name, plan)?.with_tasklet_step(
+        node,
+        TaskletStep::new(step_name, Arc::new(RunnableTasklet { calls, behavior })),
+    )?)
+}
+
+fn runnable_ids() -> SequentialIdGenerator {
+    SequentialIdGenerator::new(NonZeroU64::MIN)
+}
+
+fn contract_failure(
+    backend: &'static str,
+    case: &'static str,
+    error: impl fmt::Display,
+) -> RepositoryContractFailure {
+    RepositoryContractFailure::new(backend, case, error.to_string())
+}
+
+async fn runnable_flow_completes_without_optional_capabilities<R, F, Fut>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    const CASE: &str = "runnable_core_flow_completes_without_optional_capabilities";
+    let clock = Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS));
+    let repository = RunnableCoreRepository::new(
+        factory(Arc::clone(&clock))
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?,
+    );
+    ensure(
+        repository.descriptor().capabilities().len() == 0,
+        backend,
+        CASE,
+        "runnable-core view exposed an optional capability",
+    )?;
+
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = runnable_job(
+        "runnable-v1",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::clone(&calls),
+        RunnableTaskletBehavior::Complete,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let parameters = JobParameters::new();
+    let ids = runnable_ids();
+    let (_, stop) = StopSource::new();
+    let report = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&job, &parameters, &stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+
+    ensure(
+        report.outcome() == &FlowExecutionOutcome::Completed,
+        backend,
+        CASE,
+        "ordinary tasklet flow did not complete",
+    )?;
+    ensure(
+        calls.load(Ordering::SeqCst) == 1,
+        backend,
+        CASE,
+        "ordinary tasklet was not invoked exactly once",
+    )?;
+    ensure(
+        report.step_executions().len() == 1 && report.decisions().len() == 1,
+        backend,
+        CASE,
+        "ordinary flow did not persist one step and one decision",
+    )?;
+
+    let node =
+        NodeId::new(RUNNABLE_NODE_ID).map_err(|error| contract_failure(backend, CASE, error))?;
+    let expected_step = report.step_executions()[0].id();
+    let mut inspection = repository
+        .begin()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    let latest = inspection
+        .latest_flow_step(report.instance().id(), &node)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    let decisions = inspection
+        .flow_decisions(report.job_execution().id())
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        latest.as_ref().map(|state| state.execution().id()) == Some(expected_step),
+        backend,
+        CASE,
+        "latest logical-step authority did not return the committed step",
+    )?;
+    ensure(
+        decisions.len() == 1 && decisions[0].id() == report.decisions()[0].id(),
+        backend,
+        CASE,
+        "durable flow decision differed from the launcher report",
+    )?;
+    inspection
+        .rollback()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))
+}
+
+async fn failed_same_definition_restart_reexecutes_failed_step<R, F, Fut>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    const CASE: &str = "runnable_core_failed_same_definition_restart";
+    let clock = Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS));
+    let repository = RunnableCoreRepository::new(
+        factory(Arc::clone(&clock))
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = runnable_job(
+        "restart-v1",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::clone(&calls),
+        RunnableTaskletBehavior::FailOnce,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let parameters = JobParameters::new();
+    let ids = runnable_ids();
+
+    let (_, first_stop) = StopSource::new();
+    let first = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&job, &parameters, &first_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        matches!(first.outcome(), FlowExecutionOutcome::Failed(_)),
+        backend,
+        CASE,
+        "first user failure did not leave a failed restart source",
+    )?;
+
+    clock.advance(Duration::from_secs(1));
+    let (_, second_stop) = StopSource::new();
+    let second = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&job, &parameters, &second_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        second.outcome() == &FlowExecutionOutcome::Completed,
+        backend,
+        CASE,
+        "same-definition failed restart did not complete",
+    )?;
+    ensure(
+        first.instance().id() == second.instance().id()
+            && first.job_execution().id() != second.job_execution().id()
+            && calls.load(Ordering::SeqCst) == 2,
+        backend,
+        CASE,
+        "failed restart did not create a new attempt and re-execute the failed step",
+    )?;
+
+    let node =
+        NodeId::new(RUNNABLE_NODE_ID).map_err(|error| contract_failure(backend, CASE, error))?;
+    let mut inspection = repository
+        .begin()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    let attempts = inspection
+        .job_executions(second.instance().id())
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    let latest = inspection
+        .latest_flow_step(second.instance().id(), &node)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        attempts.len() == 2
+            && latest
+                .as_ref()
+                .map(|state| state.execution().job_execution_id())
+                == Some(second.job_execution().id()),
+        backend,
+        CASE,
+        "failed restart lineage did not point at the second execution",
+    )?;
+    inspection
+        .rollback()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))
+}
+
+async fn stopped_same_definition_restart_reexecutes_stopped_step<R, F, Fut>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    const CASE: &str = "runnable_core_stopped_same_definition_restart";
+    let clock = Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS));
+    let repository = RunnableCoreRepository::new(
+        factory(Arc::clone(&clock))
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = runnable_job(
+        "restart-v1",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::clone(&calls),
+        RunnableTaskletBehavior::StopOnce,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let parameters = JobParameters::new();
+    let ids = runnable_ids();
+
+    let (_, first_stop) = StopSource::new();
+    let first = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&job, &parameters, &first_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        first.outcome() == &FlowExecutionOutcome::Stopped,
+        backend,
+        CASE,
+        "first stop did not leave a stopped restart source",
+    )?;
+
+    clock.advance(Duration::from_secs(1));
+    let (_, second_stop) = StopSource::new();
+    let second = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&job, &parameters, &second_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        second.outcome() == &FlowExecutionOutcome::Completed,
+        backend,
+        CASE,
+        "same-definition stopped restart did not complete",
+    )?;
+    ensure(
+        first.instance().id() == second.instance().id()
+            && first.job_execution().id() != second.job_execution().id()
+            && calls.load(Ordering::SeqCst) == 2,
+        backend,
+        CASE,
+        "stopped restart did not create a new attempt and re-execute the stopped step",
+    )?;
+
+    let mut inspection = repository
+        .begin()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        inspection
+            .job_executions(second.instance().id())
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?
+            .len()
+            == 2,
+        backend,
+        CASE,
+        "stopped restart did not persist exactly two job attempts",
+    )?;
+    inspection
+        .rollback()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))
+}
+
+async fn revision_label_change_with_same_manifest_restarts<R, F, Fut>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    const CASE: &str = "runnable_core_revision_label_change_preserves_manifest_restart";
+    let clock = Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS));
+    let repository = RunnableCoreRepository::new(
+        factory(Arc::clone(&clock))
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let first_job = runnable_job(
+        "audit-v1",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::clone(&calls),
+        RunnableTaskletBehavior::FailOnce,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let second_job = runnable_job(
+        "audit-v2",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::clone(&calls),
+        RunnableTaskletBehavior::FailOnce,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        first_job
+            .compiled_plan()
+            .definition_identity()
+            .manifest_digest()
+            == second_job
+                .compiled_plan()
+                .definition_identity()
+                .manifest_digest()
+            && first_job.compiled_plan().definition_identity()
+                != second_job.compiled_plan().definition_identity(),
+        backend,
+        CASE,
+        "fixture did not isolate an audit-revision change from manifest identity",
+    )?;
+
+    let parameters = JobParameters::new();
+    let ids = runnable_ids();
+    let (_, first_stop) = StopSource::new();
+    let first = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&first_job, &parameters, &first_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        matches!(first.outcome(), FlowExecutionOutcome::Failed(_)),
+        backend,
+        CASE,
+        "fixture did not create a failed restart source",
+    )?;
+
+    clock.advance(Duration::from_secs(1));
+    let (_, second_stop) = StopSource::new();
+    let second = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&second_job, &parameters, &second_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        second.outcome() == &FlowExecutionOutcome::Completed,
+        backend,
+        CASE,
+        "same manifest with a new audit revision was rejected",
+    )?;
+    ensure(
+        first.instance().id() == second.instance().id()
+            && first.job_execution().id() != second.job_execution().id()
+            && calls.load(Ordering::SeqCst) == 2,
+        backend,
+        CASE,
+        "revision-label restart did not create the expected second attempt",
+    )
+}
+
+async fn incompatible_definition_restart_creates_no_attempt<R, F, Fut>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    const CASE: &str = "runnable_core_incompatible_definition_restart";
+    let clock = Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS));
+    let repository = RunnableCoreRepository::new(
+        factory(Arc::clone(&clock))
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?,
+    );
+    let first_job = runnable_job(
+        "definition-v1",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::new(AtomicUsize::new(0)),
+        RunnableTaskletBehavior::Fail,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let parameters = JobParameters::new();
+    let ids = runnable_ids();
+    let (_, first_stop) = StopSource::new();
+    let first = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&first_job, &parameters, &first_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        matches!(first.outcome(), FlowExecutionOutcome::Failed(_)),
+        backend,
+        CASE,
+        "fixture did not create a failed restart source",
+    )?;
+
+    let second_calls = Arc::new(AtomicUsize::new(0));
+    let incompatible = runnable_job(
+        "definition-v2",
+        "tasklet-v2",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::clone(&second_calls),
+        RunnableTaskletBehavior::Complete,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    clock.advance(Duration::from_secs(1));
+    let (_, second_stop) = StopSource::new();
+    let result = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&incompatible, &parameters, &second_stop)
+        .await;
+    ensure(
+        matches!(
+            result,
+            Err(FlowRuntimeError::Repository(
+                RepositoryError::IncompatibleDefinition { .. }
+            ))
+        ),
+        backend,
+        CASE,
+        "different manifest identity was accepted as a strict restart",
+    )?;
+    ensure(
+        second_calls.load(Ordering::SeqCst) == 0,
+        backend,
+        CASE,
+        "incompatible definition reached user work",
+    )?;
+
+    let mut inspection = repository
+        .begin()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        inspection
+            .job_executions(first.instance().id())
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?
+            .len()
+            == 1,
+        backend,
+        CASE,
+        "rejected incompatible definition created a partial job attempt",
+    )?;
+    inspection
+        .rollback()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))
+}
+
+async fn same_revision_manifest_drift_creates_no_attempt<R, F, Fut>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    const CASE: &str = "runnable_core_same_revision_manifest_drift";
+    let clock = Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS));
+    let repository = RunnableCoreRepository::new(
+        factory(Arc::clone(&clock))
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?,
+    );
+    let first_job = runnable_job(
+        "definition-v1",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::new(AtomicUsize::new(0)),
+        RunnableTaskletBehavior::Fail,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let parameters = JobParameters::new();
+    let ids = runnable_ids();
+    let (_, first_stop) = StopSource::new();
+    let first = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&first_job, &parameters, &first_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        matches!(first.outcome(), FlowExecutionOutcome::Failed(_)),
+        backend,
+        CASE,
+        "fixture did not create a failed restart source",
+    )?;
+
+    let drift_calls = Arc::new(AtomicUsize::new(0));
+    let drifted = runnable_job(
+        "definition-v1",
+        "tasklet-v2",
+        TerminalKind::Complete,
+        StartControls::default(),
+        Arc::clone(&drift_calls),
+        RunnableTaskletBehavior::Complete,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let (_, second_stop) = StopSource::new();
+    let result = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&drifted, &parameters, &second_stop)
+        .await;
+    ensure(
+        matches!(
+            result,
+            Err(FlowRuntimeError::Repository(
+                RepositoryError::DefinitionDrift { .. }
+            ))
+        ),
+        backend,
+        CASE,
+        "same revision with a different canonical manifest was not rejected as definition drift",
+    )?;
+    ensure(
+        drift_calls.load(Ordering::SeqCst) == 0,
+        backend,
+        CASE,
+        "definition drift reached user work",
+    )?;
+
+    let mut inspection = repository
+        .begin()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        inspection
+            .job_executions(first.instance().id())
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?
+            .len()
+            == 1,
+        backend,
+        CASE,
+        "rejected definition drift created a partial job attempt",
+    )?;
+    inspection
+        .rollback()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))
+}
+
+async fn start_limit_remains_instance_wide_across_restart<R, F, Fut>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    const CASE: &str = "runnable_core_start_limit_is_instance_wide";
+    let clock = Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS));
+    let repository = RunnableCoreRepository::new(
+        factory(Arc::clone(&clock))
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let limit = StartLimit::new(1).map_err(|error| contract_failure(backend, CASE, error))?;
+    let job = runnable_job(
+        "limit-v1",
+        "tasklet-v1",
+        TerminalKind::Complete,
+        StartControls::new(limit, false),
+        Arc::clone(&calls),
+        RunnableTaskletBehavior::Fail,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let parameters = JobParameters::new();
+    let ids = runnable_ids();
+    let (_, first_stop) = StopSource::new();
+    let first = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&job, &parameters, &first_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        matches!(first.outcome(), FlowExecutionOutcome::Failed(_)),
+        backend,
+        CASE,
+        "start-limit fixture did not fail its first step",
+    )?;
+
+    let (_, second_stop) = StopSource::new();
+    let second = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&job, &parameters, &second_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        matches!(
+            second.outcome(),
+            FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded { .. })
+        ),
+        backend,
+        CASE,
+        "second start was not rejected by the instance-wide logical-step limit",
+    )?;
+    ensure(
+        calls.load(Ordering::SeqCst) == 1 && second.step_executions().is_empty(),
+        backend,
+        CASE,
+        "start-limit rejection created or invoked another step",
+    )
+}
+
+async fn completed_step_and_decision_are_reused_on_failed_restart<R, F, Fut>(
+    backend: &'static str,
+    factory: &mut F,
+) -> Result<(), RepositoryContractFailure>
+where
+    R: JobRepository,
+    F: FnMut(Arc<ContractClock>) -> Fut,
+    Fut: Future<Output = Result<R, RepositoryError>>,
+{
+    const CASE: &str = "runnable_core_completed_step_and_decision_reuse";
+    let clock = Arc::new(ContractClock::new(RUNNABLE_CLOCK_MILLIS));
+    let repository = RunnableCoreRepository::new(
+        factory(Arc::clone(&clock))
+            .await
+            .map_err(|error| contract_failure(backend, CASE, error))?,
+    );
+    let calls = Arc::new(AtomicUsize::new(0));
+    let job = runnable_job(
+        "reuse-v1",
+        "tasklet-v1",
+        TerminalKind::Fail,
+        StartControls::default(),
+        Arc::clone(&calls),
+        RunnableTaskletBehavior::Complete,
+    )
+    .map_err(|error| contract_failure(backend, CASE, error))?;
+    let parameters = JobParameters::new();
+    let ids = runnable_ids();
+
+    let (_, first_stop) = StopSource::new();
+    let first = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&job, &parameters, &first_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        matches!(first.outcome(), FlowExecutionOutcome::Failed(_)) && first.decisions().len() == 1,
+        backend,
+        CASE,
+        "fixture did not commit one completed-step decision before terminal failure",
+    )?;
+
+    clock.advance(Duration::from_secs(1));
+    let (_, second_stop) = StopSource::new();
+    let second = FlowLauncher::new(&repository, clock.as_ref(), &ids)
+        .launch(&job, &parameters, &second_stop)
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        matches!(second.outcome(), FlowExecutionOutcome::Failed(_)),
+        backend,
+        CASE,
+        "failed terminal restart changed its terminal outcome",
+    )?;
+    ensure(
+        calls.load(Ordering::SeqCst) == 1,
+        backend,
+        CASE,
+        "completed logical step was re-invoked instead of reused",
+    )?;
+    ensure(
+        second.decisions().len() == 1
+            && second.decisions()[0].kind() == FlowTransitionKind::CompletedStepReuse
+            && second.decisions()[0].reused_decision_id() == Some(first.decisions()[0].id()),
+        backend,
+        CASE,
+        "restart did not append an exact durable reusable-decision reference",
+    )?;
+
+    let mut inspection = repository
+        .begin()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    let durable = inspection
+        .flow_decisions(second.job_execution().id())
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))?;
+    ensure(
+        durable.len() == 1 && durable[0].reused_decision_id() == Some(first.decisions()[0].id()),
+        backend,
+        CASE,
+        "reused decision was not durably readable from the restart execution",
+    )?;
+    inspection
+        .rollback()
+        .await
+        .map_err(|error| contract_failure(backend, CASE, error))
 }
 
 /// Runs the definition-registry/compatible-upgrade capability contract.
@@ -114,13 +977,15 @@ where
     partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory).await
 }
 
-/// Runs every repository contract group used by the in-memory and `PostgreSQL`
-/// reference adapters.
+/// Runs the legacy primitive plus represented optional repository groups.
 ///
-/// This aggregate is an equivalence/control convenience for adapters that claim
-/// all currently represented capabilities. It is not the minimum portable
-/// adapter contract and must not be used to infer support for an undeclared
-/// capability.
+/// This aggregate predates the additive runnable-core profile and remains an
+/// equivalence/control convenience for the in-memory and `PostgreSQL`
+/// reference adapters. Runnable-core execution evidence is invoked separately
+/// through [`run_runnable_core_repository_contract`].
+///
+/// This aggregate is not the minimum portable adapter contract and must not be
+/// used to infer runnable-core status, support, or an undeclared capability.
 ///
 /// # Errors
 ///
