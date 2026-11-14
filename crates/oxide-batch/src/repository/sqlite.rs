@@ -1178,7 +1178,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
                     request.job_execution_id().get(),
                     IdentifierKind::JobExecution,
                 )?)
-                .bind(sqlite_identifier(step_id.get(), IdentifierKind::StepExecution)?)
+                .bind(sqlite_identifier(
+                    step_id.get(),
+                    IdentifierKind::StepExecution,
+                )?)
                 .bind(request.source_node_id().as_str())
                 .fetch_one(&mut **self.connection()?)
                 .await
@@ -1213,7 +1216,10 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
                     request.job_execution_id().get(),
                     IdentifierKind::JobExecution,
                 )?)
-                .bind(sqlite_identifier(reused_id.get(), IdentifierKind::FlowDecision)?)
+                .bind(sqlite_identifier(
+                    reused_id.get(),
+                    IdentifierKind::FlowDecision,
+                )?)
                 .bind(request.source_node_id().as_str())
                 .bind(&request.plan_fingerprint()[..])
                 .bind(&request.input_digest()[..])
