@@ -16,7 +16,7 @@ use contract::run_runnable_core_repository_contract;
 use oxide_batch::{
     Clock, JobRepository, RepositoryError, SqliteConfig, SqliteJobRepository, SqliteMigrator,
 };
-use sqlx::Connection;
+use sqlx::{AssertSqlSafe, Connection};
 
 static NEXT_DATABASE: AtomicU64 = AtomicU64::new(1);
 
@@ -86,7 +86,9 @@ fn migration_upgrades_existing_bootstrap_sqlite_schema() -> Result<(), Box<dyn E
 
         std::fs::File::create(&target_path)?;
         let mut target = sqlx::SqliteConnection::connect(&target_url).await?;
-        sqlx::raw_sql(&migration_table_ddl)
+        // This DDL is read from SQLite's own schema for the SQLx-owned migration table
+        // in a repository-created donor database; it is not caller-controlled input.
+        sqlx::raw_sql(AssertSqlSafe(migration_table_ddl))
             .execute(&mut target)
             .await?;
         sqlx::raw_sql(include_str!("../migrations-sqlite/0001_core_metadata.sql"))
