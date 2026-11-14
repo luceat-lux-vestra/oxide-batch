@@ -888,13 +888,15 @@ where
     partition_aggregation_commits_with_parent_terminal_state(backend, &mut factory).await
 }
 
-/// Runs every repository contract group used by the in-memory and `PostgreSQL`
-/// reference adapters.
+/// Runs the legacy primitive plus represented optional repository groups.
 ///
-/// This aggregate is an equivalence/control convenience for adapters that claim
-/// all currently represented capabilities. It is not the minimum portable
-/// adapter contract and must not be used to infer support for an undeclared
-/// capability.
+/// This aggregate predates the additive runnable-core profile and remains an
+/// equivalence/control convenience for the in-memory and `PostgreSQL`
+/// reference adapters. Runnable-core execution evidence is invoked separately
+/// through [`run_runnable_core_repository_contract`].
+///
+/// This aggregate is not the minimum portable adapter contract and must not be
+/// used to infer runnable-core status, support, or an undeclared capability.
 ///
 /// # Errors
 ///
