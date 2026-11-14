@@ -284,6 +284,53 @@ impl MysqlUnitOfWork<'_> {
         self.connection.as_mut().ok_or(RepositoryError::Unavailable)
     }
 
+    async fn ensure_core_definition(
+        &mut self,
+        job_name: &JobName,
+        definition: &DefinitionIdentity,
+    ) -> Result<u64, RepositoryError> {
+        let manifest = std::str::from_utf8(definition.canonical_manifest())
+            .map_err(|_| RepositoryError::Unavailable)?;
+        let created_ms = system_time_millis(self.repository.clock.now())?;
+        let inserted = sqlx::query(
+            "INSERT INTO ob_core_job_definition              (job_name, definition_revision, manifest_format, manifest_digest, manifest, created_ms)              VALUES (?, ?, ?, ?, ?, ?)",
+        )
+        .bind(job_name.as_str())
+        .bind(definition.revision().as_str())
+        .bind(i32::from(definition.manifest_format()))
+        .bind(&definition.manifest_digest()[..])
+        .bind(manifest)
+        .bind(created_ms)
+        .execute(&mut **self.connection()?)
+        .await;
+
+        match inserted {
+            Ok(result) => Ok(result.last_insert_id()),
+            Err(error) if is_duplicate_key(&error) => {
+                let row = sqlx::query(
+                    "SELECT id, manifest_digest FROM ob_core_job_definition                      WHERE job_name = ? AND definition_revision = ?",
+                )
+                .bind(job_name.as_str())
+                .bind(definition.revision().as_str())
+                .fetch_one(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+                let digest = row
+                    .try_get::<Vec<u8>, _>("manifest_digest")
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                if digest.as_slice() != definition.manifest_digest() {
+                    return Err(RepositoryError::DefinitionDrift {
+                        job_name: job_name.clone(),
+                        revision: definition.revision().clone(),
+                    });
+                }
+                row.try_get::<u64, _>("id")
+                    .map_err(|_| RepositoryError::Unavailable)
+            }
+            Err(_) => Err(RepositoryError::Unavailable),
+        }
+    }
+
     async fn job_execution(
         &mut self,
         id: JobExecutionId,
@@ -535,24 +582,7 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
                     actual: actual.clone(),
                 });
             }
-
-            let prior_revision_digest = sqlx::query_scalar::<_, Vec<u8>>(
-                "SELECT execution.manifest_digest                  FROM ob_job_execution execution                  JOIN ob_job_instance instance ON instance.id = execution.job_instance_id                  WHERE instance.job_name = ? AND execution.definition_revision = ?                    AND execution.manifest_digest IS NOT NULL                  ORDER BY execution.id DESC LIMIT 1",
-            )
-            .bind(job_name.as_str())
-            .bind(definition.revision().as_str())
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            if prior_revision_digest
-                .as_deref()
-                .is_some_and(|digest| digest != definition.manifest_digest())
-            {
-                return Err(RepositoryError::DefinitionDrift {
-                    job_name,
-                    revision: definition.revision().clone(),
-                });
-            }
+            let definition_id = self.ensure_core_definition(&job_name, definition).await?;
 
             let row = sqlx::query(AssertSqlSafe(job_execution_select(
                 "WHERE execution.job_instance_id = ? ORDER BY execution.attempt DESC LIMIT 1",
@@ -592,7 +622,7 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
                 }
 
                 let previous_digest = sqlx::query_scalar::<_, Option<Vec<u8>>>(
-                    "SELECT manifest_digest FROM ob_job_execution WHERE id = ?",
+                    "SELECT definition.manifest_digest                      FROM ob_job_execution execution                      LEFT JOIN ob_core_job_definition definition                        ON definition.id = execution.definition_id                      WHERE execution.id = ?",
                 )
                 .bind(latest.id().get())
                 .fetch_one(&mut **self.connection()?)
@@ -608,19 +638,14 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
                 }
             }
 
-            let manifest = std::str::from_utf8(definition.canonical_manifest())
-                .map_err(|_| RepositoryError::Unavailable)?;
             let created_at = self.repository.clock.now();
             let created_ms = system_time_millis(created_at)?;
             let result = sqlx::query(
-                "INSERT INTO ob_job_execution                  (job_instance_id, attempt, definition_revision, manifest_format,                   manifest_digest, manifest, status, exit_code, created_ms, updated_ms, version)                  VALUES (?, ?, ?, ?, ?, ?, 'STARTING', 'UNKNOWN', ?, ?, 0)",
+                "INSERT INTO ob_job_execution                  (job_instance_id, definition_id, attempt, status, exit_code,                   created_ms, updated_ms, version)                  VALUES (?, ?, ?, 'STARTING', 'UNKNOWN', ?, ?, 0)",
             )
             .bind(job_instance_id.get())
+            .bind(definition_id)
             .bind(attempt)
-            .bind(definition.revision().as_str())
-            .bind(i32::from(definition.manifest_format()))
-            .bind(&definition.manifest_digest()[..])
-            .bind(manifest)
             .bind(created_ms)
             .bind(created_ms)
             .execute(&mut **self.connection()?)
@@ -986,7 +1011,7 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
     ) -> BoxFuture<'a, Result<FlowDecision, RepositoryError>> {
         Box::pin(async move {
             let row = sqlx::query(
-                "SELECT manifest_digest, manifest FROM ob_job_execution WHERE id = ?",
+                "SELECT definition.manifest_digest, definition.manifest                  FROM ob_job_execution execution                  JOIN ob_core_job_definition definition ON definition.id = execution.definition_id                  WHERE execution.id = ?",
             )
             .bind(request.job_execution_id().get())
             .fetch_optional(&mut **self.connection()?)
