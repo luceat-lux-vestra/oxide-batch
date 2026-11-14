@@ -86,7 +86,7 @@ where
 /// contract: an ordinary one-step tasklet [`FlowLauncher`] must execute and
 /// restart while the repository advertises zero optional capabilities. The
 /// runner masks optional capability declarations from the concrete reference
-/// adapter so a passing result cannot accidentally depend on PostgreSQL- or
+/// adapter so a passing result cannot accidentally depend on `PostgreSQL`- or
 /// in-memory-only capability flags.
 ///
 /// The profile composes [`run_core_repository_contract`] and additionally
