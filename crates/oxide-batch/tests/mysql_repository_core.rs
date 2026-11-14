@@ -1,4 +1,4 @@
-//! Core repository certification for the `SQLx` `MySQL`-protocol adapter family.
+//! Runnable-core repository certification for the `SQLx` `MySQL`-protocol adapter family.
 
 #![cfg(feature = "mysql")]
 
@@ -6,22 +6,10 @@
 #[path = "contract/mod.rs"]
 mod contract;
 
-use std::error::Error;
-use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
-
-use contract::run_core_repository_contract;
-use oxide_batch::{Clock, MysqlConfig, MysqlJobRepository, MysqlMigrator, RepositoryError};
+use contract::run_runnable_core_repository_contract;
+use oxide_batch::{MysqlConfig, MysqlJobRepository, MysqlMigrator, RepositoryError};
 use sqlx::mysql::MySqlPoolOptions;
-
-#[derive(Clone, Copy)]
-struct FixedClock(SystemTime);
-
-impl Clock for FixedClock {
-    fn now(&self) -> SystemTime {
-        self.0
-    }
-}
+use std::error::Error;
 
 fn runtime_url() -> Option<String> {
     std::env::var("OXIDEBATCH_MYSQL_TEST_URL").ok()
@@ -40,6 +28,23 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
         .connect(url)
         .await?;
     sqlx::query(
+        "UPDATE ob_flow_decision decision \
+         JOIN ob_job_execution execution ON execution.id = decision.job_execution_id \
+         JOIN ob_job_instance instance ON instance.id = execution.job_instance_id \
+         SET decision.reused_decision_id = NULL \
+         WHERE instance.job_name = 'repository_contract_job'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "DELETE decision FROM ob_flow_decision decision \
+         JOIN ob_job_execution execution ON execution.id = decision.job_execution_id \
+         JOIN ob_job_instance instance ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = 'repository_contract_job'",
+    )
+    .execute(&pool)
+    .await?;
+    sqlx::query(
         "DELETE step FROM ob_step_execution step \
          JOIN ob_job_execution execution ON execution.id = step.job_execution_id \
          JOIN ob_job_instance instance ON instance.id = execution.job_instance_id \
@@ -55,6 +60,9 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
     .execute(&pool)
     .await?;
     sqlx::query("DELETE FROM ob_job_instance WHERE job_name = 'repository_contract_job'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM ob_core_job_definition WHERE job_name = 'repository_contract_job'")
         .execute(&pool)
         .await?;
     pool.close().await;
@@ -84,7 +92,8 @@ fn migration_is_idempotent_for_mysql_protocol_family() -> Result<(), Box<dyn Err
 }
 
 #[test]
-fn shared_core_repository_contract_passes_on_mysql_protocol_family() -> Result<(), Box<dyn Error>> {
+fn runnable_core_repository_contract_passes_on_mysql_protocol_family() -> Result<(), Box<dyn Error>>
+{
     let Some(url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_MYSQL_TEST_URL is not set");
         return Ok(());
@@ -95,7 +104,7 @@ fn shared_core_repository_contract_passes_on_mysql_protocol_family() -> Result<(
     runtime.block_on(async {
         let config = MysqlConfig::new(url.clone())?;
         MysqlMigrator::migrate(&config).await?;
-        run_core_repository_contract(backend_name(), || {
+        run_runnable_core_repository_contract(backend_name(), |clock| {
             let url = url.clone();
             async move {
                 remove_contract_rows(&url)
@@ -103,7 +112,7 @@ fn shared_core_repository_contract_passes_on_mysql_protocol_family() -> Result<(
                     .map_err(|_| RepositoryError::Unavailable)?;
                 MysqlJobRepository::connect(
                     MysqlConfig::new(url).map_err(|_| RepositoryError::Unavailable)?,
-                    Arc::new(FixedClock(UNIX_EPOCH)),
+                    clock,
                 )
                 .await
             }
