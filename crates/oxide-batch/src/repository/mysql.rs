@@ -1133,13 +1133,12 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
         kind: FlowTransitionKind,
     ) -> BoxFuture<'a, Result<Option<FlowDecision>, RepositoryError>> {
         Box::pin(async move {
-            let exists = sqlx::query_scalar::<_, u64>(
-                "SELECT id FROM ob_job_instance WHERE id = ?",
-            )
-            .bind(job_instance_id.get())
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            let exists =
+                sqlx::query_scalar::<_, u64>("SELECT id FROM ob_job_instance WHERE id = ?")
+                    .bind(job_instance_id.get())
+                    .fetch_optional(&mut **self.connection()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
             if exists.is_none() {
                 return Err(RepositoryError::JobInstanceNotFound {
                     id: job_instance_id,
