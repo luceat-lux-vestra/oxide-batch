@@ -1,11 +1,20 @@
-ALTER TABLE ob_job_execution
-    ADD COLUMN definition_revision VARCHAR(128) NULL,
-    ADD COLUMN manifest_format SMALLINT UNSIGNED NULL,
-    ADD COLUMN manifest_digest BINARY(32) NULL,
-    ADD COLUMN manifest LONGTEXT NULL;
+CREATE TABLE ob_core_job_definition (
+    id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
+    job_name VARCHAR(255) NOT NULL,
+    definition_revision VARCHAR(128) NOT NULL,
+    manifest_format SMALLINT UNSIGNED NOT NULL,
+    manifest_digest BINARY(32) NOT NULL,
+    manifest LONGTEXT NOT NULL,
+    created_ms BIGINT NOT NULL,
+    PRIMARY KEY (id),
+    UNIQUE KEY uq_ob_core_definition_revision (job_name, definition_revision),
+    KEY ix_ob_core_definition_manifest (job_name, manifest_digest)
+) ENGINE = InnoDB;
 
-CREATE INDEX ix_ob_job_execution_definition
-    ON ob_job_execution (definition_revision, manifest_digest);
+ALTER TABLE ob_job_execution
+    ADD COLUMN definition_id BIGINT UNSIGNED NULL,
+    ADD CONSTRAINT fk_ob_job_execution_core_definition
+        FOREIGN KEY (definition_id) REFERENCES ob_core_job_definition(id);
 
 ALTER TABLE ob_step_execution
     ADD COLUMN step_logical_id VARCHAR(128) NULL;
