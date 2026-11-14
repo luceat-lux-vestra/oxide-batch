@@ -543,8 +543,14 @@ where
     )
     .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
-        first_job.compiled_plan().definition_identity().manifest_digest()
-            == second_job.compiled_plan().definition_identity().manifest_digest()
+        first_job
+            .compiled_plan()
+            .definition_identity()
+            .manifest_digest()
+            == second_job
+                .compiled_plan()
+                .definition_identity()
+                .manifest_digest()
             && first_job.compiled_plan().definition_identity()
                 != second_job.compiled_plan().definition_identity(),
         backend,
