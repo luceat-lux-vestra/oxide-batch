@@ -924,7 +924,7 @@ impl JobRepository for PostgresJobRepository {
         self.config.pool_size
     }
 
-    /// Schema 3 provides every capability this milestone defines. The pool
+    /// The current schema provides every capability declared below. The pool
     /// size above is a throughput setting and is deliberately absent here:
     /// capabilities describe what the deployment can do, not how fast.
     fn descriptor(&self) -> RepositoryDescriptor {

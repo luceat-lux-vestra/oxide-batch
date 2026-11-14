@@ -27,12 +27,26 @@ fixtures (embedded and, behind the `postgres` feature, `PostgreSQL`).
 
 The `certification` module is a contract test kit, not a support badge. Its
 runners are async and executor-neutral: the consuming adapter test chooses and
-owns its executor. The portable core repository contract is separate from optional definition,
-partition, explorer, operator/control, and retention contract groups. The
-`run_full_*` aggregates exist for reference adapters that claim all represented
-capabilities; they are not the minimum portable contract.
+owns its executor.
 
-An adapter that passes every applicable contract group still needs the versioned
-migration, crash/unknown-outcome, resource-bound, security, and capability-specific
-evidence required by the OxideBatch support matrix before it can be advertised
-as supported.
+Repository certification has two additive portable levels while M8 adapters
+migrate:
+
+- `run_core_repository_contract` is the primitive/bootstrap subset for
+  identity, execution graph, lifecycle CAS, completion guards, and rollback;
+- `run_runnable_core_repository_contract` composes that subset and proves an
+  ordinary one-step tasklet `FlowLauncher`, exact definition-bound strict
+  restart, logical flow-step/start-limit authority, and durable decision reuse
+  while optional capability declarations are masked to zero.
+
+Optional definition-registry, partition, explorer, operator/control, and
+retention contract groups remain separate. The `run_full_*` aggregates exist
+for reference adapters that claim all represented capabilities; they are not
+the minimum portable contract.
+
+A runnable-core pass still does not certify checkpoint/context payload restart
+or operational support. An adapter that passes every applicable contract group
+also needs the versioned migration, crash/unknown-outcome, resource-bound,
+security, backup/restore, stateful restart, and capability-specific evidence
+required by the OxideBatch support matrix before it can be advertised as
+supported.
