@@ -33,16 +33,16 @@ use oxide_batch::{
     BatchStatus, BoxFuture, ComponentRevision, DefinitionIdentity, DefinitionNodeUpgrade,
     DefinitionRevision, DefinitionStateKind, DefinitionStateTransform,
     DefinitionStateTransformError, DefinitionStateTransformId, DefinitionStateTransformer,
-    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey,
-    DefinitionUpgradeRevision, DomainError, ExecutionContext, ExecutionCounts, ExecutionVersion,
-    ExitStatus, FailureCategory, FailureId, FailureSummary, FlowExecutionOutcome, FlowFailure,
-    FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransitionKind,
-    JobInstanceKey, JobName, JobParameter, JobParameters, JobRepository, LifecycleError,
-    LifecycleTransition, NodeId, ParameterName, ParameterRole, ParameterValue, PartitionKey,
-    PartitionPlanEntry, RepositoryCapability, RepositoryDescriptor, RepositoryError,
-    RepositoryUnitOfWork, SequentialIdGenerator, StartControls, StartLimit, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepComponents, StepName, StepNode, StopSource, Tasklet,
-    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    DefinitionUpgrade, DefinitionUpgradeExecution, DefinitionUpgradeKey, DefinitionUpgradeRevision,
+    DomainError, ExecutionContext, ExecutionCounts, ExecutionVersion, ExitStatus, FailureCategory,
+    FailureId, FailureSummary, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob, FlowLauncher,
+    FlowNode, FlowRuntimeError, FlowTarget, FlowTransitionKind, JobInstanceKey, JobName,
+    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition, NodeId,
+    ParameterName, ParameterRole, ParameterValue, PartitionKey, PartitionPlanEntry,
+    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    SequentialIdGenerator, StartControls, StartLimit, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
+    TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 /// Runs the primitive/bootstrap portable repository contract.
@@ -408,7 +408,9 @@ where
         .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
         attempts.len() == 2
-            && latest.as_ref().map(|state| state.execution().job_execution_id())
+            && latest
+                .as_ref()
+                .map(|state| state.execution().job_execution_id())
                 == Some(second.job_execution().id()),
         backend,
         CASE,
@@ -786,8 +788,7 @@ where
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
-        matches!(first.outcome(), FlowExecutionOutcome::Failed(_))
-            && first.decisions().len() == 1,
+        matches!(first.outcome(), FlowExecutionOutcome::Failed(_)) && first.decisions().len() == 1,
         backend,
         CASE,
         "fixture did not commit one completed-step decision before terminal failure",
@@ -829,8 +830,7 @@ where
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
-        durable.len() == 1
-            && durable[0].reused_decision_id() == Some(first.decisions()[0].id()),
+        durable.len() == 1 && durable[0].reused_decision_id() == Some(first.decisions()[0].id()),
         backend,
         CASE,
         "reused decision was not durably readable from the restart execution",

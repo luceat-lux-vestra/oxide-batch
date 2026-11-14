@@ -384,8 +384,7 @@ fn definition_registry_concurrent_artifact_binding_has_one_durable_winner()
 }
 
 #[test]
-fn shared_runnable_core_repository_contract_passes_on_postgres()
--> Result<(), Box<dyn Error>> {
+fn shared_runnable_core_repository_contract_passes_on_postgres() -> Result<(), Box<dyn Error>> {
     let Some(url) = runtime_url() else {
         eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
         return Ok(());

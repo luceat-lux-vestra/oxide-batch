@@ -182,8 +182,8 @@ fn shared_repository_contract_runs_against_a_test_adapter() -> Result<(), Box<dy
 }
 
 #[test]
-fn shared_runnable_core_contract_runs_against_the_in_memory_reference()
--> Result<(), Box<dyn Error>> {
+fn shared_runnable_core_contract_runs_against_the_in_memory_reference() -> Result<(), Box<dyn Error>>
+{
     let first_id = NonZeroU64::new(10_000).ok_or(IdSequenceError::Exhausted)?;
     futures_executor::block_on(run_runnable_core_repository_contract(
         "in-memory-runnable-core",
