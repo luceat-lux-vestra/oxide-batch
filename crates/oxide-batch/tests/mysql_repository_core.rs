@@ -1,4 +1,4 @@
-//! Core repository certification for the `SQLx` `MySQL`-protocol adapter family.
+//! Runnable-core repository certification for the `SQLx` `MySQL`-protocol adapter family.
 
 #![cfg(feature = "mysql")]
 
@@ -60,6 +60,9 @@ async fn remove_contract_rows(url: &str) -> Result<(), sqlx::Error> {
     .execute(&pool)
     .await?;
     sqlx::query("DELETE FROM ob_job_instance WHERE job_name = 'repository_contract_job'")
+        .execute(&pool)
+        .await?;
+    sqlx::query("DELETE FROM ob_core_job_definition WHERE job_name = 'repository_contract_job'")
         .execute(&pool)
         .await?;
     pool.close().await;
