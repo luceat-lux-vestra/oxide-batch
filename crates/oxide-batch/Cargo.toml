@@ -23,8 +23,10 @@ default = []
 mysql = ["dep:sqlx", "sqlx/mysql"]
 postgres = ["dep:sqlx", "sqlx/postgres"]
 sqlite = ["dep:sqlx", "sqlx/sqlite-unbundled"]
+sqlserver = ["dep:bb8", "dep:tiberius", "dep:tokio-util", "tokio/net"]
 
 [dependencies]
+bb8 = { version = "0.9.1", default-features = false, optional = true }
 csv = "1.4.0"
 csv-core = "0.1.13"
 futures-util = "0.3.31"
@@ -40,7 +42,9 @@ sqlx = { version = "0.9.0", default-features = false, optional = true, features 
     "runtime-tokio",
     "tls-rustls-ring-native-roots",
 ] }
+tiberius = { version = "0.13.0", default-features = false, optional = true, features = ["rustls", "tds80"] }
 tokio = { version = "1.53.1", features = ["macros", "rt", "sync", "time"] }
+tokio-util = { version = "0.7", optional = true, features = ["compat"] }
 
 [dev-dependencies]
 futures-executor = "0.3.31"
