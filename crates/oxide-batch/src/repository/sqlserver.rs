@@ -685,11 +685,8 @@ impl SqlServerMigrator {
             .await;
 
             if let Err(error) = migration_result {
-                let _ = execute_simple_query_raw(
-                    &mut connection,
-                    "IF XACT_STATE() <> 0 ROLLBACK",
-                )
-                .await;
+                let _ = execute_simple_query_raw(&mut connection, "IF XACT_STATE() <> 0 ROLLBACK")
+                    .await;
                 connection.broken = true;
                 return Err(map_driver_error(&mut connection, error));
             }
@@ -840,10 +837,8 @@ struct SqlServerUnitOfWork<'repository> {
 impl<'repository> SqlServerUnitOfWork<'repository> {
     fn connection<'unit>(
         &'unit mut self,
-    ) -> Result<
-        &'unit mut PooledConnection<'repository, SqlServerConnectionManager>,
-        RepositoryError,
-    > {
+    ) -> Result<&'unit mut PooledConnection<'repository, SqlServerConnectionManager>, RepositoryError>
+    {
         self.connection.as_mut().ok_or(RepositoryError::Unavailable)
     }
 
@@ -1949,12 +1944,9 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
     {
         Box::pin(async move {
             let mut connection = self.connection.take().ok_or(RepositoryError::Unavailable)?;
-            if execute_simple_query_raw(
-                &mut connection,
-                "IF XACT_STATE() <> 0 ROLLBACK",
-            )
-            .await
-            .is_err()
+            if execute_simple_query_raw(&mut connection, "IF XACT_STATE() <> 0 ROLLBACK")
+                .await
+                .is_err()
             {
                 connection.broken = true;
                 return Err(RepositoryError::Unavailable);

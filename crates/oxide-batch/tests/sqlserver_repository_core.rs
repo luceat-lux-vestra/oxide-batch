@@ -254,7 +254,7 @@ fn sql_server_descriptor_declares_zero_optional_capabilities() -> Result<(), Box
         let config = settings.repository_config()?;
         SqlServerMigrator::migrate(&config).await?;
         let repository = SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await?;
-        assert!(repository.descriptor().capabilities().is_empty());
+        assert_eq!(repository.descriptor().capabilities().len(), 0);
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
