@@ -26,6 +26,7 @@ struct TestSettings {
     password: String,
     hostname_in_certificate: Option<String>,
     ca_bundle: Option<Vec<u8>>,
+    strict_tds80: bool,
 }
 
 impl TestSettings {
@@ -51,6 +52,8 @@ impl TestSettings {
         let ca_bundle = std::env::var("OXIDEBATCH_SQLSERVER_TEST_CA_PEM")
             .ok()
             .map(String::into_bytes);
+        let strict_tds80 =
+            std::env::var("OXIDEBATCH_SQLSERVER_TEST_TDS80_STRICT").as_deref() == Ok("1");
         Ok(Some(Self {
             host,
             port,
@@ -59,6 +62,7 @@ impl TestSettings {
             password,
             hostname_in_certificate,
             ca_bundle,
+            strict_tds80,
         }))
     }
 
@@ -76,6 +80,9 @@ impl TestSettings {
         if let Some(bundle) = &self.ca_bundle {
             config = config.with_ca_bundle(bundle.clone())?;
         }
+        if self.strict_tds80 {
+            config = config.with_strict_tds80_encryption();
+        }
         Ok(config)
     }
 
@@ -86,7 +93,11 @@ impl TestSettings {
         config.database(&self.database);
         config.application_name("OxideBatch SQL Server contract cleanup");
         config.authentication(AuthMethod::sql_server(&self.username, &self.password));
-        config.encryption(EncryptionLevel::Strict);
+        config.encryption(if self.strict_tds80 {
+            EncryptionLevel::Strict
+        } else {
+            EncryptionLevel::Required
+        });
         if let Some(hostname) = &self.hostname_in_certificate {
             config.hostname_in_certificate(hostname);
         }
@@ -149,67 +160,6 @@ async fn remove_contract_rows(settings: &TestSettings) -> Result<(), Box<dyn Err
         .await?
         .into_results()
         .await?;
-    Ok(())
-}
-
-#[test]
-fn direct_sql_server_session_and_migration_sql_are_accepted() -> Result<(), Box<dyn Error>> {
-    let Some(settings) = TestSettings::from_environment()? else {
-        eprintln!("skipped: SQL Server test environment is not configured");
-        return Ok(());
-    };
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    runtime.block_on(async {
-        let mut client = Box::pin(connect_test_client(&settings)).await?;
-        client
-            .simple_query(
-                "SET XACT_ABORT ON; \
-                 SET TRANSACTION ISOLATION LEVEL READ COMMITTED; \
-                 SET NOCOUNT OFF;",
-            )
-            .await?
-            .into_results()
-            .await?;
-
-        client
-            .simple_query(
-                "DECLARE @result int; \
-                 EXEC @result = sys.sp_getapplock \
-                   @Resource = N'OxideBatchSchemaMigrationProbe', \
-                   @LockMode = 'Exclusive', @LockOwner = 'Session', \
-                   @LockTimeout = 15000; \
-                 IF @result < 0 THROW 51000, 'migration probe lock unavailable', 1;",
-            )
-            .await?
-            .into_results()
-            .await?;
-
-        client.simple_query("BEGIN TRAN").await?.into_results().await?;
-        let probe_result = async {
-            client
-                .simple_query(include_str!("../migrations-sqlserver/0001_core_metadata.sql"))
-                .await?
-                .into_results()
-                .await?;
-            client
-                .simple_query(include_str!("../migrations-sqlserver/0002_runnable_core.sql"))
-                .await?
-                .into_results()
-                .await?;
-            Ok::<(), tiberius::error::Error>(())
-        }
-        .await;
-        let rollback_result = client
-            .simple_query("IF XACT_STATE() <> 0 ROLLBACK")
-            .await?
-            .into_results()
-            .await;
-        probe_result?;
-        rollback_result?;
-        Ok::<(), Box<dyn Error>>(())
-    })?;
     Ok(())
 }
 

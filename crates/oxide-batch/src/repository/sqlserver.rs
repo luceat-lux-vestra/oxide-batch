@@ -52,6 +52,7 @@ pub struct SqlServerConfig {
     password: String,
     hostname_in_certificate: Option<String>,
     ca_bundle: Option<Vec<u8>>,
+    strict_tds80: bool,
     pool_size: u32,
     acquire_timeout: Duration,
     connect_timeout: Duration,
@@ -84,6 +85,7 @@ impl SqlServerConfig {
             password: password.into(),
             hostname_in_certificate: None,
             ca_bundle: None,
+            strict_tds80: false,
             pool_size: DEFAULT_POOL_SIZE,
             acquire_timeout: DEFAULT_ACQUIRE_TIMEOUT,
             connect_timeout: DEFAULT_CONNECT_TIMEOUT,
@@ -143,6 +145,15 @@ impl SqlServerConfig {
         self.hostname_in_certificate = Some(hostname);
         self.validate()?;
         Ok(self)
+    }
+
+    /// Uses TDS 8.0 strict encryption instead of compatible required TLS.
+    ///
+    /// Certificate-chain and hostname validation remain mandatory in either mode.
+    #[must_use]
+    pub fn with_strict_tds80_encryption(mut self) -> Self {
+        self.strict_tds80 = true;
+        self
     }
 
     /// Sets the finite pool-acquire timeout.
@@ -248,7 +259,11 @@ impl SqlServerConfig {
         config.database(&self.database);
         config.application_name("OxideBatch");
         config.authentication(AuthMethod::sql_server(&self.username, &self.password));
-        config.encryption(EncryptionLevel::Strict);
+        config.encryption(if self.strict_tds80 {
+            EncryptionLevel::Strict
+        } else {
+            EncryptionLevel::Required
+        });
         config.handshake_timeout(Some(self.connect_timeout));
         config.command_timeout(Some(self.command_timeout));
         if let Some(hostname) = &self.hostname_in_certificate {
@@ -276,6 +291,7 @@ impl fmt::Debug for SqlServerConfig {
             .field("password", &"<redacted>")
             .field("hostname_in_certificate", &"<redacted>")
             .field("ca_bundle", &self.ca_bundle.as_ref().map(|_| "<redacted>"))
+            .field("strict_tds80", &self.strict_tds80)
             .field("pool_size", &self.pool_size)
             .field("acquire_timeout", &self.acquire_timeout)
             .field("connect_timeout", &self.connect_timeout)

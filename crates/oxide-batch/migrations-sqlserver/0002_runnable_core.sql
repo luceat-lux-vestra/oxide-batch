@@ -31,15 +31,21 @@ BEGIN
     ALTER TABLE dbo.ob_step_execution
         ADD step_logical_id NVARCHAR(128) COLLATE Latin1_General_100_BIN2 NULL;
 
-    UPDATE dbo.ob_step_execution
-        SET step_logical_id = step_name
-        WHERE step_logical_id IS NULL;
+    EXEC(N'
+        UPDATE dbo.ob_step_execution
+            SET step_logical_id = step_name
+            WHERE step_logical_id IS NULL;
+    ');
 
-    ALTER TABLE dbo.ob_step_execution
-        ALTER COLUMN step_logical_id NVARCHAR(128) COLLATE Latin1_General_100_BIN2 NOT NULL;
+    EXEC(N'
+        ALTER TABLE dbo.ob_step_execution
+            ALTER COLUMN step_logical_id NVARCHAR(128) COLLATE Latin1_General_100_BIN2 NOT NULL;
+    ');
 
-    CREATE INDEX ix_ob_step_execution_logical
-        ON dbo.ob_step_execution(step_logical_id, job_execution_id, id);
+    EXEC(N'
+        CREATE INDEX ix_ob_step_execution_logical
+            ON dbo.ob_step_execution(step_logical_id, job_execution_id, id);
+    ');
 END;
 
 IF OBJECT_ID(N'dbo.ob_flow_decision', N'U') IS NULL

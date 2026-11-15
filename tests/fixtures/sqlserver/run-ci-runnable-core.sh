@@ -4,15 +4,18 @@ set -euo pipefail
 image="${OXIDEBATCH_SQLSERVER_IMAGE:?pinned SQL Server image is required}"
 lane="${OXIDEBATCH_SQLSERVER_LANE:?SQL Server lane is required}"
 expected_version="${OXIDEBATCH_SQLSERVER_EXPECTED_PRODUCT_VERSION:?expected ProductVersion is required}"
+encryption="${OXIDEBATCH_SQLSERVER_ENCRYPTION:?SQL Server encryption mode is required}"
 
 case "$lane" in
   2022-cu28)
     expected_image='mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f'
     expected_version_literal='16.0.4325.4'
+    expected_encryption='required'
     ;;
   2025-cu11)
     expected_image='mcr.microsoft.com/mssql/server:2025-CU11-ubuntu-24.04@sha256:05644dad1266ca3d445d1e8f6d2ebb9a6a03df9a39376e0f7b48917356dca9d9'
     expected_version_literal='17.0.5065.9'
+    expected_encryption='strict'
     ;;
   *)
     echo "unsupported SQL Server certification lane: $lane" >&2
@@ -22,6 +25,7 @@ esac
 
 test "$image" = "$expected_image"
 test "$expected_version" = "$expected_version_literal"
+test "$encryption" = "$expected_encryption"
 
 container="oxide-batch-sqlserver-${lane//[^a-zA-Z0-9_.-]/-}"
 server_name="sqlserver-${lane}.oxide-batch.test"
@@ -70,7 +74,7 @@ docker pull "$image"
 pulled_digest="$(docker image inspect "$image" --format '{{join .RepoDigests "\n"}}' | sed -n 's/.*@\(sha256:[0-9a-f]\{64\}\)$/\1/p' | head -n 1)"
 expected_digest="${image##*@}"
 test "$pulled_digest" = "$expected_digest"
-echo "SQLSERVER_PIN lane=$lane digest=$pulled_digest expected_product_version=$expected_version"
+echo "SQLSERVER_PIN lane=$lane digest=$pulled_digest expected_product_version=$expected_version encryption=$encryption"
 
 docker run --detach \
   --name "$container" \
@@ -153,6 +157,11 @@ export OXIDEBATCH_SQLSERVER_TEST_PASSWORD="$sa_password"
 export OXIDEBATCH_SQLSERVER_TEST_CERT_HOSTNAME="$server_name"
 export OXIDEBATCH_SQLSERVER_TEST_CA_PEM
 OXIDEBATCH_SQLSERVER_TEST_CA_PEM="$(cat "$workdir/ca.pem")"
+if [ "$encryption" = strict ]; then
+  export OXIDEBATCH_SQLSERVER_TEST_TDS80_STRICT=1
+else
+  unset OXIDEBATCH_SQLSERVER_TEST_TDS80_STRICT || true
+fi
 
 cargo test -p oxide-batch --features sqlserver \
   --test sqlserver_repository_core \
