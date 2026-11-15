@@ -217,7 +217,6 @@ async fn remove_contract_rows(settings: &TestSettings) -> Result<(), Box<dyn Err
     Ok(())
 }
 
-
 async fn remove_contention_rows(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
     let mut client = Box::pin(connect_test_client(settings)).await?;
     execute_test_query(
@@ -506,44 +505,55 @@ fn deadlock_1205_maps_to_concurrent_modification() -> Result<(), Box<dyn Error>>
         .await?;
 
         let mut seed = repository.begin().await?;
-        seed.select_or_create_job_instance(&key_a).await?;
-        seed.select_or_create_job_instance(&key_b).await?;
+        let instance_a = seed
+            .select_or_create_job_instance(&key_a)
+            .await?
+            .instance()
+            .id()
+            .get();
+        let instance_b = seed
+            .select_or_create_job_instance(&key_b)
+            .await?
+            .instance()
+            .id()
+            .get();
         seed.commit().await?;
 
-        // First prove that this exact lock cycle produces SQL Server error 1205.
+        // First prove SQL Server 1205 with an exact two-row UPDATE cycle. Using
+        // primary-key predicates avoids range/page ambiguity from the previous
+        // SELECT/XLOCK choreography.
         let mut raw_a = Box::pin(connect_test_client(&settings)).await?;
         let mut raw_b = Box::pin(connect_test_client(&settings)).await?;
-        execute_test_query(
-            &mut raw_a,
-            "BEGIN TRAN; \
-             SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
-             WHERE job_name = N'repository_contention_deadlock_a'",
-        )
-        .await?;
-        execute_test_query(
-            &mut raw_b,
+        let raw_a_first = format!(
+            "SET DEADLOCK_PRIORITY HIGH; BEGIN TRAN; \
+             UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_a}"
+        );
+        let raw_b_first = format!(
             "SET DEADLOCK_PRIORITY LOW; BEGIN TRAN; \
-             SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
-             WHERE job_name = N'repository_contention_deadlock_b'",
-        )
-        .await?;
+             UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_b}"
+        );
+        execute_test_query(&mut raw_a, &raw_a_first).await?;
+        execute_test_query(&mut raw_b, &raw_b_first).await?;
 
-        let (raw_a_wait, raw_b_wait) = tokio::time::timeout(Duration::from_secs(20), async {
-            tokio::join!(
-                execute_test_query(
-                    &mut raw_a,
-                    "SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
-                     WHERE job_name = N'repository_contention_deadlock_b'",
-                ),
-                execute_test_query(
-                    &mut raw_b,
-                    "SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
-                     WHERE job_name = N'repository_contention_deadlock_a'",
+        let raw_a_second = format!(
+            "UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_b}"
+        );
+        let raw_b_second = format!(
+            "UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_a}"
+        );
+        let (raw_a_wait, raw_b_wait) =
+            tokio::time::timeout(Duration::from_secs(15), async {
+                tokio::join!(
+                    execute_test_query(&mut raw_a, &raw_a_second),
+                    execute_test_query(&mut raw_b, &raw_b_second)
                 )
-            )
-        })
-        .await
-        .map_err(|_| std::io::Error::other("raw SQL Server deadlock probe timed out"))?;
+            })
+            .await
+            .map_err(|_| {
+                std::io::Error::other(
+                    "phase=raw-1205 timed out before SQL Server selected a deadlock victim",
+                )
+            })?;
 
         assert!(raw_a_wait.is_ok());
         assert_eq!(
@@ -555,33 +565,37 @@ fn deadlock_1205_maps_to_concurrent_modification() -> Result<(), Box<dyn Error>>
         execute_test_query(&mut raw_a, "IF XACT_STATE() <> 0 ROLLBACK").await?;
         let _ = execute_test_query(&mut raw_b, "IF XACT_STATE() <> 0 ROLLBACK").await;
 
-        // Then make the repository transaction the lower-priority victim and
-        // prove that adapter error 1205 becomes the typed contention error.
+        // Then make the repository transaction the lower-priority victim. The
+        // UoW keeps the adapter's UPDLOCK/HOLDLOCK on A; a HIGH-priority raw
+        // transaction holds an exact UPDATE lock on B. Each side then requests
+        // the other's row, producing a cycle whose repository side must surface
+        // as the typed contention error.
         let mut unit = repository.begin().await?;
         unit.select_or_create_job_instance(&key_a).await?;
 
         let mut survivor = Box::pin(connect_test_client(&settings)).await?;
-        execute_test_query(
-            &mut survivor,
+        let survivor_first = format!(
             "SET DEADLOCK_PRIORITY HIGH; BEGIN TRAN; \
-             SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
-             WHERE job_name = N'repository_contention_deadlock_b'",
-        )
-        .await?;
+             UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_b}"
+        );
+        execute_test_query(&mut survivor, &survivor_first).await?;
 
+        let survivor_second = format!(
+            "UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_a}"
+        );
         let (survivor_wait, repository_wait) =
-            tokio::time::timeout(Duration::from_secs(20), async {
+            tokio::time::timeout(Duration::from_secs(15), async {
                 tokio::join!(
-                    execute_test_query(
-                        &mut survivor,
-                        "SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
-                         WHERE job_name = N'repository_contention_deadlock_a'",
-                    ),
+                    execute_test_query(&mut survivor, &survivor_second),
                     unit.select_or_create_job_instance(&key_b)
                 )
             })
             .await
-            .map_err(|_| std::io::Error::other("repository deadlock probe timed out"))?;
+            .map_err(|_| {
+                std::io::Error::other(
+                    "phase=repository-victim-1205 timed out before SQL Server selected a deadlock victim",
+                )
+            })?;
 
         assert!(survivor_wait.is_ok());
         assert_eq!(
