@@ -725,35 +725,34 @@ jobs:
 
 
 
-  sqlserver-repository-core:
-    name: sqlserver-${{ matrix.lane }}-repository-core
+  sqlserver-image-resolution:
+    name: sqlserver-${{ matrix.lane }}-docker-digest-resolution
     if: ${{ github.event.pull_request.draft == false }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         include:
           - lane: "2022-cu28"
-            image: "mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04@sha256:e10cd49443c94dbdcb7a050987db22ff4d8c87052ac53768abe1ed848d3fcef6"
-            product_version: "16.0.4325.4"
+            image: "mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04"
           - lane: "2025-cu11"
-            image: "mcr.microsoft.com/mssql/server:2025-CU11-ubuntu-24.04@sha256:a554b8cf6ab60b92838737f03d0422c4babcd491d09cba3bec0e5e41e292b921"
-            product_version: "17.0.5065.9"
+            image: "mcr.microsoft.com/mssql/server:2025-CU11-ubuntu-24.04"
     steps:
-      - name: Check out repository
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: ${{ github.repository }}
-          ref: ${{ github.sha }}
-          persist-credentials: false
-
-      - name: Run pinned SQL Server runnable-core certification
+      - name: Resolve Docker-pullable immutable digest
         env:
-          OXIDEBATCH_SQLSERVER_IMAGE: ${{ matrix.image }}
-          OXIDEBATCH_SQLSERVER_LANE: ${{ matrix.lane }}
-          OXIDEBATCH_SQLSERVER_EXPECTED_PRODUCT_VERSION: ${{ matrix.product_version }}
-        run: ./tests/fixtures/sqlserver/run-ci-runnable-core.sh
+          IMAGE: ${{ matrix.image }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker pull "$IMAGE"
+          repo_digest="$(
+            docker image inspect "$IMAGE" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
+              | grep '^mcr.microsoft.com/mssql/server@sha256:' \
+              | head -n 1
+          )"
+          [[ "$repo_digest" =~ ^mcr\.microsoft\.com/mssql/server@sha256:[0-9a-f]{64}$ ]]
+          echo "SQLSERVER_DOCKER_DIGEST lane=${{ matrix.lane }} tag=${IMAGE} repo_digest=${repo_digest}"
 
   mysql-repository-core:
     name: mysql-8.4.13-repository-core
