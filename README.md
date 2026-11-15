@@ -7,7 +7,7 @@
 
 OxideBatch is a Rust-native batch-processing framework inspired by Spring Batch. It focuses on durable execution state, explicit transaction boundaries, restartability, fault tolerance, and operational evidence rather than treating batch jobs as one-shot background functions.
 
-> **Current release:** `0.6.0` (`v0.6.0`, published 2026-08-31). OxideBatch is still a pre-1.0 project. M6 completes the current item-processing and public test-kit scope, but the project does not claim GA, enterprise readiness, or full Spring Batch parity yet.
+> **M7 release line:** `0.7.0` (`v0.7.0`). OxideBatch is still a pre-1.0 project. M7 adds advanced flow/composition, job/step scope, repeat, definition evolution, and completed launcher/operator/explorer semantics on top of the M6 item-processing/test-kit surface. It does not claim GA, enterprise readiness, full Spring Batch parity, or any M8+ capability.
 
 ## Why OxideBatch
 
@@ -28,14 +28,14 @@ Add the public facade crate:
 
 ```toml
 [dependencies]
-oxide-batch = "0.6.0"
+oxide-batch = "0.7.0"
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
 For PostgreSQL-backed durable metadata:
 
 ```toml
-oxide-batch = { version = "0.6.0", features = ["postgres"] }
+oxide-batch = { version = "0.7.0", features = ["postgres"] }
 ```
 
 `oxide-batch` is the supported application entry point. The internal workspace crates are implementation details and carry no independent stability promise.
@@ -156,15 +156,11 @@ Completed implementation milestones:
 - **M5 — Embedded Core Production Preview** (`0.5.0`)
 - **M6 — Complete Item Processing and User Test Kit** (`0.6.0`)
 
-Active development milestone:
-
-- **M7 — Advanced Flow, Repeat, Scope, and Composition** — exit verification
-  in progress. All bounded implementation owners (#195-#199) are complete;
-  #200 is the sole remaining M7-wide conformance, restart, documentation, and
-  exit-evidence owner. The reconciled M7 ledger remains unreleased candidate
-  evidence: implementation does not by itself create a released `Verified`
-  compatibility claim.
-
+Completed release-line milestone:
+- **M7 — Advanced Flow, Repeat, Scope, and Composition** (`0.7.0`) — accepted
+  exit evidence covers #195-#200. M8 and later portability/integration/scale
+  work are outside this release line. Compatibility-ledger promotion remains
+  a separate governance decision from implementation or publication.
 The detailed exit evidence, compatibility ledger, failure campaigns, and milestone records intentionally live under `docs/` rather than in this landing page.
 
 Start with:
@@ -196,7 +192,7 @@ The shipped `oxide-batch` command is a guarded repository operator, not a standa
 
 OxideBatch separates **implemented** behavior from **verified** behavior. A feature is not promoted to a release-backed compatibility claim merely because code or a test exists; compatibility promotion is governed separately by the project's evidence ledger.
 
-`0.6.0` should therefore be read as a published M6 pre-1.0 release, not as a claim of full Spring Batch compatibility or production GA.
+`0.7.0` should therefore be read as the M7 pre-1.0 release line, not as a claim of full Spring Batch compatibility, M8+ capability, or production GA.
 
 ## Contributing
 
