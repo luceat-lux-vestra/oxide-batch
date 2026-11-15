@@ -6,6 +6,7 @@
 - **Target milestone:** M12
 - **Related decision:** D-002 in the
   [M0 decision register](../product/open-decisions.md)
+- **Priority clarification:** [RFC-0012](0012-native-capability-priority-and-spring-compatibility-precedence.md)
 
 ## Summary
 
