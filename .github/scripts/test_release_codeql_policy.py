@@ -23,9 +23,11 @@ require('cron: "47 18 * * 1"' in codeql and "candidate_sha:" in codeql,
         "weekly/manual CodeQL triggers missing")
 require("CodeQL schedule guard" in codeql and "should_scan=false" in codeql,
         "unchanged-main schedule guard missing")
-require("Not a protected-main ancestor" in codeql
-        and "merge-base --is-ancestor" in codeql,
-        "historical candidate ancestry proof missing")
+require("release_tag:" in codeql
+        and "Check out trusted release source policy" in codeql
+        and "--source-only" in codeql
+        and "RUNNER_TEMP/check_release_codeql.py" in codeql,
+        "trusted main source-authority bridge missing")
 for language in ("actions", "rust"):
     require(f"- language: {language}" in codeql, f"{language} full scan missing")
 require("release-codeql-source-" in codeql and "source-identity.json" in codeql,
@@ -42,6 +44,22 @@ require("queries:" not in codeql,
 for token in ("Dispatched trusted full CodeQL", "Joining active exact-source CodeQL",
               "timed out waiting", "ambiguous active exact-source CodeQL scans"):
     require(token in gate, f"release CodeQL state machine missing {token}")
+
+for token in ("M7_RECOVERY_TAG = \"v0.7.0\"",
+              "M7_RECOVERY_BRANCH = \"release/0.7\"",
+              "M7_RECOVERY_ROOT = \"ca74edb15a56f21515a9121f376f091748afd6ae\"",
+              "M7_RECOVERY_RULESET_NAME = \"Protect M7 recovery release branch\"",
+              "check_m7_recovery_lineage",
+              "check_m7_recovery_ruleset",
+              "--source-only",
+              "inputs[release_tag]"):
+    require(token in gate, f"frozen M7 recovery authority missing {token}")
+require("release_tag:" in codeql and "inputs.release_tag" in codeql,
+        "CodeQL recovery-tag input missing")
+require(codeql.count("python3 \"$RUNNER_TEMP/check_release_codeql.py\"") == 2,
+        "CodeQL must authorize the exact source before and after analysis")
+require("refs/heads/release/0.7" not in codeql,
+        "workflow must delegate frozen recovery lineage policy to the trusted verifier")
 
 require("  codeql-preflight:" in draft and "actions: write" in draft
         and "contents: read" in draft,
