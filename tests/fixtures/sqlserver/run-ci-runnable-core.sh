@@ -24,6 +24,7 @@ test "$image" = "$expected_image"
 test "$expected_version" = "$expected_version_literal"
 
 container="oxide-batch-sqlserver-${lane//[^a-zA-Z0-9_.-]/-}"
+server_name="sqlserver-${lane}.oxide-batch.test"
 workdir="$(mktemp -d)"
 sa_password='OxideBatch!674SqlServer'
 
@@ -49,13 +50,13 @@ openssl req -x509 -new -sha256 -days 2 \
 openssl genrsa -out "$workdir/mssql.key" 2048 >/dev/null 2>&1
 openssl req -new -sha256 \
   -key "$workdir/mssql.key" \
-  -subj '/CN=localhost' \
+  -subj "/CN=$server_name" \
   -out "$workdir/mssql.csr"
-cat >"$workdir/mssql.ext" <<'EOF'
+cat >"$workdir/mssql.ext" <<EOF
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:localhost,IP:127.0.0.1
+subjectAltName=DNS:$server_name
 EOF
 openssl x509 -req -sha256 -days 2 \
   -in "$workdir/mssql.csr" \
@@ -73,6 +74,7 @@ echo "SQLSERVER_PIN lane=$lane digest=$pulled_digest expected_product_version=$e
 
 docker run --detach \
   --name "$container" \
+  --hostname "$server_name" \
   --env ACCEPT_EULA=Y \
   --env MSSQL_PID=Developer \
   --env MSSQL_SA_PASSWORD="$sa_password" \
@@ -115,12 +117,14 @@ wait_for_sqlserver
 docker exec --user 0 "$container" mkdir -p /var/opt/mssql/oxide-batch-tls
 docker cp "$workdir/mssql.pem" "$container:/var/opt/mssql/oxide-batch-tls/mssql.pem"
 docker cp "$workdir/mssql.key" "$container:/var/opt/mssql/oxide-batch-tls/mssql.key"
+docker cp "$workdir/ca.pem" "$container:/usr/local/share/ca-certificates/oxide-batch-sqlserver.crt"
+docker exec --user 0 "$container" update-ca-certificates >/dev/null
 docker exec --user 0 "$container" \
   chown mssql:mssql \
   /var/opt/mssql/oxide-batch-tls/mssql.pem \
   /var/opt/mssql/oxide-batch-tls/mssql.key
 docker exec --user 0 "$container" \
-  chmod 400 \
+  chmod 600 \
   /var/opt/mssql/oxide-batch-tls/mssql.pem \
   /var/opt/mssql/oxide-batch-tls/mssql.key
 
@@ -146,7 +150,7 @@ export OXIDEBATCH_SQLSERVER_TEST_PORT=1433
 export OXIDEBATCH_SQLSERVER_TEST_DATABASE=oxide_batch_repository
 export OXIDEBATCH_SQLSERVER_TEST_USERNAME=sa
 export OXIDEBATCH_SQLSERVER_TEST_PASSWORD="$sa_password"
-export OXIDEBATCH_SQLSERVER_TEST_CERT_HOSTNAME=localhost
+export OXIDEBATCH_SQLSERVER_TEST_CERT_HOSTNAME="$server_name"
 export OXIDEBATCH_SQLSERVER_TEST_CA_PEM
 OXIDEBATCH_SQLSERVER_TEST_CA_PEM="$(cat "$workdir/ca.pem")"
 

@@ -153,6 +153,67 @@ async fn remove_contract_rows(settings: &TestSettings) -> Result<(), Box<dyn Err
 }
 
 #[test]
+fn direct_sql_server_session_and_migration_sql_are_accepted() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment()? else {
+        eprintln!("skipped: SQL Server test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let mut client = Box::pin(connect_test_client(&settings)).await?;
+        client
+            .simple_query(
+                "SET XACT_ABORT ON; \
+                 SET TRANSACTION ISOLATION LEVEL READ COMMITTED; \
+                 SET NOCOUNT OFF;",
+            )
+            .await?
+            .into_results()
+            .await?;
+
+        client
+            .simple_query(
+                "DECLARE @result int; \
+                 EXEC @result = sys.sp_getapplock \
+                   @Resource = N'OxideBatchSchemaMigrationProbe', \
+                   @LockMode = 'Exclusive', @LockOwner = 'Session', \
+                   @LockTimeout = 15000; \
+                 IF @result < 0 THROW 51000, 'migration probe lock unavailable', 1;",
+            )
+            .await?
+            .into_results()
+            .await?;
+
+        client.simple_query("BEGIN TRAN").await?.into_results().await?;
+        let probe_result = async {
+            client
+                .simple_query(include_str!("../migrations-sqlserver/0001_core_metadata.sql"))
+                .await?
+                .into_results()
+                .await?;
+            client
+                .simple_query(include_str!("../migrations-sqlserver/0002_runnable_core.sql"))
+                .await?
+                .into_results()
+                .await?;
+            Ok::<(), tiberius::error::Error>(())
+        }
+        .await;
+        let rollback_result = client
+            .simple_query("IF XACT_STATE() <> 0 ROLLBACK")
+            .await?
+            .into_results()
+            .await;
+        probe_result?;
+        rollback_result?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
 fn migration_is_idempotent_for_sql_server() -> Result<(), Box<dyn Error>> {
     let Some(settings) = TestSettings::from_environment()? else {
         eprintln!("skipped: SQL Server test environment is not configured");
