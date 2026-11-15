@@ -7,11 +7,11 @@ expected_version="${OXIDEBATCH_SQLSERVER_EXPECTED_PRODUCT_VERSION:?expected Prod
 
 case "$lane" in
   2022-cu28)
-    expected_image='mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04@sha256:e10cd49443c94dbdcb7a050987db22ff4d8c87052ac53768abe1ed848d3fcef6'
+    expected_image='mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f'
     expected_version_literal='16.0.4325.4'
     ;;
   2025-cu11)
-    expected_image='mcr.microsoft.com/mssql/server:2025-CU11-ubuntu-24.04@sha256:a554b8cf6ab60b92838737f03d0422c4babcd491d09cba3bec0e5e41e292b921'
+    expected_image='mcr.microsoft.com/mssql/server:2025-CU11-ubuntu-24.04@sha256:05644dad1266ca3d445d1e8f6d2ebb9a6a03df9a39376e0f7b48917356dca9d9'
     expected_version_literal='17.0.5065.9'
     ;;
   *)

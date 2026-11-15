@@ -725,34 +725,35 @@ jobs:
 
 
 
-  sqlserver-image-resolution:
-    name: sqlserver-${{ matrix.lane }}-docker-digest-resolution
+  sqlserver-repository-core:
+    name: sqlserver-${{ matrix.lane }}-repository-core
     if: ${{ github.event.pull_request.draft == false }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - lane: "2022-cu28"
-            image: "mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04"
+            image: "mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f"
+            product_version: "16.0.4325.4"
           - lane: "2025-cu11"
-            image: "mcr.microsoft.com/mssql/server:2025-CU11-ubuntu-24.04"
+            image: "mcr.microsoft.com/mssql/server:2025-CU11-ubuntu-24.04@sha256:05644dad1266ca3d445d1e8f6d2ebb9a6a03df9a39376e0f7b48917356dca9d9"
+            product_version: "17.0.5065.9"
     steps:
-      - name: Resolve Docker-pullable immutable digest
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Run pinned SQL Server runnable-core certification
         env:
-          IMAGE: ${{ matrix.image }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker pull "$IMAGE"
-          repo_digest="$(
-            docker image inspect "$IMAGE" --format '{{range .RepoDigests}}{{println .}}{{end}}' \
-              | grep '^mcr.microsoft.com/mssql/server@sha256:' \
-              | head -n 1
-          )"
-          [[ "$repo_digest" =~ ^mcr\.microsoft\.com/mssql/server@sha256:[0-9a-f]{64}$ ]]
-          echo "SQLSERVER_DOCKER_DIGEST lane=${{ matrix.lane }} tag=${IMAGE} repo_digest=${repo_digest}"
+          OXIDEBATCH_SQLSERVER_IMAGE: ${{ matrix.image }}
+          OXIDEBATCH_SQLSERVER_LANE: ${{ matrix.lane }}
+          OXIDEBATCH_SQLSERVER_EXPECTED_PRODUCT_VERSION: ${{ matrix.product_version }}
+        run: ./tests/fixtures/sqlserver/run-ci-runnable-core.sh
 
   mysql-repository-core:
     name: mysql-8.4.13-repository-core
