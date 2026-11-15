@@ -497,6 +497,39 @@ for title, mutated, diagnostic in (
 print("Activated weekly/manual CodeQL security contract: PASS")
 ACTIVE_PR_CI = ROOT / ".github/workflows/pr-ci.yml"
 activated_pr_ci = ACTIVE_PR_CI.read_text(encoding="utf-8")
+
+assert MODULE.check_pr_ci_admission_contract_text(activated_pr_ci) == []
+for title, mutated, diagnostic in (
+    (
+        "broaden recovery base to wildcard",
+        activated_pr_ci.replace("      - release/0.7\n", "      - release/*\n", 1),
+        "protected-base allowlist must be exactly",
+    ),
+    (
+        "drop protected recovery base",
+        activated_pr_ci.replace("      - release/0.7\n", "", 1),
+        "protected-base allowlist must be exactly",
+    ),
+    (
+        "add alternate PR event",
+        activated_pr_ci.replace("  pull_request:\n", "  push:\n  pull_request:\n", 1),
+        "event surface must be exactly pull_request",
+    ),
+    (
+        "weaken PR event types",
+        activated_pr_ci.replace(
+            "    types: [opened, synchronize, reopened, ready_for_review]\n",
+            "    types: [opened, synchronize]\n",
+            1,
+        ),
+        "pull_request types must be exactly",
+    ),
+):
+    assert mutated != activated_pr_ci, ("PR CI admission negative fixture ineffective", title)
+    errors = MODULE.check_pr_ci_admission_contract_text(mutated)
+    assert any(diagnostic in error for error in errors), (title, errors)
+print("PR CI protected-base admission contract: PASS")
+
 assert MODULE.check_codeql_pr_runtime_contract_text(activated_pr_ci, activated_codeql) == []
 runtime_job = MODULE._job_block(activated_pr_ci, "codeql-runtime")
 assert runtime_job is not None
