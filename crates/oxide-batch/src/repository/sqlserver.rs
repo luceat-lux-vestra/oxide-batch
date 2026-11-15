@@ -565,14 +565,14 @@ fn map_driver_error(
     connection: &mut SqlServerConnection,
     error: &tiberius::error::Error,
 ) -> RepositoryError {
-    if is_duplicate_key(&error) || is_contention(&error) {
+    if is_duplicate_key(error) || is_contention(error) {
         // XACT_ABORT ON makes constraint/locking failures transaction-terminal
         // for this adapter. Discard the physical session instead of allowing a
         // caller to continue or return it to the pool.
         connection.broken = true;
         RepositoryError::ConcurrentModification
     } else {
-        if driver_code(&error).is_none() {
+        if driver_code(error).is_none() {
             connection.broken = true;
         }
         RepositoryError::Unavailable
