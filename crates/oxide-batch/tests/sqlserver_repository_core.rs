@@ -47,8 +47,7 @@ impl TestSettings {
             .map(|value| value.parse())
             .transpose()?
             .unwrap_or(1433);
-        let hostname_in_certificate =
-            std::env::var("OXIDEBATCH_SQLSERVER_TEST_CERT_HOSTNAME").ok();
+        let hostname_in_certificate = std::env::var("OXIDEBATCH_SQLSERVER_TEST_CERT_HOSTNAME").ok();
         let ca_bundle = std::env::var("OXIDEBATCH_SQLSERVER_TEST_CA_PEM")
             .ok()
             .map(String::into_bytes);
@@ -261,7 +260,6 @@ fn sql_server_descriptor_declares_zero_optional_capabilities() -> Result<(), Box
     Ok(())
 }
 
-
 #[test]
 fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(), Box<dyn Error>> {
     const CONTENDERS: usize = 8;
@@ -277,8 +275,7 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
         let config = settings.repository_config()?;
         SqlServerMigrator::migrate(&config).await?;
         remove_contract_rows(&settings).await?;
-        let repository =
-            SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await?;
+        let repository = SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await?;
         let barrier = Arc::new(tokio::sync::Barrier::new(CONTENDERS));
         let key = JobInstanceKey::new(
             JobName::new("repository_contract_job")?,
@@ -317,10 +314,9 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
         assert_eq!(active_rejections, CONTENDERS - 1);
 
         let mut inspection = repository.begin().await?;
-        let instance = inspection
-            .find_job_instance(&key)
-            .await?
-            .ok_or_else(|| std::io::Error::other("canonical SQL Server instance was not committed"))?;
+        let instance = inspection.find_job_instance(&key).await?.ok_or_else(|| {
+            std::io::Error::other("canonical SQL Server instance was not committed")
+        })?;
         assert_eq!(inspection.job_executions(instance.id()).await?.len(), 1);
         inspection.rollback().await?;
         remove_contract_rows(&settings).await?;
@@ -330,8 +326,8 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
 }
 
 #[test]
-fn newer_sql_server_schema_is_rejected_without_guessing_compatibility(
-) -> Result<(), Box<dyn Error>> {
+fn newer_sql_server_schema_is_rejected_without_guessing_compatibility() -> Result<(), Box<dyn Error>>
+{
     let Some(settings) = TestSettings::from_environment()? else {
         eprintln!("skipped: SQL Server test environment is not configured");
         return Ok(());
@@ -353,8 +349,7 @@ fn newer_sql_server_schema_is_rejected_without_guessing_compatibility(
         );
         client.simple_query(update).await?.into_results().await?;
 
-        let result =
-            SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await;
+        let result = SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await;
 
         let restore = format!(
             "UPDATE dbo.ob_schema_version SET version = {supported} \
