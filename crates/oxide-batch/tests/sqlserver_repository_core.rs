@@ -13,11 +13,9 @@ use oxide_batch::{
 };
 use std::error::Error;
 use std::io::{Read, Write};
-use std::net::{
-    Shutdown, TcpListener as StdTcpListener, TcpStream as StdTcpStream,
-};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::net::{Shutdown, TcpListener as StdTcpListener, TcpStream as StdTcpStream};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
 use std::time::Duration;
 use tiberius::{AuthMethod, Client, Config as TiberiusConfig, EncryptionLevel};
