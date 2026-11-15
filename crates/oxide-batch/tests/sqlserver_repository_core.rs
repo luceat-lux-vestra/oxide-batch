@@ -417,7 +417,9 @@ fn tls_rejects_wrong_hostname_and_untrusted_ca() -> Result<(), Box<dyn Error>> {
             Some(RepositoryError::Unavailable)
         );
 
-        let wrong_ca = settings.repository_config()?.with_ca_bundle(wrong_ca_bundle)?;
+        let wrong_ca = settings
+            .repository_config()?
+            .with_ca_bundle(wrong_ca_bundle)?;
         assert_eq!(
             SqlServerJobRepository::connect(wrong_ca, Arc::new(SystemClock))
                 .await
@@ -449,12 +451,11 @@ fn runtime_principal_cannot_migrate_or_mutate_schema_version() -> Result<(), Box
         )
         .await;
         if ddl.is_ok() {
-            let _ = execute_test_query(&mut client, "DROP TABLE dbo.ob_runtime_privilege_probe")
-                .await;
-            return Err(std::io::Error::other(
-                "runtime principal unexpectedly has DDL authority",
-            )
-            .into());
+            let _ =
+                execute_test_query(&mut client, "DROP TABLE dbo.ob_runtime_privilege_probe").await;
+            return Err(
+                std::io::Error::other("runtime principal unexpectedly has DDL authority").into(),
+            );
         }
 
         let schema_write = execute_test_query(
@@ -505,7 +506,7 @@ fn newer_sql_server_schema_is_rejected_without_guessing_compatibility() -> Resul
         let newer = supported
             .checked_add(1)
             .ok_or_else(|| std::io::Error::other("schema version overflow"))?;
-        let mut client = Box::pin(connect_test_client(&settings)).await?;
+        let mut client = Box::pin(connect_migrator_test_client(&settings)).await?;
         let update = format!(
             "UPDATE dbo.ob_schema_version SET version = {newer} \
              WHERE version = {supported}"
