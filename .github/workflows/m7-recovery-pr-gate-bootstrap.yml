@@ -1,0 +1,105 @@
+name: M7 recovery PR gate bootstrap
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  bootstrap:
+    name: exact M7 recovery PR gate bootstrap
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+      checks: write
+    env:
+      EXPECTED_PR: "671"
+      EXPECTED_BASE: "ca74edb15a56f21515a9121f376f091748afd6ae"
+      EXPECTED_CANDIDATE: "559113d6ed21445267084ae3c1a75bc82a3a27ab"
+      EXPECTED_HEAD_REF: "ci/666-backport-release-0.7-pr-admission"
+      EXPECTED_PR_CI_BLOB: "296752e36563e0896f275a2fb0f0afbe59f02730"
+      EXPECTED_VALIDATOR_BLOB: "09741524785b57d516e14aab204e69ce4b0aae15"
+      EXPECTED_TEST_BLOB: "9c87015c0fa4158f7796cf0b54982ee6a252249b"
+    steps:
+      - name: Verify exact bootstrap candidate identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "${GITHUB_REF}" = "refs/heads/main"
+          live_main="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "${GITHUB_SHA}" = "${live_main}"
+
+          pr="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${EXPECTED_PR}")"
+          test "$(jq -r '.state' <<<"${pr}")" = "open"
+          test "$(jq -r '.merged' <<<"${pr}")" = "false"
+          test "$(jq -r '.base.ref' <<<"${pr}")" = "release/0.7"
+          test "$(jq -r '.base.sha' <<<"${pr}")" = "${EXPECTED_BASE}"
+          test "$(jq -r '.head.ref' <<<"${pr}")" = "${EXPECTED_HEAD_REF}"
+          test "$(jq -r '.head.sha' <<<"${pr}")" = "${EXPECTED_CANDIDATE}"
+          test "$(jq -r '.head.repo.full_name' <<<"${pr}")" = "${GITHUB_REPOSITORY}"
+          test "$(jq -r '.changed_files' <<<"${pr}")" = "3"
+
+          live_head="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/${EXPECTED_HEAD_REF}" --jq '.object.sha')"
+          test "${live_head}" = "${EXPECTED_CANDIDATE}"
+
+          comparison="$(gh api "repos/${GITHUB_REPOSITORY}/compare/${EXPECTED_BASE}...${EXPECTED_CANDIDATE}")"
+          test "$(jq -r '.status' <<<"${comparison}")" = "ahead"
+          test "$(jq -r '.ahead_by' <<<"${comparison}")" = "3"
+          test "$(jq -r '.behind_by' <<<"${comparison}")" = "0"
+          test "$(jq -r '.merge_base_commit.sha' <<<"${comparison}")" = "${EXPECTED_BASE}"
+
+          files="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/pulls/${EXPECTED_PR}/files?per_page=100" | jq -s 'add')"
+          test "$(jq 'length' <<<"${files}")" = "3"
+
+          expected="$(cat <<EOF
+          .github/scripts/test_validate_actions_security.py	modified	${EXPECTED_TEST_BLOB}
+          .github/scripts/validate_actions_security.py	modified	${EXPECTED_VALIDATOR_BLOB}
+          .github/workflows/pr-ci.yml	modified	${EXPECTED_PR_CI_BLOB}
+          EOF
+          )"
+          observed="$(jq -r 'sort_by(.filename)[] | [.filename, .status, .sha] | @tsv' <<<"${files}")"
+          test "${observed}" = "${expected}"
+
+      - name: Check out exact reviewed historical candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.EXPECTED_CANDIDATE }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate historical admission security policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${EXPECTED_CANDIDATE}"
+          python3 .github/scripts/test_validate_actions_security.py
+          python3 .github/scripts/validate_actions_security.py
+
+      - name: Create exact bootstrap Direct Merge Gate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          existing="$(gh api -H "Accept: application/vnd.github+json"             "repos/${GITHUB_REPOSITORY}/commits/${EXPECTED_CANDIDATE}/check-runs?check_name=Direct%20Merge%20Gate&filter=latest&per_page=100")"
+
+          trusted_successes="$(jq '[.check_runs[] | select(.app.id == 15368 and .status == "completed" and .conclusion == "success")] | length' <<<"${existing}")"
+          if test "${trusted_successes}" = "1"; then
+            echo "Exact GitHub Actions Direct Merge Gate already exists; no-op."
+            exit 0
+          fi
+          test "${trusted_successes}" = "0"
+
+          jq -n             --arg name "Direct Merge Gate"             --arg sha "${EXPECTED_CANDIDATE}"             --arg title "M7 recovery PR admission bootstrap"             --arg summary "Exact reviewed PR #671 admission-only backport verified from protected main; no release-prep/product source included."             '{
+              name: $name,
+              head_sha: $sha,
+              status: "completed",
+              conclusion: "success",
+              output: {title: $title, summary: $summary}
+            }'             | gh api --method POST "repos/${GITHUB_REPOSITORY}/check-runs" --input -
