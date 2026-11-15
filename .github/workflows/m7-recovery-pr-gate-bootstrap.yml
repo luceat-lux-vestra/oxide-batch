@@ -5,15 +5,19 @@ on:
 
 permissions: {}
 
+concurrency:
+  group: m7-recovery-pr-gate-bootstrap
+  cancel-in-progress: false
+
 jobs:
   bootstrap:
     name: exact M7 recovery PR gate bootstrap
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
-      contents: read
-      pull-requests: read
-      checks: write
+      contents: read # Verify exact refs/commit identity and check out the reviewed candidate.
+      pull-requests: read # Verify PR #671 base/head/state and exact changed-file blobs.
+      checks: write # Create only the exact candidate's GitHub Actions Direct Merge Gate.
     env:
       EXPECTED_PR: "671"
       EXPECTED_BASE: "ca74edb15a56f21515a9121f376f091748afd6ae"
