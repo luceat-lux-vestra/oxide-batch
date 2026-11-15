@@ -12,7 +12,13 @@ use oxide_batch::{
     SqlServerJobRepository, SqlServerMigrator, SystemClock,
 };
 use std::error::Error;
+use std::io::{Read, Write};
+use std::net::{
+    Shutdown, TcpListener as StdTcpListener, TcpStream as StdTcpStream,
+};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::thread;
 use std::time::Duration;
 use tiberius::{AuthMethod, Client, Config as TiberiusConfig, EncryptionLevel};
 use tokio::net::TcpStream;
@@ -148,6 +154,204 @@ fn required(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
+fn proxied_repository_config(
+    settings: &TestSettings,
+    port: u16,
+) -> Result<SqlServerConfig, Box<dyn Error>> {
+    let mut config = SqlServerConfig::new(
+        "127.0.0.1",
+        settings.database.clone(),
+        settings.username.clone(),
+        settings.password.clone(),
+    )?
+    .with_port(port)?
+    .with_pool_size(1)?
+    .with_command_timeout(Duration::from_secs(5))?;
+    if let Some(hostname) = &settings.hostname_in_certificate {
+        config = config.with_hostname_in_certificate(hostname.clone())?;
+    }
+    if let Some(bundle) = &settings.ca_bundle {
+        config = config.with_ca_bundle(bundle.clone())?;
+    }
+    if settings.strict_tds80 {
+        config = config.with_strict_tds80_encryption();
+    }
+    Ok(config)
+}
+
+struct CommitResponseDropProxy {
+    address: std::net::SocketAddr,
+    armed: Arc<AtomicBool>,
+    fault_fired: Arc<AtomicBool>,
+    response_dropped: Arc<AtomicBool>,
+    accepted_connections: Arc<AtomicUsize>,
+    stop: Arc<AtomicBool>,
+    accept_thread: Option<thread::JoinHandle<()>>,
+}
+
+impl CommitResponseDropProxy {
+    fn start(settings: &TestSettings) -> Result<Self, Box<dyn Error>> {
+        let listener = StdTcpListener::bind(("127.0.0.1", 0))?;
+        listener.set_nonblocking(true)?;
+        let address = listener.local_addr()?;
+        let target_host = settings.host.clone();
+        let target_port = settings.port;
+        let armed = Arc::new(AtomicBool::new(false));
+        let fault_fired = Arc::new(AtomicBool::new(false));
+        let response_dropped = Arc::new(AtomicBool::new(false));
+        let accepted_connections = Arc::new(AtomicUsize::new(0));
+        let stop = Arc::new(AtomicBool::new(false));
+
+        let accept_armed = Arc::clone(&armed);
+        let accept_fault_fired = Arc::clone(&fault_fired);
+        let accept_response_dropped = Arc::clone(&response_dropped);
+        let accept_count = Arc::clone(&accepted_connections);
+        let accept_stop = Arc::clone(&stop);
+        let accept_thread = thread::spawn(move || {
+            while !accept_stop.load(Ordering::Acquire) {
+                match listener.accept() {
+                    Ok((client, _)) => {
+                        accept_count.fetch_add(1, Ordering::AcqRel);
+                        let target_host = target_host.clone();
+                        let armed = Arc::clone(&accept_armed);
+                        let fault_fired = Arc::clone(&accept_fault_fired);
+                        let response_dropped = Arc::clone(&accept_response_dropped);
+                        let _ = thread::spawn(move || {
+                            let _ = relay_sql_server_connection(
+                                client,
+                                &target_host,
+                                target_port,
+                                armed,
+                                fault_fired,
+                                response_dropped,
+                            );
+                        });
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Ok(Self {
+            address,
+            armed,
+            fault_fired,
+            response_dropped,
+            accepted_connections,
+            stop,
+            accept_thread: Some(accept_thread),
+        })
+    }
+
+    fn port(&self) -> u16 {
+        self.address.port()
+    }
+
+    fn arm_next_client_request(&self) {
+        self.armed.store(true, Ordering::Release);
+    }
+
+    fn fault_fired(&self) -> bool {
+        self.fault_fired.load(Ordering::Acquire)
+    }
+
+    fn response_dropped(&self) -> bool {
+        self.response_dropped.load(Ordering::Acquire)
+    }
+
+    fn accepted_connections(&self) -> usize {
+        self.accepted_connections.load(Ordering::Acquire)
+    }
+}
+
+impl Drop for CommitResponseDropProxy {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        if let Some(handle) = self.accept_thread.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn relay_sql_server_connection(
+    client: StdTcpStream,
+    target_host: &str,
+    target_port: u16,
+    armed: Arc<AtomicBool>,
+    fault_fired: Arc<AtomicBool>,
+    response_dropped: Arc<AtomicBool>,
+) -> std::io::Result<()> {
+    client.set_nodelay(true)?;
+    let server = StdTcpStream::connect((target_host, target_port))?;
+    server.set_nodelay(true)?;
+
+    let mut client_reader = client.try_clone()?;
+    let mut client_writer = client;
+    let mut server_reader = server.try_clone()?;
+    let mut server_writer = server;
+    let suppress_response = Arc::new(AtomicBool::new(false));
+    let server_side_suppression = Arc::clone(&suppress_response);
+    let server_side_response_dropped = Arc::clone(&response_dropped);
+
+    let response_relay = thread::spawn(move || -> std::io::Result<()> {
+        let mut buffer = [0_u8; 16 * 1024];
+        loop {
+            let count = server_reader.read(&mut buffer)?;
+            if count == 0 {
+                let _ = client_writer.shutdown(Shutdown::Both);
+                return Ok(());
+            }
+            if server_side_suppression.load(Ordering::Acquire) {
+                server_side_response_dropped.store(true, Ordering::Release);
+                let _ = client_writer.shutdown(Shutdown::Both);
+                return Ok(());
+            }
+            client_writer.write_all(&buffer[..count])?;
+            client_writer.flush()?;
+        }
+    });
+
+    let mut buffer = [0_u8; 16 * 1024];
+    loop {
+        let count = match client_reader.read(&mut buffer) {
+            Ok(count) => count,
+            Err(_) if response_dropped.load(Ordering::Acquire) => break,
+            Err(error) => return Err(error),
+        };
+        if count == 0 {
+            break;
+        }
+
+        let should_fault = armed.load(Ordering::Acquire)
+            && fault_fired
+                .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok();
+        if should_fault {
+            // No response from an earlier command is outstanding when the
+            // proxy is armed. Suppress the first server response after the
+            // next complete client request is forwarded; that request is the
+            // adapter's COMMIT.
+            suppress_response.store(true, Ordering::Release);
+        }
+
+        server_writer.write_all(&buffer[..count])?;
+        server_writer.flush()?;
+
+        // Keep relaying every client fragment of the armed request. The
+        // server-to-client half closes the client only after SQL Server emits
+        // the corresponding response, so a fragmented TLS/TDS COMMIT cannot be
+        // mistaken for a pre-COMMIT disconnect.
+    }
+
+    let _ = client_reader.shutdown(Shutdown::Both);
+    let _ = server_writer.shutdown(Shutdown::Both);
+    let _ = response_relay.join();
+    Ok(())
+}
+
 async fn connect_test_client(
     settings: &TestSettings,
 ) -> Result<Client<tokio_util::compat::Compat<TcpStream>>, Box<dyn Error>> {
@@ -227,6 +431,17 @@ async fn remove_contention_rows(settings: &TestSettings) -> Result<(), Box<dyn E
            N'repository_contention_deadlock_a', \
            N'repository_contention_deadlock_b' \
          )",
+    )
+    .await?;
+    Ok(())
+}
+
+async fn remove_commit_unknown_row(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
+    let mut client = Box::pin(connect_test_client(settings)).await?;
+    execute_test_query(
+        &mut client,
+        "DELETE FROM dbo.ob_job_instance \
+         WHERE job_name = N'repository_commit_unknown'",
     )
     .await?;
     Ok(())
@@ -613,6 +828,69 @@ fn deadlock_1205_maps_to_concurrent_modification() -> Result<(), Box<dyn Error>>
         fresh.rollback().await?;
 
         Box::pin(remove_contention_rows(&settings)).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn lost_commit_response_is_unknown_and_fresh_session_reconciles() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment()? else {
+        eprintln!("skipped: SQL Server test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
+        Box::pin(remove_commit_unknown_row(&settings)).await?;
+
+        let proxy = CommitResponseDropProxy::start(&settings)?;
+        let repository = SqlServerJobRepository::connect(
+            proxied_repository_config(&settings, proxy.port())?,
+            Arc::new(SystemClock),
+        )
+        .await?;
+        let key = JobInstanceKey::new(
+            JobName::new("repository_commit_unknown")?,
+            &JobParameters::new(),
+        );
+
+        let mut unit = repository.begin().await?;
+        unit.select_or_create_job_instance(&key).await?;
+
+        // All prior request/response traffic is complete here. The next client
+        // request on this checked-out connection is RepositoryUnitOfWork::commit.
+        proxy.arm_next_client_request();
+        assert_eq!(
+            unit.commit().await,
+            Err(RepositoryError::CommitOutcomeUnknown)
+        );
+        assert!(proxy.fault_fired());
+        assert!(
+            proxy.response_dropped(),
+            "proxy did not observe and suppress the server response to COMMIT"
+        );
+
+        // The adapter must not reuse the suspect physical connection. A fresh
+        // pool checkout goes through a second TCP connection and reconciles the
+        // durable state instead of inferring the commit result from the error.
+        let mut fresh = repository.begin().await?;
+        let durable = fresh.find_job_instance(&key).await?;
+        fresh.rollback().await?;
+        assert!(
+            durable.is_some(),
+            "server produced a COMMIT response but fresh reconciliation did not find the durable row"
+        );
+        assert!(
+            proxy.accepted_connections() >= 2,
+            "fresh reconciliation reused the connection whose COMMIT response was lost"
+        );
+
+        drop(repository);
+        drop(proxy);
+        Box::pin(remove_commit_unknown_row(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
