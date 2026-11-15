@@ -399,7 +399,17 @@ async fn connect_driver(
     config: &SqlServerConfig,
 ) -> Result<SqlServerConnection, tiberius::error::Error> {
     let driver = config.tiberius_config();
-    let tcp = TcpStream::connect(driver.get_addr()).await?;
+    let tcp = tokio::time::timeout(
+        config.connect_timeout,
+        TcpStream::connect(driver.get_addr()),
+    )
+    .await
+    .map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::TimedOut,
+            "SQL Server TCP connection timed out",
+        )
+    })??;
     tcp.set_nodelay(true)?;
     let mut client = Client::connect(driver, tcp.compat_write()).await?;
     client
