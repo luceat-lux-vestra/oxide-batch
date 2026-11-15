@@ -219,21 +219,24 @@ fn runnable_core_repository_contract_passes_on_sql_server() -> Result<(), Box<dy
     runtime.block_on(async {
         let config = settings.repository_config()?;
         SqlServerMigrator::migrate(&config).await?;
-        Box::pin(run_runnable_core_repository_contract("sqlserver", |clock| {
-            let settings = settings.clone();
-            async move {
-                Box::pin(remove_contract_rows(&settings))
+        Box::pin(run_runnable_core_repository_contract(
+            "sqlserver",
+            |clock| {
+                let settings = settings.clone();
+                async move {
+                    Box::pin(remove_contract_rows(&settings))
+                        .await
+                        .map_err(|_| RepositoryError::Unavailable)?;
+                    SqlServerJobRepository::connect(
+                        settings
+                            .repository_config()
+                            .map_err(|_| RepositoryError::Unavailable)?,
+                        clock,
+                    )
                     .await
-                    .map_err(|_| RepositoryError::Unavailable)?;
-                SqlServerJobRepository::connect(
-                    settings
-                        .repository_config()
-                        .map_err(|_| RepositoryError::Unavailable)?,
-                    clock,
-                )
-                .await
-            }
-        }))
+                }
+            },
+        ))
         .await?;
         Box::pin(remove_contract_rows(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
