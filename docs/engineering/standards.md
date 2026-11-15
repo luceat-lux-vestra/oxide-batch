@@ -13,6 +13,23 @@ below is a project-wide restatement of a rule some other document already
 binds more specifically (dependency direction, hot-path allocation budgets),
 that document remains the enforced source and is linked, not duplicated.
 
+### Capability and correctness before compatibility shape
+
+Spring Batch compatibility is a product reference and evidence discipline, not
+the highest-priority architecture constraint. Per
+[RFC-0012](../rfcs/0012-native-capability-priority-and-spring-compatibility-precedence.md),
+design choices preserve correctness, durability/recovery, explicit
+transaction/delivery semantics, useful native capability, operational quality,
+bounded-resource behavior, and idiomatic Rust before preserving Spring-shaped
+API, configuration, or implementation structure.
+
+A familiar Spring mechanism MAY be reused when it is the strongest justified
+design. It MUST NOT be introduced solely for familiarity when it would create a
+weaker abstraction, hide backend-native guarantees, add unjustified
+maintenance/compile/runtime cost, or delay materially stronger native
+capability. Any affected Spring capability remains visible in the compatibility
+ledger with its reviewed native equivalent or divergence.
+
 ### Idiomatic Rust over framework translation
 
 OxideBatch references Spring Batch's proven domain semantics and observable

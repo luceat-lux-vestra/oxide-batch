@@ -2,7 +2,7 @@
 
 **State:** Accepted
 
-**Long-term direction:** Accepted by RFC-0001 and RFC-0002.
+**Long-term direction:** Accepted by RFC-0001 and RFC-0002, with product/design precedence clarified by [RFC-0012](../rfcs/0012-native-capability-priority-and-spring-compatibility-precedence.md).
 
 ## Vision
 
@@ -11,11 +11,19 @@ observable batch workloads. It adopts the proven domain language and
 observable behavior of Spring Batch without reproducing Java APIs or the
 Spring container.
 
-The long-term target is complete coverage of the documented Spring Batch 6.x
-feature population and execution semantics, as accepted by
-[RFC-0002](../rfcs/0002-full-spring-batch-feature-ledger-parity.md). The
-[feature ledger](../compatibility/conformance-matrix.md) is the only permitted
-denominator for future parity claims.
+The long-term **compatibility-accounting** target is complete coverage of the
+documented Spring Batch 6.x feature population and execution semantics, as
+accepted by [RFC-0002](../rfcs/0002-full-spring-batch-feature-ledger-parity.md).
+The [feature ledger](../compatibility/conformance-matrix.md) is the only
+permitted denominator for future parity claims.
+
+That target is not the product's top-level architecture or scheduling
+constraint. Per
+[RFC-0012](../rfcs/0012-native-capability-priority-and-spring-compatibility-precedence.md),
+correctness, useful native capability, production/operational quality, and
+idiomatic Rust take precedence when Spring-shaped parity would materially
+weaken them. Complete ledger coverage requires complete review and disposition;
+it does not require every Spring mechanism or experience to be reproduced.
 
 ## Target users
 
@@ -27,16 +35,22 @@ denominator for future parity claims.
 
 ## Product principles
 
-1. Correct restart behavior is more important than raw throughput.
-2. Transaction and delivery guarantees are explicit and resource-scoped.
+1. Correctness, data integrity, restart/recovery, and explicit transaction and
+   delivery guarantees outrank compatibility shape or raw throughput.
+2. Useful native capability and production/operational quality may take
+   roadmap priority over Spring-equivalent work.
 3. Durable state transitions are auditable and concurrency-safe.
 4. Stable core contracts remain independent of database, CLI, executor, and
    telemetry SDK types.
 5. APIs and execution paths are Rust-native even when behavior is equivalent
-   to Spring Batch.
-6. Failure paths, bounded resources, and executable evidence are first-class
-   design inputs.
-7. A compatibility or readiness claim cannot exceed its recorded evidence.
+   to Spring Batch; familiarity is an ergonomic benefit, not an architecture
+   constraint.
+6. Failure paths, bounded resources, backend/resource-native guarantees, and
+   executable evidence are first-class design inputs.
+7. Spring Batch capabilities remain fully ledgered even when OxideBatch chooses
+   a native equivalent, explicit divergence, `Unsupported`, or
+   `NotApplicable` disposition.
+8. A compatibility or readiness claim cannot exceed its recorded evidence.
 
 ## Compatibility meanings
 

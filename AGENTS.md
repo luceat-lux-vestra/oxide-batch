@@ -3,9 +3,18 @@
 ## Mission and non-negotiable direction
 
 OxideBatch is an idiomatic Rust framework for reliable, restartable, observable
-batch workloads. Its long-term target is complete, evidence-backed coverage of
-the pinned Spring Batch 6.x feature population and observable execution
-semantics, delivered through a Rust-native API and engine.
+batch workloads. Its long-term **compatibility-accounting** target is complete,
+evidence-backed coverage and reviewed disposition of the pinned Spring Batch
+6.x feature population and observable execution semantics, delivered through a
+Rust-native API and engine.
+
+Spring compatibility is not the top-level architecture or scheduling authority.
+Per RFC-0012, preserve correctness, durability/recovery, explicit
+transaction/delivery guarantees, useful native capability, production/
+operational quality, idiomatic Rust, and bounded/resource-native behavior
+before preserving Spring-shaped API, configuration, or implementation
+similarity. Every affected Spring capability still remains visible in the
+ledger with an evidence-backed disposition.
 
 The project must become production-ready on the strength of executable
 evidence, operational clarity, and supportable contracts. It should ultimately
