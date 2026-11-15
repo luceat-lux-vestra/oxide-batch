@@ -28,6 +28,12 @@ POSTGRES_MATRIX = re.compile(
     r'^\s*postgres:\s*\[\s*"15"\s*,\s*"18"\s*\]\s*(?:#.*)?$'
 )
 
+# PR CI may run only for the protected default branch and the one frozen M7
+# historical release branch. Keep this exact: a wildcard release/* admission
+# would turn the recovery exception into a generic alternate merge path.
+PR_CI_ALLOWED_BASES = ("main", "release/0.7")
+PR_CI_EVENT_TYPES = ("opened", "synchronize", "reopened", "ready_for_review")
+
 EPHEMERAL_WORKFLOW = re.compile(
     r"^(?:research|temporary|tmp|experiment)(?:[-_].*)?\.ya?ml$",
     re.IGNORECASE,
@@ -264,6 +270,73 @@ def validate(root: Path) -> list[str]:
     for path in workflow_paths(root):
         violations.extend(check_workflow(path.relative_to(root), path.read_text()))
     return violations
+
+
+def check_pr_ci_admission_contract_text(
+    text: str, path: Path = Path(".github/workflows/pr-ci.yml")
+) -> list[str]:
+    """Require the exact protected bases allowed to invoke canonical PR CI."""
+    violations: list[str] = []
+    event_match = re.search(
+        r"(?ms)^on:\n(?P<body>.*?)(?=^permissions:\n)",
+        text,
+    )
+    if event_match is None:
+        return [f"{path}: PR CI must declare a pull_request event block"]
+
+    event_block = event_match.group("body")
+    events = re.findall(r"(?m)^  ([A-Za-z0-9_]+):", event_block)
+    if events != ["pull_request"]:
+        violations.append(
+            f"{path}: PR CI event surface must be exactly pull_request; got {events!r}"
+        )
+
+    types_match = re.search(
+        r"(?m)^    types:\s*\[([^\]]+)\]\s*(?:#.*)?$",
+        event_block,
+    )
+    if types_match is None:
+        violations.append(f"{path}: PR CI pull_request types are missing")
+    else:
+        observed_types = tuple(
+            part.strip() for part in types_match.group(1).split(",") if part.strip()
+        )
+        if observed_types != PR_CI_EVENT_TYPES:
+            violations.append(
+                f"{path}: PR CI pull_request types must be exactly "
+                f"{PR_CI_EVENT_TYPES!r}; got {observed_types!r}"
+            )
+
+    branches_match = re.search(
+        r"(?ms)^    branches:\n(?P<body>(?:^      - [^\n]+\n?)+)",
+        event_block,
+    )
+    if branches_match is None:
+        violations.append(f"{path}: PR CI protected-base allowlist is missing")
+    else:
+        observed_bases = tuple(
+            match.group(1)
+            for match in re.finditer(
+                r"(?m)^      - ([^\s#]+)\s*(?:#.*)?$",
+                branches_match.group("body"),
+            )
+        )
+        if observed_bases != PR_CI_ALLOWED_BASES:
+            violations.append(
+                f"{path}: PR CI protected-base allowlist must be exactly "
+                f"{PR_CI_ALLOWED_BASES!r}; got {observed_bases!r}"
+            )
+
+    return violations
+
+
+def check_pr_ci_admission_contract(root: Path) -> list[str]:
+    path = root / ".github" / "workflows" / "pr-ci.yml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"{path}: cannot read PR CI workflow: {exc}"]
+    return check_pr_ci_admission_contract_text(text, path.relative_to(root))
 
 
 def check_issue_labeler_contract_text(
@@ -559,6 +632,7 @@ def main() -> int:
 
     root = args.root.resolve()
     violations = validate(root)
+    violations.extend(check_pr_ci_admission_contract(root))
     violations.extend(check_issue_labeler_contract(root))
     violations.extend(check_codeql_weekly_manual_contract(root))
     violations.extend(check_codeql_pr_runtime_contract(root))
