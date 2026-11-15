@@ -25,8 +25,629 @@ POSTGRES_MATRIX_IMAGE = re.compile(
     r"'unsupported'\s*\}\}$"
 )
 POSTGRES_MATRIX = re.compile(
-    r'^\s*postgres:\s*\[\s*"15"\s*,\s*"18"\s*\]\s*(?:#.*)?$'
+    r'^\s*postgres:\s*\[\s*"15"\s*,\s*"18"\s*\]\s*(?:#.*)?
+EPHEMERAL_WORKFLOW = re.compile(
+    r"^(?:research|temporary|tmp|experiment)(?:[-_].*)?\.ya?ml$",
+    re.IGNORECASE,
 )
+LIFECYCLE_OWNER = re.compile(
+    r"^\s*#\s*lifecycle-owner:\s*(\S.*)$",
+    re.IGNORECASE,
+)
+LIFECYCLE_RETIRE = re.compile(
+    r"^\s*#\s*lifecycle-retire:\s*(\S.*)$",
+    re.IGNORECASE,
+)
+
+UNTRUSTED_PREFIXES = (
+    "github.event.pull_request.",
+    "github.event.issue.",
+    "github.event.comment.",
+    "github.event.review.",
+    "github.event.review_comment.",
+    "github.event.release.",
+    "github.event.workflow_run.",
+    "github.event.inputs.",
+    "inputs.",
+)
+UNTRUSTED_EXACT = {
+    "github.head_ref",
+    "github.ref",
+    "github.ref_name",
+}
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def _is_untrusted_expression(expression: str) -> bool:
+    normalized = re.sub(r"\s+", "", expression)
+    # Expressions can contain operators; treat any occurrence of the risky
+    # context as untrusted instead of requiring the whole expression to match.
+    if any(prefix in normalized for prefix in UNTRUSTED_PREFIXES):
+        return True
+    return any(
+        re.search(rf"(?<![A-Za-z0-9_.]){re.escape(name)}(?![A-Za-z0-9_.])", normalized)
+        for name in UNTRUSTED_EXACT
+    )
+
+
+def _program_block(lines: list[str], index: int) -> tuple[list[tuple[int, str]], int]:
+    """Return program text lines for run:/script: at index and last consumed index."""
+    match = PROGRAM_LINE.match(lines[index])
+    if match is None:
+        return [], index
+    base_indent = len(match.group("indent"))
+    value = match.group("value").strip()
+    if value and not value.startswith(("|", ">")):
+        return [(index + 1, value)], index
+
+    body: list[tuple[int, str]] = []
+    cursor = index + 1
+    while cursor < len(lines):
+        line = lines[cursor]
+        if not line.strip():
+            body.append((cursor + 1, line))
+            cursor += 1
+            continue
+        if _indent(line) <= base_indent:
+            break
+        body.append((cursor + 1, line))
+        cursor += 1
+    return body, cursor - 1
+
+
+def _checkout_step_has_persist_false(
+    lines: list[str], uses_index: int, match: re.Match[str]
+) -> bool:
+    uses_indent = len(match.group("indent"))
+    step_indent = uses_indent if match.group("dash") else max(0, uses_indent - 2)
+
+    cursor = uses_index + 1
+    while cursor < len(lines):
+        line = lines[cursor]
+        stripped = line.lstrip()
+        if line.strip():
+            indent = _indent(line)
+            if indent < step_indent:
+                break
+            if indent == step_indent and stripped.startswith("- "):
+                break
+        if re.match(r"^\s+persist-credentials:\s*false\s*(?:#.*)?$", line):
+            return True
+        cursor += 1
+    return False
+
+
+def _strip_yaml_comment(value: str) -> str:
+    return re.sub(r"\s+#.*$", "", value).strip()
+
+
+def _is_allowed_image(lines: list[str], value: str) -> bool:
+    if READABLE_DIGEST_IMAGE.fullmatch(value):
+        return True
+
+    matrix_image = POSTGRES_MATRIX_IMAGE.fullmatch(value)
+    if matrix_image is None:
+        return False
+    if not any(POSTGRES_MATRIX.fullmatch(line) for line in lines):
+        return False
+    return (
+        matrix_image.group("pg15") == POSTGRES_15_DIGEST
+        and matrix_image.group("pg18") == POSTGRES_18_DIGEST
+    )
+
+
+def check_ephemeral_workflow_lifecycle(path: Path, text: str) -> list[str]:
+    """Require explicit ownership and retirement conditions for ephemeral workflows."""
+    if not EPHEMERAL_WORKFLOW.fullmatch(path.name):
+        return []
+
+    header = text.splitlines()[:20]
+    owner = next(
+        (match.group(1).strip() for line in header if (match := LIFECYCLE_OWNER.match(line))),
+        "",
+    )
+    retire = next(
+        (match.group(1).strip() for line in header if (match := LIFECYCLE_RETIRE.match(line))),
+        "",
+    )
+
+    violations: list[str] = []
+    if not owner:
+        violations.append(
+            f"{path}: ephemeral workflow requires non-empty # lifecycle-owner: header metadata"
+        )
+    if not retire:
+        violations.append(
+            f"{path}: ephemeral workflow requires non-empty # lifecycle-retire: header metadata"
+        )
+    return violations
+
+
+def check_workflow(path: Path, text: str) -> list[str]:
+    lines = text.splitlines()
+    violations = check_ephemeral_workflow_lifecycle(path, text)
+
+    pull_request_target = any(
+        re.match(r"^\s*pull_request_target\s*:", line)
+        or re.match(r"^on:\s*pull_request_target\s*(?:#.*)?$", line)
+        for line in lines
+    )
+
+    for index, line in enumerate(lines):
+        uses = USES_LINE.match(line)
+        if uses:
+            value = uses.group("value")
+            if value.startswith("./"):
+                pass
+            elif value.startswith("docker://"):
+                image = value.removeprefix("docker://")
+                if not READABLE_DIGEST_IMAGE.fullmatch(image):
+                    violations.append(
+                        f"{path}:{index + 1}: docker action must retain a readable tag and immutable sha256 digest: {value}"
+                    )
+            elif "@" not in value:
+                violations.append(
+                    f"{path}:{index + 1}: external uses reference must include @<40-hex-SHA>: {value}"
+                )
+            else:
+                ref = value.rsplit("@", 1)[1]
+                if not FULL_SHA.fullmatch(ref):
+                    violations.append(
+                        f"{path}:{index + 1}: external uses reference must use a full 40-hex commit SHA: {value}"
+                    )
+
+            if value.startswith("actions/checkout@"):
+                if not _checkout_step_has_persist_false(lines, index, uses):
+                    violations.append(
+                        f"{path}:{index + 1}: actions/checkout must set persist-credentials: false"
+                    )
+                if pull_request_target:
+                    violations.append(
+                        f"{path}:{index + 1}: pull_request_target workflow must not checkout repository code"
+                    )
+
+        image = IMAGE_LINE.match(line)
+        if image:
+            value = _strip_yaml_comment(image.group("value"))
+            if not _is_allowed_image(lines, value):
+                violations.append(
+                    f"{path}:{index + 1}: service/container image must retain a readable tag and immutable sha256 digest, or use the exact checked-in PostgreSQL 15/18 digest mapping: {value}"
+                )
+
+        if re.match(r"^\s*permissions:\s*write-all\s*(?:#.*)?$", line):
+            violations.append(f"{path}:{index + 1}: permissions: write-all is forbidden")
+
+        # Workflow-top-level write permissions apply to every job and are too
+        # broad. Read-only top-level defaults are fine; writes belong on the
+        # narrowest job that needs them.
+        if re.match(r"^permissions:\s*(?:#.*)?$", line):
+            cursor = index + 1
+            while cursor < len(lines):
+                child = lines[cursor]
+                if child.strip() and _indent(child) == 0:
+                    break
+                if re.match(r"^\s{2}[A-Za-z0-9_-]+:\s*write\s*(?:#.*)?$", child):
+                    violations.append(
+                        f"{path}:{cursor + 1}: workflow-top-level write permission is forbidden; grant it at job scope"
+                    )
+                cursor += 1
+
+        program = PROGRAM_LINE.match(line)
+        if program:
+            body, _ = _program_block(lines, index)
+            for lineno, program_line in body:
+                for expression in EXPRESSION.findall(program_line):
+                    if _is_untrusted_expression(expression):
+                        violations.append(
+                            f"{path}:{lineno}: untrusted GitHub/input context must cross into program text via env/with data, not direct template interpolation: ${{{{ {expression.strip()} }}}}"
+                        )
+
+    return violations
+
+
+def workflow_paths(root: Path) -> list[Path]:
+    workflows = root / ".github" / "workflows"
+    return sorted(
+        path
+        for path in workflows.iterdir()
+        if path.is_file() and path.suffix in {".yml", ".yaml"}
+    )
+
+
+def validate(root: Path) -> list[str]:
+    violations: list[str] = []
+    for path in workflow_paths(root):
+        violations.extend(check_workflow(path.relative_to(root), path.read_text()))
+    return violations
+
+
+def check_pr_ci_admission_contract_text(
+    text: str, path: Path = Path(".github/workflows/pr-ci.yml")
+) -> list[str]:
+    """Require the exact protected bases allowed to invoke canonical PR CI."""
+    violations: list[str] = []
+    event_match = re.search(
+        r"(?ms)^on:\n(?P<body>.*?)(?=^permissions:\n)",
+        text,
+    )
+    if event_match is None:
+        return [f"{path}: PR CI must declare a pull_request event block"]
+
+    event_block = event_match.group("body")
+    events = re.findall(r"(?m)^  ([A-Za-z0-9_]+):", event_block)
+    if events != ["pull_request"]:
+        violations.append(
+            f"{path}: PR CI event surface must be exactly pull_request; got {events!r}"
+        )
+
+    types_match = re.search(
+        r"(?m)^    types:\s*\[([^\]]+)\]\s*(?:#.*)?$",
+        event_block,
+    )
+    if types_match is None:
+        violations.append(f"{path}: PR CI pull_request types are missing")
+    else:
+        observed_types = tuple(
+            part.strip() for part in types_match.group(1).split(",") if part.strip()
+        )
+        if observed_types != PR_CI_EVENT_TYPES:
+            violations.append(
+                f"{path}: PR CI pull_request types must be exactly "
+                f"{PR_CI_EVENT_TYPES!r}; got {observed_types!r}"
+            )
+
+    branches_match = re.search(
+        r"(?ms)^    branches:\n(?P<body>(?:^      - [^\n]+\n?)+)",
+        event_block,
+    )
+    if branches_match is None:
+        violations.append(f"{path}: PR CI protected-base allowlist is missing")
+    else:
+        observed_bases = tuple(
+            match.group(1)
+            for match in re.finditer(
+                r"(?m)^      - ([^\s#]+)\s*(?:#.*)?$",
+                branches_match.group("body"),
+            )
+        )
+        if observed_bases != PR_CI_ALLOWED_BASES:
+            violations.append(
+                f"{path}: PR CI protected-base allowlist must be exactly "
+                f"{PR_CI_ALLOWED_BASES!r}; got {observed_bases!r}"
+            )
+
+    return violations
+
+
+def check_pr_ci_admission_contract(root: Path) -> list[str]:
+    path = root / ".github" / "workflows" / "pr-ci.yml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"{path}: cannot read PR CI workflow: {exc}"]
+    return check_pr_ci_admission_contract_text(text, path.relative_to(root))
+
+
+def check_issue_labeler_contract_text(
+    text: str, path: Path = Path(".github/workflows/issue-labeler.yml")
+) -> list[str]:
+    """Validate the repository-specific mutation boundary for backlog reconciliation."""
+    violations: list[str] = []
+    required_fragments = (
+        "workflow_dispatch:",
+        "dry_run:",
+        "backfill:",
+        "DRY_RUN:",
+        "BACKFILL:",
+        "if (!dryRun)",
+        "name !== explicitType && !dryRun",
+        "if (!dryRun && uniqueAdd.length)",
+        "const defaultBranchRef = `refs/heads/${context.payload.repository.default_branch}`;",
+        "context.eventName === 'workflow_dispatch' && backfill && !dryRun && context.ref !== defaultBranchRef",
+        "Mutating backfill must run from",
+    )
+    for fragment in required_fragments:
+        if fragment not in text:
+            violations.append(f"{path}: issue reconciliation safety contract missing: {fragment}")
+
+    if not re.search(r"(?ms)^      dry_run:\n.*?^        default: true\s*$", text):
+        violations.append(f"{path}: dry_run must default to true")
+    if not re.search(r"(?ms)^      backfill:\n.*?^        default: false\s*$", text):
+        violations.append(f"{path}: backfill must default to false")
+
+    if not re.search(r"(?m)^permissions:\s*\{\}\s*$", text):
+        violations.append(f"{path}: workflow-level permissions must remain empty")
+
+    writes = re.findall(r"(?m)^\s+([A-Za-z0-9_-]+):\s*write\s*(?:#.*)?$", text)
+    if writes != ["issues"]:
+        violations.append(
+            f"{path}: write authority must be exactly one job-local issues:write grant; got {writes!r}"
+        )
+
+    expected_mutations = {
+        "github.rest.issues.updateLabel": 1,
+        "github.rest.issues.createLabel": 1,
+        "github.rest.issues.removeLabel": 1,
+        "github.rest.issues.addLabels": 1,
+    }
+    for call, expected in expected_mutations.items():
+        observed = text.count(call)
+        if observed != expected:
+            violations.append(
+                f"{path}: mutation surface drifted for {call}: expected {expected}, got {observed}"
+            )
+    return violations
+
+
+def check_issue_labeler_contract(root: Path) -> list[str]:
+    path = root / ".github" / "workflows" / "issue-labeler.yml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"{path}: cannot read issue labeler: {exc}"]
+    return check_issue_labeler_contract_text(text, path.relative_to(root))
+
+
+def _job_block(text: str, job_id: str) -> str | None:
+    match = re.search(
+        rf"(?ms)^  {re.escape(job_id)}:\n(?P<body>.*?)(?=^  [A-Za-z0-9_-]+:\n|\Z)",
+        text,
+    )
+    return match.group(0) if match else None
+
+
+def check_codeql_weekly_manual_contract_text(
+    text: str, path: Path = Path(".github/workflows/codeql.yml")
+) -> list[str]:
+    """Require weekly/manual full scans with trusted-main source authorization."""
+    violations: list[str] = []
+    event_match = re.search(
+        r"(?ms)^on:\n(?P<body>.*?)(?=^permissions:\n)",
+        text,
+    )
+    if event_match is None:
+        return [f"{path}: CodeQL must declare schedule/manual event block"]
+    event_block = event_match.group("body")
+    events = re.findall(r"(?m)^  ([a-z_]+):", event_block)
+    if len(events) != 2 or set(events) != {"schedule", "workflow_dispatch"}:
+        violations.append(
+            f"{path}: CodeQL must have exactly schedule and workflow_dispatch events"
+        )
+    for fragment in (
+        'cron: "47 18 * * 1"',
+        "inputs:",
+        "candidate_sha:",
+        "required: true",
+        "release_tag:",
+        "required: false",
+        'default: ""',
+    ):
+        if fragment not in event_block:
+            violations.append(f"{path}: full scan event contract missing: {fragment}")
+    for forbidden in ("pull_request:", "workflow_run:", "workflow_call:", "push:"):
+        if forbidden in event_block:
+            violations.append(f"{path}: PR/push-derived CodeQL event forbidden: {forbidden}")
+
+    guard = _job_block(text, "scan-guard")
+    if guard is None:
+        violations.append(f"{path}: scheduled CodeQL guard job missing")
+    else:
+        for fragment in (
+            "name: CodeQL schedule guard",
+            "runs-on: ubuntu-slim",
+            "actions: read",
+            "should_scan:",
+            "event=schedule&status=success&branch=main",
+            '.head_sha == $sha',
+            '.head_branch == "main"',
+            '.path == ".github/workflows/codeql.yml"',
+            'echo "should_scan=false"',
+        ):
+            if fragment not in guard:
+                violations.append(f"{path}: scheduled no-op guard missing: {fragment}")
+        if not re.search(
+            r'(?m)if \[\[ "\$GITHUB_EVENT_NAME" != schedule \]\]; then\n'
+            r'\s+echo "should_scan=true" >> "\$GITHUB_OUTPUT"\n'
+            r'\s+exit 0',
+            guard,
+        ):
+            violations.append(
+                f"{path}: manual dispatch must always enter the full CodeQL matrix"
+            )
+
+    analyze = _job_block(text, "analyze")
+    if analyze is None:
+        violations.append(f"{path}: full Actions/Rust CodeQL matrix missing")
+    else:
+        for fragment in (
+            "needs: scan-guard",
+            "if: needs.scan-guard.outputs.should_scan == 'true'",
+            "name: Analyze (${{ matrix.language }})",
+            "security-events: write",
+            "EXPECTED_SHA: ${{ github.event_name == 'workflow_dispatch' && inputs.candidate_sha || github.sha }}",
+            "RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || '' }}",
+            '[[ "$GITHUB_REF" == "refs/heads/main" ]]',
+            '[[ "$GITHUB_SHA" == "$EXPECTED_SHA" ]]',
+            '[[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]',
+            'ref: ${{ env.EXPECTED_SHA }}',
+            "Check out trusted release source policy",
+            'ref: ${{ github.sha }}',
+            "path: .release-security",
+            ".release-security/.github/scripts/check_release_codeql.py",
+            'args=(--source-only --sha "$EXPECTED_SHA")',
+            'args+=(--tag "$RELEASE_TAG")',
+            "source-identity.json",
+            "release-codeql-source-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
+            "github/codeql-action/init@",
+            "github/codeql-action/analyze@",
+            "config: |",
+            "paths-ignore:",
+            "tests/fixtures/upgrade/schema-2-runtime/probe.rs",
+            "tests/fixtures/upgrade/schema-3-runtime/probe.rs",
+            "release-codeql-${{ env.EXPECTED_SHA }}-${{ matrix.language }}",
+            ".github/scripts/check_codeql_sarif.py",
+        ):
+            if fragment not in analyze:
+                violations.append(f"{path}: exact-source full matrix contract missing: {fragment}")
+        for language in ("actions", "rust"):
+            if f"- language: {language}" not in analyze:
+                violations.append(f"{path}: full CodeQL {language} matrix entry missing")
+        if analyze.count("build-mode: none") != 2:
+            violations.append(f"{path}: Actions/Rust CodeQL must both use build-mode none")
+        if analyze.count('python3 "$RUNNER_TEMP/check_release_codeql.py"') != 2:
+            violations.append(
+                f"{path}: candidate source authority must be checked before and after CodeQL analysis"
+            )
+        if analyze.count("retention-days: 30") != 2:
+            violations.append(f"{path}: SARIF and source identity retention must both be 30 days")
+        if "refs/heads/release/0.7" in analyze:
+            violations.append(
+                f"{path}: frozen recovery lineage must remain delegated to the trusted verifier"
+            )
+        if (
+            analyze.find("Check out trusted release source policy")
+            > analyze.find("Authorize exact source against trusted policy")
+            or analyze.find("Authorize exact source against trusted policy")
+            > analyze.find("Initialize CodeQL")
+        ):
+            violations.append(
+                f"{path}: trusted source authorization must complete before CodeQL initialization"
+            )
+        if any(token in analyze for token in ("pull_request", "head_repo", "run_rust=false")):
+            violations.append(
+                f"{path}: full CodeQL matrix must not use PR source or PR-derived conditional routing"
+            )
+
+    for obsolete in ("verify-source", "analyze-actions", "analyze-rust", "rust-impact", "orphan-codeql-live"):
+        if _job_block(text, obsolete) is not None:
+            violations.append(f"{path}: obsolete CodeQL control-plane job remains: {obsolete}")
+    return violations
+
+
+def check_codeql_weekly_manual_contract(root: Path) -> list[str]:
+    path = root / ".github" / "workflows" / "codeql.yml"
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"{path}: cannot read CodeQL workflow: {exc}"]
+    return check_codeql_weekly_manual_contract_text(text, path.relative_to(root))
+
+
+
+def _immutable_codeql_pin(block: str, action: str, where: str, violations: list[str]) -> str | None:
+    matches = re.findall(rf"(?m)^\s+uses:\s*github/codeql-action/{re.escape(action)}@([0-9a-f]{{40}})(?:\s+#.*)?$", block)
+    if len(matches) != 1:
+        violations.append(f"{where}: expected exactly one immutable CodeQL {action} action")
+        return None
+    return matches[0]
+
+def check_codeql_pr_runtime_contract_text(pr_ci: str, codeql: str, path: Path = Path(".github/workflows/pr-ci.yml")) -> list[str]:
+    violations: list[str] = []
+    runtime = _job_block(pr_ci, "codeql-runtime"); scope = _job_block(pr_ci, "scope")
+    gate = _job_block(pr_ci, "direct-merge-gate"); production = _job_block(codeql, "analyze")
+    if runtime is None or scope is None or gate is None or production is None:
+        return [f"{path}: selective CodeQL runtime topology is incomplete"]
+    permission_blocks = list(re.finditer(r"(?m)^    permissions:[ \t]*\n", runtime))
+    observed_permissions: dict[str, str] = {}
+    if len(permission_blocks) != 1:
+        violations.append(f"{path}: codeql-runtime job-local permissions missing or duplicated")
+    else:
+        for line in runtime[permission_blocks[0].end():].splitlines():
+            if not line.startswith("      "):
+                break
+            match = re.fullmatch(r" {6}([A-Za-z0-9_-]+):[ \t]*([A-Za-z-]+)[ \t]*(?:#[^\r\n]*)?", line)
+            if match is None:
+                violations.append(f"{path}: malformed codeql-runtime permission")
+                break
+            key = match.group(1)
+            if key in observed_permissions:
+                violations.append(f"{path}: duplicate codeql-runtime permission: {key}")
+            observed_permissions[key] = match.group(2)
+    if observed_permissions != {"contents": "read", "pull-requests": "read"}:
+        violations.append(f"{path}: codeql-runtime permissions must be exactly contents:read + pull-requests:read")
+    prod_init = _immutable_codeql_pin(production, "init", "codeql.yml:analyze", violations)
+    prod_analyze = _immutable_codeql_pin(production, "analyze", "codeql.yml:analyze", violations)
+    pr_init = _immutable_codeql_pin(runtime, "init", f"{path}:codeql-runtime", violations)
+    pr_analyze = _immutable_codeql_pin(runtime, "analyze", f"{path}:codeql-runtime", violations)
+    if prod_init and prod_analyze and prod_init != prod_analyze: violations.append("codeql.yml:analyze: production CodeQL init/analyze pins must match")
+    if prod_init and pr_init and prod_init != pr_init: violations.append(f"{path}: PR CodeQL init pin must match production")
+    if prod_analyze and pr_analyze and prod_analyze != pr_analyze: violations.append(f"{path}: PR CodeQL analyze pin must match production")
+    runtime_fragments = (
+        "needs: scope", "if: ${{ needs.scope.outputs.codeql_runtime_required == 'true' }}",
+        "repository: ${{ github.event.pull_request.head.repo.full_name }}", "ref: ${{ github.event.pull_request.head.sha }}",
+        "persist-credentials: false", "trusted-codeql-runtime-validation.py self-test", "trusted-codeql-runtime-validation.py check-contract",
+        "languages: actions", "build-mode: none", "category: /language:actions", "upload: never",
+        "output: ${{ runner.temp }}/pr-codeql-runtime", "trusted-codeql-runtime-validation.py verify",
+    )
+    for fragment in runtime_fragments:
+        if fragment not in runtime: violations.append(f"{path}: codeql-runtime contract missing: {fragment}")
+    for forbidden in ("security-events: write", "actions: write", "id-token: write", "upload-artifact"):
+        if forbidden in runtime: violations.append(f"{path}: codeql-runtime has forbidden authority/retention: {forbidden}")
+    scope_fragments = (
+        "codeql_runtime_classification_outcome: ${{ steps.codeql-runtime-scope.outcome }}",
+        "codeql_runtime_required: ${{ steps.codeql-runtime-scope.outputs.required }}",
+        "Classify selective CodeQL runtime from trusted base", ".trusted-base/.github/scripts/trusted-codeql-runtime-validation.py",
+        "echo 'required=true' >> \"$GITHUB_OUTPUT\"", "--github-output \"$GITHUB_OUTPUT\"",
+    )
+    for fragment in scope_fragments:
+        if fragment not in scope: violations.append(f"{path}: trusted-base CodeQL classifier missing: {fragment}")
+    gate_fragments = (
+        "needs: [scope, rust, dependency, evidence, supply, conformance, codeql-runtime]",
+        "CODEQL_RUNTIME_CLASSIFICATION_OUTCOME:", "CODEQL_RUNTIME_REQUIRED:", "CODEQL_RUNTIME_RESULT:",
+        'require_success codeql-runtime-scope "$CODEQL_RUNTIME_CLASSIFICATION_OUTCOME"',
+        'require_success codeql-runtime "$CODEQL_RUNTIME_RESULT"', 'require_skipped codeql-runtime "$CODEQL_RUNTIME_RESULT"',
+    )
+    for fragment in gate_fragments:
+        if fragment not in gate: violations.append(f"{path}: Direct Merge Gate CodeQL contract missing: {fragment}")
+    return violations
+
+def check_codeql_pr_runtime_contract(root: Path) -> list[str]:
+    pr_path = root / ".github" / "workflows" / "pr-ci.yml"; codeql_path = root / ".github" / "workflows" / "codeql.yml"
+    try:
+        pr_ci = pr_path.read_text(encoding="utf-8"); codeql = codeql_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return [f"CodeQL PR runtime contract unreadable: {exc}"]
+    return check_codeql_pr_runtime_contract_text(pr_ci, codeql, pr_path.relative_to(root))
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path.cwd(),
+        help="repository root containing .github/workflows",
+    )
+    args = parser.parse_args()
+
+    root = args.root.resolve()
+    violations = validate(root)
+    violations.extend(check_pr_ci_admission_contract(root))
+    violations.extend(check_issue_labeler_contract(root))
+    violations.extend(check_codeql_weekly_manual_contract(root))
+    violations.extend(check_codeql_pr_runtime_contract(root))
+    if violations:
+        print("GitHub Actions security policy violations:", file=sys.stderr)
+        for violation in violations:
+            print(f"- {violation}", file=sys.stderr)
+        return 1
+
+    print("GitHub Actions deterministic security policy: PASS")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
+
+)
+
+# PR CI may run only for the protected default branch and the one frozen M7
+# historical release branch. Keep this exact: a wildcard release/* admission
+# would turn the recovery exception into a generic alternate merge path.
+PR_CI_ALLOWED_BASES = ("main", "release/0.7")
+PR_CI_EVENT_TYPES = ("opened", "synchronize", "reopened", "ready_for_review")
 
 EPHEMERAL_WORKFLOW = re.compile(
     r"^(?:research|temporary|tmp|experiment)(?:[-_].*)?\.ya?ml$",
