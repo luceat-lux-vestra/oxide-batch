@@ -725,35 +725,35 @@ jobs:
 
 
 
-  sqlserver-image-resolution:
-    name: sqlserver-${{ matrix.lane }}-image-resolution
+  sqlserver-repository-core:
+    name: sqlserver-${{ matrix.lane }}-repository-core
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-slim
-    timeout-minutes: 5
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
           - lane: "2022-cu28"
-            tag: "2022-CU28-ubuntu-22.04"
+            image: "mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04@sha256:e10cd49443c94dbdcb7a050987db22ff4d8c87052ac53768abe1ed848d3fcef6"
+            product_version: "16.0.4325.4"
           - lane: "2025-cu11"
-            tag: "2025-CU11-ubuntu-24.04"
+            image: "mcr.microsoft.com/mssql/server:2025-CU11-ubuntu-24.04@sha256:a554b8cf6ab60b92838737f03d0422c4babcd491d09cba3bec0e5e41e292b921"
+            product_version: "17.0.5065.9"
     steps:
-      - name: Resolve immutable Microsoft SQL Server image digest
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Run pinned SQL Server runnable-core certification
         env:
-          IMAGE_TAG: ${{ matrix.tag }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          headers="$(
-            curl --fail --silent --show-error \
-              -D - -o /dev/null \
-              -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
-              "https://mcr.microsoft.com/v2/mssql/server/manifests/${IMAGE_TAG}"
-          )"
-          digest="$(printf '%s\n' "$headers" | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" { print $2; exit }')"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          echo "SQLSERVER_IMAGE lane=${{ matrix.lane }} tag=${IMAGE_TAG} digest=${digest}"
+          OXIDEBATCH_SQLSERVER_IMAGE: ${{ matrix.image }}
+          OXIDEBATCH_SQLSERVER_LANE: ${{ matrix.lane }}
+          OXIDEBATCH_SQLSERVER_EXPECTED_PRODUCT_VERSION: ${{ matrix.product_version }}
+        run: ./tests/fixtures/sqlserver/run-ci-runnable-core.sh
 
   mysql-repository-core:
     name: mysql-8.4.13-repository-core
