@@ -1,0 +1,45 @@
+name: M8 SQL Server candidate validation helper
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: m8-sqlserver-helper-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  materialize-candidate:
+    if: ${{ github.event.pull_request.head.ref == 'm8/sqlserver-runnable-core-674' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Generate lockfile
+        run: cargo generate-lockfile
+
+      - name: Apply canonical formatting
+        run: cargo fmt --all
+
+      - name: Compile all targets and features
+        run: cargo check --workspace --all-targets --all-features
+
+      - name: Archive validation material
+        run: |
+          tar -czf /tmp/m8-sqlserver-validation.tar.gz             Cargo.lock             crates/oxide-batch/src/lib.rs             crates/oxide-batch/src/repository.rs             crates/oxide-batch/src/repository/sqlserver.rs             crates/oxide-batch/tests/facade_review.rs             crates/oxide-batch/tests/facade_surface.rs             crates/oxide-batch/tests/sqlserver_repository_core.rs
+
+      - name: Upload validation material
+        uses: actions/upload-artifact@v4
+        with:
+          name: m8-sqlserver-validation-material
+          path: /tmp/m8-sqlserver-validation.tar.gz
+          if-no-files-found: error
