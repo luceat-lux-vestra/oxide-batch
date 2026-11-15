@@ -51,6 +51,12 @@ openssl req -x509 -new -sha256 -days 2 \
   -subj '/CN=OxideBatch SQL Server CI Root' \
   -out "$workdir/ca.pem"
 
+openssl genrsa -out "$workdir/wrong-ca.key" 2048 >/dev/null 2>&1
+openssl req -x509 -new -sha256 -days 2 \
+  -key "$workdir/wrong-ca.key" \
+  -subj '/CN=OxideBatch SQL Server Wrong CI Root' \
+  -out "$workdir/wrong-ca.pem"
+
 openssl genrsa -out "$workdir/mssql.key" 2048 >/dev/null 2>&1
 openssl req -new -sha256 \
   -key "$workdir/mssql.key" \
@@ -149,19 +155,65 @@ docker exec "$container" "$sqlcmd_path" \
   -Q "IF DB_ID(N'oxide_batch_repository') IS NULL CREATE DATABASE oxide_batch_repository;" \
   >/dev/null
 
+migrator_username='oxide_batch_migrator'
+migrator_password='OxideBatch!674Migrator'
+runtime_username='oxide_batch_runtime'
+runtime_password='OxideBatch!674Runtime'
+
+docker exec "$container" "$sqlcmd_path" \
+  -S localhost -U sa -P "$sa_password" -C -b \
+  -Q "
+IF SUSER_ID(N'$migrator_username') IS NULL
+  CREATE LOGIN [$migrator_username] WITH PASSWORD=N'$migrator_password', CHECK_POLICY=OFF;
+IF SUSER_ID(N'$runtime_username') IS NULL
+  CREATE LOGIN [$runtime_username] WITH PASSWORD=N'$runtime_password', CHECK_POLICY=OFF;
+USE [oxide_batch_repository];
+IF USER_ID(N'$migrator_username') IS NULL
+  CREATE USER [$migrator_username] FOR LOGIN [$migrator_username];
+IF USER_ID(N'$runtime_username') IS NULL
+  CREATE USER [$runtime_username] FOR LOGIN [$runtime_username];
+GRANT CREATE TABLE TO [$migrator_username];
+GRANT ALTER ON SCHEMA::dbo TO [$migrator_username];
+GRANT REFERENCES ON SCHEMA::dbo TO [$migrator_username];
+GRANT SELECT, INSERT, UPDATE, DELETE ON SCHEMA::dbo TO [$migrator_username];
+" >/dev/null
+
 export OXIDEBATCH_SQLSERVER_TEST_HOST=127.0.0.1
 export OXIDEBATCH_SQLSERVER_TEST_PORT=1433
 export OXIDEBATCH_SQLSERVER_TEST_DATABASE=oxide_batch_repository
-export OXIDEBATCH_SQLSERVER_TEST_USERNAME=sa
-export OXIDEBATCH_SQLSERVER_TEST_PASSWORD="$sa_password"
+export OXIDEBATCH_SQLSERVER_TEST_USERNAME="$runtime_username"
+export OXIDEBATCH_SQLSERVER_TEST_PASSWORD="$runtime_password"
+export OXIDEBATCH_SQLSERVER_MIGRATOR_USERNAME="$migrator_username"
+export OXIDEBATCH_SQLSERVER_MIGRATOR_PASSWORD="$migrator_password"
 export OXIDEBATCH_SQLSERVER_TEST_CERT_HOSTNAME="$server_name"
 export OXIDEBATCH_SQLSERVER_TEST_CA_PEM
 OXIDEBATCH_SQLSERVER_TEST_CA_PEM="$(cat "$workdir/ca.pem")"
+export OXIDEBATCH_SQLSERVER_TEST_WRONG_CA_PEM
+OXIDEBATCH_SQLSERVER_TEST_WRONG_CA_PEM="$(cat "$workdir/wrong-ca.pem")"
 if [ "$encryption" = strict ]; then
   export OXIDEBATCH_SQLSERVER_TEST_TDS80_STRICT=1
 else
   unset OXIDEBATCH_SQLSERVER_TEST_TDS80_STRICT || true
 fi
+
+# Bootstrap the immutable schema through the dedicated migrator principal before
+# granting runtime DML. This proves the migrator can operate without sa/db_owner.
+cargo test -p oxide-batch --features sqlserver \
+  --test sqlserver_repository_core \
+  migration_is_idempotent_for_sql_server \
+  -- --exact --nocapture --test-threads=1
+
+docker exec "$container" "$sqlcmd_path" \
+  -S localhost -U sa -P "$sa_password" -C -b \
+  -Q "
+USE [oxide_batch_repository];
+GRANT SELECT ON SCHEMA::dbo TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_job_instance TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_job_execution TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_step_execution TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_core_job_definition TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_flow_decision TO [$runtime_username];
+" >/dev/null
 
 cargo test -p oxide-batch --features sqlserver \
   --test sqlserver_repository_core \

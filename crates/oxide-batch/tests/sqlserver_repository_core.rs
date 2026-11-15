@@ -24,8 +24,11 @@ struct TestSettings {
     database: String,
     username: String,
     password: String,
+    migrator_username: String,
+    migrator_password: String,
     hostname_in_certificate: Option<String>,
     ca_bundle: Option<Vec<u8>>,
+    wrong_ca_bundle: Option<Vec<u8>>,
     strict_tds80: bool,
 }
 
@@ -43,6 +46,12 @@ impl TestSettings {
         let Some(password) = required("OXIDEBATCH_SQLSERVER_TEST_PASSWORD") else {
             return Ok(None);
         };
+        let Some(migrator_username) = required("OXIDEBATCH_SQLSERVER_MIGRATOR_USERNAME") else {
+            return Ok(None);
+        };
+        let Some(migrator_password) = required("OXIDEBATCH_SQLSERVER_MIGRATOR_PASSWORD") else {
+            return Ok(None);
+        };
         let port = std::env::var("OXIDEBATCH_SQLSERVER_TEST_PORT")
             .ok()
             .map(|value| value.parse())
@@ -50,6 +59,9 @@ impl TestSettings {
             .unwrap_or(1433);
         let hostname_in_certificate = std::env::var("OXIDEBATCH_SQLSERVER_TEST_CERT_HOSTNAME").ok();
         let ca_bundle = std::env::var("OXIDEBATCH_SQLSERVER_TEST_CA_PEM")
+            .ok()
+            .map(String::into_bytes);
+        let wrong_ca_bundle = std::env::var("OXIDEBATCH_SQLSERVER_TEST_WRONG_CA_PEM")
             .ok()
             .map(String::into_bytes);
         let strict_tds80 =
@@ -60,18 +72,33 @@ impl TestSettings {
             database,
             username,
             password,
+            migrator_username,
+            migrator_password,
             hostname_in_certificate,
             ca_bundle,
+            wrong_ca_bundle,
             strict_tds80,
         }))
     }
 
     fn repository_config(&self) -> Result<SqlServerConfig, Box<dyn Error>> {
+        self.repository_config_with_credentials(&self.username, &self.password)
+    }
+
+    fn migrator_config(&self) -> Result<SqlServerConfig, Box<dyn Error>> {
+        self.repository_config_with_credentials(&self.migrator_username, &self.migrator_password)
+    }
+
+    fn repository_config_with_credentials(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<SqlServerConfig, Box<dyn Error>> {
         let mut config = SqlServerConfig::new(
             self.host.clone(),
             self.database.clone(),
-            self.username.clone(),
-            self.password.clone(),
+            username.to_owned(),
+            password.to_owned(),
         )?
         .with_port(self.port)?;
         if let Some(hostname) = &self.hostname_in_certificate {
@@ -87,12 +114,20 @@ impl TestSettings {
     }
 
     fn driver_config(&self) -> TiberiusConfig {
+        self.driver_config_with_credentials(&self.username, &self.password)
+    }
+
+    fn migrator_driver_config(&self) -> TiberiusConfig {
+        self.driver_config_with_credentials(&self.migrator_username, &self.migrator_password)
+    }
+
+    fn driver_config_with_credentials(&self, username: &str, password: &str) -> TiberiusConfig {
         let mut config = TiberiusConfig::new();
         config.host(&self.host);
         config.port(self.port);
         config.database(&self.database);
         config.application_name("OxideBatch SQL Server contract cleanup");
-        config.authentication(AuthMethod::sql_server(&self.username, &self.password));
+        config.authentication(AuthMethod::sql_server(username, password));
         config.encryption(if self.strict_tds80 {
             EncryptionLevel::Strict
         } else {
@@ -119,6 +154,24 @@ async fn connect_test_client(
     let tcp = TcpStream::connect(config.get_addr()).await?;
     tcp.set_nodelay(true)?;
     Ok(Box::pin(Client::connect(config, tcp.compat_write())).await?)
+}
+
+async fn connect_migrator_test_client(
+    settings: &TestSettings,
+) -> Result<Client<tokio_util::compat::Compat<TcpStream>>, Box<dyn Error>> {
+    let config = settings.migrator_driver_config();
+    let tcp = TcpStream::connect(config.get_addr()).await?;
+    tcp.set_nodelay(true)?;
+    Ok(Box::pin(Client::connect(config, tcp.compat_write())).await?)
+}
+
+async fn execute_test_query(
+    client: &mut Client<tokio_util::compat::Compat<TcpStream>>,
+    sql: &str,
+) -> Result<(), tiberius::error::Error> {
+    let stream = client.simple_query(sql).await?;
+    stream.into_results().await?;
+    Ok(())
 }
 
 async fn remove_contract_rows(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
@@ -173,7 +226,7 @@ fn migration_is_idempotent_for_sql_server() -> Result<(), Box<dyn Error>> {
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let config = settings.repository_config()?;
+        let config = settings.migrator_config()?;
         SqlServerMigrator::migrate(&config).await?;
         SqlServerMigrator::migrate(&config).await?;
         assert_eq!(
@@ -199,7 +252,7 @@ fn named_sql_server_lane_reports_the_expected_product_version() -> Result<(), Bo
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let mut client = Box::pin(connect_test_client(&settings)).await?;
+        let mut client = Box::pin(connect_migrator_test_client(&settings)).await?;
         let row = client
             .simple_query(
                 "SELECT CONVERT(nvarchar(128), SERVERPROPERTY('ProductVersion')) \
@@ -228,8 +281,7 @@ fn runnable_core_repository_contract_passes_on_sql_server() -> Result<(), Box<dy
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let config = settings.repository_config()?;
-        SqlServerMigrator::migrate(&config).await?;
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
         Box::pin(run_runnable_core_repository_contract(
             "sqlserver",
             |clock| {
@@ -265,8 +317,8 @@ fn sql_server_descriptor_declares_zero_optional_capabilities() -> Result<(), Box
         .enable_all()
         .build()?;
     runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
         let config = settings.repository_config()?;
-        SqlServerMigrator::migrate(&config).await?;
         let repository = SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await?;
         assert_eq!(repository.descriptor().capabilities().len(), 0);
         Ok::<(), Box<dyn Error>>(())
@@ -286,9 +338,9 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let config = settings.repository_config()?;
-        SqlServerMigrator::migrate(&config).await?;
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
         Box::pin(remove_contract_rows(&settings)).await?;
+        let config = settings.repository_config()?;
         let repository = SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await?;
         let barrier = Arc::new(tokio::sync::Barrier::new(CONTENDERS));
         let key = JobInstanceKey::new(
@@ -340,6 +392,103 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
 }
 
 #[test]
+fn tls_rejects_wrong_hostname_and_untrusted_ca() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment()? else {
+        eprintln!("skipped: SQL Server test environment is not configured");
+        return Ok(());
+    };
+    let Some(wrong_ca_bundle) = settings.wrong_ca_bundle.clone() else {
+        eprintln!("skipped: SQL Server wrong-CA fixture is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
+
+        let wrong_hostname = settings
+            .repository_config()?
+            .with_hostname_in_certificate("wrong-hostname.oxide-batch.invalid")?;
+        assert_eq!(
+            SqlServerJobRepository::connect(wrong_hostname, Arc::new(SystemClock))
+                .await
+                .err(),
+            Some(RepositoryError::Unavailable)
+        );
+
+        let wrong_ca = settings.repository_config()?.with_ca_bundle(wrong_ca_bundle)?;
+        assert_eq!(
+            SqlServerJobRepository::connect(wrong_ca, Arc::new(SystemClock))
+                .await
+                .err(),
+            Some(RepositoryError::Unavailable)
+        );
+
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn runtime_principal_cannot_migrate_or_mutate_schema_version() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment()? else {
+        eprintln!("skipped: SQL Server test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
+
+        let mut client = Box::pin(connect_test_client(&settings)).await?;
+        let ddl = execute_test_query(
+            &mut client,
+            "CREATE TABLE dbo.ob_runtime_privilege_probe (id int NOT NULL)",
+        )
+        .await;
+        if ddl.is_ok() {
+            let _ = execute_test_query(&mut client, "DROP TABLE dbo.ob_runtime_privilege_probe")
+                .await;
+            return Err(std::io::Error::other(
+                "runtime principal unexpectedly has DDL authority",
+            )
+            .into());
+        }
+
+        let schema_write = execute_test_query(
+            &mut client,
+            "UPDATE dbo.ob_schema_version SET applied_ms = applied_ms",
+        )
+        .await;
+        if schema_write.is_ok() {
+            return Err(std::io::Error::other(
+                "runtime principal unexpectedly can mutate schema version",
+            )
+            .into());
+        }
+
+        let row = client
+            .simple_query("SELECT MAX(version) AS version FROM dbo.ob_schema_version")
+            .await?
+            .into_row()
+            .await?
+            .ok_or_else(|| std::io::Error::other("schema version row was not visible"))?;
+        assert_eq!(
+            row.try_get::<i32, _>("version")?,
+            Some(
+                i32::try_from(SqlServerMigrator::supported_schema_version())
+                    .map_err(|_| std::io::Error::other("schema version is outside INT range"))?
+            )
+        );
+
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
 fn newer_sql_server_schema_is_rejected_without_guessing_compatibility() -> Result<(), Box<dyn Error>>
 {
     let Some(settings) = TestSettings::from_environment()? else {
@@ -350,8 +499,8 @@ fn newer_sql_server_schema_is_rejected_without_guessing_compatibility() -> Resul
         .enable_all()
         .build()?;
     runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
         let config = settings.repository_config()?;
-        SqlServerMigrator::migrate(&config).await?;
         let supported = SqlServerMigrator::supported_schema_version();
         let newer = supported
             .checked_add(1)
