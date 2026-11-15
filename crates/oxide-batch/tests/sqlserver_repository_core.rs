@@ -107,11 +107,11 @@ async fn connect_test_client(
     let config = settings.driver_config();
     let tcp = TcpStream::connect(config.get_addr()).await?;
     tcp.set_nodelay(true)?;
-    Ok(Client::connect(config, tcp.compat_write()).await?)
+    Ok(Box::pin(Client::connect(config, tcp.compat_write())).await?)
 }
 
 async fn remove_contract_rows(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
-    let mut client = connect_test_client(settings).await?;
+    let mut client = Box::pin(connect_test_client(settings)).await?;
     client
         .simple_query(
             "UPDATE decision \
@@ -188,7 +188,7 @@ fn named_sql_server_lane_reports_the_expected_product_version() -> Result<(), Bo
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let mut client = connect_test_client(&settings).await?;
+        let mut client = Box::pin(connect_test_client(&settings)).await?;
         let row = client
             .simple_query(
                 "SELECT CONVERT(nvarchar(128), SERVERPROPERTY('ProductVersion')) \
@@ -219,10 +219,10 @@ fn runnable_core_repository_contract_passes_on_sql_server() -> Result<(), Box<dy
     runtime.block_on(async {
         let config = settings.repository_config()?;
         SqlServerMigrator::migrate(&config).await?;
-        run_runnable_core_repository_contract("sqlserver", |clock| {
+        Box::pin(run_runnable_core_repository_contract("sqlserver", |clock| {
             let settings = settings.clone();
             async move {
-                remove_contract_rows(&settings)
+                Box::pin(remove_contract_rows(&settings))
                     .await
                     .map_err(|_| RepositoryError::Unavailable)?;
                 SqlServerJobRepository::connect(
@@ -233,9 +233,9 @@ fn runnable_core_repository_contract_passes_on_sql_server() -> Result<(), Box<dy
                 )
                 .await
             }
-        })
+        }))
         .await?;
-        remove_contract_rows(&settings).await?;
+        Box::pin(remove_contract_rows(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
@@ -274,7 +274,7 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
     runtime.block_on(async {
         let config = settings.repository_config()?;
         SqlServerMigrator::migrate(&config).await?;
-        remove_contract_rows(&settings).await?;
+        Box::pin(remove_contract_rows(&settings)).await?;
         let repository = SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await?;
         let barrier = Arc::new(tokio::sync::Barrier::new(CONTENDERS));
         let key = JobInstanceKey::new(
@@ -319,7 +319,7 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
         })?;
         assert_eq!(inspection.job_executions(instance.id()).await?.len(), 1);
         inspection.rollback().await?;
-        remove_contract_rows(&settings).await?;
+        Box::pin(remove_contract_rows(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
@@ -342,7 +342,7 @@ fn newer_sql_server_schema_is_rejected_without_guessing_compatibility() -> Resul
         let newer = supported
             .checked_add(1)
             .ok_or_else(|| std::io::Error::other("schema version overflow"))?;
-        let mut client = connect_test_client(&settings).await?;
+        let mut client = Box::pin(connect_test_client(&settings)).await?;
         let update = format!(
             "UPDATE dbo.ob_schema_version SET version = {newer} \
              WHERE version = {supported}"
