@@ -453,7 +453,10 @@ fn lock_timeout_1222_maps_to_concurrent_modification() -> Result<(), Box<dyn Err
              WHERE job_name = N'repository_contention_lock_timeout'",
         )
         .await
-        .expect_err("raw SQL Server lock-timeout probe unexpectedly succeeded");
+        .err()
+        .ok_or_else(|| {
+            std::io::Error::other("raw SQL Server lock-timeout probe unexpectedly succeeded")
+        })?;
         assert_eq!(raw_error.code(), Some(1222));
 
         let mut unit = repository.begin().await?;
@@ -522,30 +525,30 @@ fn deadlock_1205_maps_to_concurrent_modification() -> Result<(), Box<dyn Error>>
         // First prove SQL Server 1205 with an exact two-row UPDATE cycle. Using
         // primary-key predicates avoids range/page ambiguity from the previous
         // SELECT/XLOCK choreography.
-        let mut raw_a = Box::pin(connect_test_client(&settings)).await?;
-        let mut raw_b = Box::pin(connect_test_client(&settings)).await?;
-        let raw_a_first = format!(
+        let mut high_priority = Box::pin(connect_test_client(&settings)).await?;
+        let mut low_priority = Box::pin(connect_test_client(&settings)).await?;
+        let lock_high_row = format!(
             "SET DEADLOCK_PRIORITY HIGH; BEGIN TRAN; \
              UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_a}"
         );
-        let raw_b_first = format!(
+        let lock_low_row = format!(
             "SET DEADLOCK_PRIORITY LOW; BEGIN TRAN; \
              UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_b}"
         );
-        execute_test_query(&mut raw_a, &raw_a_first).await?;
-        execute_test_query(&mut raw_b, &raw_b_first).await?;
+        execute_test_query(&mut high_priority, &lock_high_row).await?;
+        execute_test_query(&mut low_priority, &lock_low_row).await?;
 
-        let raw_a_second = format!(
+        let request_low_row = format!(
             "UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_b}"
         );
-        let raw_b_second = format!(
+        let request_high_row = format!(
             "UPDATE dbo.ob_job_instance SET created_ms = created_ms WHERE id = {instance_a}"
         );
-        let (raw_a_wait, raw_b_wait) =
+        let (winner_outcome, victim_outcome) =
             tokio::time::timeout(Duration::from_secs(15), async {
                 tokio::join!(
-                    execute_test_query(&mut raw_a, &raw_a_second),
-                    execute_test_query(&mut raw_b, &raw_b_second)
+                    execute_test_query(&mut high_priority, &request_low_row),
+                    execute_test_query(&mut low_priority, &request_high_row)
                 )
             })
             .await
@@ -555,15 +558,14 @@ fn deadlock_1205_maps_to_concurrent_modification() -> Result<(), Box<dyn Error>>
                 )
             })?;
 
-        assert!(raw_a_wait.is_ok());
-        assert_eq!(
-            raw_b_wait
-                .expect_err("LOW-priority raw deadlock participant unexpectedly survived")
-                .code(),
-            Some(1205)
-        );
-        execute_test_query(&mut raw_a, "IF XACT_STATE() <> 0 ROLLBACK").await?;
-        let _ = execute_test_query(&mut raw_b, "IF XACT_STATE() <> 0 ROLLBACK").await;
+        assert!(winner_outcome.is_ok());
+        let victim_error = victim_outcome.err().ok_or_else(|| {
+            std::io::Error::other("LOW-priority raw deadlock participant unexpectedly survived")
+        })?;
+        assert_eq!(victim_error.code(), Some(1205));
+        execute_test_query(&mut high_priority, "IF XACT_STATE() <> 0 ROLLBACK").await?;
+        let _ =
+            execute_test_query(&mut low_priority, "IF XACT_STATE() <> 0 ROLLBACK").await;
 
         // Then make the repository transaction the lower-priority victim. The
         // UoW keeps the adapter's UPDLOCK/HOLDLOCK on A; a HIGH-priority raw
