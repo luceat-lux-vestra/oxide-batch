@@ -33,7 +33,9 @@ const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
 const DEFAULT_MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
-const MAX_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const MIN_OPERATION_TIMEOUT: Duration = Duration::from_millis(1);
+const MAX_OPERATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const MAX_CONNECTION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
 
 const MIGRATION_1: &str = include_str!("../../migrations-sqlserver/0001_core_metadata.sql");
 const MIGRATION_2: &str = include_str!("../../migrations-sqlserver/0002_runnable_core.sql");
@@ -88,18 +90,30 @@ impl SqlServerConfig {
         Ok(config)
     }
 
+    /// Overrides the SQL Server TCP port.
+    ///
+    /// # Errors
+    /// Returns a configuration error when the port is zero.
     pub fn with_port(mut self, port: u16) -> Result<Self, SqlServerConfigError> {
         self.port = port;
         self.validate()?;
         Ok(self)
     }
 
+    /// Sets the bounded bb8 pool capacity.
+    ///
+    /// # Errors
+    /// Returns a configuration error outside 1 through 1024 connections.
     pub fn with_pool_size(mut self, pool_size: u32) -> Result<Self, SqlServerConfigError> {
         self.pool_size = pool_size;
         self.validate()?;
         Ok(self)
     }
 
+    /// Adds an in-memory PEM/DER CA bundle to the validated trust roots.
+    ///
+    /// # Errors
+    /// Returns a configuration error for an empty bundle.
     pub fn with_ca_bundle(mut self, bundle: Vec<u8>) -> Result<Self, SqlServerConfigError> {
         if bundle.is_empty() {
             return Err(SqlServerConfigError::EmptyCaBundle);
@@ -109,6 +123,10 @@ impl SqlServerConfig {
         Ok(self)
     }
 
+    /// Overrides the hostname used for certificate-name verification.
+    ///
+    /// # Errors
+    /// Returns a configuration error for an empty hostname.
     pub fn with_hostname_in_certificate(
         mut self,
         hostname: impl Into<String>,
@@ -122,6 +140,10 @@ impl SqlServerConfig {
         Ok(self)
     }
 
+    /// Sets the finite pool-acquire timeout.
+    ///
+    /// # Errors
+    /// Returns a configuration error outside 1 ms through 10 minutes.
     pub fn with_acquire_timeout(
         mut self,
         timeout: Duration,
@@ -131,6 +153,10 @@ impl SqlServerConfig {
         Ok(self)
     }
 
+    /// Sets the finite TDS/TLS handshake timeout.
+    ///
+    /// # Errors
+    /// Returns a configuration error outside 1 ms through 10 minutes.
     pub fn with_connect_timeout(
         mut self,
         timeout: Duration,
@@ -140,6 +166,10 @@ impl SqlServerConfig {
         Ok(self)
     }
 
+    /// Sets the finite Tiberius command-response timeout.
+    ///
+    /// # Errors
+    /// Returns a configuration error outside 1 ms through 10 minutes.
     pub fn with_command_timeout(
         mut self,
         timeout: Duration,
@@ -149,6 +179,10 @@ impl SqlServerConfig {
         Ok(self)
     }
 
+    /// Sets SQL Server's per-session lock wait bound.
+    ///
+    /// # Errors
+    /// Returns a configuration error outside 1 ms through 10 minutes.
     pub fn with_lock_timeout(
         mut self,
         timeout: Duration,
@@ -158,6 +192,10 @@ impl SqlServerConfig {
         Ok(self)
     }
 
+    /// Sets the maximum lifetime of a pooled physical connection.
+    ///
+    /// # Errors
+    /// Returns a configuration error outside 1 second through 24 hours.
     pub fn with_max_lifetime(
         mut self,
         timeout: Duration,
@@ -191,11 +229,15 @@ impl SqlServerConfig {
             self.connect_timeout,
             self.command_timeout,
             self.lock_timeout,
-            self.max_lifetime,
         ] {
-            if timeout.is_zero() || timeout > MAX_TIMEOUT {
+            if timeout < MIN_OPERATION_TIMEOUT || timeout > MAX_OPERATION_TIMEOUT {
                 return Err(SqlServerConfigError::Timeout);
             }
+        }
+        if self.max_lifetime < Duration::from_secs(1)
+            || self.max_lifetime > MAX_CONNECTION_LIFETIME
+        {
+            return Err(SqlServerConfigError::ConnectionLifetime);
         }
         if self
             .hostname_in_certificate
@@ -255,18 +297,30 @@ impl fmt::Debug for SqlServerConfig {
     }
 }
 
+/// Value-redacted SQL Server adapter configuration failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum SqlServerConfigError {
+    /// Host was empty.
     EmptyHost,
+    /// Port was zero.
     Port,
+    /// Database name was empty.
     EmptyDatabase,
+    /// SQL login name was empty.
     EmptyUsername,
+    /// SQL login password was empty.
     EmptyPassword,
+    /// Certificate-validation hostname was empty.
     EmptyHostnameInCertificate,
+    /// Additional CA bundle was empty.
     EmptyCaBundle,
+    /// Pool size was outside 1 through 1024.
     PoolSize,
+    /// One acquire/connect/command/lock timeout was outside 1 ms through 10 minutes.
     Timeout,
+    /// Pool connection lifetime was outside 1 second through 24 hours.
+    ConnectionLifetime,
 }
 
 impl fmt::Display for SqlServerConfigError {
@@ -280,7 +334,10 @@ impl fmt::Display for SqlServerConfigError {
             Self::EmptyHostnameInCertificate => "SQL Server certificate hostname is empty",
             Self::EmptyCaBundle => "SQL Server CA bundle is empty",
             Self::PoolSize => "SQL Server pool size must be from 1 to 1024",
-            Self::Timeout => "SQL Server timeout must be finite and at most 10 minutes",
+            Self::Timeout => "SQL Server timeout must be from 1 ms through 10 minutes",
+            Self::ConnectionLifetime => {
+                "SQL Server connection lifetime must be from 1 second through 24 hours"
+            }
         })
     }
 }
@@ -526,15 +583,21 @@ fn map_pool_error<E>(_error: E) -> RepositoryError {
     RepositoryError::Unavailable
 }
 
+/// Applies the immutable SQL Server runnable-core metadata migrations.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SqlServerMigrator;
 
 impl SqlServerMigrator {
+    /// Returns the metadata schema version understood by this adapter.
     #[must_use]
     pub const fn supported_schema_version() -> u32 {
         SUPPORTED_SCHEMA_VERSION
     }
 
+    /// Reads the installed SQL Server metadata schema version without mutating it.
+    ///
+    /// # Errors
+    /// Returns a value-redacted repository failure when the database cannot be inspected.
     pub async fn installed_schema_version(
         config: &SqlServerConfig,
     ) -> Result<Option<u32>, RepositoryError> {
@@ -544,6 +607,10 @@ impl SqlServerMigrator {
         installed_schema_version(&mut connection).await
     }
 
+    /// Applies every pending immutable migration under a SQL Server application lock.
+    ///
+    /// # Errors
+    /// Returns a value-redacted repository failure, including for a newer unsupported schema.
     pub async fn migrate(config: &SqlServerConfig) -> Result<(), RepositoryError> {
         let mut connection = connect_driver(config)
             .await
@@ -610,14 +677,17 @@ impl SqlServerMigrator {
             let migration_result = async {
                 let stream = connection.client.simple_query(sql).await?;
                 stream.into_results().await?;
+                let version =
+                    i32::try_from(version).map_err(|_| tiberius::error::Error::Conversion(
+                        "migration version is outside SQL Server INT range".into(),
+                    ))?;
                 TdsQuery::new(
                     "INSERT INTO dbo.ob_schema_version(version, applied_ms) VALUES (@P1, @P2)",
                 )
-                .i32(i32::try_from(version).map_err(|_| RepositoryError::Unavailable)?)
+                .i32(version)
                 .i64(applied_ms)
-                .execute(&mut connection)
-                .await
-                .map_err(|_| tiberius::error::Error::Protocol("migration ledger write".into()))?;
+                .execute_raw(&mut connection)
+                .await?;
                 let commit = connection.client.simple_query("COMMIT").await?;
                 commit.into_results().await?;
                 Ok::<(), tiberius::error::Error>(())
@@ -680,6 +750,7 @@ fn verify_schema_version(current: u32) -> Result<(), RepositoryError> {
     }
 }
 
+/// First-party SQL Server implementation of the mandatory runnable-core repository contract.
 #[derive(Clone)]
 pub struct SqlServerJobRepository {
     pool: Pool<SqlServerConnectionManager>,
@@ -688,6 +759,10 @@ pub struct SqlServerJobRepository {
 }
 
 impl SqlServerJobRepository {
+    /// Builds the bounded private pool and verifies the installed schema version.
+    ///
+    /// # Errors
+    /// Returns a value-redacted repository failure for invalid configuration, connectivity, or schema state.
     pub async fn connect(
         config: SqlServerConfig,
         clock: Arc<dyn Clock>,
