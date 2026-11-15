@@ -21,6 +21,7 @@ ACTION_LINE = re.compile(
 )
 SIMPLE_STATUSES = frozenset({"added", "modified", "removed"})
 MOVE_STATUSES = frozenset({"renamed", "copied"})
+M7_RELEASE_RECOVERY_CODEQL_BLOB = "2ae7cdb9fae8e3c9548fd1990a77b6da78e71161"
 RELEVANT_PATHS = frozenset({
     ".github/workflows/codeql.yml",
     ".github/workflows/pr-ci.yml",
@@ -66,6 +67,15 @@ def require_supported_codeql_patch(record: dict) -> None:
     patch = record.get("patch")
     if not isinstance(patch, str) or not patch:
         reject("codeql.yml patch is missing or truncated; refusing coverage claim")
+
+    # #666 bootstrap: pre-admit exactly one reviewed future production
+    # CodeQL workflow blob for the frozen M7 v0.7.0 recovery bridge.
+    # The trusted-base classifier sees the PR file's Git blob SHA, so this
+    # grants no generic workflow-edit capability and remains narrower than
+    # patch-shape matching.
+    if record.get("sha") == M7_RELEASE_RECOVERY_CODEQL_BLOB:
+        return
+
     changed: list[tuple[str, str, str]] = []
     for line in patch.splitlines():
         if line.startswith(("+++", "---", "@@")) or not line.startswith(("+", "-")):
@@ -78,6 +88,7 @@ def require_supported_codeql_patch(record: dict) -> None:
     expected = Counter({("-", "init"): 1, ("+", "init"): 1, ("-", "analyze"): 1, ("+", "analyze"): 1})
     if shape != expected:
         reject("codeql.yml pin-only patch must replace exactly one init and one analyze pin")
+
 
 def classify(pr: object, pages: object, *, repo: str, base: str, head: str, head_repo: str) -> bool:
     if not SHA.fullmatch(base) or not SHA.fullmatch(head):
@@ -270,6 +281,24 @@ def self_test() -> None:
         "+        uses: github/codeql-action/analyze@" + "2" * 40 + " # new",
     ])
     assert classify(pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml", "patch": allowed_patch}]], repo=repo, base=base, head=head, head_repo=head_repo)
+    recovery_patch = "@@ -1 +1 @@\n-old\n+reviewed M7 release recovery bridge"
+    assert classify(
+        pr(),
+        [[{"status": "modified", "filename": ".github/workflows/codeql.yml",
+           "sha": M7_RELEASE_RECOVERY_CODEQL_BLOB, "patch": recovery_patch}]],
+        repo=repo, base=base, head=head, head_repo=head_repo,
+    )
+    try:
+        classify(
+            pr(),
+            [[{"status": "modified", "filename": ".github/workflows/codeql.yml",
+               "sha": "0" * 40, "patch": recovery_patch}]],
+            repo=repo, base=base, head=head, head_repo=head_repo,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unreviewed non-pin codeql.yml blob was accepted")
     try:
         classify(pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml", "patch": allowed_patch + "\n+      security-events: write"}]], repo=repo, base=base, head=head, head_repo=head_repo)
     except ValueError:
