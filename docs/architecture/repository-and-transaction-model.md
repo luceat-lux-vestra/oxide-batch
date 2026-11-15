@@ -16,6 +16,33 @@ contract but are not yet runnable-core certified or support-promoted. SQL
 Server and MongoDB remain planned M8 targets until their own implementation and
 evidence land. A code-bearing bootstrap adapter is not a support claim.
 
+## Adapter ownership and driver boundary
+
+The repository ports are the portability boundary; database client libraries
+are not. Rust has no JDBC-equivalent standard SPI that can carry every
+supported backend without introducing a new lowest-common-denominator database
+API. OxideBatch therefore keeps concrete database clients inside first-party
+adapters:
+
+- PostgreSQL, MySQL/MariaDB, and SQLite may use their SQLx backends privately;
+- SQL Server may use a TDS client and adapter-private pool privately;
+- a future MongoDB adapter may use its native client privately;
+- driver, pool, connection, row, transaction, TLS, migration-library, and raw
+  database-error types remain outside portable public signatures.
+
+The application supplies OxideBatch-owned validated configuration rather than a
+portable driver object. Framework-owned adapter construction and pool lifecycle
+are deliberate first-party behavior, not an attempt to reproduce JDBC.
+Application-provided driver/pool injection is not required by the repository
+contract.
+
+Adapter packaging is independent of this semantic rule. Implementations may
+remain behind `oxide-batch` facade features or move to implementation crates
+when there is concrete dependency-isolation or ecosystem value. M8 does not
+force a crate split, and it does not create generic `Database`,
+`DataSource`, connection, row, transaction, or pool traits merely to make
+backends look alike.
+
 ## Service boundaries
 
 | Port/service | Responsibility |

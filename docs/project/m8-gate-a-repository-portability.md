@@ -153,9 +153,30 @@ adapters may remain behind facade feature flags or move into implementation
 crates without changing this semantic boundary. Packaging is not allowed to
 expose a driver type through the facade.
 
-A concrete adapter implements the existing command/unit-of-work ports directly.
-M8 does not introduce a lowest-common-denominator `Database`, generic row,
-generic transaction, or generic query-builder abstraction.
+Rust does not provide a JDBC-like database SPI that OxideBatch can rely on for
+portable connection, transaction, row, or pool behavior. M8 therefore does
+**not** invent one. A first-party concrete adapter owns its selected database
+client/driver, pool, migration machinery, and backend-specific SQL as private
+implementation details while implementing the existing
+command/unit-of-work ports directly.
+
+Application code configures an adapter through OxideBatch-owned configuration
+types. Supplying an already-created SQLx pool, Tiberius client/pool, ODBC
+handle, or another driver object is not part of the portable repository
+contract and is not required for first-party support. An adapter-specific
+escape hatch may be proposed later only with an explicit API/compatibility
+decision; it must not redefine the repository SPI.
+
+For M8, the existing PostgreSQL/MySQL/MariaDB/SQLite facade-feature packaging is
+retained, and SQL Server may follow the same model with an adapter-private
+Tiberius/bb8 implementation. Splitting adapters into separately published
+crates is a packaging optimization, not a portability prerequisite; defer it
+until compile-time, dependency-isolation, independent-versioning, or ecosystem
+evidence justifies the added public surface.
+
+M8 does not introduce a lowest-common-denominator `Database`, generic
+`DataSource`, generic connection, generic row, generic transaction, generic
+pool, or generic query-builder abstraction.
 
 ## Database item-component boundary
 
