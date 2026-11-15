@@ -144,10 +144,7 @@ impl SqlServerConfig {
     ///
     /// # Errors
     /// Returns a configuration error outside 1 ms through 10 minutes.
-    pub fn with_acquire_timeout(
-        mut self,
-        timeout: Duration,
-    ) -> Result<Self, SqlServerConfigError> {
+    pub fn with_acquire_timeout(mut self, timeout: Duration) -> Result<Self, SqlServerConfigError> {
         self.acquire_timeout = timeout;
         self.validate()?;
         Ok(self)
@@ -157,10 +154,7 @@ impl SqlServerConfig {
     ///
     /// # Errors
     /// Returns a configuration error outside 1 ms through 10 minutes.
-    pub fn with_connect_timeout(
-        mut self,
-        timeout: Duration,
-    ) -> Result<Self, SqlServerConfigError> {
+    pub fn with_connect_timeout(mut self, timeout: Duration) -> Result<Self, SqlServerConfigError> {
         self.connect_timeout = timeout;
         self.validate()?;
         Ok(self)
@@ -170,10 +164,7 @@ impl SqlServerConfig {
     ///
     /// # Errors
     /// Returns a configuration error outside 1 ms through 10 minutes.
-    pub fn with_command_timeout(
-        mut self,
-        timeout: Duration,
-    ) -> Result<Self, SqlServerConfigError> {
+    pub fn with_command_timeout(mut self, timeout: Duration) -> Result<Self, SqlServerConfigError> {
         self.command_timeout = timeout;
         self.validate()?;
         Ok(self)
@@ -183,10 +174,7 @@ impl SqlServerConfig {
     ///
     /// # Errors
     /// Returns a configuration error outside 1 ms through 10 minutes.
-    pub fn with_lock_timeout(
-        mut self,
-        timeout: Duration,
-    ) -> Result<Self, SqlServerConfigError> {
+    pub fn with_lock_timeout(mut self, timeout: Duration) -> Result<Self, SqlServerConfigError> {
         self.lock_timeout = timeout;
         self.validate()?;
         Ok(self)
@@ -196,10 +184,7 @@ impl SqlServerConfig {
     ///
     /// # Errors
     /// Returns a configuration error outside 1 second through 24 hours.
-    pub fn with_max_lifetime(
-        mut self,
-        timeout: Duration,
-    ) -> Result<Self, SqlServerConfigError> {
+    pub fn with_max_lifetime(mut self, timeout: Duration) -> Result<Self, SqlServerConfigError> {
         self.max_lifetime = timeout;
         self.validate()?;
         Ok(self)
@@ -234,8 +219,7 @@ impl SqlServerConfig {
                 return Err(SqlServerConfigError::Timeout);
             }
         }
-        if self.max_lifetime < Duration::from_secs(1)
-            || self.max_lifetime > MAX_CONNECTION_LIFETIME
+        if self.max_lifetime < Duration::from_secs(1) || self.max_lifetime > MAX_CONNECTION_LIFETIME
         {
             return Err(SqlServerConfigError::ConnectionLifetime);
         }
@@ -499,7 +483,11 @@ impl TdsQuery {
         self,
         connection: &mut SqlServerConnection,
     ) -> Result<u64, tiberius::error::Error> {
-        Ok(self.into_driver().execute(&mut connection.client).await?.total())
+        Ok(self
+            .into_driver()
+            .execute(&mut connection.client)
+            .await?
+            .total())
     }
 
     async fn optional_raw(
@@ -524,10 +512,7 @@ impl TdsQuery {
             .await
     }
 
-    async fn one(
-        self,
-        connection: &mut SqlServerConnection,
-    ) -> Result<TdsRow, RepositoryError> {
+    async fn one(self, connection: &mut SqlServerConnection) -> Result<TdsRow, RepositoryError> {
         self.optional_raw(connection)
             .await
             .map_err(|error| map_driver_error(connection, error))?
@@ -552,10 +537,7 @@ impl TdsQuery {
             .map_err(|error| map_driver_error(connection, error))
     }
 
-    async fn execute(
-        self,
-        connection: &mut SqlServerConnection,
-    ) -> Result<u64, RepositoryError> {
+    async fn execute(self, connection: &mut SqlServerConnection) -> Result<u64, RepositoryError> {
         self.execute_raw(connection)
             .await
             .map_err(|error| map_driver_error(connection, error))
@@ -663,7 +645,9 @@ impl SqlServerMigrator {
             .await
             .map_err(|error| map_driver_error(&mut connection, error))?;
 
-        let current = installed_schema_version(&mut connection).await?.unwrap_or(0);
+        let current = installed_schema_version(&mut connection)
+            .await?
+            .unwrap_or(0);
         if current > SUPPORTED_SCHEMA_VERSION {
             return Err(RepositoryError::NewerSchema {
                 current,
@@ -690,10 +674,11 @@ impl SqlServerMigrator {
             let migration_result = async {
                 let stream = connection.client.simple_query(sql).await?;
                 stream.into_results().await?;
-                let version =
-                    i32::try_from(version).map_err(|_| tiberius::error::Error::Conversion(
+                let version = i32::try_from(version).map_err(|_| {
+                    tiberius::error::Error::Conversion(
                         "migration version is outside SQL Server INT range".into(),
-                    ))?;
+                    )
+                })?;
                 TdsQuery::new(
                     "INSERT INTO dbo.ob_schema_version(version, applied_ms) VALUES (@P1, @P2)",
                 )
@@ -730,11 +715,9 @@ impl SqlServerMigrator {
 async fn installed_schema_version(
     connection: &mut SqlServerConnection,
 ) -> Result<Option<u32>, RepositoryError> {
-    let object = TdsQuery::new(
-        "SELECT OBJECT_ID(N'dbo.ob_schema_version', N'U') AS object_id",
-    )
-    .one(connection)
-    .await?;
+    let object = TdsQuery::new("SELECT OBJECT_ID(N'dbo.ob_schema_version', N'U') AS object_id")
+        .one(connection)
+        .await?;
     if read_optional_i32(&object, "object_id")?.is_none() {
         return Ok(None);
     }
@@ -780,7 +763,9 @@ impl SqlServerJobRepository {
         config: SqlServerConfig,
         clock: Arc<dyn Clock>,
     ) -> Result<Self, RepositoryError> {
-        config.validate().map_err(|_| RepositoryError::Unavailable)?;
+        config
+            .validate()
+            .map_err(|_| RepositoryError::Unavailable)?;
         let manager = SqlServerConnectionManager {
             config: config.clone(),
         };
@@ -1078,7 +1063,10 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
             match inserted {
                 Ok(Some(row)) => {
                     let id = JobInstanceId::new(read_u64(&row, "id")?)?;
-                    Ok(JobInstanceSelection::Created(JobInstance::new(id, key.clone())))
+                    Ok(JobInstanceSelection::Created(JobInstance::new(
+                        id,
+                        key.clone(),
+                    )))
                 }
                 Ok(None) => Err(RepositoryError::Unavailable),
                 Err(error) => {
@@ -1267,10 +1255,11 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                     .one(connection)
                     .await?
                 };
-                let previous_digest = read_optional_bytes(&previous, "manifest_digest")?
-                    .ok_or(RepositoryError::IncompatibleDefinition {
+                let previous_digest = read_optional_bytes(&previous, "manifest_digest")?.ok_or(
+                    RepositoryError::IncompatibleDefinition {
                         instance_id: job_instance_id,
-                    })?;
+                    },
+                )?;
                 if previous_digest.as_slice() != definition.manifest_digest() {
                     return Err(RepositoryError::IncompatibleDefinition {
                         instance_id: job_instance_id,
@@ -1342,15 +1331,13 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
             let job_id = db_identifier(job_execution_id.get(), IdentifierKind::JobExecution)?;
             let job = {
                 let connection = self.connection()?;
-                TdsQuery::new(
-                    "SELECT job_instance_id FROM dbo.ob_job_execution WHERE id = @P1",
-                )
-                .i64(job_id)
-                .optional(connection)
-                .await?
-                .ok_or(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                })?
+                TdsQuery::new("SELECT job_instance_id FROM dbo.ob_job_execution WHERE id = @P1")
+                    .i64(job_id)
+                    .optional(connection)
+                    .await?
+                    .ok_or(RepositoryError::JobExecutionNotFound {
+                        id: job_execution_id,
+                    })?
             };
             let instance_id = read_i64(&job, "job_instance_id")?;
 
@@ -1691,8 +1678,10 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         request: &'a FlowDecisionRequest,
     ) -> BoxFuture<'a, Result<FlowDecision, RepositoryError>> {
         Box::pin(async move {
-            let execution_id =
-                db_identifier(request.job_execution_id().get(), IdentifierKind::JobExecution)?;
+            let execution_id = db_identifier(
+                request.job_execution_id().get(),
+                IdentifierKind::JobExecution,
+            )?;
             let definition = {
                 let connection = self.connection()?;
                 TdsQuery::new(
@@ -1713,8 +1702,8 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
             let manifest_text = read_string(&definition, "manifest")?;
-            let manifest: Value =
-                serde_json::from_str(&manifest_text).map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            let manifest: Value = serde_json::from_str(&manifest_text)
+                .map_err(|_| RepositoryError::FlowStateCorrupt)?;
             if !crate::flow::decision_matches_manifest(&manifest, request) {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
@@ -1902,8 +1891,7 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         job_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
         Box::pin(async move {
-            let execution_id =
-                db_identifier(job_execution_id.get(), IdentifierKind::JobExecution)?;
+            let execution_id = db_identifier(job_execution_id.get(), IdentifierKind::JobExecution)?;
             let exists = {
                 let connection = self.connection()?;
                 TdsQuery::new("SELECT id FROM dbo.ob_job_execution WHERE id = @P1")
@@ -2040,8 +2028,8 @@ fn decode_flow_decision(row: &TdsRow) -> Result<FlowDecision, RepositoryError> {
     let job_execution_id = JobExecutionId::new(read_u64(row, "job_execution_id")?)?;
     let sequence = FlowDecisionSequence::new(read_u64(row, "sequence")?)
         .map_err(|_| RepositoryError::FlowStateCorrupt)?;
-    let source_node_id =
-        NodeId::new(read_string(row, "source_node_id")?).map_err(|_| RepositoryError::FlowStateCorrupt)?;
+    let source_node_id = NodeId::new(read_string(row, "source_node_id")?)
+        .map_err(|_| RepositoryError::FlowStateCorrupt)?;
     let source_step_execution_id = read_optional_i64(row, "source_step_execution_id")?
         .map(db_read_u64)
         .transpose()?
@@ -2136,11 +2124,19 @@ async fn update_job_execution(
             .map(|value| db_u64(value.failure_id().get()))
             .transpose()?,
     )
-    .opt_i64(timestamps.started_at().map(system_time_millis).transpose()?)
+    .opt_i64(
+        timestamps
+            .started_at()
+            .map(system_time_millis)
+            .transpose()?,
+    )
     .opt_i64(timestamps.ended_at().map(system_time_millis).transpose()?)
     .i64(system_time_millis(updated_at)?)
     .i64(db_u64(execution.version().get())?)
-    .i64(db_identifier(execution.id().get(), IdentifierKind::JobExecution)?)
+    .i64(db_identifier(
+        execution.id().get(),
+        IdentifierKind::JobExecution,
+    )?)
     .i64(db_u64(expected.get())?)
     .execute(connection)
     .await
@@ -2171,7 +2167,12 @@ async fn update_step_execution(
             .map(|value| db_u64(value.failure_id().get()))
             .transpose()?,
     )
-    .opt_i64(timestamps.started_at().map(system_time_millis).transpose()?)
+    .opt_i64(
+        timestamps
+            .started_at()
+            .map(system_time_millis)
+            .transpose()?,
+    )
     .opt_i64(timestamps.ended_at().map(system_time_millis).transpose()?)
     .i64(db_u64(counts.read())?)
     .i64(db_u64(counts.processed())?)
@@ -2181,7 +2182,10 @@ async fn update_step_execution(
     .i64(db_u64(counts.rolled_back())?)
     .i64(system_time_millis(updated_at)?)
     .i64(db_u64(execution.version().get())?)
-    .i64(db_identifier(execution.id().get(), IdentifierKind::StepExecution)?)
+    .i64(db_identifier(
+        execution.id().get(),
+        IdentifierKind::StepExecution,
+    )?)
     .i64(db_u64(expected.get())?)
     .execute(connection)
     .await
@@ -2381,9 +2385,7 @@ fn system_time_millis(value: SystemTime) -> Result<i64, RepositoryError> {
 
 fn millis_system_time(value: i64) -> Result<SystemTime, RepositoryError> {
     Ok(UNIX_EPOCH
-        + Duration::from_millis(
-            u64::try_from(value).map_err(|_| RepositoryError::Unavailable)?,
-        ))
+        + Duration::from_millis(u64::try_from(value).map_err(|_| RepositoryError::Unavailable)?))
 }
 
 fn read_i64(row: &TdsRow, name: &str) -> Result<i64, RepositoryError> {
@@ -2451,7 +2453,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn config_debug_redacts_connection_identity_and_secret_material() -> Result<(), Box<dyn Error>> {
+    fn config_debug_redacts_connection_identity_and_secret_material() -> Result<(), Box<dyn Error>>
+    {
         let config = SqlServerConfig::new("db.internal", "batch", "batch_user", "secret")?
             .with_hostname_in_certificate("sql.example.test")?
             .with_ca_bundle(b"test-ca".to_vec())?;
