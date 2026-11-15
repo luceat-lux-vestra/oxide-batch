@@ -219,9 +219,9 @@ impl CommitResponseDropProxy {
                                 client,
                                 &target_host,
                                 target_port,
-                                armed,
-                                fault_fired,
-                                response_dropped,
+                                &armed,
+                                &fault_fired,
+                                &response_dropped,
                             );
                         });
                     }
@@ -278,9 +278,9 @@ fn relay_sql_server_connection(
     client: StdTcpStream,
     target_host: &str,
     target_port: u16,
-    armed: Arc<AtomicBool>,
-    fault_fired: Arc<AtomicBool>,
-    response_dropped: Arc<AtomicBool>,
+    armed: &Arc<AtomicBool>,
+    fault_fired: &Arc<AtomicBool>,
+    response_dropped: &Arc<AtomicBool>,
 ) -> std::io::Result<()> {
     client.set_nodelay(true)?;
     let server = StdTcpStream::connect((target_host, target_port))?;
@@ -292,7 +292,7 @@ fn relay_sql_server_connection(
     let mut server_writer = server;
     let suppress_response = Arc::new(AtomicBool::new(false));
     let server_side_suppression = Arc::clone(&suppress_response);
-    let server_side_response_dropped = Arc::clone(&response_dropped);
+    let server_side_response_dropped = Arc::clone(response_dropped);
 
     let response_relay = thread::spawn(move || -> std::io::Result<()> {
         let mut buffer = [0_u8; 16 * 1024];
