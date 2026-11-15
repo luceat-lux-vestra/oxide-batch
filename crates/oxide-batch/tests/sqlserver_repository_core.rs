@@ -434,6 +434,83 @@ async fn remove_contention_rows(settings: &TestSettings) -> Result<(), Box<dyn E
     Ok(())
 }
 
+async fn remove_crash_restart_rows(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
+    let mut client = Box::pin(connect_test_client(settings)).await?;
+    execute_test_query(
+        &mut client,
+        "DELETE execution \
+         FROM dbo.ob_job_execution AS execution \
+         JOIN dbo.ob_job_instance AS instance \
+           ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name IN ( \
+           N'repository_crash_committed', N'repository_crash_uncommitted' \
+         ); \
+         DELETE FROM dbo.ob_job_instance \
+         WHERE job_name IN ( \
+           N'repository_crash_committed', N'repository_crash_uncommitted' \
+         )",
+    )
+    .await?;
+    Ok(())
+}
+
+async fn run_crash_restart_child(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
+    let repository = SqlServerJobRepository::connect(
+        settings.repository_config()?,
+        Arc::new(SystemClock),
+    )
+    .await?;
+    let durable_key = JobInstanceKey::new(
+        JobName::new("repository_crash_committed")?,
+        &JobParameters::new(),
+    );
+    let undurable_key = JobInstanceKey::new(
+        JobName::new("repository_crash_uncommitted")?,
+        &JobParameters::new(),
+    );
+
+    // Persist a failed execution before the process is killed. A new process
+    // must see the same durable instance and be allowed to create a retry.
+    let mut committed = repository.begin().await?;
+    let instance = committed
+        .select_or_create_job_instance(&durable_key)
+        .await?
+        .instance()
+        .clone();
+    let attempt = committed.create_job_execution(instance.id()).await?;
+    let started = committed
+        .transition_job_execution(
+            attempt.id(),
+            attempt.version(),
+            oxide_batch::LifecycleTransition::new(
+                oxide_batch::BatchStatus::Started,
+                std::time::UNIX_EPOCH + Duration::from_secs(1),
+            ),
+        )
+        .await?;
+    committed
+        .transition_job_execution(
+            started.id(),
+            started.version(),
+            oxide_batch::LifecycleTransition::new(
+                oxide_batch::BatchStatus::Failed,
+                std::time::UNIX_EPOCH + Duration::from_secs(2),
+            ),
+        )
+        .await?;
+    committed.commit().await?;
+
+    // Hold a different, uncommitted transaction open until the parent sends
+    // SIGKILL. No Rust destructor or RepositoryUnitOfWork::rollback is run.
+    let mut pending = repository.begin().await?;
+    pending.select_or_create_job_instance(&undurable_key).await?;
+    println!("OXIDEBATCH_SQLSERVER_CRASH_READY");
+    std::io::stdout().flush()?;
+    std::future::pending::<()>().await;
+    drop(pending);
+    Ok(())
+}
+
 async fn remove_commit_unknown_row(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
     let mut client = Box::pin(connect_test_client(settings)).await?;
     execute_test_query(
@@ -889,6 +966,113 @@ fn lost_commit_response_is_unknown_and_fresh_session_reconciles() -> Result<(), 
         drop(repository);
         drop(proxy);
         Box::pin(remove_commit_unknown_row(&settings)).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn process_kill_recovers_sql_server_state() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment()? else {
+        eprintln!("skipped: SQL Server test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+
+    if std::env::var("OXIDEBATCH_SQLSERVER_CRASH_CHILD").as_deref() == Ok("1") {
+        return runtime.block_on(run_crash_restart_child(&settings));
+    }
+
+    runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
+        Box::pin(remove_crash_restart_rows(&settings)).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+
+    // Run the identical integration-test binary in a separate OS process.
+    // The child commits a FAILED attempt, then holds another transaction open.
+    let mut child = std::process::Command::new(std::env::current_exe()?)
+        .args([
+            "--exact",
+            "process_kill_recovers_sql_server_state",
+            "--nocapture",
+        ])
+        .env("OXIDEBATCH_SQLSERVER_CRASH_CHILD", "1")
+        .stdout(std::process::Stdio::piped())
+        .spawn()?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| std::io::Error::other("child stdout pipe was unavailable"))?;
+    let (send_ready, receive_ready) = std::sync::mpsc::channel();
+    let reader = thread::spawn(move || {
+        let ready = std::io::BufRead::lines(std::io::BufReader::new(stdout)).any(|line| {
+            line.is_ok_and(|line| line.contains("OXIDEBATCH_SQLSERVER_CRASH_READY"))
+        });
+        let _ = send_ready.send(ready);
+    });
+
+    // A hard kill is materially different from dropping a UoW or gracefully
+    // terminating Tokio. Always reap the child, including on handoff timeout.
+    let ready = receive_ready.recv_timeout(Duration::from_secs(45));
+    let kill_result = child.kill();
+    let child_status = child.wait()?;
+    reader
+        .join()
+        .map_err(|_| std::io::Error::other("child output reader panicked"))?;
+    assert!(
+        matches!(ready, Ok(true)),
+        "child never confirmed durable commit plus open uncommitted transaction: {ready:?}"
+    );
+    kill_result?;
+    assert!(
+        child_status.code().is_none(),
+        "child was not terminated by a signal: {child_status}"
+    );
+
+    runtime.block_on(async {
+        // Connect through an entirely new process-side repository/pool. The
+        // committed FAILED attempt must survive and the killed UoW must not.
+        let repository = SqlServerJobRepository::connect(
+            settings.repository_config()?,
+            Arc::new(SystemClock),
+        )
+        .await?;
+        let durable_key = JobInstanceKey::new(
+            JobName::new("repository_crash_committed")?,
+            &JobParameters::new(),
+        );
+        let undurable_key = JobInstanceKey::new(
+            JobName::new("repository_crash_uncommitted")?,
+            &JobParameters::new(),
+        );
+        let mut inspection = repository.begin().await?;
+        let instance = inspection
+            .find_job_instance(&durable_key)
+            .await?
+            .ok_or_else(|| std::io::Error::other("committed instance vanished after SIGKILL"))?;
+        let attempts = inspection.job_executions(instance.id()).await?;
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].status(), oxide_batch::BatchStatus::Failed);
+        assert!(
+            inspection.find_job_instance(&undurable_key).await?.is_none(),
+            "uncommitted job instance survived the process kill"
+        );
+        inspection.rollback().await?;
+
+        // A FAILED durable execution is restartable across the process
+        // boundary: a new attempt must preserve instance identity.
+        let mut restart = repository.begin().await?;
+        let retry = restart.create_job_execution(instance.id()).await?;
+        assert_ne!(retry.id(), attempts[0].id());
+        restart.commit().await?;
+
+        let mut verify = repository.begin().await?;
+        assert_eq!(verify.job_executions(instance.id()).await?.len(), 2);
+        verify.rollback().await?;
+        Box::pin(remove_crash_restart_rows(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
