@@ -8,7 +8,8 @@ mod contract;
 
 use contract::run_runnable_core_repository_contract;
 use oxide_batch::{
-    RepositoryError, SqlServerConfig, SqlServerJobRepository, SqlServerMigrator, SystemClock,
+    JobRepository, RepositoryError, SqlServerConfig, SqlServerJobRepository, SqlServerMigrator,
+    SystemClock,
 };
 use std::error::Error;
 use std::sync::Arc;
@@ -197,10 +198,10 @@ fn named_sql_server_lane_reports_the_expected_product_version() -> Result<(), Bo
             .await?
             .into_row()
             .await?
-            .ok_or("SQL Server did not return ProductVersion")?;
+            .ok_or_else(|| std::io::Error::other("SQL Server did not return ProductVersion"))?;
         let actual = row
             .try_get::<&str, _>("product_version")?
-            .ok_or("SQL Server ProductVersion was NULL")?;
+            .ok_or_else(|| std::io::Error::other("SQL Server ProductVersion was NULL"))?;
         assert_eq!(actual, expected);
         Ok::<(), Box<dyn Error>>(())
     })?;
