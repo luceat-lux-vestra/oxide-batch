@@ -13,6 +13,7 @@ use oxide_batch::{
 };
 use std::error::Error;
 use std::sync::Arc;
+use std::time::Duration;
 use tiberius::{AuthMethod, Client, Config as TiberiusConfig, EncryptionLevel};
 use tokio::net::TcpStream;
 use tokio_util::compat::TokioAsyncWriteCompatExt;
@@ -216,6 +217,22 @@ async fn remove_contract_rows(settings: &TestSettings) -> Result<(), Box<dyn Err
     Ok(())
 }
 
+
+async fn remove_contention_rows(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
+    let mut client = Box::pin(connect_test_client(settings)).await?;
+    execute_test_query(
+        &mut client,
+        "DELETE FROM dbo.ob_job_instance \
+         WHERE job_name IN ( \
+           N'repository_contention_lock_timeout', \
+           N'repository_contention_deadlock_a', \
+           N'repository_contention_deadlock_b' \
+         )",
+    )
+    .await?;
+    Ok(())
+}
+
 #[test]
 fn migration_is_idempotent_for_sql_server() -> Result<(), Box<dyn Error>> {
     let Some(settings) = TestSettings::from_environment()? else {
@@ -386,6 +403,200 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
         assert_eq!(inspection.job_executions(instance.id()).await?.len(), 1);
         inspection.rollback().await?;
         Box::pin(remove_contract_rows(&settings)).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn lock_timeout_1222_maps_to_concurrent_modification() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment()? else {
+        eprintln!("skipped: SQL Server test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
+        Box::pin(remove_contention_rows(&settings)).await?;
+
+        let key = JobInstanceKey::new(
+            JobName::new("repository_contention_lock_timeout")?,
+            &JobParameters::new(),
+        );
+        let repository = SqlServerJobRepository::connect(
+            settings
+                .repository_config()?
+                .with_lock_timeout(Duration::from_millis(150))?,
+            Arc::new(SystemClock),
+        )
+        .await?;
+
+        let mut seed = repository.begin().await?;
+        seed.select_or_create_job_instance(&key).await?;
+        seed.commit().await?;
+
+        let mut blocker = Box::pin(connect_test_client(&settings)).await?;
+        execute_test_query(
+            &mut blocker,
+            "BEGIN TRAN; \
+             SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
+             WHERE job_name = N'repository_contention_lock_timeout'",
+        )
+        .await?;
+
+        let mut raw_probe = Box::pin(connect_test_client(&settings)).await?;
+        let raw_error = execute_test_query(
+            &mut raw_probe,
+            "SET LOCK_TIMEOUT 150; \
+             SELECT id FROM dbo.ob_job_instance WITH (UPDLOCK, HOLDLOCK) \
+             WHERE job_name = N'repository_contention_lock_timeout'",
+        )
+        .await
+        .expect_err("raw SQL Server lock-timeout probe unexpectedly succeeded");
+        assert_eq!(raw_error.code(), Some(1222));
+
+        let mut unit = repository.begin().await?;
+        assert_eq!(
+            unit.select_or_create_job_instance(&key).await.err(),
+            Some(RepositoryError::ConcurrentModification)
+        );
+        drop(unit);
+
+        execute_test_query(&mut blocker, "IF XACT_STATE() <> 0 ROLLBACK").await?;
+
+        let mut fresh = repository.begin().await?;
+        assert!(fresh.find_job_instance(&key).await?.is_some());
+        fresh.rollback().await?;
+
+        Box::pin(remove_contention_rows(&settings)).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn deadlock_1205_maps_to_concurrent_modification() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment()? else {
+        eprintln!("skipped: SQL Server test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
+        Box::pin(remove_contention_rows(&settings)).await?;
+
+        let key_a = JobInstanceKey::new(
+            JobName::new("repository_contention_deadlock_a")?,
+            &JobParameters::new(),
+        );
+        let key_b = JobInstanceKey::new(
+            JobName::new("repository_contention_deadlock_b")?,
+            &JobParameters::new(),
+        );
+        let repository = SqlServerJobRepository::connect(
+            settings
+                .repository_config()?
+                .with_lock_timeout(Duration::from_secs(30))?,
+            Arc::new(SystemClock),
+        )
+        .await?;
+
+        let mut seed = repository.begin().await?;
+        seed.select_or_create_job_instance(&key_a).await?;
+        seed.select_or_create_job_instance(&key_b).await?;
+        seed.commit().await?;
+
+        // First prove that this exact lock cycle produces SQL Server error 1205.
+        let mut raw_a = Box::pin(connect_test_client(&settings)).await?;
+        let mut raw_b = Box::pin(connect_test_client(&settings)).await?;
+        execute_test_query(
+            &mut raw_a,
+            "BEGIN TRAN; \
+             SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
+             WHERE job_name = N'repository_contention_deadlock_a'",
+        )
+        .await?;
+        execute_test_query(
+            &mut raw_b,
+            "SET DEADLOCK_PRIORITY LOW; BEGIN TRAN; \
+             SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
+             WHERE job_name = N'repository_contention_deadlock_b'",
+        )
+        .await?;
+
+        let (raw_a_wait, raw_b_wait) = tokio::time::timeout(Duration::from_secs(20), async {
+            tokio::join!(
+                execute_test_query(
+                    &mut raw_a,
+                    "SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
+                     WHERE job_name = N'repository_contention_deadlock_b'",
+                ),
+                execute_test_query(
+                    &mut raw_b,
+                    "SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
+                     WHERE job_name = N'repository_contention_deadlock_a'",
+                )
+            )
+        })
+        .await
+        .map_err(|_| std::io::Error::other("raw SQL Server deadlock probe timed out"))?;
+
+        assert!(raw_a_wait.is_ok());
+        assert_eq!(
+            raw_b_wait
+                .expect_err("LOW-priority raw deadlock participant unexpectedly survived")
+                .code(),
+            Some(1205)
+        );
+        execute_test_query(&mut raw_a, "IF XACT_STATE() <> 0 ROLLBACK").await?;
+        let _ = execute_test_query(&mut raw_b, "IF XACT_STATE() <> 0 ROLLBACK").await;
+
+        // Then make the repository transaction the lower-priority victim and
+        // prove that adapter error 1205 becomes the typed contention error.
+        let mut unit = repository.begin().await?;
+        unit.select_or_create_job_instance(&key_a).await?;
+
+        let mut survivor = Box::pin(connect_test_client(&settings)).await?;
+        execute_test_query(
+            &mut survivor,
+            "SET DEADLOCK_PRIORITY HIGH; BEGIN TRAN; \
+             SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
+             WHERE job_name = N'repository_contention_deadlock_b'",
+        )
+        .await?;
+
+        let (survivor_wait, repository_wait) =
+            tokio::time::timeout(Duration::from_secs(20), async {
+                tokio::join!(
+                    execute_test_query(
+                        &mut survivor,
+                        "SELECT id FROM dbo.ob_job_instance WITH (XLOCK, HOLDLOCK) \
+                         WHERE job_name = N'repository_contention_deadlock_a'",
+                    ),
+                    unit.select_or_create_job_instance(&key_b)
+                )
+            })
+            .await
+            .map_err(|_| std::io::Error::other("repository deadlock probe timed out"))?;
+
+        assert!(survivor_wait.is_ok());
+        assert_eq!(
+            repository_wait.err(),
+            Some(RepositoryError::ConcurrentModification)
+        );
+        drop(unit);
+        execute_test_query(&mut survivor, "IF XACT_STATE() <> 0 ROLLBACK").await?;
+
+        let mut fresh = repository.begin().await?;
+        assert!(fresh.find_job_instance(&key_a).await?.is_some());
+        assert!(fresh.find_job_instance(&key_b).await?.is_some());
+        fresh.rollback().await?;
+
+        Box::pin(remove_contention_rows(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
