@@ -2,10 +2,10 @@
 
 ## Supported versions
 
-OxideBatch is an early-alpha project with a published `0.6.0` release line.
+OxideBatch is a pre-1.0 project with an M7 `0.7.0` release line.
 Security fixes are developed on the latest `main` and, when a vulnerability
 applies to a published release, the maintainer decides whether to issue a
-patched `0.6.x` release based on severity, exploitability, and compatibility
+patched `0.7.x` release based on severity, exploitability, and compatibility
 risk. Older release lines are not maintained in parallel.
 
 The published support matrix describes the runtime and database combinations

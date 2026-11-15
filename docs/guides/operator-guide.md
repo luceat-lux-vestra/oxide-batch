@@ -1,12 +1,17 @@
-# M6 Operator Guide
+# M7 Operator Guide
 
 **State:** Accepted
 
-**Applies to:** the published OxideBatch `0.6.0` M6 release (tag `v0.6.0`,
-2026-08-31)
+**Applies to:** OxideBatch `0.7.0` M7 release line (`v0.7.0`)
 
 A narrative walkthrough of the `oxide-batch` operator CLI for someone running
-this release in production. The normative contract lives in
+this release in production.
+
+M7 preserves this CLI as a guarded repository operator. The M7 operator service
+also has explicit restart/fork semantics and bounded explorer projections, but
+`FORK` is not claimed here as a new CLI/API-server surface; the accepted
+[operator fork evidence](../project/m7-operator-fork-evidence.md) explicitly
+keeps CLI/API-server/hosted control-plane work out of that slice. The normative contract lives in
 [the operator CLI contract](../operations/operator-cli.md) and the
 [CLI reference](../operations/operator-cli-reference.md); this guide orders
 that material for a first read and states plainly what the CLI cannot do. See

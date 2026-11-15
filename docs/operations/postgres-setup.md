@@ -1,8 +1,8 @@
 # PostgreSQL Setup
 
-**State:** Implemented for M2/M4 and M6 schema 4 (`#144`, additive
-`ItemStream` component state); included in the published `0.6.0` release
-(tag `v0.6.0`, 2026-08-31)
+**State:** Accepted for the M7 `0.7.0` release line; metadata schema 12
+includes the M6 component-state base plus M7 nested-job, scope, repeat,
+definition-evolution, fork-lineage, and operator `FORK` migrations.
 
 **Supported M2 matrix:** PostgreSQL 15 through 18 on Linux x86_64 GNU
 
@@ -45,17 +45,17 @@ certificate through `CaCertificate`. There is no invalid-certificate mode.
 isolated test environments. Connection strings and certificate contents or
 paths are redacted from facade diagnostics.
 
-## Initialize the current schema (4)
+## Initialize the current schema (12)
 
 Enable the adapter:
 
 ```toml
 [dependencies]
-oxide-batch = { version = "0.6.0", features = ["postgres"] }
+oxide-batch = { version = "0.7.0", features = ["postgres"] }
 ```
 
 Apply the candidate migrations with the migrator identity before starting any
-runtime. `PostgresMigrator::migrate` installs schema versions `1` through `4` on an
+runtime. `PostgresMigrator::migrate` installs the immutable migration sequence through schema `12` on an
 empty database and applies only the pending migrations on an existing one.
 No installed schema past 1 is a rolling upgrade: quiesce every runtime that
 supports an older schema first, because it rejects the newer schema on
@@ -93,8 +93,8 @@ Runtime startup is fail-closed:
 | --- | --- |
 | Missing schema/version row | `SchemaUninitialized` |
 | Supported older schema | `MigrationRequired` |
-| Exact schema version 4 | connection accepted |
-| Version above 4 | `NewerSchema` |
+| Exact schema version 12 | connection accepted |
+| Version above 12 | `NewerSchema` |
 
 Runtime startup never applies migrations automatically.
 

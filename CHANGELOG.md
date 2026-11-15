@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-11-15
+
+**M7 release line.** This pre-1.0 release packages the accepted M7 advanced
+flow, job/step scope, repeat, definition-evolution, launcher/operator, and
+explorer work on the frozen pre-M8 tree. It preserves the M5/M6 embedded
+PostgreSQL support boundary and does not include M8 repository portability,
+messaging, remote/distributed execution, project-wide 1.0/GA, enterprise
+readiness, or full Spring Batch parity. See the
+[release checklist](docs/release/release-checklist.md),
+[support matrix](docs/release/support-matrix.md#070-m7-release-line), and
+[M7 exit evidence](docs/project/m7-exit-evidence.md).
+
+**Migration notes:** the PostgreSQL metadata schema is `12`. Deployments
+upgrading from the published `0.6.0` line must quiesce schema-4 writers, take
+and verify a restorable backup, run the dedicated migrator through the M7
+migration sequence, and only then start `0.7.0` runtimes. Rollback remains
+restore-based; there is no supported reverse migration. Definition-registry
+compatibility remains fail-closed and is not inferred merely from a schema
+upgrade. See the [upgrade and rollback guide](docs/guides/upgrade-and-rollback.md).
+
+
 ### Added
 
 - M7 Gate-E launcher/operator/explorer completion: deterministic parameter

@@ -53,7 +53,7 @@ const EXPECTED_RELEASED_CRATES: &[&str] = &[
 
 /// The release candidate prepared by this change. A stale lockstep update
 /// must fail before packaging or publication.
-const EXPECTED_RELEASE_VERSION: &str = "0.6.0";
+const EXPECTED_RELEASE_VERSION: &str = "0.7.0";
 
 /// The in-toto predicate type GitHub's `actions/attest` records for a plain
 /// `subject-path`-only call (no `sbom-path`), confirmed against a real

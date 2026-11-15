@@ -72,7 +72,7 @@ project hosts those contracts but does not become the correctness authority.
 
 ## Current near-term scope
 
-M0-M6 are completed delivery milestones. The released boundary now includes:
+M0-M7 are completed delivery milestones. The 0.7.0 release boundary includes:
 
 - job/step/instance/execution domain model and typed parameters;
 - tasklet and chunk-oriented single-host execution;
@@ -82,7 +82,9 @@ M0-M6 are completed delivery milestones. The released boundary now includes:
   concurrency and partitioning;
 - operator CLI, vendor-neutral telemetry, and failure/conformance evidence;
 - the M6 item-processing/component surface and public `oxide-batch-test` test
-  kit released in `0.6.0`.
+  kit; and
+- M7 advanced flow/composition, job/step scope, repeat, definition evolution,
+  launcher/operator controls, and bounded explorer semantics.
 
 M5 established the Embedded Core Production Preview and released as
 `oxide-batch` `0.5.0` (see the
@@ -94,10 +96,10 @@ Historical M0-M6 gates remain authoritative evidence for completed work.
 Compatibility rows are promoted only by their ledger governance; completion
 or publication of M6 does not automatically make every M6 row `Verified`.
 
-The current delivery milestone is M7. Its advanced compiled-flow/custom-step
-owner (#195) and scope/factory/late-binding owner (#196) are complete, while
-#197-#200 retain the remaining repeat, definition-evolution,
-operator/explorer, and exit-evidence work. M8-M13 are later gap-closing
+M7 is complete with accepted exit evidence and the coordinated `0.7.0`
+release line. Its implementation does not automatically promote every M7
+ledger row to release-backed `Verified`; that remains separate governance.
+M8-M13 are later gap-closing
 milestones for repository, integration, scale, distributed-execution,
 migration, ecosystem, and certification scope before the separate M14
 project-wide 1.0/GA gate.
@@ -108,9 +110,9 @@ project-wide 1.0/GA gate.
 
 - M5 is an Embedded Core Production Preview/stabilization boundary rather than
   project-wide 1.0;
-- M6 completed the item-processing/test-kit portion of the accepted M6-M13
-  program; M7 is the active in-progress milestone and M8-M13 remain later
-  gap-closing milestones;
+- M6 completed the item-processing/test-kit portion and M7 completed the
+  advanced flow/scope/repeat/evolution portion; M8-M13 remain later gap-closing
+  milestones;
 - M14 is the project-wide 1.0/GA evidence and support gate.
 
 ## Permanent non-goals

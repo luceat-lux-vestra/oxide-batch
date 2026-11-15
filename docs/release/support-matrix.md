@@ -112,6 +112,31 @@ This preview interpretation is accepted by
 [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md). It is not a
 project-wide 1.0 or enterprise-readiness matrix.
 
+## 0.7.0 M7 release line
+
+`0.7.0` is the coordinated M7 pre-1.0 release line cut from the frozen
+pre-M8 baseline. It inherits the M5/M6 single-host PostgreSQL support boundary
+and adds the accepted M7 advanced-flow, scope, repeat, definition-evolution,
+launcher/operator, and explorer semantics. This section does not claim M8
+repository portability, messaging, remote/distributed execution, project-wide
+`1.0`/GA, enterprise readiness, or full Spring Batch parity.
+
+Publication of the named version and post-publication checks are separate
+release facts. Likewise, publication does not automatically promote M7
+`Implemented` rows to release-backed `Verified`; the compatibility ledger
+remains the authority for that governance decision.
+
+| Dimension | `0.7.0` release disposition | Release evidence boundary |
+| --- | --- | --- |
+| Rust | MSRV 1.95; pinned development/CI/release toolchain 1.97.1 | Workspace CI, MSRV, package and documentation gates are release-blocking |
+| Linux x86_64 GNU | Supported runtime target inherited from M5/M6 | Release-blocking CI and packaged-consumer verification |
+| PostgreSQL 15 and 18 | Release-blocking durable-adapter axes | M7 conformance, definition/restart, migration and process-kill evidence |
+| PostgreSQL 16-17 | Smoke-covered axes | Connection/migration/vertical-slice smoke only |
+| Metadata schema | Schema 12; published `0.6.0` schema 4 is the production upgrade source | Quiesced migration, newer-schema rejection, backup/restore and rollback evidence; M7 retained campaigns cover the populated intermediate boundaries |
+| M7 flow/scope/repeat/evolution/operator surface | Included in the release line; ledger promotion remains separate | Accepted #195-#200 evidence and `m7-exit-evidence.md` |
+| Deployment shape | Single host, embedded process | No distributed or remote-execution claim |
+| Other databases | Not supported by `0.7.0` | M8 certification scope; PostgreSQL remains the only durable metadata adapter in this release |
+
 ## 0.6.0 M6 release
 
 `0.6.0` is the first published M6 release: the protected `v0.6.0` tag exists

@@ -150,12 +150,12 @@ fn rejects_a_cargo_version_that_does_not_match_the_release_version() {
     serial_fixture("version-mismatch", |fixture| {
         fixture.replace_once(
             "Cargo.toml",
-            "[workspace.package]\nversion = \"0.6.0\"",
-            "[workspace.package]\nversion = \"0.6.1\"",
+            "[workspace.package]\nversion = \"0.7.0\"",
+            "[workspace.package]\nversion = \"0.7.1\"",
         );
         rejected(
             &fixture.run_release_check(),
-            &["version 0.6.1", "expected lockstep 0.6.0"],
+            &["version 0.7.1", "expected lockstep 0.7.0"],
         );
     });
 }
