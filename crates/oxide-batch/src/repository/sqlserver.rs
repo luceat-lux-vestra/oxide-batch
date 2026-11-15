@@ -578,6 +578,15 @@ fn map_pool_error<E>(_error: E) -> RepositoryError {
     RepositoryError::Unavailable
 }
 
+async fn execute_simple_query_raw(
+    connection: &mut SqlServerConnection,
+    sql: &str,
+) -> Result<(), tiberius::error::Error> {
+    let stream = connection.client.simple_query(sql).await?;
+    stream.into_results().await?;
+    Ok(())
+}
+
 /// Applies the immutable SQL Server runnable-core metadata migrations.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct SqlServerMigrator;
@@ -611,39 +620,30 @@ impl SqlServerMigrator {
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
 
-        let lock = connection
-            .client
-            .simple_query(
-                "DECLARE @result int; \
-                 EXEC @result = sys.sp_getapplock \
-                   @Resource = N'OxideBatchSchemaMigration', \
-                   @LockMode = 'Exclusive', @LockOwner = 'Session', \
-                   @LockTimeout = 15000; \
-                 IF @result < 0 THROW 51000, 'migration lock unavailable', 1;",
-            )
-            .await
-            .map_err(|error| map_driver_error(&mut connection, error))?;
-        lock.into_results()
-            .await
-            .map_err(|error| map_driver_error(&mut connection, error))?;
+        execute_simple_query_raw(
+            &mut connection,
+            "DECLARE @result int; \
+             EXEC @result = sys.sp_getapplock \
+               @Resource = N'OxideBatchSchemaMigration', \
+               @LockMode = 'Exclusive', @LockOwner = 'Session', \
+               @LockTimeout = 15000; \
+             IF @result < 0 THROW 51000, 'migration lock unavailable', 1;",
+        )
+        .await
+        .map_err(|error| map_driver_error(&mut connection, error))?;
 
-        let create_ledger = connection
-            .client
-            .simple_query(
-                "IF OBJECT_ID(N'dbo.ob_schema_version', N'U') IS NULL \
-                 BEGIN \
-                   CREATE TABLE dbo.ob_schema_version ( \
-                     version INT NOT NULL PRIMARY KEY, \
-                     applied_ms BIGINT NOT NULL \
-                   ); \
-                 END;",
-            )
-            .await
-            .map_err(|error| map_driver_error(&mut connection, error))?;
-        create_ledger
-            .into_results()
-            .await
-            .map_err(|error| map_driver_error(&mut connection, error))?;
+        execute_simple_query_raw(
+            &mut connection,
+            "IF OBJECT_ID(N'dbo.ob_schema_version', N'U') IS NULL \
+             BEGIN \
+               CREATE TABLE dbo.ob_schema_version ( \
+                 version INT NOT NULL PRIMARY KEY, \
+                 applied_ms BIGINT NOT NULL \
+               ); \
+             END;",
+        )
+        .await
+        .map_err(|error| map_driver_error(&mut connection, error))?;
 
         let current = installed_schema_version(&mut connection)
             .await?
@@ -661,19 +661,12 @@ impl SqlServerMigrator {
             }
             let applied_ms = system_time_millis(SystemTime::now())?;
 
-            let begin = connection
-                .client
-                .simple_query("BEGIN TRAN")
-                .await
-                .map_err(|error| map_driver_error(&mut connection, error))?;
-            begin
-                .into_results()
+            execute_simple_query_raw(&mut connection, "BEGIN TRAN")
                 .await
                 .map_err(|error| map_driver_error(&mut connection, error))?;
 
             let migration_result = async {
-                let stream = connection.client.simple_query(sql).await?;
-                stream.into_results().await?;
+                execute_simple_query_raw(&mut connection, sql).await?;
                 let version = i32::try_from(version).map_err(|_| {
                     tiberius::error::Error::Conversion(
                         "migration version is outside SQL Server INT range".into(),
@@ -686,20 +679,17 @@ impl SqlServerMigrator {
                 .i64(applied_ms)
                 .execute_raw(&mut connection)
                 .await?;
-                let commit = connection.client.simple_query("COMMIT").await?;
-                commit.into_results().await?;
+                execute_simple_query_raw(&mut connection, "COMMIT").await?;
                 Ok::<(), tiberius::error::Error>(())
             }
             .await;
 
             if let Err(error) = migration_result {
-                if let Ok(stream) = connection
-                    .client
-                    .simple_query("IF XACT_STATE() <> 0 ROLLBACK")
-                    .await
-                {
-                    let _ = stream.into_results().await;
-                }
+                let _ = execute_simple_query_raw(
+                    &mut connection,
+                    "IF XACT_STATE() <> 0 ROLLBACK",
+                )
+                .await;
                 connection.broken = true;
                 return Err(map_driver_error(&mut connection, error));
             }
@@ -800,14 +790,7 @@ impl SqlServerJobRepository {
         let mut connection = self.pool.get().await.map_err(map_pool_error)?;
         let lock_timeout = self.config.lock_timeout_millis()?;
         let sql = format!("SET XACT_ABORT ON; SET LOCK_TIMEOUT {lock_timeout}; BEGIN TRAN;");
-        let stream = match connection.client.simple_query(sql).await {
-            Ok(stream) => stream,
-            Err(error) => {
-                connection.broken = true;
-                return Err(map_driver_error(&mut connection, error));
-            }
-        };
-        if let Err(error) = stream.into_results().await {
+        if let Err(error) = execute_simple_query_raw(&mut connection, &sql).await {
             connection.broken = true;
             return Err(map_driver_error(&mut connection, error));
         }
@@ -854,10 +837,13 @@ struct SqlServerUnitOfWork<'repository> {
     connection: Option<PooledConnection<'repository, SqlServerConnectionManager>>,
 }
 
-impl SqlServerUnitOfWork<'_> {
-    fn connection(
-        &mut self,
-    ) -> Result<&mut PooledConnection<'_, SqlServerConnectionManager>, RepositoryError> {
+impl<'repository> SqlServerUnitOfWork<'repository> {
+    fn connection<'unit>(
+        &'unit mut self,
+    ) -> Result<
+        &'unit mut PooledConnection<'repository, SqlServerConnectionManager>,
+        RepositoryError,
+    > {
         self.connection.as_mut().ok_or(RepositoryError::Unavailable)
     }
 
@@ -1946,14 +1932,10 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
     {
         Box::pin(async move {
             let mut connection = self.connection.take().ok_or(RepositoryError::Unavailable)?;
-            let stream = match connection.client.simple_query("COMMIT").await {
-                Ok(stream) => stream,
-                Err(_) => {
-                    connection.broken = true;
-                    return Err(RepositoryError::CommitOutcomeUnknown);
-                }
-            };
-            if stream.into_results().await.is_err() {
+            if execute_simple_query_raw(&mut connection, "COMMIT")
+                .await
+                .is_err()
+            {
                 connection.broken = true;
                 return Err(RepositoryError::CommitOutcomeUnknown);
             }
@@ -1967,18 +1949,13 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
     {
         Box::pin(async move {
             let mut connection = self.connection.take().ok_or(RepositoryError::Unavailable)?;
-            let stream = match connection
-                .client
-                .simple_query("IF XACT_STATE() <> 0 ROLLBACK")
-                .await
+            if execute_simple_query_raw(
+                &mut connection,
+                "IF XACT_STATE() <> 0 ROLLBACK",
+            )
+            .await
+            .is_err()
             {
-                Ok(stream) => stream,
-                Err(_) => {
-                    connection.broken = true;
-                    return Err(RepositoryError::Unavailable);
-                }
-            };
-            if stream.into_results().await.is_err() {
                 connection.broken = true;
                 return Err(RepositoryError::Unavailable);
             }
