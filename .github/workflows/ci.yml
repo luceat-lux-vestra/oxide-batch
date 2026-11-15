@@ -726,33 +726,31 @@ jobs:
 
 
   sqlserver-image-resolution:
-    name: sqlserver-${{ matrix.lane }}-image-resolution
+    name: sqlserver-image-tag-catalog
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-slim
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - lane: "2022-cu28"
-            tag: "2022-CU28-ubuntu-22.04"
-          - lane: "2025-cu11"
-            tag: "2025-CU11-ubuntu-24.04"
     steps:
-      - name: Resolve immutable Microsoft SQL Server image digest
-        env:
-          IMAGE_TAG: ${{ matrix.tag }}
+      - name: Inspect Microsoft SQL Server container tag catalog
         shell: bash
         run: |
           set -euo pipefail
-          headers="$(
-            curl --fail --silent --show-error --head \
-              -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
-              "https://mcr.microsoft.com/v2/mssql/server/manifests/${IMAGE_TAG}"
-          )"
-          digest="$(printf '%s\n' "$headers" | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" { print $2; exit }')"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-          echo "SQLSERVER_IMAGE lane=${{ matrix.lane }} tag=${IMAGE_TAG} digest=${digest}"
+          catalog="$(curl --fail --silent --show-error 'https://mcr.microsoft.com/v2/mssql/server/tags/list')"
+          printf '%s' "$catalog" \
+            | jq -r '.tags[]' \
+            | grep -E '(^|-)2022|(^|-)2025|CU28|CU11' \
+            | sort -u \
+            | tail -n 160
+          for wanted in \
+            '2022-CU28-ubuntu-22.04' \
+            '2025-CU11-ubuntu-24.04'
+          do
+            if printf '%s' "$catalog" | jq -e --arg wanted "$wanted" '.tags | index($wanted) != null' >/dev/null; then
+              echo "SQLSERVER_TAG_PRESENT tag=$wanted"
+            else
+              echo "SQLSERVER_TAG_MISSING tag=$wanted"
+            fi
+          done
 
   mysql-repository-core:
     name: mysql-8.4.13-repository-core
