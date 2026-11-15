@@ -8,10 +8,10 @@ its specific architecture.
 
 **Last reviewed:** 2026-10-28
 
-Milestones are capability and evidence gates, not calendar promises. M0-M5
-record accepted history, closed by the release of `oxide-batch` `0.5.0`; M6
-implementation and exit evidence are complete, with its first `0.6.0` release
-published on 2026-08-31 (tag `v0.6.0`). The continuous M5-M14 program is
+Milestones are capability and evidence gates, not calendar promises. M0-M7
+record accepted history through the frozen M7 release line. M5 released as
+`0.5.0`, M6 released as `0.6.0`, and M7 implementation/exit evidence is
+complete for the coordinated `0.7.0` release line. The continuous M5-M14 program is
 accepted by [RFC-0001](rfcs/0001-m5-preview-and-project-wide-1-0.md) and the
 topic decisions linked below. Historical M0 decisions remain preserved with
 their supersession record.
@@ -313,25 +313,13 @@ separate governance decision.
 
 ## M7 — Advanced Flow, Repeat, Scope, and Composition
 
-**Status:** Exit verification in progress — activated 2026-09-07 after #194
-closed the design gate and ADR-0013 became the binding M7 architecture
-decision.
+**Status:** Complete — accepted M7 exit evidence; coordinated release line
+`0.7.0` is cut from the frozen pre-M8 baseline.
 
-The active execution boundary is issue #192 / native milestone #8. All bounded
-implementation owners #195-#199 are complete. #200 is now the sole M7-wide
-conformance, restart, documentation-reconciliation, and exit-evidence owner;
-M7 remains open until #200 satisfies the milestone exit criteria. This does not
-promote unreleased M7 implementation to a released compatibility claim.
-The accepted #198 Gate-D matrix is in
-[`m7-gate-d-acceptance-evidence.md`](project/m7-gate-d-acceptance-evidence.md).
-
-Binding M7 authority is
-[ADR-0013](architecture/decisions/0013-m7-advanced-flow-scope-repeat-and-evolution.md)
-plus the
-[M7 architecture contract](architecture/m7-advanced-flow-scope-repeat-and-evolution.md).
-The kickoff and design-gate records remain historical authorization evidence,
-not current issue-state snapshots.
-
+The M7 umbrella #192 and bounded owners #195-#200 are complete. The accepted
+exit record is [M7 exit evidence](project/m7-exit-evidence.md). This release
+boundary does not include M8-M14 work and does not automatically promote
+implemented ledger rows to release-backed `Verified`.
 **Objective:** provide Rust-native equivalents for advanced Spring Batch core
 flow, scope/late binding, repeat, and composition semantics.
 
