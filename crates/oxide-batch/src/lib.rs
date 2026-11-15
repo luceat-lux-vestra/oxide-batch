@@ -579,6 +579,10 @@ pub use repository::{InMemoryExplorer, InMemoryJobRepository};
 pub use repository::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};
 #[cfg(feature = "sqlite")]
 pub use repository::{SqliteConfig, SqliteConfigError, SqliteJobRepository, SqliteMigrator};
+#[cfg(feature = "sqlserver")]
+pub use repository::{
+    SqlServerConfig, SqlServerConfigError, SqlServerJobRepository, SqlServerMigrator,
+};
 pub use runtime::{
     BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext, JobLauncher, LaunchError,
     LaunchReport, StopPollInterval, StopSource, StopTiming, StopToken, Tasklet, TaskletContext,
