@@ -578,7 +578,10 @@ fn map_driver_error(
     connection: &mut SqlServerConnection,
     error: tiberius::error::Error,
 ) -> RepositoryError {
-    if is_contention(&error) {
+    if is_duplicate_key(&error) || is_contention(&error) {
+        // XACT_ABORT ON makes constraint/locking failures transaction-terminal
+        // for this adapter. Discard the physical session instead of allowing a
+        // caller to continue or return it to the pool.
         connection.broken = true;
         RepositoryError::ConcurrentModification
     } else {
@@ -878,50 +881,47 @@ impl SqlServerUnitOfWork<'_> {
         job_name: &JobName,
         definition: &DefinitionIdentity,
     ) -> Result<i64, RepositoryError> {
+        let existing = {
+            let connection = self.connection()?;
+            TdsQuery::new(
+                "SELECT id, manifest_digest                  FROM dbo.ob_core_job_definition WITH (UPDLOCK, HOLDLOCK)                  WHERE job_name = @P1 AND definition_revision = @P2",
+            )
+            .text(job_name.as_str())
+            .text(definition.revision().as_str())
+            .optional(connection)
+            .await?
+        };
+        if let Some(row) = existing {
+            let digest = read_bytes(&row, "manifest_digest")?;
+            if digest.as_slice() != definition.manifest_digest() {
+                return Err(RepositoryError::DefinitionDrift {
+                    job_name: job_name.clone(),
+                    revision: definition.revision().clone(),
+                });
+            }
+            return read_i64(&row, "id");
+        }
+
         let manifest = std::str::from_utf8(definition.canonical_manifest())
             .map_err(|_| RepositoryError::Unavailable)?;
         let created_ms = system_time_millis(self.repository.clock.now())?;
-        let query = TdsQuery::new(
-            "INSERT INTO dbo.ob_core_job_definition \
-             (job_name, definition_revision, manifest_format, manifest_digest, manifest, created_ms) \
-             OUTPUT INSERTED.id \
-             VALUES (@P1, @P2, @P3, @P4, @P5, @P6)",
-        )
-        .text(job_name.as_str())
-        .text(definition.revision().as_str())
-        .i32(i32::from(definition.manifest_format()))
-        .bytes(definition.manifest_digest().to_vec())
-        .text(manifest)
-        .i64(created_ms);
-
         let inserted = {
             let connection = self.connection()?;
-            query.optional_raw(connection).await
+            TdsQuery::new(
+                "INSERT INTO dbo.ob_core_job_definition                  (job_name, definition_revision, manifest_format, manifest_digest, manifest, created_ms)                  OUTPUT INSERTED.id                  VALUES (@P1, @P2, @P3, @P4, @P5, @P6)",
+            )
+            .text(job_name.as_str())
+            .text(definition.revision().as_str())
+            .i32(i32::from(definition.manifest_format()))
+            .bytes(definition.manifest_digest().to_vec())
+            .text(manifest)
+            .i64(created_ms)
+            .optional_raw(connection)
+            .await
         };
         match inserted {
             Ok(Some(row)) => read_i64(&row, "id"),
             Ok(None) => Err(RepositoryError::Unavailable),
-            Err(error) if is_duplicate_key(&error) => {
-                let row = {
-                    let connection = self.connection()?;
-                    TdsQuery::new(
-                        "SELECT id, manifest_digest FROM dbo.ob_core_job_definition \
-                         WHERE job_name = @P1 AND definition_revision = @P2",
-                    )
-                    .text(job_name.as_str())
-                    .text(definition.revision().as_str())
-                    .one(connection)
-                    .await?
-                };
-                let digest = read_bytes(&row, "manifest_digest")?;
-                if digest.as_slice() != definition.manifest_digest() {
-                    return Err(RepositoryError::DefinitionDrift {
-                        job_name: job_name.clone(),
-                        revision: definition.revision().clone(),
-                    });
-                }
-                read_i64(&row, "id")
-            }
             Err(error) => {
                 let connection = self.connection()?;
                 Err(map_driver_error(connection, error))
@@ -929,7 +929,7 @@ impl SqlServerUnitOfWork<'_> {
         }
     }
 
-    async fn job_execution(
+    async fn job_execution(async fn job_execution(
         &mut self,
         id: JobExecutionId,
     ) -> Result<Option<JobExecution>, RepositoryError> {
@@ -1046,22 +1046,34 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         key: &'a JobInstanceKey,
     ) -> BoxFuture<'a, Result<JobInstanceSelection, RepositoryError>> {
         Box::pin(async move {
+            let existing = {
+                let connection = self.connection()?;
+                TdsQuery::new(
+                    "SELECT id, job_name, identifying_parameters                      FROM dbo.ob_job_instance WITH (UPDLOCK, HOLDLOCK)                      WHERE job_name = @P1 AND instance_key = @P2",
+                )
+                .text(key.job_name().as_str())
+                .bytes(key.digest().to_vec())
+                .optional(connection)
+                .await?
+            };
+            if let Some(row) = existing {
+                return Ok(JobInstanceSelection::Existing(decode_job_instance(&row)?));
+            }
+
             let parameters = serde_json::to_string(&encode_identifying_parameters(key)?)
                 .map_err(|_| RepositoryError::Unavailable)?;
             let created_ms = system_time_millis(self.repository.clock.now())?;
-            let query = TdsQuery::new(
-                "INSERT INTO dbo.ob_job_instance \
-                 (job_name, instance_key, identifying_parameters, created_ms) \
-                 OUTPUT INSERTED.id \
-                 VALUES (@P1, @P2, @P3, @P4)",
-            )
-            .text(key.job_name().as_str())
-            .bytes(key.digest().to_vec())
-            .text(parameters)
-            .i64(created_ms);
             let inserted = {
                 let connection = self.connection()?;
-                query.optional_raw(connection).await
+                TdsQuery::new(
+                    "INSERT INTO dbo.ob_job_instance                      (job_name, instance_key, identifying_parameters, created_ms)                      OUTPUT INSERTED.id                      VALUES (@P1, @P2, @P3, @P4)",
+                )
+                .text(key.job_name().as_str())
+                .bytes(key.digest().to_vec())
+                .text(parameters)
+                .i64(created_ms)
+                .optional_raw(connection)
+                .await
             };
             match inserted {
                 Ok(Some(row)) => {
@@ -1069,21 +1081,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                     Ok(JobInstanceSelection::Created(JobInstance::new(id, key.clone())))
                 }
                 Ok(None) => Err(RepositoryError::Unavailable),
-                Err(error) if is_duplicate_key(&error) => {
-                    let row = {
-                        let connection = self.connection()?;
-                        TdsQuery::new(
-                            "SELECT id, job_name, identifying_parameters \
-                             FROM dbo.ob_job_instance \
-                             WHERE job_name = @P1 AND instance_key = @P2",
-                        )
-                        .text(key.job_name().as_str())
-                        .bytes(key.digest().to_vec())
-                        .one(connection)
-                        .await?
-                    };
-                    Ok(JobInstanceSelection::Existing(decode_job_instance(&row)?))
-                }
                 Err(error) => {
                     let connection = self.connection()?;
                     Err(map_driver_error(connection, error))
@@ -1092,7 +1089,7 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         })
     }
 
-    fn create_job_execution(
+    fn create_job_execution(fn create_job_execution(
         &mut self,
         job_instance_id: JobInstanceId,
     ) -> BoxFuture<'_, Result<JobExecution, RepositoryError>> {
@@ -1153,7 +1150,7 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
 
             let created_at = self.repository.clock.now();
             let created_ms = system_time_millis(created_at)?;
-            let row = {
+            let inserted = {
                 let connection = self.connection()?;
                 TdsQuery::new(
                     "INSERT INTO dbo.ob_job_execution \
@@ -1165,8 +1162,16 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                 .i64(db_u64(attempt)?)
                 .i64(created_ms)
                 .i64(created_ms)
-                .one(connection)
-                .await?
+                .optional_raw(connection)
+                .await
+            };
+            let row = match inserted {
+                Ok(Some(row)) => row,
+                Ok(None) => return Err(RepositoryError::Unavailable),
+                Err(error) => {
+                    let connection = self.connection()?;
+                    return Err(map_driver_error(connection, error));
+                }
             };
             let id = JobExecutionId::new(read_u64(&row, "id")?)?;
             Ok(JobExecution::new(
@@ -1294,9 +1299,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
             let row = match inserted {
                 Ok(Some(row)) => row,
                 Ok(None) => return Err(RepositoryError::Unavailable),
-                Err(error) if is_duplicate_key(&error) => {
-                    return Err(RepositoryError::ConcurrentModification);
-                }
                 Err(error) => {
                     let connection = self.connection()?;
                     return Err(map_driver_error(connection, error));
@@ -1405,9 +1407,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
             let row = match inserted {
                 Ok(Some(row)) => row,
                 Ok(None) => return Err(RepositoryError::Unavailable),
-                Err(error) if is_duplicate_key(&error) => {
-                    return Err(RepositoryError::ConcurrentModification);
-                }
                 Err(error) => {
                     let connection = self.connection()?;
                     return Err(map_driver_error(connection, error));
@@ -1844,9 +1843,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
             let row = match inserted {
                 Ok(Some(row)) => row,
                 Ok(None) => return Err(RepositoryError::Unavailable),
-                Err(error) if is_duplicate_key(&error) => {
-                    return Err(RepositoryError::ConcurrentModification);
-                }
                 Err(error) => {
                     let connection = self.connection()?;
                     return Err(map_driver_error(connection, error));
