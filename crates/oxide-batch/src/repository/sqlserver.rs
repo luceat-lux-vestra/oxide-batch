@@ -32,10 +32,10 @@ const DEFAULT_ACQUIRE_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 const DEFAULT_LOCK_TIMEOUT: Duration = Duration::from_secs(5);
-const DEFAULT_MAX_LIFETIME: Duration = Duration::from_secs(30 * 60);
+const DEFAULT_MAX_LIFETIME: Duration = Duration::from_mins(30);
 const MIN_OPERATION_TIMEOUT: Duration = Duration::from_millis(1);
-const MAX_OPERATION_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-const MAX_CONNECTION_LIFETIME: Duration = Duration::from_secs(24 * 60 * 60);
+const MAX_OPERATION_TIMEOUT: Duration = Duration::from_mins(10);
+const MAX_CONNECTION_LIFETIME: Duration = Duration::from_hours(24);
 
 const MIGRATION_1: &str = include_str!("../../migrations-sqlserver/0001_core_metadata.sql");
 const MIGRATION_2: &str = include_str!("../../migrations-sqlserver/0002_runnable_core.sql");
@@ -65,6 +65,11 @@ impl SqlServerConfig {
     ///
     /// Certificate validation is always enabled. System trust roots are used
     /// unless an additional CA bundle is supplied.
+    ///
+    /// # Errors
+    ///
+    /// Returns a value-redacted configuration error when a required field is
+    /// empty or a configured bound is outside the accepted range.
     pub fn new(
         host: impl Into<String>,
         database: impl Into<String>,
@@ -361,7 +366,7 @@ impl ManageConnection for SqlServerConnectionManager {
     type Error = tiberius::error::Error;
 
     async fn connect(&self) -> Result<Self::Connection, Self::Error> {
-        connect_driver(&self.config).await
+        Box::pin(connect_driver(&self.config)).await
     }
 
     async fn is_valid(&self, connection: &mut Self::Connection) -> Result<(), Self::Error> {
@@ -395,7 +400,7 @@ async fn connect_driver(
         )
     })??;
     tcp.set_nodelay(true)?;
-    let mut client = Client::connect(driver, tcp.compat_write()).await?;
+    let mut client = Box::pin(Client::connect(driver, tcp.compat_write())).await?;
     client
         .simple_query(
             "SET XACT_ABORT ON; \
@@ -515,7 +520,7 @@ impl TdsQuery {
     async fn one(self, connection: &mut SqlServerConnection) -> Result<TdsRow, RepositoryError> {
         self.optional_raw(connection)
             .await
-            .map_err(|error| map_driver_error(connection, error))?
+            .map_err(|error| map_driver_error(connection, &error))?
             .ok_or(RepositoryError::Unavailable)
     }
 
@@ -525,7 +530,7 @@ impl TdsQuery {
     ) -> Result<Option<TdsRow>, RepositoryError> {
         self.optional_raw(connection)
             .await
-            .map_err(|error| map_driver_error(connection, error))
+            .map_err(|error| map_driver_error(connection, &error))
     }
 
     async fn all(
@@ -534,13 +539,13 @@ impl TdsQuery {
     ) -> Result<Vec<TdsRow>, RepositoryError> {
         self.all_raw(connection)
             .await
-            .map_err(|error| map_driver_error(connection, error))
+            .map_err(|error| map_driver_error(connection, &error))
     }
 
     async fn execute(self, connection: &mut SqlServerConnection) -> Result<u64, RepositoryError> {
         self.execute_raw(connection)
             .await
-            .map_err(|error| map_driver_error(connection, error))
+            .map_err(|error| map_driver_error(connection, &error))
     }
 }
 
@@ -558,7 +563,7 @@ fn is_contention(error: &tiberius::error::Error) -> bool {
 
 fn map_driver_error(
     connection: &mut SqlServerConnection,
-    error: tiberius::error::Error,
+    error: &tiberius::error::Error,
 ) -> RepositoryError {
     if is_duplicate_key(&error) || is_contention(&error) {
         // XACT_ABORT ON makes constraint/locking failures transaction-terminal
@@ -605,7 +610,7 @@ impl SqlServerMigrator {
     pub async fn installed_schema_version(
         config: &SqlServerConfig,
     ) -> Result<Option<u32>, RepositoryError> {
-        let mut connection = connect_driver(config)
+        let mut connection = Box::pin(connect_driver(config))
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
         installed_schema_version(&mut connection).await
@@ -616,7 +621,7 @@ impl SqlServerMigrator {
     /// # Errors
     /// Returns a value-redacted repository failure, including for a newer unsupported schema.
     pub async fn migrate(config: &SqlServerConfig) -> Result<(), RepositoryError> {
-        let mut connection = connect_driver(config)
+        let mut connection = Box::pin(connect_driver(config))
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
 
@@ -630,7 +635,7 @@ impl SqlServerMigrator {
              IF @result < 0 THROW 51000, 'migration lock unavailable', 1;",
         )
         .await
-        .map_err(|error| map_driver_error(&mut connection, error))?;
+        .map_err(|error| map_driver_error(&mut connection, &error))?;
 
         execute_simple_query_raw(
             &mut connection,
@@ -643,7 +648,7 @@ impl SqlServerMigrator {
              END;",
         )
         .await
-        .map_err(|error| map_driver_error(&mut connection, error))?;
+        .map_err(|error| map_driver_error(&mut connection, &error))?;
 
         let current = installed_schema_version(&mut connection)
             .await?
@@ -663,7 +668,7 @@ impl SqlServerMigrator {
 
             execute_simple_query_raw(&mut connection, "BEGIN TRAN")
                 .await
-                .map_err(|error| map_driver_error(&mut connection, error))?;
+                .map_err(|error| map_driver_error(&mut connection, &error))?;
 
             let migration_result = async {
                 execute_simple_query_raw(&mut connection, sql).await?;
@@ -688,7 +693,7 @@ impl SqlServerMigrator {
                 let _ = execute_simple_query_raw(&mut connection, "IF XACT_STATE() <> 0 ROLLBACK")
                     .await;
                 connection.broken = true;
-                return Err(map_driver_error(&mut connection, error));
+                return Err(map_driver_error(&mut connection, &error));
             }
         }
 
@@ -789,7 +794,7 @@ impl SqlServerJobRepository {
         let sql = format!("SET XACT_ABORT ON; SET LOCK_TIMEOUT {lock_timeout}; BEGIN TRAN;");
         if let Err(error) = execute_simple_query_raw(&mut connection, &sql).await {
             connection.broken = true;
-            return Err(map_driver_error(&mut connection, error));
+            return Err(map_driver_error(&mut connection, &error));
         }
         Ok(connection)
     }
@@ -890,7 +895,7 @@ impl<'repository> SqlServerUnitOfWork<'repository> {
             Ok(None) => Err(RepositoryError::Unavailable),
             Err(error) => {
                 let connection = self.connection()?;
-                Err(map_driver_error(connection, error))
+                Err(map_driver_error(connection, &error))
             }
         }
     }
@@ -1052,7 +1057,7 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                 Ok(None) => Err(RepositoryError::Unavailable),
                 Err(error) => {
                     let connection = self.connection()?;
-                    Err(map_driver_error(connection, error))
+                    Err(map_driver_error(connection, &error))
                 }
             }
         })
@@ -1139,7 +1144,7 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                 Ok(None) => return Err(RepositoryError::Unavailable),
                 Err(error) => {
                     let connection = self.connection()?;
-                    return Err(map_driver_error(connection, error));
+                    return Err(map_driver_error(connection, &error));
                 }
             };
             let id = JobExecutionId::new(read_u64(&row, "id")?)?;
@@ -1271,7 +1276,7 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                 Ok(None) => return Err(RepositoryError::Unavailable),
                 Err(error) => {
                     let connection = self.connection()?;
-                    return Err(map_driver_error(connection, error));
+                    return Err(map_driver_error(connection, &error));
                 }
             };
             let id = JobExecutionId::new(read_u64(&row, "id")?)?;
@@ -1377,7 +1382,7 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                 Ok(None) => return Err(RepositoryError::Unavailable),
                 Err(error) => {
                     let connection = self.connection()?;
-                    return Err(map_driver_error(connection, error));
+                    return Err(map_driver_error(connection, &error));
                 }
             };
             let id = StepExecutionId::new(read_u64(&row, "id")?)?;
@@ -1815,7 +1820,7 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                 Ok(None) => return Err(RepositoryError::Unavailable),
                 Err(error) => {
                     let connection = self.connection()?;
-                    return Err(map_driver_error(connection, error));
+                    return Err(map_driver_error(connection, &error));
                 }
             };
             let id = FlowDecisionId::new(read_u64(&row, "id")?)?;
