@@ -726,31 +726,34 @@ jobs:
 
 
   sqlserver-image-resolution:
-    name: sqlserver-image-tag-catalog
+    name: sqlserver-${{ matrix.lane }}-image-resolution
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-slim
     timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: "2022-cu28"
+            tag: "2022-CU28-ubuntu-22.04"
+          - lane: "2025-cu11"
+            tag: "2025-CU11-ubuntu-24.04"
     steps:
-      - name: Inspect Microsoft SQL Server container tag catalog
+      - name: Resolve immutable Microsoft SQL Server image digest
+        env:
+          IMAGE_TAG: ${{ matrix.tag }}
         shell: bash
         run: |
           set -euo pipefail
-          catalog="$(curl --fail --silent --show-error 'https://mcr.microsoft.com/v2/mssql/server/tags/list')"
-          printf '%s' "$catalog" \
-            | jq -r '.tags[]' \
-            | grep -E '(^|-)2022|(^|-)2025|CU28|CU11' \
-            | sort -u \
-            | tail -n 160
-          for wanted in \
-            '2022-CU28-ubuntu-22.04' \
-            '2025-CU11-ubuntu-24.04'
-          do
-            if printf '%s' "$catalog" | jq -e --arg wanted "$wanted" '.tags | index($wanted) != null' >/dev/null; then
-              echo "SQLSERVER_TAG_PRESENT tag=$wanted"
-            else
-              echo "SQLSERVER_TAG_MISSING tag=$wanted"
-            fi
-          done
+          headers="$(
+            curl --fail --silent --show-error \
+              -D - -o /dev/null \
+              -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json' \
+              "https://mcr.microsoft.com/v2/mssql/server/manifests/${IMAGE_TAG}"
+          )"
+          digest="$(printf '%s\n' "$headers" | tr -d '\r' | awk 'tolower($1) == "docker-content-digest:" { print $2; exit }')"
+          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          echo "SQLSERVER_IMAGE lane=${{ matrix.lane }} tag=${IMAGE_TAG} digest=${digest}"
 
   mysql-repository-core:
     name: mysql-8.4.13-repository-core
