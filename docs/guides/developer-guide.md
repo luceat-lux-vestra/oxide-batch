@@ -1,9 +1,8 @@
-# M6 Developer Guide
+# M7 Developer Guide
 
 **State:** Accepted
 
-**Applies to:** the published OxideBatch `0.6.0` M6 release (tag `v0.6.0`,
-2026-08-31)
+**Applies to:** OxideBatch `0.7.0` M7 release line (`v0.7.0`)
 
 An executable path from a dependency declaration to a working embedded job.
 This guide links to canonical contracts rather than restating them; see
@@ -13,7 +12,7 @@ This guide links to canonical contracts rather than restating them; see
 
 ```toml
 [dependencies]
-oxide-batch = { version = "0.6.0", features = ["postgres"] }
+oxide-batch = { version = "0.7.0", features = ["postgres"] }
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 
@@ -170,6 +169,20 @@ disclosed. See the
 [M5 preview surface and disclosure gate](../api/design-guidelines.md#m5-preview-surface-and-disclosure-gate)
 for the complete rule set this release was reviewed against.
 
+## M7 additions
+
+`0.7.0` keeps `oxide-batch` as the supported application entry point while
+adding the accepted M7 composition model: advanced compiled flow/nested jobs,
+job/step scope with structured late binding, repeat state/interceptors,
+definition registry/compatible upgrade/fork lineage, and completed
+launcher/operator/explorer semantics. These are one execution/repository
+authority, not parallel engines.
+
+Before using compatible restart or fork, read the
+[M7 architecture contract](../architecture/m7-advanced-flow-scope-repeat-and-evolution.md)
+and [M7 exit evidence](../project/m7-exit-evidence.md). PostgreSQL-backed
+deployments must migrate metadata to schema 12 before starting `0.7.0`; see
+[upgrade and rollback](upgrade-and-rollback.md).
 ## Next
 
 - [Operator guide](operator-guide.md) for inspecting and recovering the jobs
