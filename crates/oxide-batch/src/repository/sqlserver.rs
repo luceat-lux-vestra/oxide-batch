@@ -2445,19 +2445,16 @@ mod tests {
     fn config_rejects_operation_timeout_outside_the_frozen_range() -> Result<(), Box<dyn Error>> {
         let base = SqlServerConfig::new("db.internal", "batch", "batch_user", "secret")?;
 
-        assert_eq!(
+        assert!(matches!(
             base.clone().with_command_timeout(Duration::ZERO),
             Err(SqlServerConfigError::Timeout)
-        );
-        assert_eq!(
+        ));
+        assert!(matches!(
             base.clone()
                 .with_command_timeout(MAX_OPERATION_TIMEOUT + Duration::from_millis(1)),
             Err(SqlServerConfigError::Timeout)
-        );
-        assert!(
-            base.with_command_timeout(MAX_OPERATION_TIMEOUT)
-                .is_ok()
-        );
+        ));
+        assert!(base.with_command_timeout(MAX_OPERATION_TIMEOUT).is_ok());
         Ok(())
     }
 
