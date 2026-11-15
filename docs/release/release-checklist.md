@@ -2,9 +2,10 @@
 
 **State:** Accepted
 
-This checklist supplements the automated release workflow. The accepted M6
-release set is six crates; the first `oxide-batch-test` publication remains a
-one-time manual bootstrap and is never generalized by the workflow.
+This checklist supplements the automated release workflow. The accepted
+release set is six crates. The M6 `oxide-batch-test` first-publication bootstrap
+is historical only; by `0.7.0` all six names are registered and normal releases
+use the reviewed Trusted Publishing path.
 
 ## Prepare
 
@@ -41,8 +42,10 @@ Before creating a **new** v* tag, public GitHub Release, or publishing crates:
 
 - [ ] Identify the exact reviewed protected-`main` commit SHA to tag. Never substitute a PR, fork, moving branch, or a prior release's scan.
 - [ ] Obtain a successful **full** Actions **and** Rust CodeQL analysis for **that same 40-hex commit** from the weekly protected-main run or manually:
-      `gh workflow run codeql.yml --ref main -f candidate_sha="$(gh api repos/luceat-lux-vestra/oxide-batch/commits/main --jq .sha)"`
-      (only valid when the returned SHA is the actual release candidate).
+      For an ordinary protected-main candidate: `gh workflow run codeql.yml --ref main -f candidate_sha="<candidate-sha>"`.
+      For the frozen M7 recovery line, dispatch the trusted main workflow with both exact inputs:
+      `gh workflow run codeql.yml --ref main -f candidate_sha="<release/0.7-head>" -f release_tag=v0.7.0`.
+      The candidate SHA must be the exact reviewed release candidate; no other branch/tag exception is authorized.
 - [ ] Verify the run succeeded on first attempt, with successful trusted source/Actions/Rust jobs, two original SARIF artifacts within the repository's 30-day retention ceiling for the same SHA, validated SHA-256 digests, correct CodeQL query packs, the reviewed Rust security-query descriptor set, extraction diagnostics/coverage, successful scan invocation, and **zero High/Critical findings**. (A clean Rust SARIF does not enumerate every executed diagnostic query as a rule descriptor, so descriptor count is not used as a proxy for the 37-query execution seen in CodeQL logs.) The automated verifier checks these again before release-draft writes and registry publication.
 - [ ] If the SHA changed after scanning, **rescan the new candidate**. A green scan of a different revision is not evidence. If any scan/verification fails or is absent, **NO NEW RELEASE**.
 - [ ] The tag-push workflow can prevent new draft/attestation mutations but **cannot prevent tag creation itself**. Likewise, a `release: published` handler cannot undo a GitHub Release already made public via UI/API, and direct owner/admin or manual crates.io actions can bypass repository workflows. **The operator prepublication hold remains mandatory for these external actions**; do not claim a non-bypassable UI/API publication gate.
@@ -87,6 +90,11 @@ Before creating a **new** v* tag, public GitHub Release, or publishing crates:
       remove the local token, and only then publish the reviewed GitHub
       Release. Follow
       [`m6-oxide-batch-test-bootstrap.md`](m6-oxide-batch-test-bootstrap.md).
+- [ ] For M7 `0.7.0`, **do not** use the M6 bootstrap path or `publish-registered`
+      recovery mode. All six crate names are already registered. Review the
+      tag-generated draft, then publish the GitHub Release so the normal
+      `release.yml` Trusted Publishing path classifies and publishes pending
+      exact `0.7.0` versions in derived dependency order.
 - [ ] Publish the GitHub Release with notes and migration warnings.
 - [ ] Let Trusted Publishing release crates in dependency order:
       `oxide-batch-core`, `oxide-batch-repository`, `oxide-batch-plan`,
