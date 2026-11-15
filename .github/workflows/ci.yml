@@ -719,16 +719,6 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: rustup toolchain install 1.95.0 --profile minimal
 
-      - name: Generate candidate lockfile for #674 validation
-        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cargo +1.95.0 generate-lockfile
-          echo '=== OXIDEBATCH_674_CARGO_LOCK_BEGIN ==='
-          cat Cargo.lock
-          echo '=== OXIDEBATCH_674_CARGO_LOCK_END ==='
-
       - name: Check workspace on minimum supported Rust
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo +1.95.0 check --workspace --all-targets --all-features --locked
