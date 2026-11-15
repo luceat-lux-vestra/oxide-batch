@@ -21,6 +21,13 @@ LANGUAGES = ("actions", "rust")
 SHA = re.compile(r"[0-9a-f]{40}\Z")
 REPO = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\Z")
 
+M7_RECOVERY_TAG = "v0.7.0"
+M7_RECOVERY_BRANCH = "release/0.7"
+M7_RECOVERY_REF = "refs/heads/release/0.7"
+M7_RECOVERY_ROOT = "ca74edb15a56f21515a9121f376f091748afd6ae"
+M7_RECOVERY_RULESET_NAME = "Protect M7 recovery release branch"
+DIRECT_MERGE_GATE_INTEGRATION_ID = 15368
+
 
 def reject(message):
     raise ValueError(message)
@@ -109,15 +116,105 @@ def api(repo, path):
     return json.loads(gh("api", f"repos/{repo}/{path}"))
 
 
-def check_repo_sha(repo, sha):
-    """A scanned protected-main SHA can be an earlier commit on main history."""
+def _is_ancestor_comparison(comparison, base_sha):
+    return (
+        isinstance(comparison, dict)
+        and comparison.get("status") in ("ahead", "identical")
+        and comparison.get("merge_base_commit", {}).get("sha") == base_sha
+        and comparison.get("base_commit", {}).get("sha") == base_sha
+    )
+
+
+def check_m7_recovery_ruleset(repo):
+    """Require a dedicated no-bypass branch ruleset for the frozen M7 recovery line."""
+    rows = api(repo, "rulesets")
+    if not isinstance(rows, list):
+        reject("recovery ruleset discovery returned invalid data")
+    matches = [
+        row for row in rows
+        if isinstance(row, dict)
+        and row.get("name") == M7_RECOVERY_RULESET_NAME
+        and row.get("target") == "branch"
+        and row.get("enforcement") == "active"
+        and isinstance(row.get("id"), int)
+    ]
+    if len(matches) != 1:
+        reject("missing or ambiguous active M7 recovery ruleset")
+
+    ruleset = api(repo, f"rulesets/{matches[0]['id']}")
+    conditions = (ruleset.get("conditions") or {}).get("ref_name") or {}
+    if (
+        ruleset.get("name") != M7_RECOVERY_RULESET_NAME
+        or ruleset.get("target") != "branch"
+        or ruleset.get("enforcement") != "active"
+        or conditions.get("include") != [M7_RECOVERY_REF]
+        or (conditions.get("exclude") or []) != []
+        or (ruleset.get("bypass_actors") or []) != []
+    ):
+        reject("M7 recovery ruleset identity or scope is weaker than frozen policy")
+
+    rules = ruleset.get("rules")
+    if not isinstance(rules, list):
+        reject("M7 recovery ruleset has invalid rules")
+    by_type = {}
+    for rule in rules:
+        if isinstance(rule, dict) and isinstance(rule.get("type"), str):
+            by_type.setdefault(rule["type"], []).append(rule)
+
+    for required in ("deletion", "non_fast_forward", "required_linear_history"):
+        if required not in by_type:
+            reject(f"M7 recovery ruleset missing {required}")
+
+    pull = by_type.get("pull_request", [])
+    if len(pull) != 1:
+        reject("M7 recovery ruleset must require pull requests")
+    pull_params = pull[0].get("parameters") or {}
+    if (
+        pull_params.get("allowed_merge_methods") != ["squash"]
+        or pull_params.get("required_review_thread_resolution") is not True
+        or pull_params.get("require_extra_approval_for_unattributed_changes") is not True
+    ):
+        reject("M7 recovery pull-request policy is weaker than frozen main policy")
+
+    checks = by_type.get("required_status_checks", [])
+    if len(checks) != 1:
+        reject("M7 recovery ruleset must require status checks")
+    check_params = checks[0].get("parameters") or {}
+    if check_params.get("do_not_enforce_on_create") is not False:
+        reject("M7 recovery status checks may not be bypassed on branch creation")
+    required_checks = check_params.get("required_status_checks") or []
+    if not any(
+        isinstance(item, dict)
+        and item.get("context") == "Direct Merge Gate"
+        and item.get("integration_id") == DIRECT_MERGE_GATE_INTEGRATION_ID
+        for item in required_checks
+    ):
+        reject("M7 recovery ruleset is missing the trusted Direct Merge Gate")
+
+
+def check_m7_recovery_lineage(repo, sha):
+    """Authorize only the exact protected release/0.7 head descending from the frozen root."""
+    ref = api(repo, f"git/ref/heads/{M7_RECOVERY_BRANCH}")
+    branch_sha = (ref.get("object") or {}).get("sha") if isinstance(ref, dict) else None
+    if branch_sha != sha:
+        reject("M7 recovery candidate is not the exact protected release/0.7 head")
+    lineage = api(repo, f"compare/{M7_RECOVERY_ROOT}...{sha}")
+    if not _is_ancestor_comparison(lineage, M7_RECOVERY_ROOT):
+        reject("M7 recovery candidate does not descend from the frozen pre-M8 root")
+    check_m7_recovery_ruleset(repo)
+
+
+def check_repo_sha(repo, sha, tag=None):
+    """Authorize protected-main history, plus the one frozen v0.7.0 recovery lineage."""
     if not REPO.fullmatch(repo) or not SHA.fullmatch(sha):
         reject("invalid repo/SHA")
     comparison = api(repo, f"compare/{sha}...main")
-    if (comparison.get("status") not in ("ahead", "identical")
-        or comparison.get("merge_base_commit", {}).get("sha") != sha
-        or comparison.get("base_commit", {}).get("sha") != sha):
-        reject("release candidate is not proven reachable from protected main")
+    if _is_ancestor_comparison(comparison, sha):
+        return
+    if tag == M7_RECOVERY_TAG:
+        check_m7_recovery_lineage(repo, sha)
+        return
+    reject("release candidate is not proven reachable from protected main")
 
 
 def check_release_source(repo, sha, tag):
@@ -135,7 +232,7 @@ def check_release_source(repo, sha, tag):
     ).strip()
     if current != sha or tagged != sha or tree != current_tree:
         reject("checkout, immutable tag commit/tree and candidate SHA disagree")
-    check_repo_sha(repo, sha)
+    check_repo_sha(repo, sha, tag)
     return tree
 
 
@@ -164,7 +261,7 @@ def verify_manifest(directory, repo, run, sha, lang):
         reject("CodeQL source provenance mismatch")
 
 
-def inspect_run(repo, sha, workflow, run_id, script, allow_missing=False):
+def inspect_run(repo, sha, workflow, run_id, script, allow_missing=False, tag=None):
     run = api(repo, f"actions/runs/{run_id}")
     jobs = api(repo, f"actions/runs/{run_id}/jobs?per_page=100")
     if intentional_schedule_skip(run, jobs):
@@ -189,7 +286,7 @@ def inspect_run(repo, sha, workflow, run_id, script, allow_missing=False):
                     subprocess.run([sys.executable, str(script),
                                     "--sarif-dir", str(directory),
                                     "--language", lang, "--candidate-sha", sha], check=True)
-    check_repo_sha(repo, sha)
+    check_repo_sha(repo, sha, tag)
     print(f"Exact-source CodeQL PASS {repo}@{sha} run={run_id} Actions+Rust")
     return True
 
@@ -256,7 +353,7 @@ def verify_live(repo, sha, tag, script):
             reject(f"existing exact candidate CodeQL run {run_id} ended {run.get('conclusion')}")
         try:
             valid = inspect_run(repo, sha, workflow, run_id, script,
-                                allow_missing=True)
+                                allow_missing=True, tag=tag)
         except (ValueError, subprocess.CalledProcessError, OSError, KeyError, TypeError) as exc:
             reject(f"invalid completed exact candidate scan {run_id}: {exc}")
         if valid is True:
@@ -277,7 +374,8 @@ def verify_live(repo, sha, tag, script):
         print(f"Joining active exact-source CodeQL {selected}", flush=True)
     else:
         gh("api", "-X", "POST", f"repos/{repo}/actions/workflows/codeql.yml/dispatches",
-           "-f", "ref=main", "-f", f"inputs[candidate_sha]={sha}")
+           "-f", "ref=main", "-f", f"inputs[candidate_sha]={sha}",
+           "-f", f"inputs[release_tag]={tag}")
         selected = None
         print(f"Dispatched trusted full CodeQL for candidate {sha}", flush=True)
 
@@ -309,7 +407,7 @@ def verify_live(repo, sha, tag, script):
             if state.get("status") == "completed":
                 if state.get("conclusion") != "success":
                     reject(f"CodeQL run {selected} ended {state.get('conclusion')}")
-                if inspect_run(repo, sha, workflow, selected, script) is True:
+                if inspect_run(repo, sha, workflow, selected, script, tag=tag) is True:
                     check_release_source(repo, sha, tag)
                     return
                 reject("CodeQL finished without complete original language evidence")
@@ -367,8 +465,7 @@ def self_test():
     probe("two SARIF plus two source-provenance", lambda r, w, j, a: a["artifacts"].pop())
     probe("wrong-SHA", lambda r, w, j, a: a["artifacts"][0]["workflow_run"].update(head_sha="b" * 40))
     probe("ambiguous", lambda r, w, j, a: a["artifacts"][1].update(expired=True))
-    # Candidate ancestry: current main and a historical protected-main ancestor
-    # are accepted; divergence is rejected fail-closed.
+    # Candidate ancestry: protected-main history remains the default authority.
     for status in ("identical", "ahead"):
         with mock.patch.object(sys.modules[__name__], "api", return_value={
             "status": status,
@@ -376,17 +473,92 @@ def self_test():
             "merge_base_commit": {"sha": sha},
         }):
             check_repo_sha(repo, sha)
-    with mock.patch.object(sys.modules[__name__], "api", return_value={
+
+    diverged = {
         "status": "diverged",
         "base_commit": {"sha": sha},
         "merge_base_commit": {"sha": "b" * 40},
-    }):
+    }
+    with mock.patch.object(sys.modules[__name__], "api", return_value=diverged):
         try:
             check_repo_sha(repo, sha)
         except ValueError as exc:
             assert "not proven reachable" in str(exc)
         else:
-            raise AssertionError("diverged release candidate was accepted")
+            raise AssertionError("arbitrary diverged release candidate was accepted")
+
+    # The only diverged exception is v0.7.0 on the exact frozen protected
+    # release/0.7 head with the required no-bypass ruleset.
+    recovery_ruleset = {
+        "id": 77,
+        "name": M7_RECOVERY_RULESET_NAME,
+        "target": "branch",
+        "enforcement": "active",
+        "conditions": {"ref_name": {"include": [M7_RECOVERY_REF], "exclude": []}},
+        "bypass_actors": [],
+        "rules": [
+            {"type": "deletion"},
+            {"type": "non_fast_forward"},
+            {"type": "required_linear_history"},
+            {"type": "pull_request", "parameters": {
+                "allowed_merge_methods": ["squash"],
+                "required_review_thread_resolution": True,
+                "require_extra_approval_for_unattributed_changes": True,
+            }},
+            {"type": "required_status_checks", "parameters": {
+                "strict_required_status_checks_policy": False,
+                "do_not_enforce_on_create": False,
+                "required_status_checks": [{
+                    "context": "Direct Merge Gate",
+                    "integration_id": DIRECT_MERGE_GATE_INTEGRATION_ID,
+                }],
+            }},
+        ],
+    }
+    recovery_api = [
+        diverged,
+        {"object": {"sha": sha}},
+        {
+            "status": "ahead",
+            "base_commit": {"sha": M7_RECOVERY_ROOT},
+            "merge_base_commit": {"sha": M7_RECOVERY_ROOT},
+        },
+        [{"id": 77, "name": M7_RECOVERY_RULESET_NAME,
+          "target": "branch", "enforcement": "active"}],
+        recovery_ruleset,
+    ]
+    with mock.patch.object(sys.modules[__name__], "api", side_effect=recovery_api):
+        check_repo_sha(repo, sha, M7_RECOVERY_TAG)
+
+    with mock.patch.object(sys.modules[__name__], "api", return_value=diverged):
+        try:
+            check_repo_sha(repo, sha, "v0.7.1")
+        except ValueError as exc:
+            assert "not proven reachable" in str(exc)
+        else:
+            raise AssertionError("recovery lineage escaped the exact v0.7.0 tag")
+
+    weak_ruleset = dict(recovery_ruleset, bypass_actors=[{"actor_id": 1}])
+    weak_api = [
+        diverged,
+        {"object": {"sha": sha}},
+        {
+            "status": "ahead",
+            "base_commit": {"sha": M7_RECOVERY_ROOT},
+            "merge_base_commit": {"sha": M7_RECOVERY_ROOT},
+        },
+        [{"id": 77, "name": M7_RECOVERY_RULESET_NAME,
+          "target": "branch", "enforcement": "active"}],
+        weak_ruleset,
+    ]
+    with mock.patch.object(sys.modules[__name__], "api", side_effect=weak_api):
+        try:
+            check_repo_sha(repo, sha, M7_RECOVERY_TAG)
+        except ValueError as exc:
+            assert "weaker than frozen policy" in str(exc)
+        else:
+            raise AssertionError("M7 recovery accepted a bypass-capable ruleset")
+
     # The successful guard-only scheduled workflow is an intentional no-op,
     # never evidence for publication even though GitHub reports SUCCESS.
     schedule = dict(run, event="schedule")
@@ -570,6 +742,7 @@ def self_test():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--source-only", action="store_true")
     parser.add_argument("--tag")
     parser.add_argument("--sha")
     args = parser.parse_args()
@@ -577,6 +750,16 @@ def main():
         self_test()
         return
     repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if args.source_only:
+        if not args.sha or not repo:
+            parser.error("--source-only requires --sha plus GITHUB_REPOSITORY")
+        try:
+            check_repo_sha(repo, args.sha, args.tag)
+        except (ValueError, subprocess.CalledProcessError, OSError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            print(f"::error::Release source authorization rejected: {exc}", file=sys.stderr)
+            raise SystemExit(1) from exc
+        print(f"Release source authority PASS {repo}@{args.sha}", flush=True)
+        return
     if not args.tag or not args.sha or not repo:
         parser.error("--tag and --sha plus GITHUB_REPOSITORY are required")
     script = Path(__file__).with_name("check_codeql_sarif.py")
