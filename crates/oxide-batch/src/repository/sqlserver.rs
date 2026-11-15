@@ -2442,6 +2442,26 @@ mod tests {
     }
 
     #[test]
+    fn config_rejects_operation_timeout_outside_the_frozen_range() -> Result<(), Box<dyn Error>> {
+        let base = SqlServerConfig::new("db.internal", "batch", "batch_user", "secret")?;
+
+        assert_eq!(
+            base.clone().with_command_timeout(Duration::ZERO),
+            Err(SqlServerConfigError::Timeout)
+        );
+        assert_eq!(
+            base.clone()
+                .with_command_timeout(MAX_OPERATION_TIMEOUT + Duration::from_millis(1)),
+            Err(SqlServerConfigError::Timeout)
+        );
+        assert!(
+            base.with_command_timeout(MAX_OPERATION_TIMEOUT)
+                .is_ok()
+        );
+        Ok(())
+    }
+
+    #[test]
     fn schema_version_guard_requires_runnable_core_schema() {
         assert!(matches!(
             verify_schema_version(1),

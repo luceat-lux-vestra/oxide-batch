@@ -931,10 +931,12 @@
         "MAX_SHORT_TIMEOUT",
         "MAX_STATEMENT_TIMEOUT",
         "MAX_CONNECTION_LIFETIME",
+        "MAX_OPERATION_TIMEOUT",
+        "MIN_OPERATION_TIMEOUT",
         "MIN_BOUNDED_DURATION"
       ],
-      "reason": "A timeout bounds how long one operation may take, not how much of a resource is concurrently held, and the capacity budget declares none of these. They are validated at construction like every other bound here, and their validation is covered by the configuration tests that own them.",
-      "covered_by": "crates/oxide-batch/tests/postgres_repository.rs::configuration_bounds_and_diagnostics_are_safe"
+      "reason": "A timeout bounds how long one operation may take, not how much of a resource is concurrently held, and the capacity budget declares none of these. They are validated at construction like every other bound here, and their validation is covered by the configuration tests that own them. The SQL Server adapter's MAX_OPERATION_TIMEOUT/MIN_OPERATION_TIMEOUT pair is the shared constructor range for acquire/connect/command/lock waits; MAX_CONNECTION_LIFETIME remains the separately bounded pooled-connection lifetime.",
+      "covered_by": "crates/oxide-batch/tests/postgres_repository.rs::configuration_bounds_and_diagnostics_are_safe; crates/oxide-batch/src/repository/sqlserver.rs::tests::config_rejects_operation_timeout_outside_the_frozen_range"
     },
     {
       "resource": "retry and backoff policy limits",
