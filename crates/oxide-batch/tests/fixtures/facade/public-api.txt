@@ -510,14 +510,14 @@ oxide_batch::SplitBranch
 oxide_batch::SplitBudget
 oxide_batch::SplitNode
 oxide_batch::SqlStateCode
-oxide_batch::SqliteConfig [sqlite]
-oxide_batch::SqliteConfigError [sqlite]
-oxide_batch::SqliteJobRepository [sqlite]
-oxide_batch::SqliteMigrator [sqlite]
 oxide_batch::SqlServerConfig [sqlserver]
 oxide_batch::SqlServerConfigError [sqlserver]
 oxide_batch::SqlServerJobRepository [sqlserver]
 oxide_batch::SqlServerMigrator [sqlserver]
+oxide_batch::SqliteConfig [sqlite]
+oxide_batch::SqliteConfigError [sqlite]
+oxide_batch::SqliteJobRepository [sqlite]
+oxide_batch::SqliteMigrator [sqlite]
 oxide_batch::StaleThreshold
 oxide_batch::StartControls
 oxide_batch::StartLimit
