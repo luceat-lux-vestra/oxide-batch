@@ -455,11 +455,9 @@ async fn remove_crash_restart_rows(settings: &TestSettings) -> Result<(), Box<dy
 }
 
 async fn run_crash_restart_child(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
-    let repository = SqlServerJobRepository::connect(
-        settings.repository_config()?,
-        Arc::new(SystemClock),
-    )
-    .await?;
+    let repository =
+        SqlServerJobRepository::connect(settings.repository_config()?, Arc::new(SystemClock))
+            .await?;
     let durable_key = JobInstanceKey::new(
         JobName::new("repository_crash_committed")?,
         &JobParameters::new(),
@@ -503,7 +501,9 @@ async fn run_crash_restart_child(settings: &TestSettings) -> Result<(), Box<dyn 
     // Hold a different, uncommitted transaction open until the parent sends
     // SIGKILL. No Rust destructor or RepositoryUnitOfWork::rollback is run.
     let mut pending = repository.begin().await?;
-    pending.select_or_create_job_instance(&undurable_key).await?;
+    pending
+        .select_or_create_job_instance(&undurable_key)
+        .await?;
     println!("OXIDEBATCH_SQLSERVER_CRASH_READY");
     std::io::stdout().flush()?;
     std::future::pending::<()>().await;
@@ -1008,9 +1008,8 @@ fn process_kill_recovers_sql_server_state() -> Result<(), Box<dyn Error>> {
         .ok_or_else(|| std::io::Error::other("child stdout pipe was unavailable"))?;
     let (send_ready, receive_ready) = std::sync::mpsc::channel();
     let reader = thread::spawn(move || {
-        let ready = std::io::BufRead::lines(std::io::BufReader::new(stdout)).any(|line| {
-            line.is_ok_and(|line| line.contains("OXIDEBATCH_SQLSERVER_CRASH_READY"))
-        });
+        let ready = std::io::BufRead::lines(std::io::BufReader::new(stdout))
+            .any(|line| line.is_ok_and(|line| line.contains("OXIDEBATCH_SQLSERVER_CRASH_READY")));
         let _ = send_ready.send(ready);
     });
 
@@ -1035,11 +1034,9 @@ fn process_kill_recovers_sql_server_state() -> Result<(), Box<dyn Error>> {
     runtime.block_on(async {
         // Connect through an entirely new process-side repository/pool. The
         // committed FAILED attempt must survive and the killed UoW must not.
-        let repository = SqlServerJobRepository::connect(
-            settings.repository_config()?,
-            Arc::new(SystemClock),
-        )
-        .await?;
+        let repository =
+            SqlServerJobRepository::connect(settings.repository_config()?, Arc::new(SystemClock))
+                .await?;
         let durable_key = JobInstanceKey::new(
             JobName::new("repository_crash_committed")?,
             &JobParameters::new(),
@@ -1055,9 +1052,12 @@ fn process_kill_recovers_sql_server_state() -> Result<(), Box<dyn Error>> {
             .ok_or_else(|| std::io::Error::other("committed instance vanished after SIGKILL"))?;
         let attempts = inspection.job_executions(instance.id()).await?;
         assert_eq!(attempts.len(), 1);
-        assert_eq!(attempts[0].status(), oxide_batch::BatchStatus::Failed);
+        assert_eq!(attempts[0].metadata().status(), oxide_batch::BatchStatus::Failed);
         assert!(
-            inspection.find_job_instance(&undurable_key).await?.is_none(),
+            inspection
+                .find_job_instance(&undurable_key)
+                .await?
+                .is_none(),
             "uncommitted job instance survived the process kill"
         );
         inspection.rollback().await?;
