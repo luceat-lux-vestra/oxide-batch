@@ -929,7 +929,7 @@ impl SqlServerUnitOfWork<'_> {
         }
     }
 
-    async fn job_execution(async fn job_execution(
+    async fn job_execution(
         &mut self,
         id: JobExecutionId,
     ) -> Result<Option<JobExecution>, RepositoryError> {
@@ -1089,7 +1089,7 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         })
     }
 
-    fn create_job_execution(fn create_job_execution(
+    fn create_job_execution(
         &mut self,
         job_instance_id: JobInstanceId,
     ) -> BoxFuture<'_, Result<JobExecution, RepositoryError>> {
