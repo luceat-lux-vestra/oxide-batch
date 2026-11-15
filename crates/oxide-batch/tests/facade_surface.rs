@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 const UPDATE_VARIABLE: &str = "OXIDEBATCH_UPDATE_FACADE_SNAPSHOT";
 
 /// Features that gate concrete durable-adapter entry points.
-const OPTIONAL_FEATURES: &[&str] = &["mysql", "postgres", "sqlite"];
+const OPTIONAL_FEATURES: &[&str] = &["mysql", "postgres", "sqlite", "sqlserver"];
 
 /// Every supported `oxide-batch` import path.
 ///
@@ -183,6 +183,11 @@ mod resolves {
 
     #[cfg(feature = "sqlite")]
     pub use oxide_batch::{SqliteConfig, SqliteConfigError, SqliteJobRepository, SqliteMigrator};
+
+    #[cfg(feature = "sqlserver")]
+    pub use oxide_batch::{
+        SqlServerConfig, SqlServerConfigError, SqlServerJobRepository, SqlServerMigrator,
+    };
 
     #[cfg(feature = "postgres")]
     pub use oxide_batch::{
