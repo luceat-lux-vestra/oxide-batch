@@ -2,11 +2,35 @@
 
 **State:** Accepted
 
-**Long-term target:** Complete feature-ledger parity is accepted by RFC-0002.
+**Long-term compatibility target:** Complete feature-ledger coverage is accepted by RFC-0002; product/design precedence is governed by [RFC-0012](../rfcs/0012-native-capability-priority-and-spring-compatibility-precedence.md).
 
 This is the normative compatibility and public-claim policy. The
 [feature ledger](conformance-matrix.md) owns the population and per-row status;
 the [conformance strategy](conformance-strategy.md) owns evidence requirements.
+
+## Priority and design authority
+
+Spring Batch is a mandatory comparison baseline, not OxideBatch's architecture
+or roadmap authority. RFC-0012 establishes the precedence when compatibility
+pressure competes with native product design:
+
+1. correctness, durability, recovery, transaction/delivery, security, and data
+   integrity;
+2. useful OxideBatch capability and production/operational quality;
+3. idiomatic Rust, bounded-resource behavior, maintainability, and
+   backend/resource-native architecture;
+4. Spring semantic, behavioral, operational, and feature compatibility;
+5. API/configuration/implementation-shape similarity.
+
+A lower priority must not materially weaken a higher one merely to preserve a
+Spring-shaped experience. The ledger remains complete: an affected Spring
+capability is still reviewed and recorded as verified equivalence, a native
+equivalent, explicit divergence, `Unsupported`, `NotApplicable`, or a
+genuinely scheduled `Deferred` item.
+
+Accordingly, "complete feature-ledger coverage" is an accounting and evidence
+obligation. It does not mean that every Spring mechanism is implemented, nor
+that parity work automatically outranks native feature development.
 
 ## Reference baseline
 
@@ -106,9 +130,11 @@ Public wording names the Spring baseline, OxideBatch version, ledger scope, and
 known divergences. “100% compatible” is too ambiguous and must not be used.
 
 Released claims remain limited to verified semantic, behavioral, feature,
-operational, and migration rows. The accepted long-term target is complete
-documented feature-ledger coverage under
-[RFC-0002](../rfcs/0002-full-spring-batch-feature-ledger-parity.md).
+operational, and migration rows. The accepted long-term compatibility target
+is complete documented feature-ledger coverage under
+[RFC-0002](../rfcs/0002-full-spring-batch-feature-ledger-parity.md), subject to
+the product/design precedence in
+[RFC-0012](../rfcs/0012-native-capability-priority-and-spring-compatibility-precedence.md).
 
 ## Evidence required for `Verified`
 
