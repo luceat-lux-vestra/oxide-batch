@@ -28,7 +28,9 @@ pub use postgres::{
 #[cfg(feature = "sqlite")]
 pub use sqlite::{SqliteConfig, SqliteConfigError, SqliteJobRepository, SqliteMigrator};
 #[cfg(feature = "sqlserver")]
-pub use sqlserver::{SqlServerConfig, SqlServerConfigError, SqlServerJobRepository, SqlServerMigrator};
+pub use sqlserver::{
+    SqlServerConfig, SqlServerConfigError, SqlServerJobRepository, SqlServerMigrator,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RepeatManifestOwner {
