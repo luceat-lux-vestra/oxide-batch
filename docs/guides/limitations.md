@@ -1,85 +1,74 @@
-# M6 Release Limitations
+# M7 Release Limitations
 
-**State:** Accepted
+**State:** Accepted release-line guidance
 
-**Applies to:** the published OxideBatch `0.6.0` M6 release (tag `v0.6.0`,
-2026-08-31)
+**Applies to:** OxideBatch `0.7.0` M7 release line (`v0.7.0`)
 
-This is the explicit limitations record the
-[production preview guide](production-preview.md) and the
-[M6 support matrix](../release/support-matrix.md#0.6.0-m6-release)
-promise. It names every compatibility-ledger row that is not advertised as
-verified capability in this release. The
-[feature ledger](../compatibility/conformance-matrix.md) is the canonical,
-machine-cross-checked source; this page is a readable summary of it and never
-overrides it. No row is hidden: `Partial`, `Planned`, and `Unknown` rows are
-all listed or counted below.
+This is the readable limitations record for the M7 release line. The
+[feature ledger](../compatibility/conformance-matrix.md) remains authoritative
+for row status and evidence. Publishing a version never promotes an
+`Implemented` or `Partial` row to release-backed `Verified` by itself.
 
-## Released M5 foundation and M6
+## Supported boundary
 
-The released M5 foundation has `28` of its `29` advertised rows `Verified`
-against `0.5.0`; `META-CONTEXT-001` remains `Implemented`. M6 adds the item
-component catalog, schema-4 component state, and public `oxide-batch-test`.
-Those M6 rows have retained campaign evidence; `0.6.0` is now published with
-post-publish verification passed, but promoting a row to release-backed
-`Verified` evidence is a separate governance decision this document does not
-make automatically upon publication. See the
-[M6 disposition](../release/support-matrix.md#0.6.0-m6-release)
-and [M6 exit record](../project/m6-exit-evidence.md). Everything below this
-line is **not** advertised as fully verified by this release.
+- Rust MSRV is 1.95; the pinned development/CI/release toolchain is 1.97.1.
+- Linux x86_64 GNU remains the supported runtime target.
+- PostgreSQL 15 and 18 are the release-blocking durable-adapter axes;
+  PostgreSQL 16 and 17 receive smoke coverage.
+- Metadata schema is 12. Upgrade from the published `0.6.0` schema-4 line
+  requires quiesced migration and a verified backup; rollback is restore-based.
+- Certificate-validated Rustls `verify-full` is the production PostgreSQL
+  transport mode. Plaintext remains for isolated/local test environments.
+- Deployment remains single-host and embedded in the application process.
 
-## Partial: implemented at a bounded M0-M5 boundary, expands in M7-M11
+## M7 capability included in this release line
 
-These `13` rows work within the boundary described, and that boundary is
-narrower than full Spring Batch parity for the same feature. Each expands in a
-later milestone; none is silently dropped.
+The accepted M7 boundary includes:
 
-| Row | What works today | What is bounded or deferred |
-| --- | --- | --- |
-| [`LIFE-STOP-001`](../compatibility/conformance-matrix.md#domain-identity-lifecycle-and-launch) | Application-owned cooperative stop, durable operator stop request, drain reporting, in-flight chunk policy, deadlines | Complete operator-driven stop across every execution shape is M7 |
-| [`LIFE-RECOVER-001`](../compatibility/conformance-matrix.md#domain-identity-lifecycle-and-launch) | Evidence-based audited recovery: stale-clock guards, version/digest binding, `UNKNOWN`-effect reason, atomic audit | Stricter `UNKNOWN` handling than Spring; no automatic takeover |
-| [`STEP-STARTLIMIT-001`](../compatibility/conformance-matrix.md#step-chunk-item-stream-and-standard-components) | Start limit and allow-start-if-complete for basic sequential flow | Complete M7 coverage across nested/split flow remains |
-| [`FT-RETRY-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Typed bounded retry policy, `65,535`-attempt and `256`-key caps | A crash can replay the pre-decision initial call or consume an uninvoked reservation |
-| [`FT-SKIP-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Classified, counted read/process/write skips; shared limit across attempts | A crash during a pre-commit skip callback may replay the callback |
-| [`FT-ROLLBACK-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Typed rollback-capability classifier | No-rollback is capability-scoped and still records a skip |
-| [`LISTENER-ITEM-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | M3 callbacks plus the M6 component listener boundary | Complete flow/listener taxonomy remains later M7 scope |
-| [`FLOW-SEQUENCE-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Finite acyclic sequential/conditional flow with process-kill reuse | Nested/split flow and complete M7 coverage remain |
-| [`FLOW-DECIDER-001`](../compatibility/conformance-matrix.md#fault-tolerance-repeat-listeners-flow-and-scope) | Basic decider node, restart reuse, decision-commit crash boundary | Complete M7 coverage remains |
-| [`REPO-COMMAND-001`](../compatibility/conformance-matrix.md#repository-operator-testing-and-observability) | Authoritative identity/lifecycle writes over OxideBatch's own schema and ports | Service split and pagination remain accepted targets |
-| [`REPO-RETENTION-001`](../compatibility/conformance-matrix.md#repository-operator-testing-and-observability) | Hold, eligibility, plan/apply digest guard, bounded batches, audit | Archive, export, scheduling, and portability remain M8 |
-| [`SCALE-PARSTEP-001`](../compatibility/conformance-matrix.md#local-and-distributed-scalability) | Bounded local split: factories, cancellation, aggregation, both sibling policies | Chunk branches are not required at this boundary; complete scale is M10 |
-| [`SCALE-LOCALPART-001`](../compatibility/conformance-matrix.md#local-and-distributed-scalability) | Bounded local partitioning: durable state, deterministic aggregation, restart carry-forward | No lease or fencing in the local slice; RFC-0009 remote semantics remain proposed |
+- advanced compiled sequential/conditional flow, split/nested flow and
+  nested-job composition, custom leaf nodes, and durable decision reuse;
+- live job/step scope, component factories, typed late binding, bounded
+  same-scope dependencies, cleanup, and durable scope provenance;
+- repeat context/interceptors and durable repeat identity/state;
+- definition registry identity, explicit compatible-upgrade edges, drift
+  rejection, fork lineage, and compatible restart selection;
+- parameter incrementing and launch identity, start/non-restart controls,
+  operator restart/fork semantics, and bounded explorer projections.
 
-## Planned and Unknown: not yet implemented
+These capabilities are backed by the accepted M7 evidence set, including
+[M7 exit evidence](../project/m7-exit-evidence.md). Ledger promotion remains
+a separate governance action and is not silently performed by the release.
 
-The remaining rows are `Planned` for a named later milestone (M7-M14), and `2` rows —
-`DB-MONGO-001` and `IO-MAILLDAP-001` — are `Unknown` (reviewed disposition not
-yet decided). None of these is implemented in this release. The complete list
-with target milestones is the
-[feature ledger](../compatibility/conformance-matrix.md); notable absences a
-new user is likely to look for:
+## Explicitly not included
 
-- M6 standard reusable item components, composites, decorators, multi-resource
-  input/output, and test-kit rows are published in `0.6.0` with retained
-  campaign and post-publish evidence; promoting them to ledger `Verified`
-  status is a separate governance decision, not yet made;
-- M7 job/step scope and structured late binding (`SCOPE-JOB-001`,
-  `SCOPE-STEP-001`) are implemented by #276/#277 but remain unreleased and
-  therefore are not ledger-`Verified`;
-- nested/split job flow and the definition registry (`FLOW-SPLIT-001`,
-  `FLOW-NESTED-001`, `REPO-REGISTRY-001`) remain M7 work;
-- additional relational databases and messaging/streaming adapters
-  (`DB-MYSQL-001`, `DB-SQLITE-001`, `DB-SQLSERVER-001`, `MSG-KAFKA-001`,
-  `MSG-AMQP-001`, and related rows) — M8/M9;
-- multi-threaded/local-chunk scaling beyond the bounded M4/M5 slice
-  (`SCALE-MTSTEP-001`, `SCALE-LOCALCHUNK-001`) — M10;
-- remote/distributed execution of any kind (`SCALE-REMOTEPART-001`,
-  `SCALE-REMOTECHUNK-001`, `SCALE-REMOTESTEP-001`) — M11;
-- Spring Batch definition/metadata migration tooling (`MIG-DEFINITION-001`,
-  `MIG-METADATA-001`) — M12.
+`0.7.0` does **not** claim:
 
-## What this means for a full-parity or readiness claim
+- MySQL, MariaDB, SQLite, SQL Server, Oracle, or another durable metadata
+  adapter; database portability/certification begins in M8;
+- generic cross-resource exactly-once semantics or universal distributed
+  transactions;
+- Kafka/AMQP or other broker/stream adapters;
+- remote step/partition/chunk execution or a multi-host worker protocol;
+- project-wide `1.0`, GA, enterprise readiness, production-readiness across
+  all roadmap categories, or complete Spring Batch parity;
+- Java/Spring source compatibility.
 
-The visibility of every row above prevents any full Spring Batch parity,
-enterprise-readiness, or project-wide production-readiness claim for this
-release. See [what M6 explicitly is not](production-preview.md#what-m6-explicitly-is-not).
+## Operational caveats
+
+- Runtime startup verifies schema 12 but never migrates automatically.
+- The `0.6.0` -> `0.7.0` metadata change is not a rolling upgrade; quiesce
+  older writers before migration.
+- Definition compatibility is independent of schema compatibility. Changed
+  definitions need the accepted registry/upgrade contract and fail closed
+  when drift or a missing edge is detected.
+- Forking creates explicit new lineage; it is never disguised as restart.
+- The shipped CLI remains a guarded repository operator, not a standalone
+  job-definition loader. Application work still requires a host application
+  that supplies the compiled definition catalog.
+- M7 operator fork is a service-level capability; the accepted evidence
+  explicitly does not claim new CLI/API-server/hosted control-plane work.
+
+See the [support matrix](../release/support-matrix.md#070-m7-release-line),
+[upgrade and rollback guide](upgrade-and-rollback.md), and
+[M7 operator fork evidence](../project/m7-operator-fork-evidence.md) for the
+bounded release contract.
