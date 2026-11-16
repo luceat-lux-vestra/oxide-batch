@@ -1,4 +1,4 @@
-//! Runnable-core repository certification source for the first-party MongoDB adapter.
+//! Runnable-core repository certification source for the first-party `MongoDB` adapter.
 
 #![cfg(feature = "mongodb")]
 

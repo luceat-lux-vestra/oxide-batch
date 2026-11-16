@@ -2533,6 +2533,7 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8426a875ded61430d4a811dbfda7633b6b8af0225c547fc6c28b8b0aa7d79a13"
 dependencies = [
+"bson",
 "mongocrypt-sys",
 "once_cell",
 "serde",
@@ -2611,7 +2612,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "112d82ceb8c5bf524d9af484d4e4970c9fd5a0cc15ba14ad93dccd28873b0629"
 dependencies = [
 "digest 0.11.3",
-"hmac",
 ]
 
 [[package]]
