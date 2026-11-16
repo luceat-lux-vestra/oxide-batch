@@ -2541,7 +2541,8 @@ dependencies = [
 [[package]]
 name = "mongocrypt-sys"
 version = "0.1.6+1.18.2"
-source = "git+https://github.com/mongodb/libmongocrypt-rust.git?branch=main#852b788d2900fa11cffa9ca2efd91bf4dee55bdc"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "851fac73f7fe22f6a3ab87f720ce509cae7c9fd08e7dd27866cc232dee07ccf4"
 
 [[package]]
 name = "mongodb"

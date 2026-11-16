@@ -939,6 +939,12 @@
       "covered_by": "crates/oxide-batch/tests/postgres_repository.rs::configuration_bounds_and_diagnostics_are_safe; crates/oxide-batch/src/repository/sqlserver.rs::tests::config_rejects_operation_timeout_outside_the_frozen_range"
     },
     {
+      "resource": "MongoDB pooled-connection idle lifetime",
+      "symbols": ["MAX_IDLE"],
+      "reason": "MAX_IDLE bounds how long an unused driver-owned MongoDB connection may remain in the pool. It does not bound connection cardinality, queued work, a retained result set, or another framework-owned capacity dimension exercised by the M5 saturation campaign, so it is classified as a duration/lifetime configuration bound rather than pretending the PostgreSQL resource campaign proves it.",
+      "covered_by": null
+    },
+    {
       "resource": "retry and backoff policy limits",
       "symbols": ["MAX_RETRY", "MAX_BACKOFF"],
       "reason": "The retry attempt ceiling and the backoff ceiling bound a policy a definition declares, not a resource the framework holds. The retry cache those attempts write into is in scope, and is the resource the performance plan names.",

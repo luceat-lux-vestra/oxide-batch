@@ -45,7 +45,7 @@ const EXECUTIONS: &str = "ob_job_execution";
 const STEPS: &str = "ob_step_execution";
 const DECISIONS: &str = "ob_flow_decision";
 
-/// Redacted first-party MongoDB repository configuration.
+/// Redacted first-party `MongoDB` repository configuration.
 ///
 /// The connection string is retained only for driver construction and is never
 /// rendered by Debug or Display output.
@@ -62,11 +62,16 @@ pub struct MongoConfig {
 }
 
 impl MongoConfig {
-    /// Constructs a MongoDB repository configuration.
+    /// Constructs a `MongoDB` repository configuration.
     ///
     /// The URI owns authentication, replica-set discovery, and TLS inputs. The
     /// adapter always overrides retryable reads/writes for repository work so
-    /// retry authority remains with OxideBatch.
+    /// retry authority remains with `OxideBatch`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MongoConfigError`] when the URI or database input violates the
+    /// repository configuration bounds.
     pub fn new(
         uri: impl Into<String>,
         database: impl Into<String>,
@@ -85,28 +90,44 @@ impl MongoConfig {
         Ok(config)
     }
 
-    /// Sets both the driver pool ceiling and the repository UoW concurrency bound.
+    /// Sets both the driver pool ceiling and the repository `UoW` concurrency bound.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MongoConfigError`] when `pool_size` is outside the supported range.
     pub fn with_pool_size(mut self, pool_size: u32) -> Result<Self, MongoConfigError> {
         self.pool_size = pool_size;
         self.validate()?;
         Ok(self)
     }
 
-    /// Sets the maximum wait for an OxideBatch repository UoW permit.
+    /// Sets the maximum wait for an `OxideBatch` repository `UoW` permit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MongoConfigError`] when `value` is outside the supported timeout range.
     pub fn with_acquire_timeout(mut self, value: Duration) -> Result<Self, MongoConfigError> {
         self.acquire_timeout = value;
         self.validate()?;
         Ok(self)
     }
 
-    /// Sets the MongoDB driver socket connection timeout.
+    /// Sets the `MongoDB` driver socket connection timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MongoConfigError`] when `value` is outside the supported timeout range.
     pub fn with_connect_timeout(mut self, value: Duration) -> Result<Self, MongoConfigError> {
         self.connect_timeout = value;
         self.validate()?;
         Ok(self)
     }
 
-    /// Sets the MongoDB driver server-selection timeout.
+    /// Sets the `MongoDB` driver server-selection timeout.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MongoConfigError`] when `value` is outside the supported timeout range.
     pub fn with_server_selection_timeout(
         mut self,
         value: Duration,
@@ -116,7 +137,11 @@ impl MongoConfig {
         Ok(self)
     }
 
-    /// Sets the maximum idle lifetime for pooled MongoDB connections.
+    /// Sets the maximum idle lifetime for pooled `MongoDB` connections.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MongoConfigError`] when `value` is outside the supported idle range.
     pub fn with_max_idle_time(mut self, value: Duration) -> Result<Self, MongoConfigError> {
         self.max_idle_time = value;
         self.validate()?;
@@ -124,6 +149,10 @@ impl MongoConfig {
     }
 
     /// Sets the server-side maximum time allowed for transaction commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`MongoConfigError`] when `value` is outside the supported timeout range.
     pub fn with_max_commit_time(mut self, value: Duration) -> Result<Self, MongoConfigError> {
         self.max_commit_time = value;
         self.validate()?;
@@ -192,9 +221,9 @@ impl fmt::Debug for MongoConfig {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum MongoConfigError {
-    /// The MongoDB connection URI is empty.
+    /// The `MongoDB` connection URI is empty.
     EmptyUri,
-    /// The MongoDB database name is empty.
+    /// The `MongoDB` database name is empty.
     EmptyDatabase,
     /// The configured pool size is outside the supported bound.
     PoolSize,
@@ -229,18 +258,23 @@ async fn client_and_database(config: &MongoConfig) -> Result<(Client, Database),
     Ok((client, database))
 }
 
-/// Owns MongoDB collection/index bootstrap and schema compatibility checks.
+/// Owns `MongoDB` collection/index bootstrap and schema compatibility checks.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MongoMigrator;
 
 impl MongoMigrator {
-    /// Returns the newest MongoDB repository schema understood by this adapter.
+    /// Returns the newest `MongoDB` repository schema understood by this adapter.
     #[must_use]
     pub const fn supported_schema_version() -> u32 {
         SUPPORTED_SCHEMA_VERSION
     }
 
-    /// Reads the installed MongoDB repository schema version, if initialized.
+    /// Reads the installed `MongoDB` repository schema version, if initialized.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RepositoryError`] when the repository cannot be reached or its
+    /// stored schema marker cannot be decoded.
     pub async fn installed_schema_version(
         config: &MongoConfig,
     ) -> Result<Option<u32>, RepositoryError> {
@@ -264,15 +298,20 @@ impl MongoMigrator {
     }
 
     /// Creates or advances the adapter-owned collections, indexes, and schema marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RepositoryError`] when bootstrap fails or the installed schema is
+    /// newer than this adapter supports.
     pub async fn migrate(config: &MongoConfig) -> Result<(), RepositoryError> {
         let (_, database) = client_and_database(config).await?;
-        if let Some(current) = Self::installed_schema_version(config).await? {
-            if current > SUPPORTED_SCHEMA_VERSION {
-                return Err(RepositoryError::NewerSchema {
-                    current,
-                    supported: SUPPORTED_SCHEMA_VERSION,
-                });
-            }
+        if let Some(current) = Self::installed_schema_version(config).await?
+            && current > SUPPORTED_SCHEMA_VERSION
+        {
+            return Err(RepositoryError::NewerSchema {
+                current,
+                supported: SUPPORTED_SCHEMA_VERSION,
+            });
         }
 
         let existing = database
@@ -392,7 +431,7 @@ async fn create_unique_index(
     Ok(())
 }
 
-/// First-party MongoDB implementation of the mandatory OxideBatch repository profile.
+/// First-party `MongoDB` implementation of the mandatory `OxideBatch` repository profile.
 #[derive(Clone)]
 pub struct MongoJobRepository {
     client: Client,
@@ -403,7 +442,12 @@ pub struct MongoJobRepository {
 }
 
 impl MongoJobRepository {
-    /// Connects to an initialized MongoDB repository using the supplied clock.
+    /// Connects to an initialized `MongoDB` repository using the supplied clock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RepositoryError`] when the repository is unavailable, uninitialized,
+    /// or requires a schema migration.
     pub async fn connect(
         config: MongoConfig,
         clock: Arc<dyn Clock>,
@@ -1590,10 +1634,9 @@ fn execution_metadata_update(
     );
     update.insert(
         "failure_category",
-        metadata
-            .failure()
-            .map(|failure| Bson::String(failure.category().durable_code().to_owned()))
-            .unwrap_or(Bson::Null),
+        metadata.failure().map_or(Bson::Null, |failure| {
+            Bson::String(failure.category().durable_code().to_owned())
+        }),
     );
     update.insert(
         "failure_id",
@@ -1969,15 +2012,17 @@ fn decode_status(value: &str) -> Result<BatchStatus, RepositoryError> {
 }
 
 fn map_operation_error(error: MongoError) -> RepositoryError {
-    if error.contains_label(TRANSIENT_TRANSACTION_ERROR) || is_duplicate_key(&error) {
+    let transient = error.contains_label(TRANSIENT_TRANSACTION_ERROR);
+    let kind = error.kind;
+    if transient || is_duplicate_key(kind.as_ref()) {
         RepositoryError::ConcurrentModification
     } else {
         RepositoryError::Unavailable
     }
 }
 
-fn is_duplicate_key(error: &MongoError) -> bool {
-    match error.kind.as_ref() {
+fn is_duplicate_key(kind: &ErrorKind) -> bool {
+    match kind {
         ErrorKind::Write(WriteFailure::WriteError(write)) => write.code == 11000,
         ErrorKind::Command(command) => command.code == 11000,
         _ => false,
@@ -2007,17 +2052,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn configuration_debug_redacts_uri_and_database() {
+    fn configuration_debug_redacts_uri_and_database() -> Result<(), MongoConfigError> {
         let config = MongoConfig::new(
             "mongodb://alice:secret@example.invalid/?replicaSet=rs0",
             "sensitive_db",
-        )
-        .expect("configuration");
+        )?;
         let rendered = format!("{config:?}");
         assert!(!rendered.contains("alice"));
         assert!(!rendered.contains("secret"));
         assert!(!rendered.contains("sensitive_db"));
         assert!(rendered.contains("<redacted>"));
+        Ok(())
     }
 
     #[test]
