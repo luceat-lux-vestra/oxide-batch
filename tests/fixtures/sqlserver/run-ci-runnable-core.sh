@@ -281,8 +281,15 @@ BEGIN
   ALTER DATABASE [$restore_database] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
   DROP DATABASE [$restore_database];
 END;
-CREATE DATABASE [$restore_database];
-USE [$restore_database];
+" >/dev/null
+
+docker exec "$container" "$sqlcmd_path" \
+  -S localhost -U sa -P "$sa_password" -C -b \
+  -Q "CREATE DATABASE [$restore_database];" >/dev/null
+
+docker exec "$container" "$sqlcmd_path" \
+  -S localhost -U sa -P "$sa_password" -C -b -d "$restore_database" \
+  -Q "
 CREATE USER [$migrator_username] FOR LOGIN [$migrator_username];
 CREATE USER [$runtime_username] FOR LOGIN [$runtime_username];
 GRANT CREATE TABLE TO [$migrator_username];

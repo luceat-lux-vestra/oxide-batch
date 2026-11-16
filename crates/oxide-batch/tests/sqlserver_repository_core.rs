@@ -1254,7 +1254,9 @@ fn logical_backup_source_contains_restartable_state() -> Result<(), Box<dyn Erro
         return Ok(());
     }
     let Some(settings) = TestSettings::from_environment()? else {
-        return Err(std::io::Error::other("SQL Server backup seed environment is incomplete").into());
+        return Err(
+            std::io::Error::other("SQL Server backup seed environment is incomplete").into(),
+        );
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -1333,7 +1335,10 @@ fn logical_backup_restores_restartable_state() -> Result<(), Box<dyn Error>> {
             .latest_flow_step(instance.id(), &node)
             .await?
             .ok_or_else(|| std::io::Error::other("restored failed step was missing"))?;
-        assert_eq!(source_step.execution().metadata().status(), BatchStatus::Failed);
+        assert_eq!(
+            source_step.execution().metadata().status(),
+            BatchStatus::Failed
+        );
         inspection.rollback().await?;
 
         let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
@@ -1350,7 +1355,13 @@ fn logical_backup_restores_restartable_state() -> Result<(), Box<dyn Error>> {
         assert_eq!(attempts.len(), 2);
         assert_eq!(attempts[0].metadata().status(), BatchStatus::Failed);
         assert_eq!(attempts[1].metadata().status(), BatchStatus::Completed);
-        assert_eq!(verify.flow_decisions(restarted.job_execution().id()).await?.len(), 1);
+        assert_eq!(
+            verify
+                .flow_decisions(restarted.job_execution().id())
+                .await?
+                .len(),
+            1
+        );
         verify.rollback().await?;
 
         Box::pin(remove_backup_restore_rows(&settings)).await?;
