@@ -521,6 +521,17 @@ async fn remove_commit_unknown_row(settings: &TestSettings) -> Result<(), Box<dy
     Ok(())
 }
 
+async fn remove_pool_resource_bound_row(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
+    let mut client = Box::pin(connect_test_client(settings)).await?;
+    execute_test_query(
+        &mut client,
+        "DELETE FROM dbo.ob_job_instance \
+         WHERE job_name = N'repository_pool_resource_bound'",
+    )
+    .await?;
+    Ok(())
+}
+
 #[test]
 fn migration_is_idempotent_for_sql_server() -> Result<(), Box<dyn Error>> {
     let Some(settings) = TestSettings::from_environment()? else {
@@ -965,6 +976,85 @@ fn lost_commit_response_is_unknown_and_fresh_session_reconciles() -> Result<(), 
         drop(repository);
         drop(proxy);
         Box::pin(remove_commit_unknown_row(&settings)).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn pool_capacity_bounds_concurrent_uows_and_replaces_suspect_connection(
+) -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment()? else {
+        eprintln!("skipped: SQL Server test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
+        Box::pin(remove_pool_resource_bound_row(&settings)).await?;
+
+        let proxy = CommitResponseDropProxy::start(&settings)?;
+        let config = proxied_repository_config(&settings, proxy.port())?
+            .with_pool_size(2)?
+            .with_acquire_timeout(Duration::from_millis(250))?;
+        let repository =
+            SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await?;
+        assert_eq!(repository.connection_capacity(), 2);
+
+        // Hold the entire declared pool. More concurrent UoWs must fail closed
+        // at the acquire bound rather than creating an unbounded connection.
+        let mut first = repository.begin().await?;
+        let second = repository.begin().await?;
+        let (overflow_a, overflow_b, overflow_c) = tokio::join!(
+            repository.begin(),
+            repository.begin(),
+            repository.begin()
+        );
+        assert_eq!(overflow_a.err(), Some(RepositoryError::Unavailable));
+        assert_eq!(overflow_b.err(), Some(RepositoryError::Unavailable));
+        assert_eq!(overflow_c.err(), Some(RepositoryError::Unavailable));
+
+        let key = JobInstanceKey::new(
+            JobName::new("repository_pool_resource_bound")?,
+            &JobParameters::new(),
+        );
+        first.select_or_create_job_instance(&key).await?;
+        let accepted_before_fault = proxy.accepted_connections();
+        assert!(
+            accepted_before_fault >= 2,
+            "pool saturation did not establish two physical SQL Server connections"
+        );
+
+        // Make one of the two saturated connections suspect. The other stays
+        // checked out, so successful reconciliation can only happen after the
+        // broken physical session is discarded and a replacement is created.
+        proxy.arm_next_client_request();
+        assert_eq!(
+            first.commit().await,
+            Err(RepositoryError::CommitOutcomeUnknown)
+        );
+        assert!(proxy.fault_fired());
+        assert!(proxy.response_dropped());
+
+        let mut fresh = repository.begin().await?;
+        let durable = fresh.find_job_instance(&key).await?;
+        fresh.rollback().await?;
+        assert!(
+            durable.is_some(),
+            "replacement connection did not reconcile the durable COMMIT"
+        );
+        assert!(
+            proxy.accepted_connections() > accepted_before_fault,
+            "pool reused the suspect physical connection instead of replacing it"
+        );
+        assert_eq!(repository.connection_capacity(), 2);
+
+        second.rollback().await?;
+        drop(repository);
+        drop(proxy);
+        Box::pin(remove_pool_resource_bound_row(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
