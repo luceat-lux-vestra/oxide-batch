@@ -10,8 +10,8 @@ use std::error::Error;
 use std::sync::Arc;
 
 use contract::run_runnable_core_repository_contract;
-use mongodb::bson::doc;
 use mongodb::Client;
+use mongodb::bson::doc;
 use oxide_batch::{
     JobRepository, MongoConfig, MongoJobRepository, MongoMigrator, RepositoryError, SystemClock,
 };

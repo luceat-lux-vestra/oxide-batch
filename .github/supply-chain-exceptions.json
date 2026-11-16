@@ -7,6 +7,20 @@
       "owner": "luceat-lux-vestra",
       "rationale": "SQLx 0.9.0 requires libsqlite3-sys <0.38.0. The OxideBatch sqlite facade enables only sqlx/sqlite-unbundled, so the advisory's bundled vulnerable SQLite copy is not linked; system SQLite patching remains a deployment security responsibility. Track upstream compatibility and removal under #656.",
       "expires": "2027-02-12"
+    },
+    {
+      "kind": "license",
+      "target": "{\"allow\":[\"CC0-1.0\"],\"crate\":\"tiny-keccak@2.0.2\"}",
+      "owner": "luceat-lux-vestra",
+      "rationale": "MongoDB Rust driver 3.10.1 reaches tiny-keccak 2.0.2 through mongodb-internal-macros -> macro_magic -> const-random. CC0-1.0 is a permissive public-domain dedication; keep the exception crate/version-scoped while #646 validates the first-party adapter and revisit before support promotion.",
+      "expires": "2027-02-12"
+    },
+    {
+      "kind": "license",
+      "target": "{\"allow\":[\"CDLA-Permissive-2.0\"],\"crate\":\"webpki-roots@1.0.12\"}",
+      "owner": "luceat-lux-vestra",
+      "rationale": "The frozen MongoDB Rustls profile requires webpki-roots 1.0.12 for the public root-certificate data set. CDLA-Permissive-2.0 is permissive, but the project baseline is intentionally narrower; keep this crate/version-scoped exception until #646 certification decides whether it belongs in the permanent policy baseline.",
+      "expires": "2027-02-12"
     }
   ]
 }

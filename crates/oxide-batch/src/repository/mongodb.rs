@@ -4,9 +4,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use mongodb::bson::{Binary, Bson, Document, doc, spec::BinarySubtype};
-use mongodb::error::{
-    Error as MongoError, ErrorKind, TRANSIENT_TRANSACTION_ERROR, WriteFailure,
-};
+use mongodb::error::{Error as MongoError, ErrorKind, TRANSIENT_TRANSACTION_ERROR, WriteFailure};
 use mongodb::options::{
     Acknowledgment, ClientOptions, IndexOptions, ReadConcern, ReturnDocument, WriteConcern,
 };
@@ -87,24 +85,28 @@ impl MongoConfig {
         Ok(config)
     }
 
+    /// Sets both the driver pool ceiling and the repository UoW concurrency bound.
     pub fn with_pool_size(mut self, pool_size: u32) -> Result<Self, MongoConfigError> {
         self.pool_size = pool_size;
         self.validate()?;
         Ok(self)
     }
 
+    /// Sets the maximum wait for an OxideBatch repository UoW permit.
     pub fn with_acquire_timeout(mut self, value: Duration) -> Result<Self, MongoConfigError> {
         self.acquire_timeout = value;
         self.validate()?;
         Ok(self)
     }
 
+    /// Sets the MongoDB driver socket connection timeout.
     pub fn with_connect_timeout(mut self, value: Duration) -> Result<Self, MongoConfigError> {
         self.connect_timeout = value;
         self.validate()?;
         Ok(self)
     }
 
+    /// Sets the MongoDB driver server-selection timeout.
     pub fn with_server_selection_timeout(
         mut self,
         value: Duration,
@@ -114,12 +116,14 @@ impl MongoConfig {
         Ok(self)
     }
 
+    /// Sets the maximum idle lifetime for pooled MongoDB connections.
     pub fn with_max_idle_time(mut self, value: Duration) -> Result<Self, MongoConfigError> {
         self.max_idle_time = value;
         self.validate()?;
         Ok(self)
     }
 
+    /// Sets the server-side maximum time allowed for transaction commit.
     pub fn with_max_commit_time(mut self, value: Duration) -> Result<Self, MongoConfigError> {
         self.max_commit_time = value;
         self.validate()?;
@@ -184,13 +188,19 @@ impl fmt::Debug for MongoConfig {
     }
 }
 
+/// Validation error for [`MongoConfig`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum MongoConfigError {
+    /// The MongoDB connection URI is empty.
     EmptyUri,
+    /// The MongoDB database name is empty.
     EmptyDatabase,
+    /// The configured pool size is outside the supported bound.
     PoolSize,
+    /// A configured operation timeout is outside the supported bound.
     Timeout,
+    /// The configured pooled-connection idle lifetime is outside the supported bound.
     IdleTime,
 }
 
@@ -224,11 +234,13 @@ async fn client_and_database(config: &MongoConfig) -> Result<(Client, Database),
 pub struct MongoMigrator;
 
 impl MongoMigrator {
+    /// Returns the newest MongoDB repository schema understood by this adapter.
     #[must_use]
     pub const fn supported_schema_version() -> u32 {
         SUPPORTED_SCHEMA_VERSION
     }
 
+    /// Reads the installed MongoDB repository schema version, if initialized.
     pub async fn installed_schema_version(
         config: &MongoConfig,
     ) -> Result<Option<u32>, RepositoryError> {
@@ -251,6 +263,7 @@ impl MongoMigrator {
         }
     }
 
+    /// Creates or advances the adapter-owned collections, indexes, and schema marker.
     pub async fn migrate(config: &MongoConfig) -> Result<(), RepositoryError> {
         let (_, database) = client_and_database(config).await?;
         if let Some(current) = Self::installed_schema_version(config).await? {
@@ -379,6 +392,7 @@ async fn create_unique_index(
     Ok(())
 }
 
+/// First-party MongoDB implementation of the mandatory OxideBatch repository profile.
 #[derive(Clone)]
 pub struct MongoJobRepository {
     client: Client,
@@ -389,6 +403,7 @@ pub struct MongoJobRepository {
 }
 
 impl MongoJobRepository {
+    /// Connects to an initialized MongoDB repository using the supplied clock.
     pub async fn connect(
         config: MongoConfig,
         clock: Arc<dyn Clock>,
@@ -483,10 +498,7 @@ impl MongoUnitOfWork<'_> {
     async fn next_id(&mut self, kind: &'static str) -> Result<u64, RepositoryError> {
         let collection = self.repository.collection(COUNTERS);
         let row = collection
-            .find_one_and_update(
-                doc! { "_id": kind },
-                doc! { "$inc": { "value": 1_i64 } },
-            )
+            .find_one_and_update(doc! { "_id": kind }, doc! { "$inc": { "value": 1_i64 } })
             .upsert(true)
             .return_document(ReturnDocument::After)
             .session(self.session()?)
@@ -758,10 +770,11 @@ impl RepositoryUnitOfWork for MongoUnitOfWork<'_> {
                 .map_err(map_operation_error)?;
             let attempt = next_attempt(job_instance_id, latest.as_ref())?;
             if let Some(latest) = &latest {
-                let prior_definition_id = read_optional_u64(latest, "definition_id")?
-                    .ok_or(RepositoryError::IncompatibleDefinition {
+                let prior_definition_id = read_optional_u64(latest, "definition_id")?.ok_or(
+                    RepositoryError::IncompatibleDefinition {
                         instance_id: job_instance_id,
-                    })?;
+                    },
+                )?;
                 let definitions = self.repository.collection(DEFINITIONS);
                 let prior = definitions
                     .find_one(doc! { "id": u64_to_i64(prior_definition_id)? })
@@ -771,8 +784,7 @@ impl RepositoryUnitOfWork for MongoUnitOfWork<'_> {
                     .ok_or(RepositoryError::IncompatibleDefinition {
                         instance_id: job_instance_id,
                     })?;
-                if read_bytes(&prior, "manifest_digest")?.as_slice()
-                    != definition.manifest_digest()
+                if read_bytes(&prior, "manifest_digest")?.as_slice() != definition.manifest_digest()
                 {
                     return Err(RepositoryError::IncompatibleDefinition {
                         instance_id: job_instance_id,
@@ -1243,9 +1255,8 @@ impl RepositoryUnitOfWork for MongoUnitOfWork<'_> {
             {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
-            let manifest: Value =
-                serde_json::from_str(&read_string(&definition, "manifest")?)
-                    .map_err(|_| RepositoryError::FlowStateCorrupt)?;
+            let manifest: Value = serde_json::from_str(&read_string(&definition, "manifest")?)
+                .map_err(|_| RepositoryError::FlowStateCorrupt)?;
             if !crate::flow::decision_matches_manifest(&manifest, request) {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
@@ -1472,8 +1483,12 @@ fn next_attempt(
     let execution = decode_job_execution(latest)?;
     match execution.metadata().status() {
         BatchStatus::Stopped | BatchStatus::Failed => {}
-        BatchStatus::Completed => return Err(RepositoryError::CompletedInstance { id: instance_id }),
-        BatchStatus::Abandoned => return Err(RepositoryError::AbandonedInstance { id: instance_id }),
+        BatchStatus::Completed => {
+            return Err(RepositoryError::CompletedInstance { id: instance_id });
+        }
+        BatchStatus::Abandoned => {
+            return Err(RepositoryError::AbandonedInstance { id: instance_id });
+        }
         status => {
             return Err(RepositoryError::ExecutionAlreadyActive {
                 instance_id,
@@ -1834,9 +1849,7 @@ fn decode_identifying_parameters(value: &Value) -> Result<JobParameters, Reposit
             .ok_or(RepositoryError::Unavailable)?;
         let raw = envelope.get("value").ok_or(RepositoryError::Unavailable)?;
         let value = match kind {
-            "string" => ParameterValue::string(
-                raw.as_str().ok_or(RepositoryError::Unavailable)?,
-            )?,
+            "string" => ParameterValue::string(raw.as_str().ok_or(RepositoryError::Unavailable)?)?,
             "i64" => ParameterValue::from(raw.as_i64().ok_or(RepositoryError::Unavailable)?),
             "u64" => ParameterValue::from(raw.as_u64().ok_or(RepositoryError::Unavailable)?),
             "bool" => ParameterValue::from(raw.as_bool().ok_or(RepositoryError::Unavailable)?),
@@ -1886,9 +1899,7 @@ fn read_optional_i64(row: &Document, name: &str) -> Result<Option<i64>, Reposito
 }
 
 fn read_optional_u64(row: &Document, name: &str) -> Result<Option<u64>, RepositoryError> {
-    read_optional_i64(row, name)?
-        .map(i64_to_u64)
-        .transpose()
+    read_optional_i64(row, name)?.map(i64_to_u64).transpose()
 }
 
 fn read_string(row: &Document, name: &str) -> Result<String, RepositoryError> {
