@@ -8,8 +8,9 @@ mod contract;
 
 use contract::run_runnable_core_repository_contract;
 use oxide_batch::{
-    JobInstanceKey, JobName, JobParameters, JobRepository, RepositoryError, SqlServerConfig,
-    SqlServerJobRepository, SqlServerMigrator, SystemClock,
+    BatchStatus, FailureCategory, FailureId, FailureSummary, JobInstanceKey, JobName, JobParameters,
+    JobRepository, LifecycleTransition, RepositoryError, SqlServerConfig, SqlServerJobRepository,
+    SqlServerMigrator, SystemClock,
 };
 use std::error::Error;
 use std::io::{Read, Write};
@@ -476,23 +477,21 @@ async fn run_crash_restart_child(settings: &TestSettings) -> Result<(), Box<dyn 
         .instance()
         .clone();
     let attempt = committed.create_job_execution(instance.id()).await?;
+    let created_at = attempt.metadata().timestamps().created_at();
     let started = committed
         .transition_job_execution(
             attempt.id(),
             attempt.version(),
-            oxide_batch::LifecycleTransition::new(
-                oxide_batch::BatchStatus::Started,
-                std::time::UNIX_EPOCH + Duration::from_secs(1),
-            ),
+            LifecycleTransition::new(BatchStatus::Started, created_at + Duration::from_secs(1)),
         )
         .await?;
     committed
         .transition_job_execution(
             started.id(),
             started.version(),
-            oxide_batch::LifecycleTransition::new(
-                oxide_batch::BatchStatus::Failed,
-                std::time::UNIX_EPOCH + Duration::from_secs(2),
+            LifecycleTransition::failed(
+                created_at + Duration::from_secs(2),
+                FailureSummary::new(FailureCategory::UserComponent, FailureId::new(674)?),
             ),
         )
         .await?;
@@ -1052,7 +1051,10 @@ fn process_kill_recovers_sql_server_state() -> Result<(), Box<dyn Error>> {
             .ok_or_else(|| std::io::Error::other("committed instance vanished after SIGKILL"))?;
         let attempts = inspection.job_executions(instance.id()).await?;
         assert_eq!(attempts.len(), 1);
-        assert_eq!(attempts[0].metadata().status(), oxide_batch::BatchStatus::Failed);
+        assert_eq!(
+            attempts[0].metadata().status(),
+            oxide_batch::BatchStatus::Failed
+        );
         assert!(
             inspection
                 .find_job_instance(&undurable_key)
