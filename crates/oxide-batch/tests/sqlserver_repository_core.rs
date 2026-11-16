@@ -8,9 +8,9 @@ mod contract;
 
 use contract::run_runnable_core_repository_contract;
 use oxide_batch::{
-    BatchStatus, FailureCategory, FailureId, FailureSummary, JobInstanceKey, JobName, JobParameters,
-    JobRepository, LifecycleTransition, RepositoryError, SqlServerConfig, SqlServerJobRepository,
-    SqlServerMigrator, SystemClock,
+    BatchStatus, FailureCategory, FailureId, FailureSummary, JobInstanceKey, JobName,
+    JobParameters, JobRepository, LifecycleTransition, RepositoryError, SqlServerConfig,
+    SqlServerJobRepository, SqlServerMigrator, SystemClock,
 };
 use std::error::Error;
 use std::io::{Read, Write};
