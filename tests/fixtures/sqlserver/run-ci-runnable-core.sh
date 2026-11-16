@@ -103,6 +103,18 @@ if [ -z "$sqlcmd_path" ]; then
   exit 1
 fi
 
+bcp_path=''
+for candidate in /opt/mssql-tools18/bin/bcp /opt/mssql-tools/bin/bcp; do
+  if docker exec "$container" test -x "$candidate" >/dev/null 2>&1; then
+    bcp_path="$candidate"
+    break
+  fi
+done
+if [ -z "$bcp_path" ]; then
+  echo "bcp was not found in SQL Server image $image" >&2
+  exit 1
+fi
+
 wait_for_sqlserver() {
   local attempt
   for attempt in $(seq 1 90); do
@@ -218,3 +230,104 @@ GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_flow_decision TO [$runtime_userna
 cargo test -p oxide-batch --features sqlserver \
   --test sqlserver_repository_core \
   -- --nocapture --test-threads=1
+
+# Final runnable-core operational gate: take a table-level logical backup of a
+# deliberately restartable durable fixture, reconstruct the immutable schema in
+# a clean database, restore the row archive with constraints enabled, and prove
+# the restored FAILED attempt restarts to completion through the repository API.
+source_database="$OXIDEBATCH_SQLSERVER_TEST_DATABASE"
+restore_database='oxide_batch_repository_restore'
+backup_dir="/tmp/oxide-batch-logical-backup-$lane"
+
+docker exec "$container" "$sqlcmd_path" \
+  -S localhost -U sa -P "$sa_password" -C -b -d "$source_database" \
+  -Q "
+UPDATE dbo.ob_flow_decision SET reused_decision_id = NULL;
+DELETE FROM dbo.ob_flow_decision;
+DELETE FROM dbo.ob_step_execution;
+DELETE FROM dbo.ob_job_execution;
+DELETE FROM dbo.ob_job_instance;
+DELETE FROM dbo.ob_core_job_definition;
+" >/dev/null
+
+OXIDEBATCH_SQLSERVER_BACKUP_RESTORE_MODE=seed \
+cargo test -p oxide-batch --features sqlserver \
+  --test sqlserver_repository_core \
+  logical_backup_source_contains_restartable_state \
+  -- --exact --nocapture --test-threads=1
+
+docker exec "$container" sh -c "rm -rf '$backup_dir' && mkdir -p '$backup_dir'"
+backup_tables=(
+  ob_core_job_definition
+  ob_job_instance
+  ob_job_execution
+  ob_step_execution
+  ob_flow_decision
+)
+for table in "${backup_tables[@]}"; do
+  docker exec "$container" "$bcp_path" "dbo.$table" out "$backup_dir/$table.bcp" \
+    -n -S "$server_name" -d "$source_database" \
+    -U "$migrator_username" -P "$migrator_password"
+done
+for table in ob_core_job_definition ob_job_instance ob_job_execution ob_step_execution; do
+  docker exec "$container" test -s "$backup_dir/$table.bcp"
+done
+
+docker exec "$container" "$sqlcmd_path" \
+  -S localhost -U sa -P "$sa_password" -C -b \
+  -Q "
+IF DB_ID(N'$restore_database') IS NOT NULL
+BEGIN
+  ALTER DATABASE [$restore_database] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+  DROP DATABASE [$restore_database];
+END;
+CREATE DATABASE [$restore_database];
+USE [$restore_database];
+CREATE USER [$migrator_username] FOR LOGIN [$migrator_username];
+CREATE USER [$runtime_username] FOR LOGIN [$runtime_username];
+GRANT CREATE TABLE TO [$migrator_username];
+GRANT ALTER ON SCHEMA::dbo TO [$migrator_username];
+GRANT REFERENCES ON SCHEMA::dbo TO [$migrator_username];
+GRANT SELECT, INSERT, UPDATE, DELETE ON SCHEMA::dbo TO [$migrator_username];
+" >/dev/null
+
+export OXIDEBATCH_SQLSERVER_TEST_DATABASE="$restore_database"
+cargo test -p oxide-batch --features sqlserver \
+  --test sqlserver_repository_core \
+  migration_is_idempotent_for_sql_server \
+  -- --exact --nocapture --test-threads=1
+
+docker exec "$container" "$sqlcmd_path" \
+  -S localhost -U sa -P "$sa_password" -C -b -d "$restore_database" \
+  -Q "
+GRANT SELECT ON SCHEMA::dbo TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_job_instance TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_job_execution TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_step_execution TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_core_job_definition TO [$runtime_username];
+GRANT INSERT, UPDATE, DELETE ON OBJECT::dbo.ob_flow_decision TO [$runtime_username];
+" >/dev/null
+
+for table in "${backup_tables[@]}"; do
+  if docker exec "$container" test -s "$backup_dir/$table.bcp"; then
+    docker exec "$container" "$bcp_path" "dbo.$table" in "$backup_dir/$table.bcp" \
+      -n -E -k -h "CHECK_CONSTRAINTS" -S "$server_name" -d "$restore_database" \
+      -U "$migrator_username" -P "$migrator_password"
+  fi
+done
+
+OXIDEBATCH_SQLSERVER_BACKUP_RESTORE_MODE=restore \
+cargo test -p oxide-batch --features sqlserver \
+  --test sqlserver_repository_core \
+  logical_backup_restores_restartable_state \
+  -- --exact --nocapture --test-threads=1
+
+echo "SQLSERVER_LOGICAL_BACKUP_RESTORE lane=$lane source=$source_database restore=$restore_database method=bcp-native constraint_check=enabled"
+
+export OXIDEBATCH_SQLSERVER_TEST_DATABASE="$source_database"
+docker exec "$container" "$sqlcmd_path" \
+  -S localhost -U sa -P "$sa_password" -C -b \
+  -Q "
+ALTER DATABASE [$restore_database] SET SINGLE_USER WITH ROLLBACK IMMEDIATE;
+DROP DATABASE [$restore_database];
+" >/dev/null
