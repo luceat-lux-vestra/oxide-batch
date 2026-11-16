@@ -8,13 +8,17 @@ mod contract;
 
 use contract::run_runnable_core_repository_contract;
 use oxide_batch::{
-    BatchStatus, FailureCategory, FailureId, FailureSummary, JobInstanceKey, JobName,
-    JobParameters, JobRepository, LifecycleTransition, RepositoryError, SqlServerConfig,
-    SqlServerJobRepository, SqlServerMigrator, SystemClock,
+    BatchStatus, BoxFuture, ComponentRevision, DefinitionRevision, FailureCategory, FailureId,
+    FailureSummary, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
+    JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition, NodeId,
+    RepositoryError, SequentialIdGenerator, SqlServerConfig, SqlServerJobRepository,
+    SqlServerMigrator, StepComponents, StepName, StepNode, StopSource, SystemClock, Tasklet,
+    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 use std::error::Error;
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpListener as StdTcpListener, TcpStream as StdTcpStream};
+use std::num::NonZeroU64;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread;
@@ -527,6 +531,83 @@ async fn remove_pool_resource_bound_row(settings: &TestSettings) -> Result<(), B
         &mut client,
         "DELETE FROM dbo.ob_job_instance \
          WHERE job_name = N'repository_pool_resource_bound'",
+    )
+    .await?;
+    Ok(())
+}
+
+const BACKUP_RESTORE_JOB: &str = "repository_backup_restore";
+const BACKUP_RESTORE_NODE: &str = "backup_step";
+const BACKUP_RESTORE_MODE: &str = "OXIDEBATCH_SQLSERVER_BACKUP_RESTORE_MODE";
+
+struct BackupRestoreTasklet {
+    fail: bool,
+}
+
+impl Tasklet for BackupRestoreTasklet {
+    fn execute<'a>(
+        &'a self,
+        _context: TaskletContext<'a>,
+    ) -> BoxFuture<'a, Result<TaskletOutcome, TaskletError>> {
+        Box::pin(async move {
+            if self.fail {
+                Err(TaskletError::new())
+            } else {
+                Ok(TaskletOutcome::Completed)
+            }
+        })
+    }
+}
+
+fn backup_restore_job(fail: bool) -> Result<FlowJob, Box<dyn Error>> {
+    let job_name = JobName::new(BACKUP_RESTORE_JOB)?;
+    let node = NodeId::new(BACKUP_RESTORE_NODE)?;
+    let step_name = StepName::new(BACKUP_RESTORE_NODE)?;
+    let plan = FlowGraph::new(node.clone())
+        .with_node(FlowNode::step(StepNode::new(
+            node.clone(),
+            step_name.clone(),
+            StepComponents::Tasklet(ComponentRevision::new("backup-tasklet-v1")?),
+        )))
+        .with_sequence(node.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(&job_name, DefinitionRevision::new("backup-v1")?)?;
+    Ok(FlowJob::new(job_name, plan)?.with_tasklet_step(
+        node,
+        TaskletStep::new(step_name, Arc::new(BackupRestoreTasklet { fail })),
+    )?)
+}
+
+async fn remove_backup_restore_rows(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
+    let mut client = Box::pin(connect_test_client(settings)).await?;
+    execute_test_query(
+        &mut client,
+        "UPDATE decision SET reused_decision_id = NULL \
+         FROM dbo.ob_flow_decision AS decision \
+         JOIN dbo.ob_job_execution AS execution \
+           ON execution.id = decision.job_execution_id \
+         JOIN dbo.ob_job_instance AS instance \
+           ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = N'repository_backup_restore'; \
+         DELETE decision FROM dbo.ob_flow_decision AS decision \
+         JOIN dbo.ob_job_execution AS execution \
+           ON execution.id = decision.job_execution_id \
+         JOIN dbo.ob_job_instance AS instance \
+           ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = N'repository_backup_restore'; \
+         DELETE step FROM dbo.ob_step_execution AS step \
+         JOIN dbo.ob_job_execution AS execution \
+           ON execution.id = step.job_execution_id \
+         JOIN dbo.ob_job_instance AS instance \
+           ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = N'repository_backup_restore'; \
+         DELETE execution FROM dbo.ob_job_execution AS execution \
+         JOIN dbo.ob_job_instance AS instance \
+           ON instance.id = execution.job_instance_id \
+         WHERE instance.job_name = N'repository_backup_restore'; \
+         DELETE FROM dbo.ob_job_instance \
+         WHERE job_name = N'repository_backup_restore'; \
+         DELETE FROM dbo.ob_core_job_definition \
+         WHERE job_name = N'repository_backup_restore'",
     )
     .await?;
     Ok(())
@@ -1161,6 +1242,129 @@ fn process_kill_recovers_sql_server_state() -> Result<(), Box<dyn Error>> {
         assert_eq!(verify.job_executions(instance.id()).await?.len(), 2);
         verify.rollback().await?;
         Box::pin(remove_crash_restart_rows(&settings)).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn logical_backup_source_contains_restartable_state() -> Result<(), Box<dyn Error>> {
+    if required(BACKUP_RESTORE_MODE).as_deref() != Some("seed") {
+        eprintln!("skipped: SQL Server logical backup seed mode is not enabled");
+        return Ok(());
+    }
+    let Some(settings) = TestSettings::from_environment()? else {
+        return Err(
+            std::io::Error::other("SQL Server backup seed environment is incomplete").into(),
+        );
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        SqlServerMigrator::migrate(&settings.migrator_config()?).await?;
+        Box::pin(remove_backup_restore_rows(&settings)).await?;
+
+        let clock = SystemClock;
+        let repository =
+            SqlServerJobRepository::connect(settings.repository_config()?, Arc::new(SystemClock))
+                .await?;
+        let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+        let (_source, stop) = StopSource::new();
+        let report = FlowLauncher::new(&repository, &clock, &ids)
+            .launch(&backup_restore_job(true)?, &JobParameters::new(), &stop)
+            .await?;
+        assert!(matches!(report.outcome(), FlowExecutionOutcome::Failed(_)));
+
+        let mut inspection = repository.begin().await?;
+        let key = JobInstanceKey::new(JobName::new(BACKUP_RESTORE_JOB)?, &JobParameters::new());
+        let instance = inspection
+            .find_job_instance(&key)
+            .await?
+            .ok_or_else(|| std::io::Error::other("backup seed instance was not durable"))?;
+        let attempts = inspection.job_executions(instance.id()).await?;
+        assert_eq!(attempts.len(), 1);
+        assert_eq!(attempts[0].metadata().status(), BatchStatus::Failed);
+        let latest = inspection
+            .latest_flow_step(instance.id(), &NodeId::new(BACKUP_RESTORE_NODE)?)
+            .await?
+            .ok_or_else(|| std::io::Error::other("backup seed step was not durable"))?;
+        assert_eq!(latest.execution().metadata().status(), BatchStatus::Failed);
+        inspection.rollback().await?;
+
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn logical_backup_restores_restartable_state() -> Result<(), Box<dyn Error>> {
+    if required(BACKUP_RESTORE_MODE).as_deref() != Some("restore") {
+        eprintln!("skipped: SQL Server logical restore mode is not enabled");
+        return Ok(());
+    }
+    let Some(settings) = TestSettings::from_environment()? else {
+        return Err(std::io::Error::other("SQL Server restore environment is incomplete").into());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let migrator = settings.migrator_config()?;
+        assert_eq!(
+            SqlServerMigrator::installed_schema_version(&migrator).await?,
+            Some(SqlServerMigrator::supported_schema_version())
+        );
+
+        let clock = SystemClock;
+        let repository =
+            SqlServerJobRepository::connect(settings.repository_config()?, Arc::new(SystemClock))
+                .await?;
+        let key = JobInstanceKey::new(JobName::new(BACKUP_RESTORE_JOB)?, &JobParameters::new());
+        let node = NodeId::new(BACKUP_RESTORE_NODE)?;
+
+        let mut inspection = repository.begin().await?;
+        let instance = inspection
+            .find_job_instance(&key)
+            .await?
+            .ok_or_else(|| std::io::Error::other("restored job instance was missing"))?;
+        let source_attempts = inspection.job_executions(instance.id()).await?;
+        assert_eq!(source_attempts.len(), 1);
+        assert_eq!(source_attempts[0].metadata().status(), BatchStatus::Failed);
+        let source_step = inspection
+            .latest_flow_step(instance.id(), &node)
+            .await?
+            .ok_or_else(|| std::io::Error::other("restored failed step was missing"))?;
+        assert_eq!(
+            source_step.execution().metadata().status(),
+            BatchStatus::Failed
+        );
+        inspection.rollback().await?;
+
+        let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
+        let (_source, stop) = StopSource::new();
+        let restarted = FlowLauncher::new(&repository, &clock, &ids)
+            .launch(&backup_restore_job(false)?, &JobParameters::new(), &stop)
+            .await?;
+        assert_eq!(restarted.outcome(), &FlowExecutionOutcome::Completed);
+        assert_eq!(restarted.instance().id(), instance.id());
+        assert_ne!(restarted.job_execution().id(), source_attempts[0].id());
+
+        let mut verify = repository.begin().await?;
+        let attempts = verify.job_executions(instance.id()).await?;
+        assert_eq!(attempts.len(), 2);
+        assert_eq!(attempts[0].metadata().status(), BatchStatus::Failed);
+        assert_eq!(attempts[1].metadata().status(), BatchStatus::Completed);
+        assert_eq!(
+            verify
+                .flow_decisions(restarted.job_execution().id())
+                .await?
+                .len(),
+            1
+        );
+        verify.rollback().await?;
+
+        Box::pin(remove_backup_restore_rows(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
