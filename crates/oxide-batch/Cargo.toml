@@ -20,6 +20,7 @@ all-features = true
 
 [features]
 default = []
+mongodb = ["dep:mongodb"]
 mysql = ["dep:sqlx", "sqlx/mysql"]
 postgres = ["dep:sqlx", "sqlx/postgres"]
 sqlite = ["dep:sqlx", "sqlx/sqlite-unbundled"]
@@ -30,6 +31,7 @@ bb8 = { version = "0.9.1", default-features = false, optional = true }
 csv = "1.4.0"
 csv-core = "0.1.13"
 futures-util = "0.3.31"
+mongodb = { version = "3.10.1", default-features = false, optional = true, features = ["compat-3-0-0", "rustls-tls"] }
 oxide-batch-core = { path = "../oxide-batch-core", version = "=0.6.0" }
 oxide-batch-plan = { path = "../oxide-batch-plan", version = "=0.6.0" }
 oxide-batch-repository = { path = "../oxide-batch-repository", version = "=0.6.0" }
