@@ -982,8 +982,8 @@ fn lost_commit_response_is_unknown_and_fresh_session_reconciles() -> Result<(), 
 }
 
 #[test]
-fn pool_capacity_bounds_concurrent_uows_and_replaces_suspect_connection(
-) -> Result<(), Box<dyn Error>> {
+fn pool_capacity_bounds_concurrent_uows_and_replaces_suspect_connection()
+-> Result<(), Box<dyn Error>> {
     let Some(settings) = TestSettings::from_environment()? else {
         eprintln!("skipped: SQL Server test environment is not configured");
         return Ok(());
@@ -999,19 +999,15 @@ fn pool_capacity_bounds_concurrent_uows_and_replaces_suspect_connection(
         let config = proxied_repository_config(&settings, proxy.port())?
             .with_pool_size(2)?
             .with_acquire_timeout(Duration::from_millis(250))?;
-        let repository =
-            SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await?;
+        let repository = SqlServerJobRepository::connect(config, Arc::new(SystemClock)).await?;
         assert_eq!(repository.connection_capacity(), 2);
 
         // Hold the entire declared pool. More concurrent UoWs must fail closed
         // at the acquire bound rather than creating an unbounded connection.
         let mut first = repository.begin().await?;
         let second = repository.begin().await?;
-        let (overflow_a, overflow_b, overflow_c) = tokio::join!(
-            repository.begin(),
-            repository.begin(),
-            repository.begin()
-        );
+        let (overflow_a, overflow_b, overflow_c) =
+            tokio::join!(repository.begin(), repository.begin(), repository.begin());
         assert_eq!(overflow_a.err(), Some(RepositoryError::Unavailable));
         assert_eq!(overflow_b.err(), Some(RepositoryError::Unavailable));
         assert_eq!(overflow_c.err(), Some(RepositoryError::Unavailable));
