@@ -577,6 +577,10 @@ pub use repository::{
 pub use repository::{InMemoryExplorer, InMemoryJobRepository};
 #[cfg(feature = "mysql")]
 pub use repository::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};
+#[cfg(feature = "sqlserver")]
+pub use repository::{
+    SqlServerConfig, SqlServerConfigError, SqlServerJobRepository, SqlServerMigrator,
+};
 #[cfg(feature = "sqlite")]
 pub use repository::{SqliteConfig, SqliteConfigError, SqliteJobRepository, SqliteMigrator};
 pub use runtime::{

@@ -13,6 +13,8 @@ pub(crate) mod postgres;
 mod scope_postgres;
 #[cfg(feature = "sqlite")]
 mod sqlite;
+#[cfg(feature = "sqlserver")]
+mod sqlserver;
 
 pub use memory::{InMemoryExplorer, InMemoryJobRepository};
 #[cfg(feature = "mysql")]
@@ -25,6 +27,10 @@ pub use postgres::{
 };
 #[cfg(feature = "sqlite")]
 pub use sqlite::{SqliteConfig, SqliteConfigError, SqliteJobRepository, SqliteMigrator};
+#[cfg(feature = "sqlserver")]
+pub use sqlserver::{
+    SqlServerConfig, SqlServerConfigError, SqlServerJobRepository, SqlServerMigrator,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum RepeatManifestOwner {
