@@ -570,9 +570,7 @@ async fn assert_phase_state(
         .ok_or("target context was not materialized")?;
     assert_eq!(target_context.schema_version().get(), 2);
     assert_eq!(context_value(target_context)?, 8);
-    let target_definition = inspect
-        .scope_execution_definition(latest.id())
-        .await?;
+    let target_definition = inspect.scope_execution_definition(latest.id()).await?;
     assert_eq!(target_definition.revision().as_str(), "v2");
     inspect.rollback().await?;
 

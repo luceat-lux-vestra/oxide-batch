@@ -982,6 +982,12 @@
       "covered_by": "crates/oxide-batch/src/item_components/multi_resource.rs::tests::resource_identity_rejects_one_byte_past_its_ceiling, crates/oxide-batch/src/item_components/object_store.rs::tests::object_identity_rejects_one_byte_past_its_ceiling"
     },
     {
+      "resource": "fork source-step snapshot corruption guard",
+      "symbols": ["MAX_FORK_SOURCE_STEPS"],
+      "reason": "MAX_FORK_SOURCE_STEPS is a defensive fail-closed guard on materializing one fork source execution's durable step snapshot, not an independently admitted operational resource. A valid execution is already constrained by the definition's MAX_NODES ceiling and by unique (job_execution_id, step_logical_id) ownership, so this guard can bind only if durable metadata is malformed or corrupt; it prevents an oversized result from being returned rather than defining a separately configurable queue, buffer, worker set, cache, or result-set budget for normal execution.",
+      "covered_by": "crates/oxide-batch-repository/src/repository.rs::MAX_FORK_SOURCE_STEPS; crates/oxide-batch/migrations/0002_fault_tolerance_and_flow.sql::ob_step_execution_logical_id_unique"
+    },
+    {
       "resource": "definition-upgrade descriptor shape ceilings",
       "symbols": [
         "MAX_DEFINITION_UPGRADE_NODES",
