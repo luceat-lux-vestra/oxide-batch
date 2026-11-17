@@ -489,7 +489,7 @@ impl fmt::Debug for MongoJobRepository {
     }
 }
 
-/// Read-only bounded Explorer adapter for MongoDB metadata.
+/// Read-only bounded Explorer adapter for `MongoDB` metadata.
 ///
 /// This port is additive and deliberately does not advertise a
 /// `RepositoryCapability`. Unsupported queries retain the
@@ -500,7 +500,7 @@ pub struct MongoExplorer {
 }
 
 impl MongoExplorer {
-    /// Binds one MongoDB repository to the bounded read port.
+    /// Binds one `MongoDB` repository to the bounded read port.
     #[must_use]
     pub const fn new(repository: MongoJobRepository) -> Self {
         Self { repository }
