@@ -377,10 +377,9 @@ where
     let fixture = fixture(backend, CASE, factory).await?;
     let mut expected = Vec::new();
     for index in 0..5 {
-        let execution =
-            seed_core_launch(&fixture, JOB, &format!("traversal-{index}"))
-        .await
-        .map_err(at!(backend, CASE))?;
+        let execution = seed_core_launch(&fixture, JOB, &format!("traversal-{index}"))
+            .await
+            .map_err(at!(backend, CASE))?;
         expected.push(execution.job_instance_id());
     }
     let observed = traverse_instances(&fixture, JOB, 2)
@@ -444,8 +443,8 @@ where
     let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..3 {
         seed_core_launch(&fixture, JOB, &format!("ceiling-{index}"))
-        .await
-        .map_err(at!(backend, CASE))?;
+            .await
+            .map_err(at!(backend, CASE))?;
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
@@ -493,8 +492,8 @@ where
     let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..3 {
         seed_core_launch(&fixture, JOB, &format!("mismatch-{index}"))
-        .await
-        .map_err(at!(backend, CASE))?;
+            .await
+            .map_err(at!(backend, CASE))?;
     }
     seed_core_launch(&fixture, OTHER_JOB, "mismatch-other")
         .await
@@ -555,8 +554,8 @@ where
     let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..3 {
         seed_core_launch(&fixture, JOB, &format!("corrupt-{index}"))
-        .await
-        .map_err(at!(backend, CASE))?;
+            .await
+            .map_err(at!(backend, CASE))?;
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
@@ -620,8 +619,8 @@ where
     )?;
     for index in 0..3 {
         seed_core_launch(&fixture, JOB, &format!("bounds-{index}"))
-        .await
-        .map_err(at!(backend, CASE))?;
+            .await
+            .map_err(at!(backend, CASE))?;
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;

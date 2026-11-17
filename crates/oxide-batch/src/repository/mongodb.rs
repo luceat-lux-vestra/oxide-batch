@@ -617,6 +617,7 @@ impl ExplorerRepository for MongoExplorer {
             decode_mongo_execution_projection(&row).map(Some)
         })
     }
+}
 
 impl JobRepository for MongoJobRepository {
     fn connection_capacity(&self) -> u32 {
