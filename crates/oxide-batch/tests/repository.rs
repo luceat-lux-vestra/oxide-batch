@@ -23,7 +23,7 @@ use oxide_batch::{
     IdGenerationError, IdGenerator, IdentifierKind, InMemoryJobRepository, JobInstanceKey, JobName,
     JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition,
     NestedJobLinkRequest, NodeId, OwnerToken, ParameterName, ParameterRole, ParameterValue,
-    RecoveryRequest, RepositoryError, SequentialIdGenerator, StepName,
+    RecoveryRequest, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, StepName,
 };
 
 fn time(second: u64) -> SystemTime {
@@ -42,6 +42,18 @@ fn repository(
         ),
         clock,
     ))
+}
+
+fn durable_attempt_count(
+    unit: &mut dyn RepositoryUnitOfWork,
+    instance_id: oxide_batch::JobInstanceId,
+) -> Result<u64, RepositoryError> {
+    block_on(async {
+        let Some(latest) = unit.latest_job_execution(instance_id).await? else {
+            return Ok(0);
+        };
+        Ok(unit.job_execution_attempt(latest.id()).await?.get())
+    })
 }
 
 fn instance_key() -> Result<JobInstanceKey, oxide_batch::DomainError> {
@@ -450,14 +462,6 @@ fn first_launch_creates_execution_graph() -> Result<(), Box<dyn Error>> {
         block_on(inspection.get_step_execution(step.id()))?,
         Some(step.clone())
     );
-    assert_eq!(
-        block_on(inspection.job_executions(instance.id()))?,
-        vec![job]
-    );
-    assert_eq!(
-        block_on(inspection.step_executions(step.job_execution_id()))?,
-        vec![step]
-    );
     block_on(inspection.rollback())?;
     Ok(())
 }
@@ -637,9 +641,14 @@ fn failed_instance_restart_creates_distinct_execution() -> Result<(), Box<dyn Er
 
     let mut inspection = block_on(repository.begin())?;
     assert_eq!(
-        block_on(inspection.job_executions(instance.id()))?,
-        vec![failed, restarted]
+        block_on(inspection.get_job_execution(failed.id()))?,
+        Some(failed.clone())
     );
+    assert_eq!(
+        block_on(inspection.get_job_execution(restarted.id()))?,
+        Some(restarted.clone())
+    );
+    assert_eq!(durable_attempt_count(&mut *inspection, instance.id())?, 2);
     block_on(inspection.rollback())?;
     Ok(())
 }
@@ -688,7 +697,7 @@ fn concurrent_launch_creates_single_instance() -> Result<(), Box<dyn Error>> {
     let mut inspection = block_on(repository.begin())?;
     let instance =
         block_on(inspection.find_job_instance(&key))?.ok_or("committed instance was not found")?;
-    assert_eq!(block_on(inspection.job_executions(instance.id()))?.len(), 1);
+    assert_eq!(durable_attempt_count(&mut *inspection, instance.id())?, 1);
     block_on(inspection.rollback())?;
     Ok(())
 }
@@ -927,8 +936,10 @@ fn nested_job_stopped_child_restarts_same_instance_with_exact_parameters()
     assert!(restarted.terminal().is_none());
     let restored = block_on(continuation.nested_job_parameters(restarted_parent.id(), &node))?;
     assert_eq!(restored, parameters);
-    let attempts = block_on(continuation.job_executions(first_link.child_job_instance_id()))?;
-    assert_eq!(attempts.len(), 2);
+    assert_eq!(
+        durable_attempt_count(&mut *continuation, first_link.child_job_instance_id())?,
+        2
+    );
     block_on(continuation.commit())?;
     Ok(())
 }
@@ -973,8 +984,10 @@ fn nested_job_active_and_unknown_children_fail_closed_without_duplicate_attempt(
             status: BatchStatus::Starting,
         })
     );
-    let attempts = block_on(active.job_executions(first_link.child_job_instance_id()))?;
-    assert_eq!(attempts.len(), 1);
+    assert_eq!(
+        durable_attempt_count(&mut *active, first_link.child_job_instance_id())?,
+        1
+    );
     block_on(active.rollback())?;
 
     let mut mark_unknown = block_on(repository.begin())?;
@@ -1000,8 +1013,10 @@ fn nested_job_active_and_unknown_children_fail_closed_without_duplicate_attempt(
             status: BatchStatus::Unknown,
         })
     );
-    let attempts = block_on(ambiguous.job_executions(first_link.child_job_instance_id()))?;
-    assert_eq!(attempts.len(), 1);
+    assert_eq!(
+        durable_attempt_count(&mut *ambiguous, first_link.child_job_instance_id())?,
+        1
+    );
     assert_eq!(
         block_on(ambiguous.observe_nested_job_terminal(parent_execution.id(), &node, time(308),)),
         Err(RepositoryError::NestedJobChildUnresolved {
@@ -1063,8 +1078,10 @@ fn nested_job_existing_link_rejects_parameter_drift_without_duplicate_child()
         ))),
         Err(RepositoryError::NestedJobStateCorrupt)
     );
-    let attempts = block_on(duplicate.job_executions(link.child_job_instance_id()))?;
-    assert_eq!(attempts.len(), 1);
+    assert_eq!(
+        durable_attempt_count(&mut *duplicate, link.child_job_instance_id())?,
+        1
+    );
     block_on(duplicate.rollback())?;
     Ok(())
 }

@@ -71,6 +71,28 @@ A stale version or fencing token cannot update checkpoint, context, counters,
 assignment, or terminal status. Telemetry, process memory, and message
 delivery never override repository state.
 
+## Portable repository outcome taxonomy
+
+Portable transaction failures preserve what the adapter actually knows about
+durable state:
+
+- `ConcurrentModification` means a committed competing change invalidated the
+  caller's snapshot or compare-and-swap authority. The caller must refresh
+  repository authority before retrying.
+- `TransactionAborted` means the adapter can prove the current transaction did
+  not commit. No durable mutation from that transaction is visible; retry starts
+  from a fresh unit of work rather than entering unknown-outcome recovery.
+- `CommitOutcomeUnknown` means `COMMIT` may have reached durable storage but
+  its acknowledgement was not reliable. The caller must inspect durable state
+  through a healthy connection and must not infer rollback.
+- `Unavailable` means the repository or its infrastructure could not satisfy
+  the operation and no more specific portable outcome applies.
+
+An adapter must never collapse a possibly committed operation into
+`TransactionAborted` or `Unavailable`. Conversely, a transaction that is
+provably aborted must not be reported as an optimistic conflict or ambiguous
+commit merely to fit an existing backend error class.
+
 ## Capability negotiation
 
 Adapters publish a versioned descriptor covering:

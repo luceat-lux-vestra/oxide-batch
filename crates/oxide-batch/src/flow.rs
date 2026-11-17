@@ -4222,8 +4222,8 @@ impl<'a> FlowLauncher<'a> {
             .await?
             .instance()
             .clone();
-        let prior_attempts = unit.job_executions(instance.id()).await?;
-        let restart_eligible = prior_attempts.last().is_some_and(|execution| {
+        let prior_attempt = unit.latest_job_execution(instance.id()).await?;
+        let restart_eligible = prior_attempt.as_ref().is_some_and(|execution| {
             matches!(
                 execution.metadata().status(),
                 BatchStatus::Failed | BatchStatus::Stopped
@@ -4281,21 +4281,16 @@ impl<'a> FlowLauncher<'a> {
         } else {
             execution
         };
-        let attempt = NonZeroU64::new(
-            u64::try_from(unit.job_executions(instance.id()).await?.len())
-                .map_err(|_| FlowRuntimeError::CountExhausted)?,
-        )
-        .map(ExecutionAttempt::new)
-        .ok_or(FlowRuntimeError::CountExhausted)?;
+        let attempt = ExecutionAttempt::new(unit.job_execution_attempt(execution.id()).await?);
         match unit.commit().await {
             Ok(()) => {}
             Err(RepositoryError::CommitOutcomeUnknown) if upgrade.is_some() => {
                 let mut recovery = self.repository.begin().await?;
                 let durable = recovery.get_job_execution(execution.id()).await?;
-                let durable_attempts = recovery.job_executions(instance.id()).await?;
+                let durable_latest = recovery.latest_job_execution(instance.id()).await?;
                 recovery.rollback().await?;
                 let exact = durable.as_ref() == Some(&execution)
-                    && durable_attempts.last().map(JobExecution::id) == Some(execution.id());
+                    && durable_latest.as_ref().map(JobExecution::id) == Some(execution.id());
                 if !exact {
                     return Err(RepositoryError::CommitOutcomeUnknown.into());
                 }

@@ -631,10 +631,13 @@ async fn unresolved_prior_child_marks_restart_parent_unknown() -> Result<(), Box
     ));
 
     let mut unit = repository.begin().await?;
-    let attempts = unit.job_executions(prior_parent.job_instance_id()).await?;
-    assert_eq!(attempts.len(), 2);
-    assert_eq!(attempts[1].metadata().status(), BatchStatus::Unknown);
-    let link = unit.nested_job_link(attempts[1].id(), &nested).await?;
+    let latest = unit
+        .latest_job_execution(prior_parent.job_instance_id())
+        .await?
+        .ok_or("restart attempt missing")?;
+    assert_eq!(unit.job_execution_attempt(latest.id()).await?.get(), 2);
+    assert_eq!(latest.metadata().status(), BatchStatus::Unknown);
+    let link = unit.nested_job_link(latest.id(), &nested).await?;
     assert!(
         link.is_none(),
         "failed restart must not create a second link"

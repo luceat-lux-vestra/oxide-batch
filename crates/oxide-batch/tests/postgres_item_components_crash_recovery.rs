@@ -42,15 +42,16 @@ use oxide_batch::{
     BatchStatus, BusinessStatement, BusinessValue, ChunkCommitReceipt, ChunkCount, ChunkCounts,
     ChunkFaultProgress, ChunkTransactionContext, ChunkTransactionManager, Clock,
     ComponentStreamIdentity, ItemReader, ItemStream, JobInstanceKey, JobName, JobParameters,
-    JobRepository, LifecycleTransition, PostgresChunkStateError, PostgresChunkStateProvider,
-    PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresJobRepository,
-    PostgresMigrator, ReadContext, ReadOutcome, ReaderError, StateLimits, StepName,
-    StreamOpenContext, StreamUpdateContext, TlsMode,
+    JobRepository, LifecycleTransition, NodeId, PostgresChunkStateError,
+    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig,
+    PostgresConfigError, PostgresJobRepository, PostgresMigrator, ReadContext, ReadOutcome,
+    ReaderError, StateLimits, StepName, StreamOpenContext, StreamUpdateContext, TlsMode,
 };
 use sqlx::postgres::PgPoolOptions;
 
 const CRASH_MODE_ENV: &str = "OXIDEBATCH_149_CRASH_MODE";
 const CRASH_EXIT_CODE: i32 = 87;
+const STEP_NAME: &str = "import";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ReaderKind {
@@ -258,7 +259,7 @@ async fn create_started_chunk_scope(
         .clone();
     let job = create.create_job_execution(instance.id()).await?;
     let step = create
-        .create_step_execution(job.id(), &StepName::new("import")?)
+        .create_step_execution(job.id(), &StepName::new(STEP_NAME)?)
         .await?;
     create.commit().await?;
 
@@ -425,16 +426,12 @@ async fn inspect_and_restart(kind: ReaderKind, url: String) -> Result<(), Box<dy
         .await?
         .ok_or("crashed worker did not durably create the job instance")?;
     let execution = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("crashed worker did not durably create the job execution")?;
     let step = inspect
-        .step_executions(execution.id())
+        .flow_step_execution(execution.id(), &NodeId::new(STEP_NAME)?)
         .await?
-        .into_iter()
-        .next()
         .ok_or("crashed worker did not durably create the step execution")?;
     inspect.rollback().await?;
     assert_eq!(step.metadata().status(), BatchStatus::Started);

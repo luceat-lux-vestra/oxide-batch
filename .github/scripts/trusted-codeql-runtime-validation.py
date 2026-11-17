@@ -218,8 +218,9 @@ def check_contract(root: Path = ROOT) -> None:
     for fragment in required_scope:
         if fragment not in scope:
             reject(f"trusted-base CodeQL classifier contract missing: {fragment}")
+    if "\n      - codeql-runtime\n" not in gate:
+        reject("Direct Merge Gate CodeQL dependency missing: codeql-runtime")
     required_gate = (
-        "needs: [scope, rust, dependency, evidence, supply, conformance, codeql-runtime]",
         "CODEQL_RUNTIME_CLASSIFICATION_OUTCOME:", "CODEQL_RUNTIME_REQUIRED:", "CODEQL_RUNTIME_RESULT:",
         'require_success codeql-runtime-scope "$CODEQL_RUNTIME_CLASSIFICATION_OUTCOME"',
         'require_success codeql-runtime "$CODEQL_RUNTIME_RESULT"',

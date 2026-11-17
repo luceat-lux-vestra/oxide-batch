@@ -557,7 +557,7 @@ for title, mutated, diagnostic in (
     ("drift PR init pin", activated_pr_ci.replace(f"github/codeql-action/init@{RUNTIME_PIN}", "github/codeql-action/init@" + "0" * 40, 1), "PR CodeQL init pin must match production"),
     ("grant runtime write authority", activated_pr_ci.replace(runtime_job, runtime_write, 1), "permissions must be exactly"),
     ("duplicate runtime permission", activated_pr_ci.replace(runtime_job, runtime_duplicate, 1), "duplicate codeql-runtime permission"),
-    ("detach runtime from Direct Merge Gate", activated_pr_ci.replace("needs: [scope, rust, dependency, evidence, supply, conformance, codeql-runtime]", "needs: [scope, rust, dependency, evidence, supply, conformance]", 1), "Direct Merge Gate CodeQL contract missing"),
+    ("detach runtime from Direct Merge Gate", activated_pr_ci.replace("      - codeql-runtime\n", "", 1), "Direct Merge Gate CodeQL dependency missing"),
     ("lose exact PR head checkout", activated_pr_ci.replace("          ref: ${{ github.event.pull_request.head.sha }}\n", "          ref: ${{ github.sha }}\n", 1), "ref: ${{ github.event.pull_request.head.sha }}"),
     ("lose trusted-base classifier", activated_pr_ci.replace(".trusted-base/.github/scripts/trusted-codeql-runtime-validation.py", ".github/scripts/trusted-codeql-runtime-validation.py", 1), "trusted-base CodeQL classifier missing"),
 ):

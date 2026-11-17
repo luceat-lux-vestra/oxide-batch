@@ -26,6 +26,7 @@ jobs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
       supply_chain_impact: ${{ steps.classify.outputs.supply_chain_impact }}
       evidence_impact: ${{ steps.classify.outputs.evidence_impact }}
+      direct_workflows: ${{ steps.classify.outputs.direct_workflows }}
       codeql_runtime_classification_outcome: ${{ steps.codeql-runtime-scope.outcome }}
       codeql_runtime_required: ${{ steps.codeql-runtime-scope.outputs.required }}
     steps:
@@ -54,6 +55,7 @@ jobs:
             echo 'docs_only=false'
             echo 'supply_chain_impact=true'
             echo 'evidence_impact=true'
+            echo 'direct_workflows=[]'
           } >> "$GITHUB_OUTPUT"
           set -euo pipefail
           test "$TRUSTED_CHECKOUT" = "success"
@@ -91,11 +93,13 @@ jobs:
           docs_only="$(jq -r 'if .classification_valid == true and (.docs_only | type) == "boolean" then .docs_only else error("invalid docs_only") end' <<<"$classification")"
           supply_chain_impact="$(jq -r 'if .classification_valid == true and (.supply_chain_impact | type) == "boolean" then .supply_chain_impact else error("invalid supply_chain_impact") end' <<<"$classification")"
           evidence_impact="$(jq -r 'if .classification_valid == true and (.evidence_impact | type) == "boolean" then .evidence_impact else error("invalid evidence_impact") end' <<<"$classification")"
+          direct_workflows="$(jq -cer 'if .classification_valid == true and (.direct_proof_campaign_workflows | type) == "array" and all(.direct_proof_campaign_workflows[]; type == "string") and ((.direct_proof_campaign_workflows | unique | length) == (.direct_proof_campaign_workflows | length)) then .direct_proof_campaign_workflows else error("invalid direct-proof campaign output") end' <<<"$classification")"
 
           {
             echo "docs_only=$docs_only"
             echo "supply_chain_impact=$supply_chain_impact"
             echo "evidence_impact=$evidence_impact"
+            echo "direct_workflows=$direct_workflows"
           } >> "$GITHUB_OUTPUT"
 
       - name: Classify selective CodeQL runtime from trusted base
@@ -164,12 +168,83 @@ jobs:
     permissions:
       contents: read
 
-  conformance:
+  campaign_soak:
     needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-soak.yml') }}
+    uses: ./.github/workflows/m5-soak.yml
+    permissions:
+      contents: read
+
+  campaign_gate_b:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m6-gate-b.yml') }}
+    uses: ./.github/workflows/m6-gate-b.yml
+    permissions:
+      contents: read
+
+  campaign_gate_h:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m6-gate-h.yml') }}
+    uses: ./.github/workflows/m6-gate-h.yml
+    permissions:
+      contents: read
+
+  campaign_upgrade:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-upgrade.yml') }}
+    uses: ./.github/workflows/m5-upgrade.yml
+    permissions:
+      contents: read
+
+  campaign_security:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-security.yml') }}
+    uses: ./.github/workflows/m5-security.yml
+    permissions:
+      contents: read
+
+  campaign_performance:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-performance.yml') }}
+    uses: ./.github/workflows/m5-performance.yml
+    permissions:
+      contents: read
+
+  campaign_conformance:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-conformance.yml') }}
     uses: ./.github/workflows/m5-conformance.yml
     permissions:
       contents: read
       pull-requests: read # M5 trusted routing re-reads exact PR identity and changed-file metadata.
+
+  campaign_cancellation:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-cancellation.yml') }}
+    uses: ./.github/workflows/m5-cancellation.yml
+    permissions:
+      contents: read
+
+  campaign_crash_restore:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-crash-restore.yml') }}
+    uses: ./.github/workflows/m5-crash-restore.yml
+    permissions:
+      contents: read
+
+  campaign_m6_conformance:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m6-conformance.yml') }}
+    uses: ./.github/workflows/m6-conformance.yml
+    permissions:
+      contents: read
+
+  campaign_resource_bounds:
+    needs: scope
+    if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-resource-bounds.yml') }}
+    uses: ./.github/workflows/m5-resource-bounds.yml
+    permissions:
+      contents: read
 
   codeql-runtime:
     name: codeql-runtime
@@ -218,7 +293,24 @@ jobs:
             --head "$HEAD_SHA"
   direct-merge-gate:
     name: Direct Merge Gate
-    needs: [scope, rust, dependency, evidence, supply, conformance, codeql-runtime]
+    needs:
+      - scope
+      - rust
+      - dependency
+      - evidence
+      - supply
+      - campaign_soak
+      - campaign_gate_b
+      - campaign_gate_h
+      - campaign_upgrade
+      - campaign_security
+      - campaign_performance
+      - campaign_conformance
+      - campaign_cancellation
+      - campaign_crash_restore
+      - campaign_m6_conformance
+      - campaign_resource_bounds
+      - codeql-runtime
     if: ${{ always() }}
     runs-on: ubuntu-slim
     timeout-minutes: 5
@@ -233,11 +325,22 @@ jobs:
           DOCS_ONLY: ${{ needs.scope.outputs.docs_only }}
           EVIDENCE_IMPACT: ${{ needs.scope.outputs.evidence_impact }}
           SUPPLY_IMPACT: ${{ needs.scope.outputs.supply_chain_impact }}
+          DIRECT_WORKFLOWS: ${{ needs.scope.outputs.direct_workflows }}
           RUST_RESULT: ${{ needs.rust.result }}
           DEPENDENCY_RESULT: ${{ needs.dependency.result }}
           EVIDENCE_RESULT: ${{ needs.evidence.result }}
           SUPPLY_RESULT: ${{ needs.supply.result }}
-          CONFORMANCE_RESULT: ${{ needs.conformance.result }}
+          CAMPAIGN_SOAK_RESULT: ${{ needs.campaign_soak.result }}
+          CAMPAIGN_GATE_B_RESULT: ${{ needs.campaign_gate_b.result }}
+          CAMPAIGN_GATE_H_RESULT: ${{ needs.campaign_gate_h.result }}
+          CAMPAIGN_UPGRADE_RESULT: ${{ needs.campaign_upgrade.result }}
+          CAMPAIGN_SECURITY_RESULT: ${{ needs.campaign_security.result }}
+          CAMPAIGN_PERFORMANCE_RESULT: ${{ needs.campaign_performance.result }}
+          CAMPAIGN_CONFORMANCE_RESULT: ${{ needs.campaign_conformance.result }}
+          CAMPAIGN_CANCELLATION_RESULT: ${{ needs.campaign_cancellation.result }}
+          CAMPAIGN_CRASH_RESTORE_RESULT: ${{ needs.campaign_crash_restore.result }}
+          CAMPAIGN_M6_CONFORMANCE_RESULT: ${{ needs.campaign_m6_conformance.result }}
+          CAMPAIGN_RESOURCE_BOUNDS_RESULT: ${{ needs.campaign_resource_bounds.result }}
           CODEQL_RUNTIME_CLASSIFICATION_OUTCOME: ${{ needs.scope.outputs.codeql_runtime_classification_outcome }}
           CODEQL_RUNTIME_REQUIRED: ${{ needs.scope.outputs.codeql_runtime_required }}
           CODEQL_RUNTIME_RESULT: ${{ needs.codeql-runtime.result }}
@@ -268,7 +371,15 @@ jobs:
             fi
           }
 
-          require_success conformance "$CONFORMANCE_RESULT"
+          require_campaign() {
+            local workflow="$1"
+            local result="$2"
+            case "$DIRECT_WORKFLOWS" in
+              *"\"$workflow\""*) require_success "$workflow" "$result" ;;
+              *) require_skipped "$workflow" "$result" ;;
+            esac
+          }
+
           require_success codeql-runtime-scope "$CODEQL_RUNTIME_CLASSIFICATION_OUTCOME"
 
           if [ "$CODEQL_RUNTIME_REQUIRED" = "true" ]; then
@@ -280,15 +391,32 @@ jobs:
             exit 1
           fi
 
-          echo "scope=$SCOPE_RESULT classification=$CLASSIFICATION_OUTCOME docs_only=$DOCS_ONLY codeql_runtime_required=$CODEQL_RUNTIME_REQUIRED"
+          echo "scope=$SCOPE_RESULT classification=$CLASSIFICATION_OUTCOME docs_only=$DOCS_ONLY codeql_runtime_required=$CODEQL_RUNTIME_REQUIRED direct_workflows=$DIRECT_WORKFLOWS"
 
+          require_success scope "$SCOPE_RESULT"
           if [ "$CLASSIFICATION_OUTCOME" != "success" ]; then
-            require_success rust "$RUST_RESULT"
-            require_success dependency "$DEPENDENCY_RESULT"
-            require_success evidence "$EVIDENCE_RESULT"
-            require_success supply "$SUPPLY_RESULT"
-            exit 0
+            echo "::error::trusted PR campaign classification must succeed before merge" >&2
+            exit 1
           fi
+          case "$DIRECT_WORKFLOWS" in
+            \[*\]) ;;
+            *)
+              echo "::error::trusted direct workflow output is not a JSON array" >&2
+              exit 1
+              ;;
+          esac
+
+          require_campaign ".github/workflows/m5-soak.yml" "$CAMPAIGN_SOAK_RESULT"
+          require_campaign ".github/workflows/m6-gate-b.yml" "$CAMPAIGN_GATE_B_RESULT"
+          require_campaign ".github/workflows/m6-gate-h.yml" "$CAMPAIGN_GATE_H_RESULT"
+          require_campaign ".github/workflows/m5-upgrade.yml" "$CAMPAIGN_UPGRADE_RESULT"
+          require_campaign ".github/workflows/m5-security.yml" "$CAMPAIGN_SECURITY_RESULT"
+          require_campaign ".github/workflows/m5-performance.yml" "$CAMPAIGN_PERFORMANCE_RESULT"
+          require_campaign ".github/workflows/m5-conformance.yml" "$CAMPAIGN_CONFORMANCE_RESULT"
+          require_campaign ".github/workflows/m5-cancellation.yml" "$CAMPAIGN_CANCELLATION_RESULT"
+          require_campaign ".github/workflows/m5-crash-restore.yml" "$CAMPAIGN_CRASH_RESTORE_RESULT"
+          require_campaign ".github/workflows/m6-conformance.yml" "$CAMPAIGN_M6_CONFORMANCE_RESULT"
+          require_campaign ".github/workflows/m5-resource-bounds.yml" "$CAMPAIGN_RESOURCE_BOUNDS_RESULT"
 
           if [ "$DOCS_ONLY" = "true" ]; then
             require_skipped rust "$RUST_RESULT"

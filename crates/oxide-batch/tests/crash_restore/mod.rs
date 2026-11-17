@@ -31,14 +31,15 @@ use oxide_batch::{
     ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkFaultProgress,
     ChunkRestartContract, ChunkSize, ChunkTransactionContext, ChunkTransactionManager, Clock,
     ComponentRevision, DefinitionIdentity, DefinitionRevision, ExecutionContext, ExecutionCounts,
-    ExecutionVersion, ExplorerRepository, FailureCategory, FailureId, FailureSummary, FlowDecision,
-    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceKey, JobName,
-    JobOperator, JobParameters, JobRepository, LifecycleTransition, OperationId,
-    OperatorOutcomeClass, OperatorRequest, OwnerToken, PostgresChunkStateError,
-    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig, PostgresExplorer,
-    PostgresJobRepository, ReasonCode, RecoveryDecision, RecoveryDirective, RecoveryProposal,
-    RecoveryProposer, StaleThreshold, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepExecution, StepName, StepPartition, SystemClock, SystemMonotonicClock, TlsMode,
+    ExecutionVersion, FailureCategory, FailureId, FailureSummary, FlowDecision, JobExecution,
+    JobExecutionId, JobExecutionProjection, JobExplorer, JobInstance, JobInstanceKey, JobName,
+    JobOperator, JobParameters, JobRepository, LifecycleTransition, NodeId, OperationId,
+    OperatorOutcomeClass, OperatorRequest, OwnerToken, PageRequest, PageSize,
+    PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
+    PostgresConfig, PostgresExplorer, PostgresJobRepository, ReasonCode, RecoveryDecision,
+    RecoveryDirective, RecoveryProposal, RecoveryProposer, StaleThreshold, StateLimits,
+    StateSchemaId, StateSchemaVersion, StepExecution, StepName, StepPartition, SystemClock,
+    SystemMonotonicClock, TlsMode,
 };
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -490,15 +491,78 @@ pub struct DurableStep {
 /// Returns the repository, explorer, or state failure that prevented a
 /// complete reading. A partial reading is never returned, because a campaign
 /// comparison over one is not evidence.
+async fn all_execution_ids(
+    explorer: &JobExplorer<PostgresExplorer>,
+    instance_id: oxide_batch::JobInstanceId,
+) -> Result<Vec<JobExecutionId>, Box<dyn Error>> {
+    let size = PageSize::new(500)?;
+    let mut request = PageRequest::first(size);
+    let mut ids = Vec::new();
+    loop {
+        let page = explorer.list_executions(instance_id, &request).await?;
+        ids.extend(page.rows().iter().map(JobExecutionProjection::id));
+        let Some(cursor) = page.next_cursor() else {
+            break;
+        };
+        request = PageRequest::resume(size, cursor.clone());
+    }
+    ids.reverse();
+    Ok(ids)
+}
+
+async fn all_step_ids(
+    explorer: &JobExplorer<PostgresExplorer>,
+    execution_id: JobExecutionId,
+) -> Result<Vec<oxide_batch::StepExecutionId>, Box<dyn Error>> {
+    let size = PageSize::new(500)?;
+    let mut request = PageRequest::first(size);
+    let mut ids = Vec::new();
+    loop {
+        let page = explorer
+            .list_step_executions(execution_id, &request)
+            .await?;
+        ids.extend(
+            page.rows()
+                .iter()
+                .map(oxide_batch::StepExecutionProjection::id),
+        );
+        let Some(cursor) = page.next_cursor() else {
+            break;
+        };
+        request = PageRequest::resume(size, cursor.clone());
+    }
+    ids.sort_unstable();
+    Ok(ids)
+}
+
+async fn all_flow_decisions(
+    explorer: &JobExplorer<PostgresExplorer>,
+    execution_id: JobExecutionId,
+) -> Result<Vec<FlowDecision>, Box<dyn Error>> {
+    let size = PageSize::new(500)?;
+    let mut request = PageRequest::first(size);
+    let mut decisions = Vec::new();
+    loop {
+        let page = explorer.list_flow_decisions(execution_id, &request).await?;
+        decisions.extend(page.rows().iter().cloned());
+        let Some(cursor) = page.next_cursor() else {
+            break;
+        };
+        request = PageRequest::resume(size, cursor.clone());
+    }
+    decisions.sort_by_key(|decision| (decision.sequence(), decision.id()));
+    Ok(decisions)
+}
+
 pub async fn observe(
     repository: &PostgresJobRepository,
     key: &JobInstanceKey,
 ) -> Result<DurableObservation, Box<dyn Error>> {
-    let explorer = PostgresExplorer::new(repository.clone());
-    let mut unit = repository.begin().await?;
+    let explorer = JobExplorer::new(PostgresExplorer::new(repository.clone()));
+    let mut lookup = repository.begin().await?;
 
-    let Some(instance) = unit.find_job_instance(key).await? else {
-        unit.rollback().await?;
+    let Some(instance) = lookup.find_job_instance(key).await? else {
+        lookup.rollback().await?;
         return Ok(DurableObservation {
             instance: None,
             executions: Vec::new(),
@@ -510,30 +574,40 @@ pub async fn observe(
             partitions: Vec::new(),
         });
     };
+    lookup.rollback().await?;
 
-    let executions = unit.job_executions(instance.id()).await?;
-    let mut steps = Vec::new();
-    let mut flow_decisions = Vec::new();
-    let mut recovery_decisions = Vec::new();
-    let mut partitions = Vec::new();
-    for execution in &executions {
-        let attempt_steps = unit.step_executions(execution.id()).await?;
-        let mut attempt_partitions = Vec::new();
-        for step in &attempt_steps {
+    let execution_ids = all_execution_ids(&explorer, instance.id()).await?;
+    let mut unit = repository.begin().await?;
+    let mut executions = Vec::with_capacity(execution_ids.len());
+    let mut steps = Vec::with_capacity(execution_ids.len());
+    let mut flow_decisions = Vec::with_capacity(execution_ids.len());
+    let mut recovery_decisions = Vec::with_capacity(execution_ids.len());
+    let mut partitions = Vec::with_capacity(execution_ids.len());
+    for execution_id in execution_ids {
+        let execution = unit
+            .get_job_execution(execution_id)
+            .await?
+            .ok_or_else(|| Failure("explorer execution vanished during observation".to_owned()))?;
+        let step_ids = all_step_ids(&explorer, execution_id).await?;
+        let mut attempt_steps = Vec::with_capacity(step_ids.len());
+        let mut attempt_partitions = Vec::with_capacity(step_ids.len());
+        for step_id in step_ids {
+            let step = unit
+                .get_step_execution(step_id)
+                .await?
+                .ok_or_else(|| Failure("explorer step vanished during observation".to_owned()))?;
             attempt_partitions.push(
                 unit.step_partition_plan(step.id())
                     .await
                     .unwrap_or_default(),
             );
+            attempt_steps.push(step);
         }
+        flow_decisions.push(all_flow_decisions(&explorer, execution_id).await?);
+        recovery_decisions.push(unit.recovery_decision(execution_id).await?);
         partitions.push(attempt_partitions);
         steps.push(attempt_steps);
-        flow_decisions.push(
-            unit.flow_decisions(execution.id())
-                .await
-                .unwrap_or_default(),
-        );
-        recovery_decisions.push(unit.recovery_decision(execution.id()).await?);
+        executions.push(execution);
     }
     unit.rollback().await?;
 
@@ -541,7 +615,7 @@ pub async fn observe(
     let mut durable_state = Vec::new();
     let mut projections = Vec::new();
     for (execution, attempt_steps) in executions.iter().zip(&steps) {
-        projections.push(explorer.execution(execution.id()).await?);
+        projections.push(explorer.get_execution(execution.id()).await?);
         let mut attempt_state = Vec::new();
         for step in attempt_steps {
             let scope = ChunkTransactionContext::new(execution.id(), step.id());
@@ -778,16 +852,12 @@ pub async fn latest_attempt(
         .await?
         .ok_or_else(|| Failure("the campaign job created no instance".to_owned()))?;
     let execution = unit
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next_back()
         .ok_or_else(|| Failure("the campaign job created no attempt".to_owned()))?;
     let step = unit
-        .step_executions(execution.id())
+        .flow_step_execution(execution.id(), &NodeId::new(STEP_NAME)?)
         .await?
-        .into_iter()
-        .next()
         .ok_or_else(|| Failure("the campaign job created no step attempt".to_owned()))?;
     unit.rollback().await?;
     Ok((execution, step))

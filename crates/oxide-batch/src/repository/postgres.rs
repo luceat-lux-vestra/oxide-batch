@@ -2844,15 +2844,60 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             }
             // Lock in deterministic ID order so subsequent state reads in this
             // UoW cannot mix committed versions with in-flight context writes.
-            sqlx::query(
+            let locked_steps = sqlx::query(
                 "SELECT id FROM oxide_batch.ob_step_execution \
-                 WHERE job_execution_id = $1 ORDER BY id FOR UPDATE",
+                 WHERE job_execution_id = $1 ORDER BY id LIMIT $2 FOR UPDATE",
             )
             .bind(source_id)
+            .bind(
+                i64::try_from(oxide_batch_repository::MAX_FORK_SOURCE_STEPS + 1)
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?,
+            )
             .fetch_all(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
+            if locked_steps.len() > oxide_batch_repository::MAX_FORK_SOURCE_STEPS {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
             self.job_execution(source_execution_id).await
+        })
+    }
+
+    fn fork_source_step_states(
+        &mut self,
+        source_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<FlowStepState>, RepositoryError>> {
+        Box::pin(async move {
+            let source_id = database_id(source_execution_id.get(), IdentifierKind::JobExecution)?;
+            let rows = sqlx::query(AssertSqlSafe(durable_step_select(
+                "WHERE execution.job_execution_id = $1 ORDER BY execution.id LIMIT $2 FOR UPDATE",
+            )))
+            .bind(source_id)
+            .bind(
+                i64::try_from(oxide_batch_repository::MAX_FORK_SOURCE_STEPS + 1)
+                    .map_err(|_| RepositoryError::ForkStateCorrupt)?,
+            )
+            .fetch_all(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?;
+            if rows.len() > oxide_batch_repository::MAX_FORK_SOURCE_STEPS {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            rows.iter()
+                .map(|row| {
+                    let node_id = NodeId::new(read_text(row, "step_logical_id")?)
+                        .map_err(|_| RepositoryError::ForkStateCorrupt)?;
+                    let durable = decode_durable_step_state(row)?;
+                    let context = if durable.execution_context.schema_id().as_str()
+                        == DEFAULT_CONTEXT_SCHEMA
+                    {
+                        None
+                    } else {
+                        Some(durable.execution_context)
+                    };
+                    Ok(FlowStepState::new(node_id, durable.step_execution, context))
+                })
+                .collect()
         })
     }
 
@@ -4181,10 +4226,10 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         Box::pin(async move { self.job_execution(id).await })
     }
 
-    fn job_executions(
+    fn latest_job_execution(
         &mut self,
         job_instance_id: JobInstanceId,
-    ) -> BoxFuture<'_, Result<Vec<JobExecution>, RepositoryError>> {
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
         Box::pin(async move {
             let instance_id = database_id(job_instance_id.get(), IdentifierKind::JobInstance)?;
             let exists: bool = sqlx::query_scalar(
@@ -4199,14 +4244,39 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     id: job_instance_id,
                 });
             }
-            let rows = sqlx::query(AssertSqlSafe(job_execution_select(
-                "WHERE execution.job_instance_id = $1 ORDER BY execution.attempt",
+            let row = sqlx::query(AssertSqlSafe(job_execution_select(
+                "WHERE execution.job_instance_id = $1 ORDER BY execution.attempt DESC LIMIT 1",
             )))
             .bind(instance_id)
-            .fetch_all(&mut **self.transaction()?)
+            .fetch_optional(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            rows.iter().map(decode_job_execution).collect()
+            row.map(|row| decode_job_execution(&row)).transpose()
+        })
+    }
+
+    fn job_execution_attempt(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
+        Box::pin(async move {
+            let raw: i32 = sqlx::query_scalar(
+                "SELECT attempt FROM oxide_batch.ob_job_execution WHERE id = $1",
+            )
+            .bind(database_id(
+                job_execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .fetch_optional(&mut **self.transaction()?)
+            .await
+            .map_err(|_| RepositoryError::Unavailable)?
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: job_execution_id,
+            })?;
+            u64::try_from(raw)
+                .ok()
+                .and_then(std::num::NonZeroU64::new)
+                .ok_or(RepositoryError::Unavailable)
         })
     }
 
@@ -4217,32 +4287,29 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         Box::pin(async move { self.step_execution(id).await })
     }
 
-    fn step_executions(
-        &mut self,
+    fn flow_step_execution<'a>(
+        &'a mut self,
         job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>> {
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<StepExecution>, RepositoryError>> {
         Box::pin(async move {
-            let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_execution WHERE id = $1)",
-            )
-            .bind(job_id)
-            .fetch_one(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            if !exists {
+            if self.job_execution(job_execution_id).await?.is_none() {
                 return Err(RepositoryError::JobExecutionNotFound {
                     id: job_execution_id,
                 });
             }
-            let rows = sqlx::query(AssertSqlSafe(step_execution_select(
-                "WHERE execution.job_execution_id = $1 ORDER BY execution.id",
+            let row = sqlx::query(AssertSqlSafe(step_execution_select(
+                "WHERE execution.job_execution_id = $1 AND execution.step_logical_id = $2 LIMIT 1",
             )))
-            .bind(job_id)
-            .fetch_all(&mut **self.transaction()?)
+            .bind(database_id(
+                job_execution_id.get(),
+                IdentifierKind::JobExecution,
+            )?)
+            .bind(node_id.as_str())
+            .fetch_optional(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            rows.iter().map(decode_step_execution).collect()
+            row.map(|row| decode_step_execution(&row)).transpose()
         })
     }
 
@@ -4556,32 +4623,19 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
-    fn flow_decisions(
+    fn get_flow_decision(
         &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
+        id: FlowDecisionId,
+    ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>> {
         Box::pin(async move {
-            let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_execution WHERE id = $1)",
-            )
-            .bind(job_id)
-            .fetch_one(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            if !exists {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                });
-            }
-            let rows = sqlx::query(AssertSqlSafe(flow_decision_select(
-                "WHERE decision.job_execution_id = $1 ORDER BY decision.sequence",
+            let row = sqlx::query(AssertSqlSafe(flow_decision_select(
+                "WHERE decision.id = $1",
             )))
-            .bind(job_id)
-            .fetch_all(&mut **self.transaction()?)
+            .bind(database_id(id.get(), IdentifierKind::FlowDecision)?)
+            .fetch_optional(&mut **self.transaction()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            rows.iter().map(decode_flow_decision).collect()
+            row.map(|row| decode_flow_decision(&row)).transpose()
         })
     }
 
@@ -7670,7 +7724,7 @@ async fn select_nested_child_for_request(
         .await?
         .instance()
         .clone();
-    let latest = unit.job_executions(child_instance.id()).await?.pop();
+    let latest = unit.latest_job_execution(child_instance.id()).await?;
     let child_execution = match latest {
         None => {
             unit.create_job_execution_with_definition(

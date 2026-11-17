@@ -32,7 +32,7 @@ use oxide_batch::{
     FailureCategory, FailureId, FailureSummary, JobInstanceId, JobInstanceKey, JobName,
     JobParameters, JobRepository, LifecycleTransition, NodeId, PostgresJobRepository,
     PostgresMigrator, RepositoryError, StartLimit, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepName,
+    StepExecutionId, StepName,
 };
 use sqlx::{Connection as _, PgConnection};
 
@@ -88,6 +88,7 @@ impl Phase {
 
 struct UpgradeFixture {
     instance_id: JobInstanceId,
+    source_step_id: StepExecutionId,
 }
 
 #[test]
@@ -130,6 +131,7 @@ async fn run_phase(
         runtime_url,
         migrator_url,
         fixture.instance_id,
+        fixture.source_step_id,
         &handshake,
         &mut child,
         &mut block,
@@ -154,6 +156,7 @@ async fn drive_kill(
     runtime_url: &str,
     migrator_url: &str,
     instance_id: JobInstanceId,
+    source_step_id: StepExecutionId,
     handshake: &Path,
     child: &mut Child,
     block: &mut PhaseBlock,
@@ -186,7 +189,7 @@ async fn drive_kill(
     block.release().await?;
     let expected_attempts = if phase == Phase::CommitInFlight { 2 } else { 1 };
     wait_for_attempt_count(runtime_url, phase.job_name(), expected_attempts).await?;
-    assert_phase_state(runtime_url, phase, instance_id).await
+    assert_phase_state(runtime_url, phase, instance_id, source_step_id).await
 }
 
 async fn prepare_source(runtime_url: &str, job: &str) -> Result<UpgradeFixture, Box<dyn Error>> {
@@ -270,6 +273,7 @@ async fn prepare_source(runtime_url: &str, job: &str) -> Result<UpgradeFixture, 
 
     Ok(UpgradeFixture {
         instance_id: instance.id(),
+        source_step_id: source_step.id(),
     })
 }
 
@@ -515,6 +519,7 @@ async fn assert_phase_state(
     runtime_url: &str,
     phase: Phase,
     instance_id: JobInstanceId,
+    source_step_id: StepExecutionId,
 ) -> Result<(), Box<dyn Error>> {
     let repository = PostgresJobRepository::connect(
         config(runtime_url.to_owned())?,
@@ -522,17 +527,28 @@ async fn assert_phase_state(
     )
     .await?;
     let mut inspect = repository.begin().await?;
-    let executions = inspect.job_executions(instance_id).await?;
+    let latest = inspect
+        .latest_job_execution(instance_id)
+        .await?
+        .ok_or("upgrade source execution disappeared")?;
     let expected = if phase == Phase::CommitInFlight { 2 } else { 1 };
-    assert_eq!(executions.len(), expected);
+    assert_eq!(
+        inspect.job_execution_attempt(latest.id()).await?.get(),
+        expected
+    );
 
     let source = inspect
-        .latest_flow_step(instance_id, &NodeId::new(SOURCE_NODE)?)
+        .scope_step_state(source_step_id)
         .await?
         .ok_or("source step disappeared after upgrade kill")?;
     let source_context = source.context().ok_or("source context disappeared")?;
     assert_eq!(source_context.schema_version().get(), 1);
     assert_eq!(context_value(source_context)?, 7);
+    let source_execution = inspect
+        .get_job_execution(source.execution().job_execution_id())
+        .await?
+        .ok_or("source job execution disappeared")?;
+    assert_eq!(source_execution.metadata().status(), BatchStatus::Failed);
 
     if phase != Phase::CommitInFlight {
         assert!(
@@ -542,14 +558,14 @@ async fn assert_phase_state(
                 .is_none(),
             "pre-commit kill created a partial target step",
         );
-        assert_eq!(executions[0].metadata().status(), BatchStatus::Failed);
+        assert_eq!(latest.id(), source_execution.id());
         inspect.rollback().await?;
         repository.close().await?;
         return Ok(());
     }
 
-    assert_eq!(executions[0].metadata().status(), BatchStatus::Failed);
-    assert_eq!(executions[1].metadata().status(), BatchStatus::Starting);
+    assert_ne!(latest.id(), source_execution.id());
+    assert_eq!(latest.metadata().status(), BatchStatus::Starting);
     let target = inspect
         .latest_flow_step(instance_id, &NodeId::new(TARGET_NODE)?)
         .await?
@@ -559,9 +575,7 @@ async fn assert_phase_state(
         .ok_or("target context was not materialized")?;
     assert_eq!(target_context.schema_version().get(), 2);
     assert_eq!(context_value(target_context)?, 8);
-    let target_definition = inspect
-        .scope_execution_definition(executions[1].id())
-        .await?;
+    let target_definition = inspect.scope_execution_definition(latest.id()).await?;
     assert_eq!(target_definition.revision().as_str(), "v2");
     inspect.rollback().await?;
 
@@ -579,12 +593,16 @@ async fn assert_phase_state(
             execution_id,
             status: BatchStatus::Starting,
             ..
-        }) if execution_id == executions[1].id()
+        }) if execution_id == latest.id()
     ));
     replay.rollback().await?;
 
     let mut count = repository.begin().await?;
-    assert_eq!(count.job_executions(instance_id).await?.len(), 2);
+    let latest = count
+        .latest_job_execution(instance_id)
+        .await?
+        .ok_or("replayed upgrade attempt missing")?;
+    assert_eq!(count.job_execution_attempt(latest.id()).await?.get(), 2);
     count.rollback().await?;
     repository.close().await?;
     Ok(())

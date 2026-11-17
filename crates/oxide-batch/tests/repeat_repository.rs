@@ -189,17 +189,45 @@ async fn repeat_state_advances_only_on_commit_and_restarts_from_durable_authorit
     );
     replay.rollback().await?;
 
-    // A new step attempt sees the last committed decision. Preparing ordinal
-    // one and then rolling back must leave ordinal zero authoritative.
-    let mut setup = repository.begin().await?;
-    let job_execution_id = setup
+    // A genuine restart attempt sees the last committed decision. Preparing
+    // ordinal one and then rolling back must leave ordinal zero authoritative.
+    let mut fail = repository.begin().await?;
+    let first_step_execution = fail
         .get_step_execution(first_step)
         .await?
-        .expect("first step exists")
-        .job_execution_id();
+        .expect("first step exists");
+    let first_job = fail
+        .get_job_execution(first_step_execution.job_execution_id())
+        .await?
+        .expect("first job exists");
+    let failed_at = SystemTime::now();
+    fail.transition_step_execution(
+        first_step_execution.id(),
+        first_step_execution.version(),
+        LifecycleTransition::failed(
+            failed_at,
+            FailureSummary::new(FailureCategory::UserComponent, FailureId::new(701)?),
+        ),
+    )
+    .await?;
+    fail.transition_job_execution(
+        first_job.id(),
+        first_job.version(),
+        LifecycleTransition::failed(
+            failed_at,
+            FailureSummary::new(FailureCategory::UserComponent, FailureId::new(702)?),
+        ),
+    )
+    .await?;
+    fail.commit().await?;
+
+    let mut setup = repository.begin().await?;
+    let second_job = setup
+        .create_job_execution_with_definition(instance, plan.definition_identity())
+        .await?;
     let second_step = setup
         .create_flow_step_execution(
-            job_execution_id,
+            second_job.id(),
             &StepName::new("repeat-step")?,
             &NodeId::new("repeat-step")?,
             StartLimit::UNRESTRICTED,

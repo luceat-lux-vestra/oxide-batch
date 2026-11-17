@@ -12,11 +12,12 @@ use std::time::{Duration, SystemTime};
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, FailureCategory,
     FailureId, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
-    FlowTransitionKind, JobInstanceKey, JobName, JobParameters, JobRepository, JoinNode, NodeId,
-    PostgresConfig, PostgresJobRepository, PostgresMigrator, RecoveryRequest,
-    SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode, StepComponents, StepName, StepNode,
-    StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
-    TaskletStepFactory, TerminalKind, TlsMode,
+    FlowTransitionKind, JobExplorer, JobInstanceKey, JobName, JobParameters, JobRepository,
+    JoinNode, NodeId, PageRequest, PageSize, PostgresConfig, PostgresExplorer,
+    PostgresJobRepository, PostgresMigrator, RecoveryRequest, SequentialIdGenerator, SplitBranch,
+    SplitBudget, SplitNode, StepComponents, StepName, StepNode, StopSource, Tasklet,
+    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TaskletStepFactory, TerminalKind,
+    TlsMode,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -200,6 +201,8 @@ fn spawn_crash_worker() -> Result<ExitStatus, Box<dyn Error>> {
 async fn inspect_recover_restart(url: String) -> Result<(), Box<dyn Error>> {
     let clock = FixedClock(SystemTime::UNIX_EPOCH + Duration::from_secs(9_101));
     let repository = PostgresJobRepository::connect(config(url)?, Arc::new(clock)).await?;
+    let explorer = JobExplorer::new(PostgresExplorer::new(repository.clone()));
+    let page = PageRequest::first(PageSize::new(500)?);
     let key = JobInstanceKey::new(JobName::new(JOB)?, &JobParameters::new());
     let mut inspect = repository.begin().await?;
     let instance = inspect
@@ -207,14 +210,18 @@ async fn inspect_recover_restart(url: String) -> Result<(), Box<dyn Error>> {
         .await?
         .ok_or("crash worker did not create an instance")?;
     let original = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("crash worker did not create an execution")?;
-    let original_steps = inspect.step_executions(original.id()).await?;
-    let original_decisions = inspect.flow_decisions(original.id()).await?;
     inspect.rollback().await?;
+    let original_steps = explorer
+        .list_step_executions(original.id(), &page)
+        .await?
+        .into_rows();
+    let original_decisions = explorer
+        .list_flow_decisions(original.id(), &page)
+        .await?
+        .into_rows();
 
     // The process exited after the first branch committed and before the join
     // aggregate could be selected.
@@ -223,7 +230,7 @@ async fn inspect_recover_restart(url: String) -> Result<(), Box<dyn Error>> {
         original_steps
             .iter()
             .find(|step| step.step_name().as_str() == name)
-            .map(|step| step.metadata().status())
+            .map(oxide_batch::StepExecutionProjection::status)
     };
     assert_eq!(durable_status("prepare"), Some(BatchStatus::Completed));
     assert_eq!(durable_status("first"), Some(BatchStatus::Completed));
@@ -281,10 +288,8 @@ async fn inspect_recover_restart(url: String) -> Result<(), Box<dyn Error>> {
         .await?
         .ok_or("the completed branch attempt disappeared")?;
     let restarted_second = verify
-        .step_executions(report.job_execution().id())
+        .flow_step_execution(report.job_execution().id(), &NodeId::new("second")?)
         .await?
-        .into_iter()
-        .find(|step| step.step_name().as_str() == "second")
         .ok_or("the restarted branch attempt is missing")?;
     verify.rollback().await?;
     assert_eq!(reused.metadata().status(), BatchStatus::Completed);

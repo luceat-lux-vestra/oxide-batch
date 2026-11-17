@@ -824,7 +824,7 @@ async fn drain_cycle(
         };
         coordinator.spawn(phase, async move {
             if let Ok(mut unit) = reader.begin().await {
-                let _ = unit.job_executions(instance).await;
+                let _ = unit.latest_job_execution(instance).await;
                 let _ = unit.rollback().await;
             }
         })?;

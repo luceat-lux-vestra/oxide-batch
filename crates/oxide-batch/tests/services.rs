@@ -440,7 +440,13 @@ fn compatible_restart_requires_exact_live_execution_and_replays_without_code()
     );
 
     let mut untouched = block_on(repository.begin())?;
-    assert_eq!(block_on(untouched.job_executions(instance.id()))?.len(), 1);
+    let untouched_latest = block_on(untouched.latest_job_execution(instance.id()))?
+        .ok_or(RepositoryError::Unavailable)?;
+    assert_eq!(untouched_latest.id(), first.id());
+    assert_eq!(
+        block_on(untouched.job_execution_attempt(untouched_latest.id()))?.get(),
+        1
+    );
     assert!(
         block_on(
             untouched.find_operator_request(OperatorAction::Restart, request.operation_id(),)
@@ -463,7 +469,12 @@ fn compatible_restart_requires_exact_live_execution_and_replays_without_code()
     assert!(replayed.execution().is_none());
 
     let mut inspect = block_on(repository.begin())?;
-    assert_eq!(block_on(inspect.job_executions(instance.id()))?.len(), 2);
+    let latest = block_on(inspect.latest_job_execution(instance.id()))?
+        .ok_or(RepositoryError::Unavailable)?;
+    assert_eq!(
+        block_on(inspect.job_execution_attempt(latest.id()))?.get(),
+        2
+    );
     assert!(
         block_on(inspect.find_operator_request(OperatorAction::Restart, request.operation_id(),))?
             .is_some()
@@ -821,26 +832,12 @@ impl oxide_batch::RepositoryUnitOfWork for FaultingUnit<'_> {
         self.inner.get_job_execution(id)
     }
 
-    fn job_executions(
-        &mut self,
-        job_instance_id: oxide_batch::JobInstanceId,
-    ) -> oxide_batch::BoxFuture<'_, Result<Vec<oxide_batch::JobExecution>, RepositoryError>> {
-        self.inner.job_executions(job_instance_id)
-    }
-
     fn get_step_execution(
         &mut self,
         id: oxide_batch::StepExecutionId,
     ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::StepExecution>, RepositoryError>>
     {
         self.inner.get_step_execution(id)
-    }
-
-    fn step_executions(
-        &mut self,
-        job_execution_id: oxide_batch::JobExecutionId,
-    ) -> oxide_batch::BoxFuture<'_, Result<Vec<oxide_batch::StepExecution>, RepositoryError>> {
-        self.inner.step_executions(job_execution_id)
     }
 
     fn recover_job_execution<'a>(
@@ -877,6 +874,45 @@ impl oxide_batch::RepositoryUnitOfWork for FaultingUnit<'_> {
         draft: &'a oxide_batch::OperatorRecordDraft,
     ) -> oxide_batch::BoxFuture<'a, Result<oxide_batch::OperatorRecord, RepositoryError>> {
         self.inner.append_operator_request(draft)
+    }
+
+    fn latest_job_execution(
+        &mut self,
+        job_instance_id: oxide_batch::JobInstanceId,
+    ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::JobExecution>, RepositoryError>>
+    {
+        self.inner.latest_job_execution(job_instance_id)
+    }
+
+    fn job_execution_attempt(
+        &mut self,
+        job_execution_id: oxide_batch::JobExecutionId,
+    ) -> oxide_batch::BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
+        self.inner.job_execution_attempt(job_execution_id)
+    }
+
+    fn flow_step_execution<'a>(
+        &'a mut self,
+        job_execution_id: oxide_batch::JobExecutionId,
+        node_id: &'a oxide_batch::NodeId,
+    ) -> oxide_batch::BoxFuture<'a, Result<Option<oxide_batch::StepExecution>, RepositoryError>>
+    {
+        self.inner.flow_step_execution(job_execution_id, node_id)
+    }
+
+    fn get_flow_decision(
+        &mut self,
+        id: oxide_batch::FlowDecisionId,
+    ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::FlowDecision>, RepositoryError>>
+    {
+        self.inner.get_flow_decision(id)
+    }
+
+    fn fork_source_step_states(
+        &mut self,
+        source_execution_id: oxide_batch::JobExecutionId,
+    ) -> oxide_batch::BoxFuture<'_, Result<Vec<oxide_batch::FlowStepState>, RepositoryError>> {
+        self.inner.fork_source_step_states(source_execution_id)
     }
 
     fn commit<'a>(self: Box<Self>) -> oxide_batch::BoxFuture<'a, Result<(), RepositoryError>>

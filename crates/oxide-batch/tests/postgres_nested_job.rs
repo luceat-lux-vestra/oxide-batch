@@ -237,11 +237,12 @@ fn postgres_nested_job_completed_child_reuses_exact_committed_link() -> Result<(
                 .await?,
             parameters
         );
+        let latest = continuation
+            .latest_job_execution(first.child_job_instance_id())
+            .await?
+            .ok_or("nested child execution missing")?;
         assert_eq!(
-            continuation
-                .job_executions(first.child_job_instance_id())
-                .await?
-                .len(),
+            continuation.job_execution_attempt(latest.id()).await?.get(),
             1
         );
         continuation.commit().await?;
@@ -315,11 +316,12 @@ fn postgres_nested_job_stopped_child_restarts_same_instance_with_complete_parame
                 .await?,
             parameters
         );
+        let latest = continuation
+            .latest_job_execution(first.child_job_instance_id())
+            .await?
+            .ok_or("nested child execution missing")?;
         assert_eq!(
-            continuation
-                .job_executions(first.child_job_instance_id())
-                .await?
-                .len(),
+            continuation.job_execution_attempt(latest.id()).await?.get(),
             2
         );
         continuation.commit().await?;
@@ -398,13 +400,11 @@ fn postgres_nested_job_unknown_child_stays_unresolved_without_terminal_or_duplic
                 status: BatchStatus::Unknown,
             }) if child_execution_id == first.child_job_execution_id()
         ));
-        assert_eq!(
-            ambiguous
-                .job_executions(first.child_job_instance_id())
-                .await?
-                .len(),
-            1
-        );
+        let latest = ambiguous
+            .latest_job_execution(first.child_job_instance_id())
+            .await?
+            .ok_or("nested child execution missing")?;
+        assert_eq!(ambiguous.job_execution_attempt(latest.id()).await?.get(), 1);
         let durable = ambiguous
             .nested_job_link(parent_execution.id(), &node)
             .await?
@@ -460,13 +460,11 @@ fn postgres_nested_job_existing_link_rejects_nonidentifying_parameter_drift()
                 .await,
             Err(RepositoryError::NestedJobStateCorrupt)
         );
-        assert_eq!(
-            duplicate
-                .job_executions(link.child_job_instance_id())
-                .await?
-                .len(),
-            1
-        );
+        let latest = duplicate
+            .latest_job_execution(link.child_job_instance_id())
+            .await?
+            .ok_or("nested child execution missing")?;
+        assert_eq!(duplicate.job_execution_attempt(latest.id()).await?.get(), 1);
         duplicate.rollback().await?;
         repository.close().await?;
         Ok::<(), Box<dyn Error>>(())

@@ -22,11 +22,11 @@ use oxide_batch::{
     DecisionInputVersion, DecisionNode, DefinitionRevision, ExitCode, ExitPattern, ExitStatus,
     FailureCategory, FailureId, FlowEvent, FlowEventKind, FlowEventSink, FlowExecutionOutcome,
     FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, FlowTransition, FlowTransitionKind,
-    JobExecutionDecider, JobInstanceKey, JobName, JobParameters, JobRepository, JoinNode, NodeId,
-    PostgresConfig, PostgresJobRepository, PostgresMigrator, RecoveryRequest,
-    SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode, StepComponents, StepName, StepNode,
-    StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
-    TlsMode,
+    JobExecutionDecider, JobExplorer, JobInstanceKey, JobName, JobParameters, JobRepository,
+    JoinNode, NodeId, PageRequest, PageSize, PostgresConfig, PostgresExplorer,
+    PostgresJobRepository, PostgresMigrator, RecoveryRequest, SequentialIdGenerator, SplitBranch,
+    SplitBudget, SplitNode, StepComponents, StepName, StepNode, StopSource, Tasklet,
+    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind, TlsMode,
 };
 use sqlx::postgres::PgPoolOptions;
 
@@ -373,11 +373,14 @@ async fn run_worker(
     Err("advanced-flow worker crossed the selected SIGKILL boundary".into())
 }
 
-fn durable_step_status(steps: &[oxide_batch::StepExecution], name: &str) -> Option<BatchStatus> {
+fn durable_step_status(
+    steps: &[oxide_batch::StepExecutionProjection],
+    name: &str,
+) -> Option<BatchStatus> {
     steps
         .iter()
         .find(|step| step.step_name().as_str() == name)
-        .map(|step| step.metadata().status())
+        .map(oxide_batch::StepExecutionProjection::status)
 }
 
 #[allow(
@@ -387,6 +390,8 @@ fn durable_step_status(steps: &[oxide_batch::StepExecution], name: &str) -> Opti
 async fn inspect_recover_restart(point: CrashPoint, url: String) -> Result<(), Box<dyn Error>> {
     let clock = FixedClock(SystemTime::UNIX_EPOCH + Duration::from_secs(12_001));
     let repository = PostgresJobRepository::connect(config(url)?, Arc::new(clock)).await?;
+    let explorer = JobExplorer::new(PostgresExplorer::new(repository.clone()));
+    let page = PageRequest::first(PageSize::new(500)?);
     let key = JobInstanceKey::new(JobName::new(point.job_name())?, &JobParameters::new());
     let mut inspect = repository.begin().await?;
     let instance = inspect
@@ -394,14 +399,18 @@ async fn inspect_recover_restart(point: CrashPoint, url: String) -> Result<(), B
         .await?
         .ok_or("advanced-flow worker did not create an instance")?;
     let original = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("advanced-flow worker did not create an execution")?;
-    let original_steps = inspect.step_executions(original.id()).await?;
-    let original_decisions = inspect.flow_decisions(original.id()).await?;
     inspect.rollback().await?;
+    let original_steps = explorer
+        .list_step_executions(original.id(), &page)
+        .await?
+        .into_rows();
+    let original_decisions = explorer
+        .list_flow_decisions(original.id(), &page)
+        .await?
+        .into_rows();
 
     assert_eq!(original.metadata().status(), BatchStatus::Started);
     assert_eq!(

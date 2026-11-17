@@ -231,6 +231,16 @@ fn runnable_ids() -> SequentialIdGenerator {
     SequentialIdGenerator::new(NonZeroU64::MIN)
 }
 
+async fn attempt_count(
+    unit: &mut dyn RepositoryUnitOfWork,
+    instance_id: oxide_batch::JobInstanceId,
+) -> Result<u64, RepositoryError> {
+    let Some(latest) = unit.latest_job_execution(instance_id).await? else {
+        return Ok(0);
+    };
+    Ok(unit.job_execution_attempt(latest.id()).await?.get())
+}
+
 fn contract_failure(
     backend: &'static str,
     case: &'static str,
@@ -310,8 +320,8 @@ where
         .latest_flow_step(report.instance().id(), &node)
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
-    let decisions = inspection
-        .flow_decisions(report.job_execution().id())
+    let decision = inspection
+        .get_flow_decision(report.decisions()[0].id())
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
@@ -321,7 +331,7 @@ where
         "latest logical-step authority did not return the committed step",
     )?;
     ensure(
-        decisions.len() == 1 && decisions[0].id() == report.decisions()[0].id(),
+        decision.as_ref().map(oxide_batch::FlowDecision::id) == Some(report.decisions()[0].id()),
         backend,
         CASE,
         "durable flow decision differed from the launcher report",
@@ -400,8 +410,7 @@ where
         .begin()
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
-    let attempts = inspection
-        .job_executions(second.instance().id())
+    let attempts = attempt_count(&mut *inspection, second.instance().id())
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     let latest = inspection
@@ -409,7 +418,7 @@ where
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
-        attempts.len() == 2
+        attempts == 2
             && latest
                 .as_ref()
                 .map(|state| state.execution().job_execution_id())
@@ -491,11 +500,9 @@ where
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
-        inspection
-            .job_executions(second.instance().id())
+        attempt_count(&mut *inspection, second.instance().id())
             .await
             .map_err(|error| contract_failure(backend, CASE, error))?
-            .len()
             == 2,
         backend,
         CASE,
@@ -671,11 +678,9 @@ where
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
-        inspection
-            .job_executions(first.instance().id())
+        attempt_count(&mut *inspection, first.instance().id())
             .await
             .map_err(|error| contract_failure(backend, CASE, error))?
-            .len()
             == 1,
         backend,
         CASE,
@@ -763,11 +768,9 @@ where
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
-        inspection
-            .job_executions(first.instance().id())
+        attempt_count(&mut *inspection, first.instance().id())
             .await
             .map_err(|error| contract_failure(backend, CASE, error))?
-            .len()
             == 1,
         backend,
         CASE,
@@ -915,11 +918,14 @@ where
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     let durable = inspection
-        .flow_decisions(second.job_execution().id())
+        .get_flow_decision(second.decisions()[0].id())
         .await
         .map_err(|error| contract_failure(backend, CASE, error))?;
     ensure(
-        durable.len() == 1 && durable[0].reused_decision_id() == Some(first.decisions()[0].id()),
+        durable
+            .as_ref()
+            .and_then(oxide_batch::FlowDecision::reused_decision_id)
+            == Some(first.decisions()[0].id()),
         backend,
         CASE,
         "reused decision was not durably readable from the restart execution",
@@ -1494,11 +1500,9 @@ where
         .await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
-        inspect
-            .job_executions(instance.id())
+        attempt_count(&mut *inspect, instance.id())
             .await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
-            .len()
             == 1,
         backend,
         CASE,
@@ -1812,11 +1816,9 @@ where
         .await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
-        inspect
-            .job_executions(instance.id())
+        attempt_count(&mut *inspect, instance.id())
             .await
             .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?
-            .len()
             == 1,
         backend,
         CASE,
@@ -2852,16 +2854,16 @@ where
         .begin()
         .await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let jobs = inspection
-        .job_executions(instance.id())
+    let durable_job = inspection
+        .get_job_execution(job.id())
         .await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
-    let steps = inspection
-        .step_executions(job.id())
+    let durable_step = inspection
+        .get_step_execution(step.id())
         .await
         .map_err(|error| RepositoryContractFailure::new(backend, CASE, error.to_string()))?;
     ensure(
-        jobs == vec![job] && steps == vec![step],
+        durable_job.as_ref() == Some(&job) && durable_step.as_ref() == Some(&step),
         backend,
         CASE,
         "execution graph inspection differed from creation",

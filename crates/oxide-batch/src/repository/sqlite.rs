@@ -985,36 +985,55 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         Box::pin(async move { self.job_execution(id).await })
     }
 
-    fn job_executions(
+    fn latest_job_execution(
         &mut self,
         job_instance_id: JobInstanceId,
-    ) -> BoxFuture<'_, Result<Vec<JobExecution>, RepositoryError>> {
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
         Box::pin(async move {
-            let instance: Option<i64> =
+            let instance_id =
+                sqlite_identifier(job_instance_id.get(), IdentifierKind::JobInstance)?;
+            let exists: Option<i64> =
                 sqlx::query_scalar("SELECT id FROM ob_job_instance WHERE id = ?")
-                    .bind(sqlite_identifier(
-                        job_instance_id.get(),
-                        IdentifierKind::JobInstance,
-                    )?)
+                    .bind(instance_id)
                     .fetch_optional(&mut **self.connection()?)
                     .await
                     .map_err(|_| RepositoryError::Unavailable)?;
-            if instance.is_none() {
+            if exists.is_none() {
                 return Err(RepositoryError::JobInstanceNotFound {
                     id: job_instance_id,
                 });
             }
-            let rows = sqlx::query(AssertSqlSafe(job_execution_select(
-                "WHERE execution.job_instance_id = ? ORDER BY execution.attempt",
+            let row = sqlx::query(AssertSqlSafe(job_execution_select(
+                "WHERE execution.job_instance_id = ? ORDER BY execution.attempt DESC LIMIT 1",
             )))
-            .bind(sqlite_identifier(
-                job_instance_id.get(),
-                IdentifierKind::JobInstance,
-            )?)
-            .fetch_all(&mut **self.connection()?)
+            .bind(instance_id)
+            .fetch_optional(&mut **self.connection()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            rows.iter().map(decode_job_execution).collect()
+            row.map(|row| decode_job_execution(&row)).transpose()
+        })
+    }
+
+    fn job_execution_attempt(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
+        Box::pin(async move {
+            let raw: i64 = sqlx::query_scalar("SELECT attempt FROM ob_job_execution WHERE id = ?")
+                .bind(sqlite_identifier(
+                    job_execution_id.get(),
+                    IdentifierKind::JobExecution,
+                )?)
+                .fetch_optional(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+                .ok_or(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                })?;
+            u64::try_from(raw)
+                .ok()
+                .and_then(std::num::NonZeroU64::new)
+                .ok_or(RepositoryError::Unavailable)
         })
     }
 
@@ -1025,36 +1044,29 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         Box::pin(async move { self.step_execution(id).await })
     }
 
-    fn step_executions(
-        &mut self,
+    fn flow_step_execution<'a>(
+        &'a mut self,
         job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>> {
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<StepExecution>, RepositoryError>> {
         Box::pin(async move {
-            let job: Option<i64> =
-                sqlx::query_scalar("SELECT id FROM ob_job_execution WHERE id = ?")
-                    .bind(sqlite_identifier(
-                        job_execution_id.get(),
-                        IdentifierKind::JobExecution,
-                    )?)
-                    .fetch_optional(&mut **self.connection()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?;
-            if job.is_none() {
+            if self.job_execution(job_execution_id).await?.is_none() {
                 return Err(RepositoryError::JobExecutionNotFound {
                     id: job_execution_id,
                 });
             }
-            let rows = sqlx::query(AssertSqlSafe(step_execution_select(
-                "WHERE execution.job_execution_id = ? ORDER BY execution.id",
+            let row = sqlx::query(AssertSqlSafe(step_execution_select(
+                "WHERE execution.job_execution_id = ? AND execution.step_logical_id = ? LIMIT 1",
             )))
             .bind(sqlite_identifier(
                 job_execution_id.get(),
                 IdentifierKind::JobExecution,
             )?)
-            .fetch_all(&mut **self.connection()?)
+            .bind(node_id.as_str())
+            .fetch_optional(&mut **self.connection()?)
             .await
             .map_err(|_| RepositoryError::Unavailable)?;
-            rows.iter().map(decode_step_execution).collect()
+            row.map(|row| decode_step_execution(&row)).transpose()
         })
     }
 
@@ -1329,36 +1341,17 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         })
     }
 
-    fn flow_decisions(
+    fn get_flow_decision(
         &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
+        id: FlowDecisionId,
+    ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>> {
         Box::pin(async move {
-            let exists: Option<i64> =
-                sqlx::query_scalar("SELECT id FROM ob_job_execution WHERE id = ?")
-                    .bind(sqlite_identifier(
-                        job_execution_id.get(),
-                        IdentifierKind::JobExecution,
-                    )?)
-                    .fetch_optional(&mut **self.connection()?)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?;
-            if exists.is_none() {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                });
-            }
-            let rows = sqlx::query(AssertSqlSafe(flow_decision_select(
-                "WHERE decision.job_execution_id = ? ORDER BY decision.sequence",
-            )))
-            .bind(sqlite_identifier(
-                job_execution_id.get(),
-                IdentifierKind::JobExecution,
-            )?)
-            .fetch_all(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            rows.iter().map(decode_flow_decision).collect()
+            let row = sqlx::query(AssertSqlSafe(flow_decision_select("WHERE decision.id = ?")))
+                .bind(sqlite_identifier(id.get(), IdentifierKind::FlowDecision)?)
+                .fetch_optional(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+            row.map(|row| decode_flow_decision(&row)).transpose()
         })
     }
 

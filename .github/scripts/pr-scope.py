@@ -534,12 +534,85 @@ def read_changes(lines: Iterable[str]) -> list[Change] | None:
     return changes
 
 
+def verify_pr_campaign_orchestration(
+    repo_root: Path,
+    campaigns: tuple[Campaign, ...],
+) -> None:
+    """Bind every discovered direct-proof campaign to PR execution and merge gating."""
+    workflow_path = repo_root / ".github" / "workflows" / "pr-ci.yml"
+    source = workflow_path.read_text(encoding="utf-8")
+    expected = {campaign.workflow for campaign in campaigns}
+
+    reusable = set(
+        re.findall(
+            r"^\s+uses:\s+\./(\.github/workflows/(?:m5|m6)-[^\s]+\.yml)\s*$",
+            source,
+            flags=re.MULTILINE,
+        )
+    )
+    if reusable != expected:
+        missing = sorted(expected - reusable)
+        extra = sorted(reusable - expected)
+        raise AssertionError(
+            "PR direct-proof reusable-workflow inventory drift: "
+            f"missing={missing} extra={extra}"
+        )
+
+    required_literals = (
+        "direct_workflows: ${{ steps.classify.outputs.direct_workflows }}",
+        "echo 'direct_workflows=[]'",
+        "trusted PR campaign classification must succeed before merge",
+    )
+    for literal in required_literals:
+        if source.count(literal) != 1:
+            raise AssertionError(
+                f"PR direct-proof orchestration must contain exactly one {literal!r}"
+            )
+
+    for campaign in campaigns:
+        condition = (
+            "contains(needs.scope.outputs.direct_workflows, "
+            f"'{campaign.workflow}')"
+        )
+        uses = f"uses: ./{campaign.workflow}"
+        gate = f'require_campaign "{campaign.workflow}"'
+        if source.count(condition) != 1:
+            raise AssertionError(
+                f"{campaign.workflow} must have exactly one trusted direct-proof job condition"
+            )
+        if source.count(uses) != 1:
+            raise AssertionError(
+                f"{campaign.workflow} must be invoked exactly once by PR CI"
+            )
+        if source.count(gate) != 1:
+            raise AssertionError(
+                f"{campaign.workflow} must be checked exactly once by Direct Merge Gate"
+            )
+
+
 def self_test(
     repo_root: Path,
     policy: ScopePolicy,
     campaigns: tuple[Campaign, ...],
 ) -> None:
     assert campaigns, "campaign inventory must not be empty"
+    verify_pr_campaign_orchestration(repo_root, campaigns)
+
+    # Every direct path from every semantic closure must route its owning
+    # dedicated workflow into PR proof, including campaign-scope changes.
+    for campaign in campaigns:
+        for direct_path in campaign.direct_paths:
+            direct_result = classify(
+                [Change("modified", direct_path)],
+                1,
+                policy,
+                campaigns,
+            )
+            assert direct_result is not None
+            assert (
+                campaign.workflow
+                in direct_result["direct_proof_campaign_workflows"]
+            ), (campaign.workflow, direct_path)
 
     actual_head = subprocess.run(
         ["git", "-C", str(repo_root), "rev-parse", "HEAD"],

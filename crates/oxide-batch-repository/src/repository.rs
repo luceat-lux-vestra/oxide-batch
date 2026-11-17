@@ -20,16 +20,20 @@ use oxide_batch_core::{
 };
 
 use crate::{
-    ActorRef, DefinitionRegistration, FlowDecision, FlowDecisionRequest, FlowStepState,
-    FlowTransitionKind, ForkLineage, NestedJobLink, NestedJobLinkRequest, OperationId,
-    OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PartitionAggregate,
-    PartitionAggregationError, PartitionPlanEntry, PurgeCounts, PurgePlan, PurgePlanRequest,
-    PurgeSurvey, ReasonCode, RepeatCommitRequest, RepeatExecution, RepeatLineage, RetentionAction,
-    RetentionHold, RetentionRecord, RetentionRecordDraft, ScopeResolutionProvenance, StepPartition,
+    ActorRef, DefinitionRegistration, FlowDecision, FlowDecisionId, FlowDecisionRequest,
+    FlowStepState, FlowTransitionKind, ForkLineage, NestedJobLink, NestedJobLinkRequest,
+    OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken,
+    PartitionAggregate, PartitionAggregationError, PartitionPlanEntry, PurgeCounts, PurgePlan,
+    PurgePlanRequest, PurgeSurvey, ReasonCode, RepeatCommitRequest, RepeatExecution, RepeatLineage,
+    RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
+    ScopeResolutionProvenance, StepPartition,
 };
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
 const MAX_OPERATOR_REFERENCE_BYTES: usize = 128;
+/// Maximum committed step states one fork-source snapshot may return.
+#[doc(hidden)]
+pub const MAX_FORK_SOURCE_STEPS: usize = 1024;
 
 /// An owned, dynamically dispatched future used by public asynchronous ports.
 ///
@@ -805,6 +809,21 @@ pub trait RepositoryUnitOfWork: Send {
             })
         })
     }
+
+    /// Loads the bounded committed step-state snapshot of a locked fork source.
+    ///
+    /// Implementations declaring definition/fork support must return at most
+    /// `MAX_FORK_SOURCE_STEPS` states and fail before returning an oversized set.
+    fn fork_source_step_states(
+        &mut self,
+        _source_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<FlowStepState>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
+    }
     /// Appends immutable lineage within the target creation `UoW`.
     fn append_fork_lineage<'a>(
         &'a mut self,
@@ -1086,23 +1105,11 @@ pub trait RepositoryUnitOfWork: Send {
         id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>>;
 
-    /// Loads job execution snapshots in creation order.
-    fn job_executions(
-        &mut self,
-        job_instance_id: JobInstanceId,
-    ) -> BoxFuture<'_, Result<Vec<JobExecution>, RepositoryError>>;
-
     /// Loads one step execution snapshot for inspection.
     fn get_step_execution(
         &mut self,
         id: StepExecutionId,
     ) -> BoxFuture<'_, Result<Option<StepExecution>, RepositoryError>>;
-
-    /// Loads step execution snapshots in creation order.
-    fn step_executions(
-        &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>>;
 
     /// Loads the latest durable attempt for one instance/logical-step pair.
     fn latest_flow_step<'a>(
@@ -1112,6 +1119,35 @@ pub trait RepositoryUnitOfWork: Send {
     ) -> BoxFuture<'a, Result<Option<FlowStepState>, RepositoryError>> {
         Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
     }
+
+    /// Loads the exact logical step owned by one execution attempt.
+    ///
+    /// Production adapters override this with an indexed point lookup. This
+    /// display-name fallback is P1 migration scaffolding only.
+    fn flow_step_execution<'a>(
+        &'a mut self,
+        job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<StepExecution>, RepositoryError>>;
+
+    /// Loads the authoritative latest execution for one logical instance.
+    ///
+    /// Production adapters override this with a bounded point/scalar query.
+    /// This history-based body exists only as P1 migration scaffolding and is
+    /// removed together with the legacy history methods in P2.
+    fn latest_job_execution(
+        &mut self,
+        job_instance_id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>>;
+
+    /// Loads the durable one-based attempt ordinal bound to one execution.
+    ///
+    /// Production adapters override this with a bounded scalar read. This
+    /// fallback exists only until P2 removes the legacy history methods.
+    fn job_execution_attempt(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<NonZeroU64, RepositoryError>>;
 
     /// Loads one exact flow-step attempt for scoped source re-resolution.
     fn scope_step_state(
@@ -1145,13 +1181,13 @@ pub trait RepositoryUnitOfWork: Send {
         Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
     }
 
-    /// Loads one execution's flow decisions in sequence order.
-    fn flow_decisions(
+    /// Loads one exact durable flow decision by identifier.
+    ///
+    /// Production adapters must override this with a bounded point lookup.
+    fn get_flow_decision(
         &mut self,
-        _job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
-        Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
-    }
+        _id: FlowDecisionId,
+    ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>>;
 
     /// Loads the current committed repeat record for one concrete step attempt.
     fn repeat_execution<'a>(
@@ -2043,6 +2079,12 @@ pub enum RepositoryError {
     },
     /// Another committed unit of work invalidated this snapshot.
     ConcurrentModification,
+    /// The repository transaction was definitively aborted before commit.
+    ///
+    /// No durable mutation from this transaction is visible. Callers may start
+    /// a fresh unit of work; this is distinct from an optimistic conflict and
+    /// from an ambiguous commit acknowledgement.
+    TransactionAborted,
     /// A commit failed after the durable store may have made it visible.
     ///
     /// Callers must inspect durable metadata through a new healthy unit of
@@ -2281,6 +2323,9 @@ impl fmt::Display for RepositoryError {
             Self::ConcurrentModification => {
                 formatter.write_str("repository unit of work is based on a stale snapshot")
             }
+            Self::TransactionAborted => {
+                formatter.write_str("repository transaction was aborted before commit")
+            }
             Self::CommitOutcomeUnknown => formatter
                 .write_str("commit outcome is unknown; inspect durable metadata before recovery"),
             Self::Unavailable => formatter.write_str("repository is unavailable"),
@@ -2377,5 +2422,26 @@ impl From<IdGenerationError> for RepositoryError {
 impl From<LifecycleError> for RepositoryError {
     fn from(error: LifecycleError) -> Self {
         Self::Lifecycle(error)
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use std::error::Error as _;
+
+    use super::RepositoryError;
+
+    #[test]
+    fn transaction_aborted_is_a_source_free_known_not_committed_outcome() {
+        let error = RepositoryError::TransactionAborted;
+
+        assert_eq!(
+            error.to_string(),
+            "repository transaction was aborted before commit"
+        );
+        assert!(error.source().is_none());
+        assert_ne!(error, RepositoryError::ConcurrentModification);
+        assert_ne!(error, RepositoryError::CommitOutcomeUnknown);
+        assert_ne!(error, RepositoryError::Unavailable);
     }
 }

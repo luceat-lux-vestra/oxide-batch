@@ -12,7 +12,7 @@ use oxide_batch::{
     ChunkComponentRevisions, ChunkCount, ChunkCounts, ChunkDeliveryMode, ChunkFaultProgress,
     ChunkRestartContract, ChunkSize, ChunkTransactionContext, ChunkTransactionManager, Clock,
     ComponentRevision, DefinitionIdentity, DefinitionRevision, ExecutionContext, FailureCategory,
-    FailureId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition,
+    FailureId, JobInstanceKey, JobName, JobParameters, JobRepository, LifecycleTransition, NodeId,
     PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
     PostgresConfig, PostgresMigrator, RecoveryRequest, StateLimits, StateSchemaId,
     StateSchemaVersion, StepName, TlsMode,
@@ -362,16 +362,12 @@ async fn inspect_recover_and_restart(point: CrashPoint, url: String) -> Result<(
         .await?
         .ok_or("crashed worker did not durably create the job instance")?;
     let original = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("crashed worker did not durably create the job execution")?;
     let original_step = inspect
-        .step_executions(original.id())
+        .flow_step_execution(original.id(), &NodeId::new(STEP_NAME)?)
         .await?
-        .into_iter()
-        .next()
         .ok_or("crashed worker did not durably create the step execution")?;
     inspect.rollback().await?;
     assert_eq!(original.metadata().status(), BatchStatus::Started);
@@ -411,12 +407,14 @@ async fn inspect_recover_and_restart(point: CrashPoint, url: String) -> Result<(
     assert!(!format!("{:?}", recovered.decision()).contains("[42"));
 
     let mut post_recovery = repository.begin().await?;
-    let recovered_steps = post_recovery.step_executions(original.id()).await?;
-    assert_eq!(recovered_steps.len(), 1);
-    assert_eq!(recovered_steps[0].id(), original_step.id());
-    assert_eq!(recovered_steps[0].metadata().status(), BatchStatus::Failed);
+    let recovered_step = post_recovery
+        .get_step_execution(original_step.id())
+        .await?
+        .ok_or("recovered step disappeared")?;
+    assert_eq!(recovered_step.id(), original_step.id());
+    assert_eq!(recovered_step.metadata().status(), BatchStatus::Failed);
     assert_eq!(
-        recovered_steps[0].metadata().timestamps().ended_at(),
+        recovered_step.metadata().timestamps().ended_at(),
         Some(UNIX_EPOCH + Duration::from_secs(902))
     );
     post_recovery.rollback().await?;
@@ -491,16 +489,18 @@ async fn inspect_recover_and_restart(point: CrashPoint, url: String) -> Result<(
     complete.commit().await?;
 
     let mut final_inspection = repository.begin().await?;
-    let attempts = final_inspection.job_executions(instance.id()).await?;
-    assert_eq!(attempts.len(), 2);
+    let latest = final_inspection
+        .latest_job_execution(instance.id())
+        .await?
+        .ok_or("restart attempt was not inspectable")?;
     assert_eq!(
-        attempts
-            .last()
-            .ok_or("restart attempt was not inspectable")?
-            .metadata()
-            .status(),
-        BatchStatus::Completed
+        final_inspection
+            .job_execution_attempt(latest.id())
+            .await?
+            .get(),
+        2
     );
+    assert_eq!(latest.metadata().status(), BatchStatus::Completed);
     assert_eq!(
         final_inspection
             .recovery_decision(original.id())

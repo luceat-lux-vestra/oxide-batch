@@ -262,15 +262,12 @@ async fn inspect_recover_restart(url: String, migrator_url: &str) -> Result<(), 
         .await?
         .ok_or("crash worker did not create an instance")?;
     let original = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("crash worker did not create an execution")?;
-    let original_steps = inspect.step_executions(original.id()).await?;
-    let parent = original_steps
-        .iter()
-        .find(|step| step.step_name().as_str() == "partitioned")
+    let parent = inspect
+        .flow_step_execution(original.id(), &NodeId::new("partitioned")?)
+        .await?
         .ok_or("partition manager is missing")?;
     let original_plan = inspect.step_partition_plan(parent.id()).await?;
     inspect.rollback().await?;

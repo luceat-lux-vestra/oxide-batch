@@ -586,7 +586,14 @@ fn concurrent_launch_creates_single_instance() -> Result<(), Box<dyn Error>> {
             .find_job_instance(&key)
             .await?
             .ok_or("canonical instance was not committed")?;
-        assert_eq!(inspection.job_executions(instance.id()).await?.len(), 1);
+        let latest = inspection
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or("canonical execution missing")?;
+        assert_eq!(
+            inspection.job_execution_attempt(latest.id()).await?.get(),
+            1
+        );
         inspection.rollback().await?;
         repository.close().await?;
         remove_contract_rows(&url).await?;
@@ -1253,8 +1260,15 @@ fn compatible_restart_transforms_cross_family_state_on_postgres() -> Result<(), 
         rejected.rollback().await?;
 
         let mut unchanged = repository.begin().await?;
+        let unchanged_latest = unchanged
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or("source execution disappeared after failed transform")?;
         assert_eq!(
-            unchanged.job_executions(instance.id()).await?.len(),
+            unchanged
+                .job_execution_attempt(unchanged_latest.id())
+                .await?
+                .get(),
             1,
             "a failed transform must not create a partial target attempt",
         );

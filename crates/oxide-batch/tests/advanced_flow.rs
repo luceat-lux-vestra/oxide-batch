@@ -1090,18 +1090,6 @@ async fn verify_durable_decision_order(
         .iter()
         .map(|decision| (decision.sequence().get(), decision.id()))
         .collect::<Vec<_>>();
-    let mut transaction = repository.begin().await?;
-    let stored = transaction.flow_decisions(execution).await?;
-    transaction.rollback().await?;
-    let actual = stored
-        .iter()
-        .map(|decision| (decision.sequence().get(), decision.id()))
-        .collect::<Vec<_>>();
-    assert_eq!(
-        actual, expected,
-        "repository must return logical sequence order"
-    );
-
     let explorer = JobExplorer::new(InMemoryExplorer::new(repository));
     for size in [1, 2, 3] {
         let size = PageSize::new(size)?;

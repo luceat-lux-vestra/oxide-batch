@@ -204,16 +204,16 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
             assert_eq!(target_execution.metadata().status(), BatchStatus::Starting);
             assert_eq!(
                 check
-                    .job_executions(lineage.target_instance_id())
+                    .job_execution_attempt(lineage.target_execution_id())
                     .await?
-                    .len(),
+                    .get(),
                 1
             );
             assert!(
                 check
-                    .step_executions(lineage.target_execution_id())
+                    .flow_step_execution(lineage.target_execution_id(), &NodeId::new("only")?)
                     .await?
-                    .is_empty()
+                    .is_none()
             );
             let actual = check
                 .scope_job_execution_context(lineage.target_execution_id())
@@ -263,13 +263,11 @@ fn transformed_fork_persists_across_reconnect_without_restart_inference()
                 Some(first.clone()),
             );
             let mut count = reopened.begin().await?;
-            assert_eq!(
-                count
-                    .job_executions(first.target_instance_id())
-                    .await?
-                    .len(),
-                1
-            );
+            let target = count
+                .latest_job_execution(first.target_instance_id())
+                .await?
+                .ok_or("fork target missing")?;
+            assert_eq!(count.job_execution_attempt(target.id()).await?.get(), 1);
             count.rollback().await?;
 
             // Post-lineage rollback must erase instance, execution, and

@@ -523,13 +523,13 @@ impl<R: JobRepository> JobOperator<R> {
         let Some(instance_id) = request.job_instance_id() else {
             return Err(EffectFailure::Rejected(OperatorRejection::InstanceNotFound));
         };
-        let prior = unit
-            .job_executions(instance_id)
+        let latest = unit
+            .latest_job_execution(instance_id)
             .await
-            .map_err(EffectFailure::classify)?;
-        let latest = prior.last().ok_or(EffectFailure::Rejected(
-            OperatorRejection::RestartWithoutPriorAttempt,
-        ))?;
+            .map_err(EffectFailure::classify)?
+            .ok_or(EffectFailure::Rejected(
+                OperatorRejection::RestartWithoutPriorAttempt,
+            ))?;
         let prior_status = latest.metadata().status();
         if matches!(prior_status, BatchStatus::Unknown) {
             return Err(EffectFailure::Rejected(OperatorRejection::InvalidState {

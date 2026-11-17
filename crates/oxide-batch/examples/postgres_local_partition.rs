@@ -140,7 +140,7 @@ async fn latest(
     let key = JobInstanceKey::new(JobName::new(JOB)?, &JobParameters::new());
     let mut unit = repository.begin().await?;
     let execution = if let Some(instance) = unit.find_job_instance(&key).await? {
-        unit.job_executions(instance.id()).await?.into_iter().last()
+        unit.latest_job_execution(instance.id()).await?
     } else {
         None
     };
@@ -154,17 +154,16 @@ async fn inspect() -> Result<(), Box<dyn Error>> {
         .await?
         .ok_or("the example has no durable execution")?;
     let mut unit = repository.begin().await?;
-    let steps = unit.step_executions(execution.id()).await?;
+    let partitioned = unit
+        .flow_step_execution(execution.id(), &NodeId::new("partitioned")?)
+        .await?;
     println!(
         "execution {} status {} version {}",
         execution.id(),
         execution.metadata().status(),
         execution.version().get()
     );
-    for step in &steps {
-        if step.step_name().as_str() != "partitioned" {
-            continue;
-        }
+    if let Some(step) = partitioned {
         for partition in unit.step_partition_plan(step.id()).await? {
             println!(
                 "partition {} status {} worker {:?}",
