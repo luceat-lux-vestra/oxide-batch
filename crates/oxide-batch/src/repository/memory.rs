@@ -2998,7 +2998,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .await?
                 .instance()
                 .clone();
-            let latest = self.latest_job_execution(child_instance.id()).await?.cloned();
+            let latest = self.latest_job_execution(child_instance.id()).await?;
             let child_execution = match latest {
                 None => {
                     self.create_job_execution_with_definition(
