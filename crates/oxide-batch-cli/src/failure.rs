@@ -28,6 +28,7 @@ pub fn repository(error: &RepositoryError) -> ExitCategory {
         RepositoryError::SchemaUninitialized
         | RepositoryError::MigrationRequired { .. }
         | RepositoryError::NewerSchema { .. }
+        | RepositoryError::TransactionAborted
         | RepositoryError::Unavailable => ExitCategory::RepositoryUnavailable,
         RepositoryError::Identifier(_) => ExitCategory::Internal,
         RepositoryError::Domain(_) | RepositoryError::IdentifierOutOfRange { .. } => {
@@ -54,6 +55,10 @@ pub fn repository_diagnostic(error: &RepositoryError) -> Diagnostic {
         RepositoryError::NewerSchema { .. } => (
             "SCHEMA_NEWER",
             "the metadata schema is newer than this build supports",
+        ),
+        RepositoryError::TransactionAborted => (
+            "TRANSACTION_ABORTED",
+            "the repository transaction was aborted before commit; start from fresh durable state",
         ),
         RepositoryError::Unavailable => ("REPOSITORY_UNAVAILABLE", "the repository is unavailable"),
         RepositoryError::CommitOutcomeUnknown => (
@@ -259,6 +264,21 @@ mod tests {
             repository(&RepositoryError::Unavailable),
             ExitCategory::RepositoryUnavailable
         );
+    }
+
+    #[test]
+    fn an_aborted_transaction_is_operational_but_not_unknown_or_optimistic() {
+        let error = RepositoryError::TransactionAborted;
+
+        assert_eq!(repository(&error), ExitCategory::RepositoryUnavailable);
+        assert_ne!(repository(&error), ExitCategory::OutcomeUnknown);
+        assert_ne!(repository(&error), ExitCategory::OptimisticConflict);
+
+        let diagnostic = repository_diagnostic(&error);
+        assert_eq!(diagnostic.code, "TRANSACTION_ABORTED");
+        assert_ne!(diagnostic.code, "OUTCOME_UNKNOWN");
+        assert_ne!(diagnostic.code, "CONCURRENT_MODIFICATION");
+        assert_ne!(diagnostic.code, "REPOSITORY_UNAVAILABLE");
     }
 
     #[test]

@@ -2088,6 +2088,12 @@ pub enum RepositoryError {
     },
     /// Another committed unit of work invalidated this snapshot.
     ConcurrentModification,
+    /// The repository transaction was definitively aborted before commit.
+    ///
+    /// No durable mutation from this transaction is visible. Callers may start
+    /// a fresh unit of work; this is distinct from an optimistic conflict and
+    /// from an ambiguous commit acknowledgement.
+    TransactionAborted,
     /// A commit failed after the durable store may have made it visible.
     ///
     /// Callers must inspect durable metadata through a new healthy unit of
@@ -2326,6 +2332,9 @@ impl fmt::Display for RepositoryError {
             Self::ConcurrentModification => {
                 formatter.write_str("repository unit of work is based on a stale snapshot")
             }
+            Self::TransactionAborted => {
+                formatter.write_str("repository transaction was aborted before commit")
+            }
             Self::CommitOutcomeUnknown => formatter
                 .write_str("commit outcome is unknown; inspect durable metadata before recovery"),
             Self::Unavailable => formatter.write_str("repository is unavailable"),
@@ -2422,5 +2431,26 @@ impl From<IdGenerationError> for RepositoryError {
 impl From<LifecycleError> for RepositoryError {
     fn from(error: LifecycleError) -> Self {
         Self::Lifecycle(error)
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use std::error::Error as _;
+
+    use super::RepositoryError;
+
+    #[test]
+    fn transaction_aborted_is_a_source_free_known_not_committed_outcome() {
+        let error = RepositoryError::TransactionAborted;
+
+        assert_eq!(
+            error.to_string(),
+            "repository transaction was aborted before commit"
+        );
+        assert!(error.source().is_none());
+        assert_ne!(error, RepositoryError::ConcurrentModification);
+        assert_ne!(error, RepositoryError::CommitOutcomeUnknown);
+        assert_ne!(error, RepositoryError::Unavailable);
     }
 }
