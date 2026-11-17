@@ -241,7 +241,10 @@ fn postgres_nested_job_completed_child_reuses_exact_committed_link() -> Result<(
             .latest_job_execution(first.child_job_instance_id())
             .await?
             .ok_or("nested child execution missing")?;
-        assert_eq!(continuation.job_execution_attempt(latest.id()).await?.get(), 1);
+        assert_eq!(
+            continuation.job_execution_attempt(latest.id()).await?.get(),
+            1
+        );
         continuation.commit().await?;
         repository.close().await?;
         Ok::<(), Box<dyn Error>>(())
@@ -317,7 +320,10 @@ fn postgres_nested_job_stopped_child_restarts_same_instance_with_complete_parame
             .latest_job_execution(first.child_job_instance_id())
             .await?
             .ok_or("nested child execution missing")?;
-        assert_eq!(continuation.job_execution_attempt(latest.id()).await?.get(), 2);
+        assert_eq!(
+            continuation.job_execution_attempt(latest.id()).await?.get(),
+            2
+        );
         continuation.commit().await?;
         repository.close().await?;
         Ok::<(), Box<dyn Error>>(())

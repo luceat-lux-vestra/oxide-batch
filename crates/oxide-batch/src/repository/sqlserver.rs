@@ -1617,7 +1617,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         })
     }
 
-
     fn get_step_execution(
         &mut self,
         id: StepExecutionId,
@@ -1652,7 +1651,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
             row.map(|row| decode_step_execution(&row)).transpose()
         })
     }
-
 
     fn latest_flow_step<'a>(
         &'a mut self,
@@ -1925,7 +1923,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
             row.map(|row| decode_flow_decision(&row)).transpose()
         })
     }
-
 
     fn recover_job_execution<'a>(
         &'a mut self,

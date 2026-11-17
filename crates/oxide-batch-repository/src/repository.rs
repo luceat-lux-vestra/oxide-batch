@@ -21,12 +21,12 @@ use oxide_batch_core::{
 
 use crate::{
     ActorRef, DefinitionRegistration, FlowDecision, FlowDecisionId, FlowDecisionRequest,
-    FlowStepState,
-    FlowTransitionKind, ForkLineage, NestedJobLink, NestedJobLinkRequest, OperationId,
-    OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PartitionAggregate,
-    PartitionAggregationError, PartitionPlanEntry, PurgeCounts, PurgePlan, PurgePlanRequest,
-    PurgeSurvey, ReasonCode, RepeatCommitRequest, RepeatExecution, RepeatLineage, RetentionAction,
-    RetentionHold, RetentionRecord, RetentionRecordDraft, ScopeResolutionProvenance, StepPartition,
+    FlowStepState, FlowTransitionKind, ForkLineage, NestedJobLink, NestedJobLinkRequest,
+    OperationId, OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken,
+    PartitionAggregate, PartitionAggregationError, PartitionPlanEntry, PurgeCounts, PurgePlan,
+    PurgePlanRequest, PurgeSurvey, ReasonCode, RepeatCommitRequest, RepeatExecution, RepeatLineage,
+    RetentionAction, RetentionHold, RetentionRecord, RetentionRecordDraft,
+    ScopeResolutionProvenance, StepPartition,
 };
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
@@ -1107,7 +1107,6 @@ pub trait RepositoryUnitOfWork: Send {
 
     /// Loads job execution snapshots in creation order.
 
-
     /// Loads one step execution snapshot for inspection.
     fn get_step_execution(
         &mut self,
@@ -1115,7 +1114,6 @@ pub trait RepositoryUnitOfWork: Send {
     ) -> BoxFuture<'_, Result<Option<StepExecution>, RepositoryError>>;
 
     /// Loads step execution snapshots in creation order.
-
 
     /// Loads the latest durable attempt for one instance/logical-step pair.
     fn latest_flow_step<'a>(
@@ -1196,7 +1194,6 @@ pub trait RepositoryUnitOfWork: Send {
         &mut self,
         _id: FlowDecisionId,
     ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>>;
-
 
     /// Loads the current committed repeat record for one concrete step attempt.
     fn repeat_execution<'a>(

@@ -34,12 +34,12 @@ use oxide_batch::{
     ExecutionVersion, ExplorerRepository, FailureCategory, FailureId, FailureSummary, FlowDecision,
     JobExecution, JobExecutionId, JobExecutionProjection, JobExplorer, JobInstance, JobInstanceKey,
     JobName, JobOperator, JobParameters, JobRepository, LifecycleTransition, NodeId, OperationId,
-    PageRequest, PageSize,
-    OperatorOutcomeClass, OperatorRequest, OwnerToken, PostgresChunkStateError,
-    PostgresChunkStateProvider, PostgresChunkTransactionManager, PostgresConfig, PostgresExplorer,
-    PostgresJobRepository, ReasonCode, RecoveryDecision, RecoveryDirective, RecoveryProposal,
-    RecoveryProposer, StaleThreshold, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepExecution, StepName, StepPartition, SystemClock, SystemMonotonicClock, TlsMode,
+    OperatorOutcomeClass, OperatorRequest, OwnerToken, PageRequest, PageSize,
+    PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
+    PostgresConfig, PostgresExplorer, PostgresJobRepository, ReasonCode, RecoveryDecision,
+    RecoveryDirective, RecoveryProposal, RecoveryProposer, StaleThreshold, StateLimits,
+    StateSchemaId, StateSchemaVersion, StepExecution, StepName, StepPartition, SystemClock,
+    SystemMonotonicClock, TlsMode,
 };
 use serde_json::{Value, json};
 use sqlx::Row;
@@ -518,8 +518,14 @@ async fn all_step_ids(
     let mut request = PageRequest::first(size);
     let mut ids = Vec::new();
     loop {
-        let page = explorer.list_step_executions(execution_id, &request).await?;
-        ids.extend(page.rows().iter().map(oxide_batch::StepExecutionProjection::id));
+        let page = explorer
+            .list_step_executions(execution_id, &request)
+            .await?;
+        ids.extend(
+            page.rows()
+                .iter()
+                .map(oxide_batch::StepExecutionProjection::id),
+        );
         let Some(cursor) = page.next_cursor() else {
             break;
         };

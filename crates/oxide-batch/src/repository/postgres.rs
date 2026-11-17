@@ -2868,8 +2868,7 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         source_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Vec<FlowStepState>, RepositoryError>> {
         Box::pin(async move {
-            let source_id =
-                database_id(source_execution_id.get(), IdentifierKind::JobExecution)?;
+            let source_id = database_id(source_execution_id.get(), IdentifierKind::JobExecution)?;
             let rows = sqlx::query(AssertSqlSafe(durable_step_select(
                 "WHERE execution.job_execution_id = $1 ORDER BY execution.id LIMIT $2 FOR UPDATE",
             )))
@@ -2889,17 +2888,14 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
                     let node_id = NodeId::new(read_text(row, "step_logical_id")?)
                         .map_err(|_| RepositoryError::ForkStateCorrupt)?;
                     let durable = decode_durable_step_state(row)?;
-                    let context =
-                        if durable.execution_context.schema_id().as_str() == DEFAULT_CONTEXT_SCHEMA {
-                            None
-                        } else {
-                            Some(durable.execution_context)
-                        };
-                    Ok(FlowStepState::new(
-                        node_id,
-                        durable.step_execution,
-                        context,
-                    ))
+                    let context = if durable.execution_context.schema_id().as_str()
+                        == DEFAULT_CONTEXT_SCHEMA
+                    {
+                        None
+                    } else {
+                        Some(durable.execution_context)
+                    };
+                    Ok(FlowStepState::new(node_id, durable.step_execution, context))
                 })
                 .collect()
         })
@@ -4284,7 +4280,6 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
-
     fn get_step_execution(
         &mut self,
         id: StepExecutionId,
@@ -4317,7 +4312,6 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             row.map(|row| decode_step_execution(&row)).transpose()
         })
     }
-
 
     fn latest_flow_step<'a>(
         &'a mut self,
@@ -4644,7 +4638,6 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
             row.map(|row| decode_flow_decision(&row)).transpose()
         })
     }
-
 
     fn repeat_execution<'a>(
         &'a mut self,

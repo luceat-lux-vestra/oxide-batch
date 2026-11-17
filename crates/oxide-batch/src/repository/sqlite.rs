@@ -1019,26 +1019,23 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         job_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
         Box::pin(async move {
-            let raw: i64 = sqlx::query_scalar(
-                "SELECT attempt FROM ob_job_execution WHERE id = ?",
-            )
-            .bind(sqlite_identifier(
-                job_execution_id.get(),
-                IdentifierKind::JobExecution,
-            )?)
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?
-            .ok_or(RepositoryError::JobExecutionNotFound {
-                id: job_execution_id,
-            })?;
+            let raw: i64 = sqlx::query_scalar("SELECT attempt FROM ob_job_execution WHERE id = ?")
+                .bind(sqlite_identifier(
+                    job_execution_id.get(),
+                    IdentifierKind::JobExecution,
+                )?)
+                .fetch_optional(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?
+                .ok_or(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                })?;
             u64::try_from(raw)
                 .ok()
                 .and_then(std::num::NonZeroU64::new)
                 .ok_or(RepositoryError::Unavailable)
         })
     }
-
 
     fn get_step_execution(
         &mut self,
@@ -1072,7 +1069,6 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
             row.map(|row| decode_step_execution(&row)).transpose()
         })
     }
-
 
     fn latest_flow_step<'a>(
         &'a mut self,
@@ -1350,17 +1346,14 @@ impl RepositoryUnitOfWork for SqliteUnitOfWork<'_> {
         id: FlowDecisionId,
     ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>> {
         Box::pin(async move {
-            let row = sqlx::query(AssertSqlSafe(flow_decision_select(
-                "WHERE decision.id = ?",
-            )))
-            .bind(sqlite_identifier(id.get(), IdentifierKind::FlowDecision)?)
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            let row = sqlx::query(AssertSqlSafe(flow_decision_select("WHERE decision.id = ?")))
+                .bind(sqlite_identifier(id.get(), IdentifierKind::FlowDecision)?)
+                .fetch_optional(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
             row.map(|row| decode_flow_decision(&row)).transpose()
         })
     }
-
 
     fn recover_job_execution<'a>(
         &'a mut self,

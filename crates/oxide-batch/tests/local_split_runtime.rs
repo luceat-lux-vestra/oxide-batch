@@ -13,10 +13,10 @@ use oxide_batch::{
     ExitCode, ExitStatus, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode,
     FlowRuntimeError, FlowTarget, FlowTransitionKind, InMemoryExplorer, InMemoryJobRepository,
     JobExplorer, JobName, JobParameters, JobRepository, JoinNode, LocalFailurePolicy, NodeId,
-    PageRequest, PageSize, RepositoryDescriptor,
-    RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SplitBranch, SplitBudget,
-    SplitNode, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
-    TaskletError, TaskletOutcome, TaskletStep, TaskletStepFactory, TerminalKind,
+    PageRequest, PageSize, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
+    SequentialIdGenerator, SplitBranch, SplitBudget, SplitNode, StepComponents, StepName, StepNode,
+    StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
+    TaskletStepFactory, TerminalKind,
 };
 use tokio::sync::{Barrier, Notify};
 
@@ -391,11 +391,15 @@ async fn normalized_success(
     let steps = explorer
         .list_step_executions(execution_id, &request)
         .await?;
-    assert!(steps.next_cursor().is_none(), "fixture exceeded one bounded step page");
-    let decisions = explorer
-        .list_flow_decisions(execution_id, &request)
-        .await?;
-    assert!(decisions.next_cursor().is_none(), "fixture exceeded one bounded decision page");
+    assert!(
+        steps.next_cursor().is_none(),
+        "fixture exceeded one bounded step page"
+    );
+    let decisions = explorer.list_flow_decisions(execution_id, &request).await?;
+    assert!(
+        decisions.next_cursor().is_none(),
+        "fixture exceeded one bounded decision page"
+    );
 
     let mut steps = steps
         .rows()
@@ -921,8 +925,13 @@ async fn completion_order_does_not_change_failed_aggregate() -> Result<(), Box<d
         let execution_id = report.job_execution().id();
         let explorer = JobExplorer::new(InMemoryExplorer::new(&repository));
         let request = PageRequest::first(PageSize::new(500)?);
-        let steps = explorer.list_step_executions(execution_id, &request).await?;
-        assert!(steps.next_cursor().is_none(), "fixture exceeded one bounded step page");
+        let steps = explorer
+            .list_step_executions(execution_id, &request)
+            .await?;
+        assert!(
+            steps.next_cursor().is_none(),
+            "fixture exceeded one bounded step page"
+        );
         let mut steps = steps
             .rows()
             .iter()

@@ -471,7 +471,10 @@ fn compatible_restart_requires_exact_live_execution_and_replays_without_code()
     let mut inspect = block_on(repository.begin())?;
     let latest = block_on(inspect.latest_job_execution(instance.id()))?
         .ok_or(RepositoryError::Unavailable)?;
-    assert_eq!(block_on(inspect.job_execution_attempt(latest.id()))?.get(), 2);
+    assert_eq!(
+        block_on(inspect.job_execution_attempt(latest.id()))?.get(),
+        2
+    );
     assert!(
         block_on(inspect.find_operator_request(OperatorAction::Restart, request.operation_id(),))?
             .is_some()
@@ -829,7 +832,6 @@ impl oxide_batch::RepositoryUnitOfWork for FaultingUnit<'_> {
         self.inner.get_job_execution(id)
     }
 
-
     fn get_step_execution(
         &mut self,
         id: oxide_batch::StepExecutionId,
@@ -837,7 +839,6 @@ impl oxide_batch::RepositoryUnitOfWork for FaultingUnit<'_> {
     {
         self.inner.get_step_execution(id)
     }
-
 
     fn recover_job_execution<'a>(
         &'a mut self,
@@ -878,7 +879,8 @@ impl oxide_batch::RepositoryUnitOfWork for FaultingUnit<'_> {
     fn latest_job_execution(
         &mut self,
         job_instance_id: oxide_batch::JobInstanceId,
-    ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::JobExecution>, RepositoryError>> {
+    ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::JobExecution>, RepositoryError>>
+    {
         self.inner.latest_job_execution(job_instance_id)
     }
 
@@ -893,14 +895,16 @@ impl oxide_batch::RepositoryUnitOfWork for FaultingUnit<'_> {
         &'a mut self,
         job_execution_id: oxide_batch::JobExecutionId,
         node_id: &'a oxide_batch::NodeId,
-    ) -> oxide_batch::BoxFuture<'a, Result<Option<oxide_batch::StepExecution>, RepositoryError>> {
+    ) -> oxide_batch::BoxFuture<'a, Result<Option<oxide_batch::StepExecution>, RepositoryError>>
+    {
         self.inner.flow_step_execution(job_execution_id, node_id)
     }
 
     fn get_flow_decision(
         &mut self,
         id: oxide_batch::FlowDecisionId,
-    ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::FlowDecision>, RepositoryError>> {
+    ) -> oxide_batch::BoxFuture<'_, Result<Option<oxide_batch::FlowDecision>, RepositoryError>>
+    {
         self.inner.get_flow_decision(id)
     }
 

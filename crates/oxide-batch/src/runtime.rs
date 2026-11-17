@@ -3,7 +3,7 @@
 use std::any::Any;
 use std::error::Error;
 use std::fmt;
-use std::num::{NonZeroU64, NonZeroUsize};
+use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1343,7 +1343,10 @@ impl<'a> JobLauncher<'a> {
             NodeId::new(job.step.name().as_str()).map_err(|_| RepositoryError::FlowStateCorrupt)?;
         let existing_step = unit.flow_step_execution(execution_id, &node_id).await?;
         let step_execution = match existing_step {
-            None => unit.create_step_execution(execution_id, job.step.name()).await?,
+            None => {
+                unit.create_step_execution(execution_id, job.step.name())
+                    .await?
+            }
             Some(step)
                 if step.step_name() == job.step.name()
                     && step.metadata().status() == BatchStatus::Starting =>

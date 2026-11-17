@@ -4281,8 +4281,7 @@ impl<'a> FlowLauncher<'a> {
         } else {
             execution
         };
-        let attempt =
-            ExecutionAttempt::new(unit.job_execution_attempt(execution.id()).await?);
+        let attempt = ExecutionAttempt::new(unit.job_execution_attempt(execution.id()).await?);
         match unit.commit().await {
             Ok(()) => {}
             Err(RepositoryError::CommitOutcomeUnknown) if upgrade.is_some() => {

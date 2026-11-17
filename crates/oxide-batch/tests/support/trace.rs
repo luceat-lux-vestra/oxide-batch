@@ -18,9 +18,9 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use oxide_batch::{
     BoxFuture, DefinitionIdentity, DefinitionUpgrade, ExecutionMetadata, ExecutionVersion,
-    ExitStatus, InMemoryExplorer, InMemoryJobRepository, JobExecution, JobExecutionId,
-    JobExplorer, JobInstance, JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName,
-    JobRepository, LifecycleEvent, LifecycleEventSink, LifecycleTransition, PageRequest, PageSize,
+    ExitStatus, InMemoryExplorer, InMemoryJobRepository, JobExecution, JobExecutionId, JobExplorer,
+    JobInstance, JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName, JobRepository,
+    LifecycleEvent, LifecycleEventSink, LifecycleTransition, PageRequest, PageSize,
     RecoveryDecision, RecoveryRequest, RecoveryResult, RepositoryError, RepositoryUnitOfWork,
     StepExecution, StepExecutionId, StepName,
 };
@@ -83,7 +83,9 @@ impl ExecutionTrace {
         let request = PageRequest::first(PageSize::new(500)?);
         let execution_page = explorer.list_executions(instance_id, &request).await?;
         if execution_page.next_cursor().is_some() {
-            return Err(std::io::Error::other("trace execution history exceeded one bounded page").into());
+            return Err(
+                std::io::Error::other("trace execution history exceeded one bounded page").into(),
+            );
         }
         let mut execution_ids = execution_page
             .into_rows()
@@ -100,9 +102,13 @@ impl ExecutionTrace {
                 .get_job_execution(execution_id)
                 .await?
                 .ok_or_else(|| std::io::Error::other("explorer execution vanished"))?;
-            let step_page = explorer.list_step_executions(execution_id, &request).await?;
+            let step_page = explorer
+                .list_step_executions(execution_id, &request)
+                .await?;
             if step_page.next_cursor().is_some() {
-                return Err(std::io::Error::other("trace step history exceeded one bounded page").into());
+                return Err(
+                    std::io::Error::other("trace step history exceeded one bounded page").into(),
+                );
             }
             let mut step_ids = step_page
                 .into_rows()
@@ -548,7 +554,6 @@ impl RepositoryUnitOfWork for RecordingUnitOfWork<'_> {
         self.inner.get_job_execution(id)
     }
 
-
     fn get_step_execution(
         &mut self,
         id: StepExecutionId,
@@ -559,7 +564,6 @@ impl RepositoryUnitOfWork for RecordingUnitOfWork<'_> {
         ));
         self.inner.get_step_execution(id)
     }
-
 
     fn recover_job_execution<'a>(
         &'a mut self,

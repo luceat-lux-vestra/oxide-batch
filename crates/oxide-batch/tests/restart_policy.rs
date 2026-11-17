@@ -251,8 +251,14 @@ async fn m7_nonrestartable_job_rejects_restart_before_user_work() -> Result<(), 
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     let mut inspection = repository.begin().await?;
-    let latest = inspection.latest_job_execution(instance_id).await?.ok_or("missing latest attempt")?;
-    assert_eq!(inspection.job_execution_attempt(latest.id()).await?.get(), 1);
+    let latest = inspection
+        .latest_job_execution(instance_id)
+        .await?
+        .ok_or("missing latest attempt")?;
+    assert_eq!(
+        inspection.job_execution_attempt(latest.id()).await?.get(),
+        1
+    );
     inspection.rollback().await?;
     Ok(())
 }
@@ -334,8 +340,14 @@ async fn nonrestartable_step_rejects_required_reentry_before_new_attempt_or_user
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 
     let mut inspection = repository.begin().await?;
-    let latest = inspection.latest_job_execution(instance_id).await?.ok_or("missing latest attempt")?;
-    assert_eq!(inspection.job_execution_attempt(latest.id()).await?.get(), 1);
+    let latest = inspection
+        .latest_job_execution(instance_id)
+        .await?
+        .ok_or("missing latest attempt")?;
+    assert_eq!(
+        inspection.job_execution_attempt(latest.id()).await?.get(),
+        1
+    );
     inspection.rollback().await?;
     Ok(())
 }
@@ -369,7 +381,10 @@ async fn completed_nonrestartable_step_is_still_reused_when_reentry_is_not_reque
         .latest_job_execution(first.instance().id())
         .await?
         .ok_or("missing restarted attempt")?;
-    assert_eq!(inspection.job_execution_attempt(latest.id()).await?.get(), 2);
+    assert_eq!(
+        inspection.job_execution_attempt(latest.id()).await?.get(),
+        2
+    );
     inspection.rollback().await?;
     Ok(())
 }

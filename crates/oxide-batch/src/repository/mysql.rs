@@ -908,13 +908,12 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
         job_instance_id: JobInstanceId,
     ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
         Box::pin(async move {
-            let exists = sqlx::query_scalar::<_, u64>(
-                "SELECT id FROM ob_job_instance WHERE id = ?",
-            )
-            .bind(job_instance_id.get())
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            let exists =
+                sqlx::query_scalar::<_, u64>("SELECT id FROM ob_job_instance WHERE id = ?")
+                    .bind(job_instance_id.get())
+                    .fetch_optional(&mut **self.connection()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
             if exists.is_none() {
                 return Err(RepositoryError::JobInstanceNotFound {
                     id: job_instance_id,
@@ -936,20 +935,18 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
         job_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
         Box::pin(async move {
-            let raw = sqlx::query_scalar::<_, u64>(
-                "SELECT attempt FROM ob_job_execution WHERE id = ?",
-            )
-            .bind(job_execution_id.get())
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?
-            .ok_or(RepositoryError::JobExecutionNotFound {
-                id: job_execution_id,
-            })?;
+            let raw =
+                sqlx::query_scalar::<_, u64>("SELECT attempt FROM ob_job_execution WHERE id = ?")
+                    .bind(job_execution_id.get())
+                    .fetch_optional(&mut **self.connection()?)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?
+                    .ok_or(RepositoryError::JobExecutionNotFound {
+                        id: job_execution_id,
+                    })?;
             std::num::NonZeroU64::new(raw).ok_or(RepositoryError::Unavailable)
         })
     }
-
 
     fn get_step_execution(
         &mut self,
@@ -980,7 +977,6 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
             row.map(|row| decode_step_execution(&row)).transpose()
         })
     }
-
 
     fn latest_flow_step<'a>(
         &'a mut self,
@@ -1185,17 +1181,14 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
         id: FlowDecisionId,
     ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>> {
         Box::pin(async move {
-            let row = sqlx::query(AssertSqlSafe(flow_decision_select(
-                "WHERE decision.id = ?",
-            )))
-            .bind(id.get())
-            .fetch_optional(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
+            let row = sqlx::query(AssertSqlSafe(flow_decision_select("WHERE decision.id = ?")))
+                .bind(id.get())
+                .fetch_optional(&mut **self.connection()?)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
             row.map(|row| decode_flow_decision(&row)).transpose()
         })
     }
-
 
     fn recover_job_execution<'a>(
         &'a mut self,

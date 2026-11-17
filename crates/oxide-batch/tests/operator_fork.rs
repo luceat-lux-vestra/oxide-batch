@@ -147,7 +147,13 @@ fn operator_fork_applies_once_and_replays_as_fork() -> Result<(), Box<dyn Error>
             .latest_job_execution(lineage.target_instance_id())
             .await?
             .ok_or("fork target execution missing")?;
-        assert_eq!(inspect.job_execution_attempt(target_latest.id()).await?.get(), 1);
+        assert_eq!(
+            inspect
+                .job_execution_attempt(target_latest.id())
+                .await?
+                .get(),
+            1
+        );
         inspect.rollback().await?;
 
         let replayed = operator.execute(&request).await?;
@@ -160,7 +166,13 @@ fn operator_fork_applies_once_and_replays_as_fork() -> Result<(), Box<dyn Error>
             .latest_job_execution(lineage.target_instance_id())
             .await?
             .ok_or("fork target execution missing")?;
-        assert_eq!(final_read.job_execution_attempt(target_latest.id()).await?.get(), 1);
+        assert_eq!(
+            final_read
+                .job_execution_attempt(target_latest.id())
+                .await?
+                .get(),
+            1
+        );
         final_read.rollback().await?;
         Ok::<_, Box<dyn Error>>(())
     })

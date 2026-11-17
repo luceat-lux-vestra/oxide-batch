@@ -63,12 +63,11 @@ use oxide_batch::{
     ItemWriter, JobExplorer, JobInstanceKey, JobName, JobParameters, JobRepository, PageRequest,
     PageSize, PostgresChunkStateError, PostgresChunkStateProvider, PostgresChunkTransactionManager,
     PostgresConfig, PostgresExplorer, PostgresJobRepository, ProcessContext, ProcessOutcome,
-    ProcessorError, ReadContext,
-    ReadOutcome, ReaderError, RestartabilityDeclaration, StateCodecError, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepName, StreamCloseContext, StreamCloseError,
-    StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome, StreamStateContract,
-    StreamUpdateContext, StreamUpdateError, TlsMode, VersionedStateCodec, WriteContext,
-    WriteOutcome, WriterError,
+    ProcessorError, ReadContext, ReadOutcome, ReaderError, RestartabilityDeclaration,
+    StateCodecError, StateLimits, StateSchemaId, StateSchemaVersion, StepName, StreamCloseContext,
+    StreamCloseError, StreamCloseOutcome, StreamOpenContext, StreamOpenError, StreamOpenOutcome,
+    StreamStateContract, StreamUpdateContext, StreamUpdateError, TlsMode, VersionedStateCodec,
+    WriteContext, WriteOutcome, WriterError,
 };
 use sqlx::Connection as _;
 use sqlx::PgPool;
@@ -1301,15 +1300,25 @@ pub async fn snapshot(
         let request = PageRequest::first(PageSize::new(500)?);
         let executions = explorer.list_executions(instance.id(), &request).await?;
         if executions.next_cursor().is_some() {
-            return Err(std::io::Error::other("Gate B execution history exceeded one bounded page").into());
+            return Err(std::io::Error::other(
+                "Gate B execution history exceeded one bounded page",
+            )
+            .into());
         }
-        let newest_execution = executions.rows().first().map(oxide_batch::JobExecutionProjection::id);
+        let newest_execution = executions
+            .rows()
+            .first()
+            .map(oxide_batch::JobExecutionProjection::id);
         let mut rows = executions.into_rows();
         rows.reverse();
         for execution in &rows {
-            let steps = explorer.list_step_executions(execution.id(), &request).await?;
+            let steps = explorer
+                .list_step_executions(execution.id(), &request)
+                .await?;
             if steps.next_cursor().is_some() {
-                return Err(std::io::Error::other("Gate B step history exceeded one bounded page").into());
+                return Err(
+                    std::io::Error::other("Gate B step history exceeded one bounded page").into(),
+                );
             }
             let step_status = steps.rows().first().map_or_else(
                 || "none".to_owned(),
@@ -1321,9 +1330,14 @@ pub async fn snapshot(
             }
         }
         if let Some(execution_id) = newest_execution {
-            let steps = explorer.list_step_executions(execution_id, &request).await?;
+            let steps = explorer
+                .list_step_executions(execution_id, &request)
+                .await?;
             if steps.next_cursor().is_some() {
-                return Err(std::io::Error::other("Gate B latest step history exceeded one bounded page").into());
+                return Err(std::io::Error::other(
+                    "Gate B latest step history exceeded one bounded page",
+                )
+                .into());
             }
             if let Some(step) = steps.rows().first() {
                 let manager = transaction_manager(repository);

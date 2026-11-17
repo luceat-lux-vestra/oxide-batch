@@ -647,7 +647,11 @@ async fn fingerprint_mismatch_without_an_edge_rejects_restart_before_any_write()
         unit.rollback().await?;
         execution
     };
-    assert_eq!(before.id(), after.id(), "a rejected restart must not create an execution");
+    assert_eq!(
+        before.id(),
+        after.id(),
+        "a rejected restart must not create an execution"
+    );
     assert_eq!(before.version(), after.version());
     assert_eq!(before.metadata().status(), after.metadata().status());
     Ok(())
@@ -704,7 +708,11 @@ async fn revision_rebound_to_a_new_fingerprint_is_drift() -> Result<(), Box<dyn 
         .latest_job_execution(instance.id())
         .await?
         .ok_or("recorded execution vanished")?;
-    assert_eq!(unit.job_execution_attempt(latest.id()).await?.get(), 1, "drift must not create an execution");
+    assert_eq!(
+        unit.job_execution_attempt(latest.id()).await?.get(),
+        1,
+        "drift must not create an execution"
+    );
     unit.rollback().await?;
     Ok(())
 }

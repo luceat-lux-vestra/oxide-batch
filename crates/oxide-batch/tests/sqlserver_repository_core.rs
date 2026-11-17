@@ -783,8 +783,13 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
         let latest = inspection
             .latest_job_execution(instance.id())
             .await?
-            .ok_or_else(|| std::io::Error::other("canonical SQL Server execution was not committed"))?;
-        assert_eq!(inspection.job_execution_attempt(latest.id()).await?.get(), 1);
+            .ok_or_else(|| {
+                std::io::Error::other("canonical SQL Server execution was not committed")
+            })?;
+        assert_eq!(
+            inspection.job_execution_attempt(latest.id()).await?.get(),
+            1
+        );
         inspection.rollback().await?;
         Box::pin(remove_contract_rows(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
@@ -1224,11 +1229,11 @@ fn process_kill_recovers_sql_server_state() -> Result<(), Box<dyn Error>> {
             .latest_job_execution(instance.id())
             .await?
             .ok_or_else(|| std::io::Error::other("committed execution vanished after SIGKILL"))?;
-        assert_eq!(inspection.job_execution_attempt(source.id()).await?.get(), 1);
         assert_eq!(
-            source.metadata().status(),
-            oxide_batch::BatchStatus::Failed
+            inspection.job_execution_attempt(source.id()).await?.get(),
+            1
         );
+        assert_eq!(source.metadata().status(), oxide_batch::BatchStatus::Failed);
         assert!(
             inspection
                 .find_job_instance(&undurable_key)
@@ -1297,7 +1302,10 @@ fn logical_backup_source_contains_restartable_state() -> Result<(), Box<dyn Erro
             .latest_job_execution(instance.id())
             .await?
             .ok_or_else(|| std::io::Error::other("backup seed execution was not durable"))?;
-        assert_eq!(inspection.job_execution_attempt(source.id()).await?.get(), 1);
+        assert_eq!(
+            inspection.job_execution_attempt(source.id()).await?.get(),
+            1
+        );
         assert_eq!(source.metadata().status(), BatchStatus::Failed);
         let latest = inspection
             .latest_flow_step(instance.id(), &NodeId::new(BACKUP_RESTORE_NODE)?)
@@ -1347,7 +1355,10 @@ fn logical_backup_restores_restartable_state() -> Result<(), Box<dyn Error>> {
             .await?
             .ok_or_else(|| std::io::Error::other("restored source execution was missing"))?;
         assert_eq!(
-            inspection.job_execution_attempt(source_execution.id()).await?.get(),
+            inspection
+                .job_execution_attempt(source_execution.id())
+                .await?
+                .get(),
             1
         );
         assert_eq!(source_execution.metadata().status(), BatchStatus::Failed);

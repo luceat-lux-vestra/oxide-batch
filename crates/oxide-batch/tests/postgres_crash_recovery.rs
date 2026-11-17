@@ -493,11 +493,14 @@ async fn inspect_recover_and_restart(point: CrashPoint, url: String) -> Result<(
         .latest_job_execution(instance.id())
         .await?
         .ok_or("restart attempt was not inspectable")?;
-    assert_eq!(final_inspection.job_execution_attempt(latest.id()).await?.get(), 2);
     assert_eq!(
-        latest.metadata().status(),
-        BatchStatus::Completed
+        final_inspection
+            .job_execution_attempt(latest.id())
+            .await?
+            .get(),
+        2
     );
+    assert_eq!(latest.metadata().status(), BatchStatus::Completed);
     assert_eq!(
         final_inspection
             .recovery_decision(original.id())

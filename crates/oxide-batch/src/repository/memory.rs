@@ -1685,7 +1685,11 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         source_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Vec<FlowStepState>, RepositoryError>> {
         Box::pin(async move {
-            if !self.staged.job_executions.contains_key(&source_execution_id) {
+            if !self
+                .staged
+                .job_executions
+                .contains_key(&source_execution_id)
+            {
                 return Err(RepositoryError::JobExecutionNotFound {
                     id: source_execution_id,
                 });
@@ -1932,7 +1936,10 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             self.ensure_definition(&job_name, &definition)?;
             let mut restart_parameters = None;
             let mut restart_source = None;
-            if let Some(latest) = self.latest_job_execution_snapshot(job_instance_id)?.cloned() {
+            if let Some(latest) = self
+                .latest_job_execution_snapshot(job_instance_id)?
+                .cloned()
+            {
                 restart_source = Some(latest.id());
                 restart_parameters = self.staged.job_parameters.get(&latest.id()).cloned();
                 match latest.metadata().status() {
@@ -2352,10 +2359,9 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             )?;
             let execution = StepExecution::new(id, job_execution_id, step_name.clone(), metadata);
             self.staged.step_executions.insert(id, execution.clone());
-            self.staged.step_execution_by_logical.insert(
-                (job_execution_id, node_id.clone()),
-                id,
-            );
+            self.staged
+                .step_execution_by_logical
+                .insert((job_execution_id, node_id.clone()), id);
             self.staged.step_logical_ids.insert(id, node_id.clone());
             if let Some(context) = inherited_context {
                 self.staged.step_contexts.insert(id, context);
@@ -2566,7 +2572,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move { Ok(self.staged.instances_by_id.get(&id).cloned()) })
     }
 
-
     fn get_step_execution(
         &mut self,
         id: StepExecutionId,
@@ -2593,7 +2598,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .cloned())
         })
     }
-
 
     fn latest_flow_step<'a>(
         &'a mut self,
@@ -2789,7 +2793,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
     ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>> {
         Box::pin(async move { Ok(self.staged.flow_decisions.get(&id).cloned()) })
     }
-
 
     fn repeat_execution<'a>(
         &'a mut self,
@@ -2995,7 +2998,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .await?
                 .instance()
                 .clone();
-            let latest = self.latest_job_execution(child_instance.id())?.cloned();
+            let latest = self.latest_job_execution(child_instance.id()).await?.cloned();
             let child_execution = match latest {
                 None => {
                     self.create_job_execution_with_definition(
