@@ -523,9 +523,8 @@ async fn durable_operator_stop_is_polled_by_the_owning_launcher() -> Result<(), 
             .await?
             .ok_or(RepositoryError::Unavailable)?;
         let execution = unit
-            .job_executions(instance.id())
+            .latest_job_execution(instance.id())
             .await?
-            .pop()
             .ok_or(RepositoryError::Unavailable)?;
         unit.request_execution_stop(
             execution.id(),

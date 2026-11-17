@@ -1617,36 +1617,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         })
     }
 
-    fn job_executions(
-        &mut self,
-        job_instance_id: JobInstanceId,
-    ) -> BoxFuture<'_, Result<Vec<JobExecution>, RepositoryError>> {
-        Box::pin(async move {
-            let instance_id = db_identifier(job_instance_id.get(), IdentifierKind::JobInstance)?;
-            let exists = {
-                let connection = self.connection()?;
-                TdsQuery::new("SELECT id FROM dbo.ob_job_instance WHERE id = @P1")
-                    .i64(instance_id)
-                    .optional(connection)
-                    .await?
-            };
-            if exists.is_none() {
-                return Err(RepositoryError::JobInstanceNotFound {
-                    id: job_instance_id,
-                });
-            }
-            let rows = {
-                let connection = self.connection()?;
-                TdsQuery::new(job_execution_select(
-                    "WHERE execution.job_instance_id = @P1 ORDER BY execution.attempt",
-                ))
-                .i64(instance_id)
-                .all(connection)
-                .await?
-            };
-            rows.iter().map(decode_job_execution).collect()
-        })
-    }
 
     fn get_step_execution(
         &mut self,
@@ -1683,36 +1653,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         })
     }
 
-    fn step_executions(
-        &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>> {
-        Box::pin(async move {
-            let job_id = db_identifier(job_execution_id.get(), IdentifierKind::JobExecution)?;
-            let exists = {
-                let connection = self.connection()?;
-                TdsQuery::new("SELECT id FROM dbo.ob_job_execution WHERE id = @P1")
-                    .i64(job_id)
-                    .optional(connection)
-                    .await?
-            };
-            if exists.is_none() {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                });
-            }
-            let rows = {
-                let connection = self.connection()?;
-                TdsQuery::new(step_execution_select(
-                    "WHERE execution.job_execution_id = @P1 ORDER BY execution.id",
-                ))
-                .i64(job_id)
-                .all(connection)
-                .await?
-            };
-            rows.iter().map(decode_step_execution).collect()
-        })
-    }
 
     fn latest_flow_step<'a>(
         &'a mut self,
@@ -1986,37 +1926,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         })
     }
 
-
-    fn flow_decisions(
-        &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
-        Box::pin(async move {
-            let execution_id = db_identifier(job_execution_id.get(), IdentifierKind::JobExecution)?;
-            let exists = {
-                let connection = self.connection()?;
-                TdsQuery::new("SELECT id FROM dbo.ob_job_execution WHERE id = @P1")
-                    .i64(execution_id)
-                    .optional(connection)
-                    .await?
-            };
-            if exists.is_none() {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                });
-            }
-            let rows = {
-                let connection = self.connection()?;
-                TdsQuery::new(flow_decision_select(
-                    "WHERE decision.job_execution_id = @P1 ORDER BY decision.sequence",
-                ))
-                .i64(execution_id)
-                .all(connection)
-                .await?
-            };
-            rows.iter().map(decode_flow_decision).collect()
-        })
-    }
 
     fn recover_job_execution<'a>(
         &'a mut self,

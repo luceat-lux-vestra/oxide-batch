@@ -780,7 +780,11 @@ fn concurrent_launch_creates_one_sql_server_instance_and_attempt() -> Result<(),
         let instance = inspection.find_job_instance(&key).await?.ok_or_else(|| {
             std::io::Error::other("canonical SQL Server instance was not committed")
         })?;
-        assert_eq!(inspection.job_executions(instance.id()).await?.len(), 1);
+        let latest = inspection
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or_else(|| std::io::Error::other("canonical SQL Server execution was not committed"))?;
+        assert_eq!(inspection.job_execution_attempt(latest.id()).await?.get(), 1);
         inspection.rollback().await?;
         Box::pin(remove_contract_rows(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
@@ -1216,10 +1220,13 @@ fn process_kill_recovers_sql_server_state() -> Result<(), Box<dyn Error>> {
             .find_job_instance(&durable_key)
             .await?
             .ok_or_else(|| std::io::Error::other("committed instance vanished after SIGKILL"))?;
-        let attempts = inspection.job_executions(instance.id()).await?;
-        assert_eq!(attempts.len(), 1);
+        let source = inspection
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or_else(|| std::io::Error::other("committed execution vanished after SIGKILL"))?;
+        assert_eq!(inspection.job_execution_attempt(source.id()).await?.get(), 1);
         assert_eq!(
-            attempts[0].metadata().status(),
+            source.metadata().status(),
             oxide_batch::BatchStatus::Failed
         );
         assert!(
@@ -1235,11 +1242,15 @@ fn process_kill_recovers_sql_server_state() -> Result<(), Box<dyn Error>> {
         // boundary: a new attempt must preserve instance identity.
         let mut restart = repository.begin().await?;
         let retry = restart.create_job_execution(instance.id()).await?;
-        assert_ne!(retry.id(), attempts[0].id());
+        assert_ne!(retry.id(), source.id());
         restart.commit().await?;
 
         let mut verify = repository.begin().await?;
-        assert_eq!(verify.job_executions(instance.id()).await?.len(), 2);
+        let latest = verify
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or_else(|| std::io::Error::other("restart execution missing"))?;
+        assert_eq!(verify.job_execution_attempt(latest.id()).await?.get(), 2);
         verify.rollback().await?;
         Box::pin(remove_crash_restart_rows(&settings)).await?;
         Ok::<(), Box<dyn Error>>(())
@@ -1282,9 +1293,12 @@ fn logical_backup_source_contains_restartable_state() -> Result<(), Box<dyn Erro
             .find_job_instance(&key)
             .await?
             .ok_or_else(|| std::io::Error::other("backup seed instance was not durable"))?;
-        let attempts = inspection.job_executions(instance.id()).await?;
-        assert_eq!(attempts.len(), 1);
-        assert_eq!(attempts[0].metadata().status(), BatchStatus::Failed);
+        let source = inspection
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or_else(|| std::io::Error::other("backup seed execution was not durable"))?;
+        assert_eq!(inspection.job_execution_attempt(source.id()).await?.get(), 1);
+        assert_eq!(source.metadata().status(), BatchStatus::Failed);
         let latest = inspection
             .latest_flow_step(instance.id(), &NodeId::new(BACKUP_RESTORE_NODE)?)
             .await?
@@ -1328,9 +1342,15 @@ fn logical_backup_restores_restartable_state() -> Result<(), Box<dyn Error>> {
             .find_job_instance(&key)
             .await?
             .ok_or_else(|| std::io::Error::other("restored job instance was missing"))?;
-        let source_attempts = inspection.job_executions(instance.id()).await?;
-        assert_eq!(source_attempts.len(), 1);
-        assert_eq!(source_attempts[0].metadata().status(), BatchStatus::Failed);
+        let source_execution = inspection
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or_else(|| std::io::Error::other("restored source execution was missing"))?;
+        assert_eq!(
+            inspection.job_execution_attempt(source_execution.id()).await?.get(),
+            1
+        );
+        assert_eq!(source_execution.metadata().status(), BatchStatus::Failed);
         let source_step = inspection
             .latest_flow_step(instance.id(), &node)
             .await?
@@ -1348,19 +1368,27 @@ fn logical_backup_restores_restartable_state() -> Result<(), Box<dyn Error>> {
             .await?;
         assert_eq!(restarted.outcome(), &FlowExecutionOutcome::Completed);
         assert_eq!(restarted.instance().id(), instance.id());
-        assert_ne!(restarted.job_execution().id(), source_attempts[0].id());
+        assert_ne!(restarted.job_execution().id(), source_execution.id());
 
         let mut verify = repository.begin().await?;
-        let attempts = verify.job_executions(instance.id()).await?;
-        assert_eq!(attempts.len(), 2);
-        assert_eq!(attempts[0].metadata().status(), BatchStatus::Failed);
-        assert_eq!(attempts[1].metadata().status(), BatchStatus::Completed);
+        let durable_source = verify
+            .get_job_execution(source_execution.id())
+            .await?
+            .ok_or_else(|| std::io::Error::other("restored source execution disappeared"))?;
+        let latest = verify
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or_else(|| std::io::Error::other("completed restart execution missing"))?;
+        assert_eq!(verify.job_execution_attempt(latest.id()).await?.get(), 2);
+        assert_eq!(durable_source.metadata().status(), BatchStatus::Failed);
+        assert_eq!(latest.metadata().status(), BatchStatus::Completed);
+        assert_eq!(restarted.decisions().len(), 1);
         assert_eq!(
             verify
-                .flow_decisions(restarted.job_execution().id())
+                .get_flow_decision(restarted.decisions()[0].id())
                 .await?
-                .len(),
-            1
+                .as_ref(),
+            Some(&restarted.decisions()[0])
         );
         verify.rollback().await?;
 

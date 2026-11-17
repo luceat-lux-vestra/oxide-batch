@@ -522,9 +522,15 @@ async fn assert_phase_state(
     )
     .await?;
     let mut inspect = repository.begin().await?;
-    let executions = inspect.job_executions(instance_id).await?;
+    let latest = inspect
+        .latest_job_execution(instance_id)
+        .await?
+        .ok_or("upgrade source execution disappeared")?;
     let expected = if phase == Phase::CommitInFlight { 2 } else { 1 };
-    assert_eq!(executions.len(), expected);
+    assert_eq!(
+        inspect.job_execution_attempt(latest.id()).await?.get(),
+        expected
+    );
 
     let source = inspect
         .latest_flow_step(instance_id, &NodeId::new(SOURCE_NODE)?)
@@ -584,7 +590,11 @@ async fn assert_phase_state(
     replay.rollback().await?;
 
     let mut count = repository.begin().await?;
-    assert_eq!(count.job_executions(instance_id).await?.len(), 2);
+    let latest = count
+        .latest_job_execution(instance_id)
+        .await?
+        .ok_or("replayed upgrade attempt missing")?;
+    assert_eq!(count.job_execution_attempt(latest.id()).await?.get(), 2);
     count.rollback().await?;
     repository.close().await?;
     Ok(())

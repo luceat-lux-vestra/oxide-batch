@@ -42,7 +42,7 @@ use oxide_batch::{
     BatchStatus, BusinessStatement, BusinessValue, ChunkCommitReceipt, ChunkCount, ChunkCounts,
     ChunkFaultProgress, ChunkTransactionContext, ChunkTransactionManager, Clock,
     ComponentStreamIdentity, ItemReader, ItemStream, JobInstanceKey, JobName, JobParameters,
-    JobRepository, LifecycleTransition, PostgresChunkStateError, PostgresChunkStateProvider,
+    JobRepository, LifecycleTransition, NodeId, PostgresChunkStateError, PostgresChunkStateProvider,
     PostgresChunkTransactionManager, PostgresConfig, PostgresConfigError, PostgresJobRepository,
     PostgresMigrator, ReadContext, ReadOutcome, ReaderError, StateLimits, StepName,
     StreamOpenContext, StreamUpdateContext, TlsMode,
@@ -425,16 +425,12 @@ async fn inspect_and_restart(kind: ReaderKind, url: String) -> Result<(), Box<dy
         .await?
         .ok_or("crashed worker did not durably create the job instance")?;
     let execution = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("crashed worker did not durably create the job execution")?;
     let step = inspect
-        .step_executions(execution.id())
+        .flow_step_execution(execution.id(), &NodeId::new(STEP_NAME)?)
         .await?
-        .into_iter()
-        .next()
         .ok_or("crashed worker did not durably create the step execution")?;
     inspect.rollback().await?;
     assert_eq!(step.metadata().status(), BatchStatus::Started);

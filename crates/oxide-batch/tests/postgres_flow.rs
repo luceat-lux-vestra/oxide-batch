@@ -373,9 +373,13 @@ fn decisions_and_completed_step_reuse_survive_postgres_restart() -> Result<(), B
         assert!(second.decisions()[1].reused_decision_id().is_some());
 
         let mut inspect = repository.begin().await?;
-        let durable = inspect.flow_decisions(second.job_execution().id()).await?;
+        for expected in second.decisions() {
+            assert_eq!(
+                inspect.get_flow_decision(expected.id()).await?.as_ref(),
+                Some(expected)
+            );
+        }
         inspect.rollback().await?;
-        assert_eq!(durable, second.decisions());
         repository.close().await?;
         Ok::<(), Box<dyn Error>>(())
     })
@@ -676,10 +680,11 @@ fn postgres_nonrestartable_job_rejects_restart_before_user_work() -> Result<(), 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         let mut inspect = repository.begin().await?;
-        assert_eq!(
-            inspect.job_executions(first.instance().id()).await?.len(),
-            1
-        );
+        let latest = inspect
+            .latest_job_execution(first.instance().id())
+            .await?
+            .ok_or("missing first attempt")?;
+        assert_eq!(inspect.job_execution_attempt(latest.id()).await?.get(), 1);
         inspect.rollback().await?;
 
         repository.close().await?;

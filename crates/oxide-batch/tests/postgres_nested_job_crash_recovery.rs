@@ -25,10 +25,11 @@ use std::time::{Duration, Instant, SystemTime};
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, FailureCategory,
     FailureId, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
-    JobExecution, JobExecutionId, JobInstanceKey, JobName, JobParameter, JobParameters,
-    JobRepository, MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
+    JobExecution, JobExecutionId, JobExplorer, JobInstanceKey, JobName, JobParameter,
+    JobParameters, JobRepository, MissingParameterPolicy, NestedJobNode, NestedJobParameterMapping,
     NestedJobParameterSource, NodeId, ParameterCoercion, ParameterName, ParameterRole,
-    ParameterValue, ParameterValueKind, PostgresConfig, PostgresJobRepository, PostgresMigrator,
+    ParameterValue, ParameterValueKind, PageRequest, PageSize, PostgresConfig, PostgresExplorer,
+    PostgresJobRepository, PostgresMigrator,
     RecoveryRequest, SequentialIdGenerator, StepName, StopSource, Tasklet, TaskletContext,
     TaskletError, TaskletJob, TaskletOutcome, TaskletStep, TerminalKind, TlsMode,
 };
@@ -522,10 +523,8 @@ async fn original_parent_execution(
         .await?
         .ok_or("worker did not create parent instance")?;
     let execution = unit
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("worker did not create parent execution")?;
     unit.rollback().await?;
     Ok(execution)
@@ -713,6 +712,8 @@ async fn run_parent_scenario(
     assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
     assert_eq!(business_effect_count(&handshake)?, 1);
 
+    let explorer = JobExplorer::new(PostgresExplorer::new(repository.clone()));
+    let page = PageRequest::first(PageSize::new(500)?);
     let mut inspect = repository.begin().await?;
     let restart_link = inspect
         .nested_job_link(report.job_execution().id(), &nested)
@@ -721,9 +722,15 @@ async fn run_parent_scenario(
     let persisted = inspect
         .nested_job_parameters(report.job_execution().id(), &nested)
         .await?;
-    let restart_decisions = inspect.flow_decisions(report.job_execution().id()).await?;
-    let original_decisions = inspect.flow_decisions(original_parent.id()).await?;
     inspect.rollback().await?;
+    let restart_decisions = explorer
+        .list_flow_decisions(report.job_execution().id(), &page)
+        .await?
+        .into_rows();
+    let original_decisions = explorer
+        .list_flow_decisions(original_parent.id(), &page)
+        .await?
+        .into_rows();
 
     assert_eq!(
         persisted

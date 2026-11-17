@@ -18,10 +18,11 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use oxide_batch::{
     BoxFuture, DefinitionIdentity, DefinitionUpgrade, ExecutionMetadata, ExecutionVersion,
-    ExitStatus, JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey,
-    JobInstanceSelection, JobName, JobRepository, LifecycleEvent, LifecycleEventSink,
-    LifecycleTransition, RecoveryDecision, RecoveryRequest, RecoveryResult, RepositoryError,
-    RepositoryUnitOfWork, StepExecution, StepExecutionId, StepName,
+    ExitStatus, InMemoryExplorer, InMemoryJobRepository, JobExecution, JobExecutionId,
+    JobExplorer, JobInstance, JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName,
+    JobRepository, LifecycleEvent, LifecycleEventSink, LifecycleTransition, PageRequest, PageSize,
+    RecoveryDecision, RecoveryRequest, RecoveryResult, RepositoryError, RepositoryUnitOfWork,
+    StepExecution, StepExecutionId, StepName,
 };
 
 /// Environment variable that rewrites golden traces instead of comparing them.
@@ -75,16 +76,53 @@ impl ExecutionTrace {
     /// Returns [`RepositoryError`] when the repository cannot be inspected.
     pub async fn record_durable_state(
         &self,
-        repository: &dyn JobRepository,
+        repository: &InMemoryJobRepository,
         instance_id: JobInstanceId,
-    ) -> Result<(), RepositoryError> {
+    ) -> Result<(), Box<dyn Error>> {
+        let explorer = JobExplorer::new(InMemoryExplorer::new(repository));
+        let request = PageRequest::first(PageSize::new(500)?);
+        let execution_page = explorer.list_executions(instance_id, &request).await?;
+        if execution_page.next_cursor().is_some() {
+            return Err(std::io::Error::other("trace execution history exceeded one bounded page").into());
+        }
+        let mut execution_ids = execution_page
+            .into_rows()
+            .into_iter()
+            .map(|projection| projection.id())
+            .collect::<Vec<_>>();
+        execution_ids.reverse();
+
         let mut unit = repository.begin().await?;
-        let executions = unit.job_executions(instance_id).await?;
-        let mut steps = Vec::new();
-        for execution in &executions {
-            steps.push(unit.step_executions(execution.id()).await?);
+        let mut executions = Vec::with_capacity(execution_ids.len());
+        let mut steps = Vec::with_capacity(execution_ids.len());
+        for execution_id in execution_ids {
+            let execution = unit
+                .get_job_execution(execution_id)
+                .await?
+                .ok_or_else(|| std::io::Error::other("explorer execution vanished"))?;
+            let step_page = explorer.list_step_executions(execution_id, &request).await?;
+            if step_page.next_cursor().is_some() {
+                return Err(std::io::Error::other("trace step history exceeded one bounded page").into());
+            }
+            let mut step_ids = step_page
+                .into_rows()
+                .into_iter()
+                .map(|projection| projection.id())
+                .collect::<Vec<_>>();
+            step_ids.sort_unstable();
+            let mut execution_steps = Vec::with_capacity(step_ids.len());
+            for step_id in step_ids {
+                execution_steps.push(
+                    unit.get_step_execution(step_id)
+                        .await?
+                        .ok_or_else(|| std::io::Error::other("explorer step vanished"))?,
+                );
+            }
+            executions.push(execution);
+            steps.push(execution_steps);
         }
         unit.rollback().await?;
+
         self.record(format!("durable instance={}", instance_id.get()));
         for (execution, step_executions) in executions.iter().zip(steps) {
             self.record(format!(
@@ -510,16 +548,6 @@ impl RepositoryUnitOfWork for RecordingUnitOfWork<'_> {
         self.inner.get_job_execution(id)
     }
 
-    fn job_executions(
-        &mut self,
-        job_instance_id: JobInstanceId,
-    ) -> BoxFuture<'_, Result<Vec<JobExecution>, RepositoryError>> {
-        self.trace.record(format!(
-            "unit job_executions instance={}",
-            job_instance_id.get()
-        ));
-        self.inner.job_executions(job_instance_id)
-    }
 
     fn get_step_execution(
         &mut self,
@@ -532,16 +560,6 @@ impl RepositoryUnitOfWork for RecordingUnitOfWork<'_> {
         self.inner.get_step_execution(id)
     }
 
-    fn step_executions(
-        &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>> {
-        self.trace.record(format!(
-            "unit step_executions job_execution={}",
-            job_execution_id.get()
-        ));
-        self.inner.step_executions(job_execution_id)
-    }
 
     fn recover_job_execution<'a>(
         &'a mut self,
@@ -563,6 +581,50 @@ impl RepositoryUnitOfWork for RecordingUnitOfWork<'_> {
         self.trace
             .record(format!("unit recovery_decision job_execution={}", id.get()));
         self.inner.recovery_decision(id)
+    }
+
+    fn latest_job_execution(
+        &mut self,
+        job_instance_id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
+        self.trace.record(format!(
+            "unit latest_job_execution instance={}",
+            job_instance_id.get()
+        ));
+        self.inner.latest_job_execution(job_instance_id)
+    }
+
+    fn job_execution_attempt(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
+        self.trace.record(format!(
+            "unit job_execution_attempt job_execution={}",
+            job_execution_id.get()
+        ));
+        self.inner.job_execution_attempt(job_execution_id)
+    }
+
+    fn flow_step_execution<'a>(
+        &'a mut self,
+        job_execution_id: JobExecutionId,
+        node_id: &'a oxide_batch::NodeId,
+    ) -> BoxFuture<'a, Result<Option<StepExecution>, RepositoryError>> {
+        self.trace.record(format!(
+            "unit flow_step_execution job_execution={} node={}",
+            job_execution_id.get(),
+            node_id.as_str()
+        ));
+        self.inner.flow_step_execution(job_execution_id, node_id)
+    }
+
+    fn get_flow_decision(
+        &mut self,
+        id: oxide_batch::FlowDecisionId,
+    ) -> BoxFuture<'_, Result<Option<oxide_batch::FlowDecision>, RepositoryError>> {
+        self.trace
+            .record(format!("unit get_flow_decision decision={}", id.get()));
+        self.inner.get_flow_decision(id)
     }
 
     fn fork_source_step_states(

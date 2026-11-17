@@ -4284,34 +4284,6 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
-    fn job_executions(
-        &mut self,
-        job_instance_id: JobInstanceId,
-    ) -> BoxFuture<'_, Result<Vec<JobExecution>, RepositoryError>> {
-        Box::pin(async move {
-            let instance_id = database_id(job_instance_id.get(), IdentifierKind::JobInstance)?;
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_instance WHERE id = $1)",
-            )
-            .bind(instance_id)
-            .fetch_one(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            if !exists {
-                return Err(RepositoryError::JobInstanceNotFound {
-                    id: job_instance_id,
-                });
-            }
-            let rows = sqlx::query(AssertSqlSafe(job_execution_select(
-                "WHERE execution.job_instance_id = $1 ORDER BY execution.attempt",
-            )))
-            .bind(instance_id)
-            .fetch_all(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            rows.iter().map(decode_job_execution).collect()
-        })
-    }
 
     fn get_step_execution(
         &mut self,
@@ -4346,34 +4318,6 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
-    fn step_executions(
-        &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>> {
-        Box::pin(async move {
-            let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_execution WHERE id = $1)",
-            )
-            .bind(job_id)
-            .fetch_one(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            if !exists {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                });
-            }
-            let rows = sqlx::query(AssertSqlSafe(step_execution_select(
-                "WHERE execution.job_execution_id = $1 ORDER BY execution.id",
-            )))
-            .bind(job_id)
-            .fetch_all(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            rows.iter().map(decode_step_execution).collect()
-        })
-    }
 
     fn latest_flow_step<'a>(
         &'a mut self,
@@ -4701,35 +4645,6 @@ impl RepositoryUnitOfWork for PostgresUnitOfWork<'_> {
         })
     }
 
-
-    fn flow_decisions(
-        &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
-        Box::pin(async move {
-            let job_id = database_id(job_execution_id.get(), IdentifierKind::JobExecution)?;
-            let exists: bool = sqlx::query_scalar(
-                "SELECT EXISTS(SELECT 1 FROM oxide_batch.ob_job_execution WHERE id = $1)",
-            )
-            .bind(job_id)
-            .fetch_one(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            if !exists {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                });
-            }
-            let rows = sqlx::query(AssertSqlSafe(flow_decision_select(
-                "WHERE decision.job_execution_id = $1 ORDER BY decision.sequence",
-            )))
-            .bind(job_id)
-            .fetch_all(&mut **self.transaction()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            rows.iter().map(decode_flow_decision).collect()
-        })
-    }
 
     fn repeat_execution<'a>(
         &'a mut self,
@@ -7816,7 +7731,7 @@ async fn select_nested_child_for_request(
         .await?
         .instance()
         .clone();
-    let latest = unit.job_executions(child_instance.id()).await?.pop();
+    let latest = unit.latest_job_execution(child_instance.id()).await?;
     let child_execution = match latest {
         None => {
             unit.create_job_execution_with_definition(

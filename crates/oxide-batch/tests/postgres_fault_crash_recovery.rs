@@ -18,7 +18,7 @@ use oxide_batch::{
     FailureCategory, FailureId, FaultAction, FaultClassifier, FaultDescriptor, FaultPhase,
     FaultPolicy, FaultRule, FaultRuntime, FaultStateError, FaultStateStore, ItemListenerContext,
     ItemListenerSet, ItemProcessor, ItemReader, ItemWriter, JobInstanceKey, JobName, JobParameters,
-    JobRepository, ListenerError, PostgresChunkStateError, PostgresChunkStateProvider,
+    JobRepository, ListenerError, NodeId, PostgresChunkStateError, PostgresChunkStateProvider,
     PostgresChunkTransactionManager, PostgresConfig, PostgresFaultState, PostgresJobRepository,
     PostgresMigrator, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
     ReaderError, RecoveryRequest, RetryLimit, RetryOrdinal, RetryReservation, RetryStateLimit,
@@ -503,16 +503,12 @@ async fn inspect_recover_and_restart(point: CrashPoint, url: String) -> Result<(
         .await?
         .ok_or("fault crash worker did not create an instance")?;
     let original = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("fault crash worker did not create an execution")?;
     let original_step = inspect
-        .step_executions(original.id())
+        .flow_step_execution(original.id(), &NodeId::new(STEP)?)
         .await?
-        .into_iter()
-        .next()
         .ok_or("fault crash worker did not create a step")?;
     inspect.rollback().await?;
     assert_eq!(witness_count(&url, point.job_name()).await?, 1);

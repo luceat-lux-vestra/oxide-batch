@@ -11,8 +11,9 @@ use std::time::{Duration, SystemTime};
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, ExecutionCounts,
     ExitCode, ExitStatus, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode,
-    FlowRuntimeError, FlowTarget, FlowTransitionKind, InMemoryJobRepository, JobName,
-    JobParameters, JobRepository, JoinNode, LocalFailurePolicy, NodeId, RepositoryDescriptor,
+    FlowRuntimeError, FlowTarget, FlowTransitionKind, InMemoryExplorer, InMemoryJobRepository,
+    JobExplorer, JobName, JobParameters, JobRepository, JoinNode, LocalFailurePolicy, NodeId,
+    PageRequest, PageSize, RepositoryDescriptor,
     RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SplitBranch, SplitBudget,
     SplitNode, StepComponents, StepName, StepNode, StopSource, Tasklet, TaskletContext,
     TaskletError, TaskletOutcome, TaskletStep, TaskletStepFactory, TerminalKind,
@@ -385,18 +386,25 @@ async fn normalized_success(
     assert!(maximum.load(Ordering::SeqCst) <= usize::from(concurrency));
     let execution_id = report.job_execution().id();
 
-    let mut unit = repository.begin().await?;
-    let steps = unit.step_executions(execution_id).await?;
-    let decisions = unit.flow_decisions(execution_id).await?;
-    unit.rollback().await?;
+    let explorer = JobExplorer::new(InMemoryExplorer::new(&repository));
+    let request = PageRequest::first(PageSize::new(500)?);
+    let steps = explorer
+        .list_step_executions(execution_id, &request)
+        .await?;
+    assert!(steps.next_cursor().is_none(), "fixture exceeded one bounded step page");
+    let decisions = explorer
+        .list_flow_decisions(execution_id, &request)
+        .await?;
+    assert!(decisions.next_cursor().is_none(), "fixture exceeded one bounded decision page");
 
     let mut steps = steps
+        .rows()
         .iter()
         .map(|step| NormalizedStep {
             step_name: step.step_name().as_str().to_owned(),
-            status: step.metadata().status(),
-            exit_status: step.metadata().exit_status().clone(),
-            counts: step.metadata().counts(),
+            status: step.status(),
+            exit_status: step.exit_status().clone(),
+            counts: step.counts(),
         })
         .collect::<Vec<_>>();
     steps.sort_by(|left, right| left.step_name.cmp(&right.step_name));
@@ -405,6 +413,7 @@ async fn normalized_success(
         job_exit_status: report.job_execution().metadata().exit_status().clone(),
         steps,
         decisions: decisions
+            .rows()
             .iter()
             .map(|decision| NormalizedDecision {
                 sequence: decision.sequence().get(),
@@ -910,16 +919,18 @@ async fn completion_order_does_not_change_failed_aggregate() -> Result<(), Box<d
             .launch(&job, &JobParameters::new(), &stop)
             .await?;
         let execution_id = report.job_execution().id();
-        let mut unit = repository.begin().await?;
-        let steps = unit.step_executions(execution_id).await?;
-        unit.rollback().await?;
+        let explorer = JobExplorer::new(InMemoryExplorer::new(&repository));
+        let request = PageRequest::first(PageSize::new(500)?);
+        let steps = explorer.list_step_executions(execution_id, &request).await?;
+        assert!(steps.next_cursor().is_none(), "fixture exceeded one bounded step page");
         let mut steps = steps
+            .rows()
             .iter()
             .map(|step| NormalizedStep {
                 step_name: step.step_name().as_str().to_owned(),
-                status: step.metadata().status(),
-                exit_status: step.metadata().exit_status().clone(),
-                counts: step.metadata().counts(),
+                status: step.status(),
+                exit_status: step.exit_status().clone(),
+                counts: step.counts(),
             })
             .collect::<Vec<_>>();
         steps.sort_by(|left, right| left.step_name.cmp(&right.step_name));

@@ -428,10 +428,8 @@ async fn inspect_recover_restart(point: CrashPoint, url: String) -> Result<(), B
         .await?
         .ok_or("custom-leaf worker did not create an instance")?;
     let original = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("custom-leaf worker did not create an execution")?;
     let durable = inspect
         .latest_flow_step(instance.id(), &node_id)

@@ -194,14 +194,12 @@ async fn request_for(
         .await?
         .ok_or("missing prepared source")?;
     let source_execution = read
-        .job_executions(source.id())
+        .latest_job_execution(source.id())
         .await?
-        .pop()
         .ok_or("missing prepared source execution")?;
     let step = read
-        .step_executions(source_execution.id())
+        .flow_step_execution(source_execution.id(), &NodeId::new("only")?)
         .await?
-        .pop()
         .ok_or("missing prepared source step")?;
     read.rollback().await?;
 
@@ -353,13 +351,12 @@ async fn verify_atomic_fork(
             .await?
             .ok_or("committed fork has no target execution")?;
         assert_eq!(target.metadata().status(), BatchStatus::Starting);
-        assert_eq!(
-            read.job_executions(lineage.target_instance_id())
+        assert_eq!(read.job_execution_attempt(target.id()).await?.get(), 1);
+        assert!(
+            read.flow_step_execution(target.id(), &NodeId::new("only")?)
                 .await?
-                .len(),
-            1
+                .is_none()
         );
-        assert!(read.step_executions(target.id()).await?.is_empty());
         let context = read
             .scope_job_execution_context(target.id())
             .await?
@@ -381,13 +378,11 @@ async fn verify_atomic_fork(
             lineage,
         );
         let mut count = repository.begin().await?;
-        assert_eq!(
-            count
-                .job_executions(lineage.target_instance_id())
-                .await?
-                .len(),
-            1
-        );
+        let latest = count
+            .latest_job_execution(lineage.target_instance_id())
+            .await?
+            .ok_or("committed fork target disappeared")?;
+        assert_eq!(count.job_execution_attempt(latest.id()).await?.get(), 1);
         count.rollback().await?;
     } else {
         // Before COMMIT, or after a rolled-back in-flight COMMIT, none of

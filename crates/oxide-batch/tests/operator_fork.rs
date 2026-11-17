@@ -143,13 +143,11 @@ fn operator_fork_applies_once_and_replays_as_fork() -> Result<(), Box<dyn Error>
                 .map(|record| record.action()),
             Some(OperatorAction::Fork)
         );
-        assert_eq!(
-            inspect
-                .job_executions(lineage.target_instance_id())
-                .await?
-                .len(),
-            1
-        );
+        let target_latest = inspect
+            .latest_job_execution(lineage.target_instance_id())
+            .await?
+            .ok_or("fork target execution missing")?;
+        assert_eq!(inspect.job_execution_attempt(target_latest.id()).await?.get(), 1);
         inspect.rollback().await?;
 
         let replayed = operator.execute(&request).await?;
@@ -158,13 +156,11 @@ fn operator_fork_applies_once_and_replays_as_fork() -> Result<(), Box<dyn Error>
         assert!(replayed.execution().is_none());
 
         let mut final_read = repository.begin().await?;
-        assert_eq!(
-            final_read
-                .job_executions(lineage.target_instance_id())
-                .await?
-                .len(),
-            1
-        );
+        let target_latest = final_read
+            .latest_job_execution(lineage.target_instance_id())
+            .await?
+            .ok_or("fork target execution missing")?;
+        assert_eq!(final_read.job_execution_attempt(target_latest.id()).await?.get(), 1);
         final_read.rollback().await?;
         Ok::<_, Box<dyn Error>>(())
     })

@@ -618,9 +618,12 @@ async fn fingerprint_mismatch_without_an_edge_rejects_restart_before_any_write()
 
     let before = {
         let mut unit = repository.begin().await?;
-        let executions = unit.job_executions(instance.id()).await?;
+        let execution = unit
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or("missing recorded execution")?;
         unit.rollback().await?;
-        executions
+        execution
     };
 
     let mut unit = repository.begin().await?;
@@ -637,20 +640,16 @@ async fn fingerprint_mismatch_without_an_edge_rejects_restart_before_any_write()
 
     let after = {
         let mut unit = repository.begin().await?;
-        let executions = unit.job_executions(instance.id()).await?;
+        let execution = unit
+            .latest_job_execution(instance.id())
+            .await?
+            .ok_or("recorded execution vanished")?;
         unit.rollback().await?;
-        executions
+        execution
     };
-    assert_eq!(
-        before.len(),
-        after.len(),
-        "a rejected restart must not create an execution"
-    );
-    for (before, after) in before.iter().zip(after.iter()) {
-        assert_eq!(before.id(), after.id());
-        assert_eq!(before.version(), after.version());
-        assert_eq!(before.metadata().status(), after.metadata().status());
-    }
+    assert_eq!(before.id(), after.id(), "a rejected restart must not create an execution");
+    assert_eq!(before.version(), after.version());
+    assert_eq!(before.metadata().status(), after.metadata().status());
     Ok(())
 }
 
@@ -701,9 +700,12 @@ async fn revision_rebound_to_a_new_fingerprint_is_drift() -> Result<(), Box<dyn 
     unit.rollback().await?;
 
     let mut unit = repository.begin().await?;
-    let executions = unit.job_executions(instance.id()).await?;
+    let latest = unit
+        .latest_job_execution(instance.id())
+        .await?
+        .ok_or("recorded execution vanished")?;
+    assert_eq!(unit.job_execution_attempt(latest.id()).await?.get(), 1, "drift must not create an execution");
     unit.rollback().await?;
-    assert_eq!(executions.len(), 1, "drift must not create an execution");
     Ok(())
 }
 

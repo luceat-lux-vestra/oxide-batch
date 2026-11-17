@@ -901,17 +901,17 @@ impl PortReading {
 pub async fn read_through_port(
     repository: &oxide_batch::PostgresJobRepository,
 ) -> Result<PortReading, Box<dyn Error>> {
-    use oxide_batch::{ExplorerRepository, JobRepository};
+    use oxide_batch::{JobExplorer, JobRepository, PageRequest, PageSize};
 
     let key = oxide_batch::JobInstanceKey::new(
         oxide_batch::JobName::new(FIXTURE_JOB)?,
         &oxide_batch::JobParameters::new(),
     );
-    let explorer = oxide_batch::PostgresExplorer::new(repository.clone());
-    let mut unit = repository.begin().await?;
+    let explorer = JobExplorer::new(oxide_batch::PostgresExplorer::new(repository.clone()));
+    let mut lookup = repository.begin().await?;
 
-    let Some(instance) = unit.find_job_instance(&key).await? else {
-        unit.rollback().await?;
+    let Some(instance) = lookup.find_job_instance(&key).await? else {
+        lookup.rollback().await?;
         return Ok(PortReading {
             instance: None,
             executions: Vec::new(),
@@ -921,25 +921,86 @@ pub async fn read_through_port(
             flow_decisions: Vec::new(),
         });
     };
+    lookup.rollback().await?;
 
-    let executions = unit.job_executions(instance.id()).await?;
-    let mut steps = Vec::new();
-    let mut recovery_decisions = Vec::new();
-    let mut flow_decisions = Vec::new();
-    for execution in &executions {
-        steps.push(unit.step_executions(execution.id()).await?);
-        recovery_decisions.push(unit.recovery_decision(execution.id()).await?);
-        flow_decisions.push(
-            unit.flow_decisions(execution.id())
-                .await
-                .unwrap_or_default(),
+    let size = PageSize::new(500)?;
+    let mut request = PageRequest::first(size);
+    let mut execution_ids = Vec::new();
+    loop {
+        let page = explorer.list_executions(instance.id(), &request).await?;
+        execution_ids.extend(
+            page.rows()
+                .iter()
+                .map(oxide_batch::JobExecutionProjection::id),
         );
+        let Some(cursor) = page.next_cursor() else {
+            break;
+        };
+        request = PageRequest::resume(size, cursor.clone());
+    }
+    execution_ids.reverse();
+
+    let mut unit = repository.begin().await?;
+    let mut executions = Vec::with_capacity(execution_ids.len());
+    let mut steps = Vec::with_capacity(execution_ids.len());
+    let mut recovery_decisions = Vec::with_capacity(execution_ids.len());
+    let mut flow_decisions = Vec::with_capacity(execution_ids.len());
+    for execution_id in execution_ids {
+        let execution = unit
+            .get_job_execution(execution_id)
+            .await?
+            .ok_or("explorer execution vanished during upgrade observation")?;
+
+        let mut step_request = PageRequest::first(size);
+        let mut step_ids = Vec::new();
+        loop {
+            let page = explorer
+                .list_step_executions(execution_id, &step_request)
+                .await?;
+            step_ids.extend(
+                page.rows()
+                    .iter()
+                    .map(oxide_batch::StepExecutionProjection::id),
+            );
+            let Some(cursor) = page.next_cursor() else {
+                break;
+            };
+            step_request = PageRequest::resume(size, cursor.clone());
+        }
+        step_ids.sort_unstable();
+        let mut attempt_steps = Vec::with_capacity(step_ids.len());
+        for step_id in step_ids {
+            attempt_steps.push(
+                unit.get_step_execution(step_id)
+                    .await?
+                    .ok_or("explorer step vanished during upgrade observation")?,
+            );
+        }
+
+        let mut decision_request = PageRequest::first(size);
+        let mut attempt_decisions = Vec::new();
+        loop {
+            let page = explorer
+                .list_flow_decisions(execution_id, &decision_request)
+                .await?;
+            attempt_decisions.extend(page.rows().iter().cloned());
+            let Some(cursor) = page.next_cursor() else {
+                break;
+            };
+            decision_request = PageRequest::resume(size, cursor.clone());
+        }
+        attempt_decisions.sort_by_key(|decision| (decision.sequence(), decision.id()));
+
+        recovery_decisions.push(unit.recovery_decision(execution_id).await?);
+        flow_decisions.push(attempt_decisions);
+        steps.push(attempt_steps);
+        executions.push(execution);
     }
     unit.rollback().await?;
 
     let mut projections = Vec::new();
     for execution in &executions {
-        projections.push(explorer.execution(execution.id()).await?);
+        projections.push(explorer.get_execution(execution.id()).await?);
     }
 
     Ok(PortReading {

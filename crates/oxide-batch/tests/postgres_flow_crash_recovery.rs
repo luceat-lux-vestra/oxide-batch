@@ -13,8 +13,9 @@ use std::time::{Duration, Instant, SystemTime};
 use oxide_batch::{
     BatchStatus, BoxFuture, Clock, ComponentRevision, DefinitionRevision, ExecutionContext,
     FailureCategory, FailureId, FlowEvent, FlowEventKind, FlowEventSink, FlowExecutionOutcome,
-    FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, FlowTransitionKind, JobInstanceKey,
-    JobName, JobParameters, JobRepository, NodeId, PostgresConfig, PostgresMigrator,
+    FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget, FlowTransitionKind, JobExplorer,
+    JobInstanceKey, JobName, JobParameters, JobRepository, NodeId, PageRequest, PageSize,
+    PostgresConfig, PostgresExplorer, PostgresMigrator,
     RecoveryRequest, RepeatCallbackError, RepeatContext, RepeatDecision, RepeatDefinition,
     RepeatId, RepeatInterceptor, RepeatInterceptorDefinition, RepeatInterceptorId,
     RepeatInterceptorKind, RepeatInterceptorRegistration, RepeatLineage, RepeatOrdinal,
@@ -221,6 +222,8 @@ async fn inspect_recover_and_restart(point: CrashPoint, url: String) -> Result<(
     let repository =
         oxide_batch::PostgresJobRepository::connect(plaintext_config(url)?, Arc::new(clock))
             .await?;
+    let explorer = JobExplorer::new(PostgresExplorer::new(repository.clone()));
+    let page = PageRequest::first(PageSize::new(500)?);
     let key = JobInstanceKey::new(JobName::new(point.job_name())?, &JobParameters::new());
     let mut inspect = repository.begin().await?;
     let instance = inspect
@@ -228,18 +231,22 @@ async fn inspect_recover_and_restart(point: CrashPoint, url: String) -> Result<(
         .await?
         .ok_or("flow crash worker did not create an instance")?;
     let original = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("flow crash worker did not create an execution")?;
-    let steps = inspect.step_executions(original.id()).await?;
-    let prior_decisions = inspect.flow_decisions(original.id()).await?;
     inspect.rollback().await?;
+    let steps = explorer
+        .list_step_executions(original.id(), &page)
+        .await?
+        .into_rows();
+    let prior_decisions = explorer
+        .list_flow_decisions(original.id(), &page)
+        .await?
+        .into_rows();
 
     assert_eq!(original.metadata().status(), BatchStatus::Started);
     assert_eq!(steps.len(), 1);
-    assert_eq!(steps[0].metadata().status(), BatchStatus::Completed);
+    assert_eq!(steps[0].status(), BatchStatus::Completed);
     assert_eq!(
         prior_decisions.len(),
         usize::from(point == CrashPoint::AfterDecisionCommit)
@@ -636,10 +643,8 @@ async fn inspect_recover_and_restart_repeat(
         .await?
         .ok_or("repeat crash worker did not create an instance")?;
     let original = inspect
-        .job_executions(instance.id())
+        .latest_job_execution(instance.id())
         .await?
-        .into_iter()
-        .next()
         .ok_or("repeat crash worker did not create an execution")?;
     let inner0 = inspect
         .latest_repeat_execution_in_lineage(instance.id(), &node, &inner_id, &lineage0)

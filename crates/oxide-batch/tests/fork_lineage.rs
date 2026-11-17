@@ -10,7 +10,7 @@ use oxide_batch::{
     BatchStatus, Clock, ComponentRevision, DefinitionArtifactId, DefinitionIdentity,
     DefinitionRegistration, DefinitionRegistry, DefinitionRevision, ExecutionVersion, ForkRequest,
     InMemoryJobRepository, JobFork, JobInstanceKey, JobName, JobParameters, JobRepository,
-    LifecycleTransition, OperationId, RepositoryError, SequentialIdGenerator, StepName,
+    LifecycleTransition, NodeId, OperationId, RepositoryError, SequentialIdGenerator, StepName,
 };
 
 #[derive(Clone, Copy)]
@@ -120,14 +120,13 @@ fn plain_fork_creates_only_new_lineage_with_no_inherited_attempt() -> Result<(),
             .ok_or(RepositoryError::ForkStateCorrupt)?;
         assert_eq!(target.metadata().status(), BatchStatus::Starting);
         assert_eq!(target.version(), ExecutionVersion::INITIAL);
-        assert!(inspect.step_executions(target.id()).await?.is_empty());
-        assert_eq!(
+        assert!(
             inspect
-                .job_executions(lineage.target_instance_id())
+                .flow_step_execution(target.id(), &NodeId::new("only")?)
                 .await?
-                .len(),
-            1
+                .is_none()
         );
+        assert_eq!(inspect.job_execution_attempt(target.id()).await?.get(), 1);
         assert_eq!(inspect.scope_execution_attempt(target.id()).await?.get(), 1);
         assert_eq!(
             inspect.job_execution_parameters(target.id()).await?,
@@ -217,13 +216,11 @@ fn ambiguous_fork_commit_uses_exact_operation_readback() -> Result<(), Box<dyn E
         );
         assert_eq!(service.fork(&request).await?, lineage);
         let mut check = repository.begin().await?;
-        assert_eq!(
-            check
-                .job_executions(lineage.target_instance_id())
-                .await?
-                .len(),
-            1
-        );
+        let target = check
+            .latest_job_execution(lineage.target_instance_id())
+            .await?
+            .ok_or("fork target missing")?;
+        assert_eq!(check.job_execution_attempt(target.id()).await?.get(), 1);
         check.rollback().await?;
         Ok::<(), Box<dyn Error>>(())
     })

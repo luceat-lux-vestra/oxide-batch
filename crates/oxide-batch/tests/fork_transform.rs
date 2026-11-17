@@ -177,9 +177,9 @@ fn explicitly_transformed_fork_creates_fresh_target_and_context() -> Result<(), 
         assert_eq!(target_execution.metadata().status(), BatchStatus::Starting);
         assert!(
             observe
-                .step_executions(target_execution.id())
+                .flow_step_execution(target_execution.id(), &NodeId::new("only")?)
                 .await?
-                .is_empty()
+                .is_none()
         );
         let target_context = observe
             .scope_job_execution_context(target_execution.id())

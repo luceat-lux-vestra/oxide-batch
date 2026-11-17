@@ -339,10 +339,7 @@ pub async fn find_running_execution(
     let mut unit = repository.begin().await?;
     let instance = unit.find_job_instance(key).await?;
     let found = match instance {
-        Some(instance) => {
-            let executions = unit.job_executions(instance.id()).await?;
-            executions.into_iter().next_back()
-        }
+        Some(instance) => unit.latest_job_execution(instance.id()).await?,
         None => None,
     };
     unit.rollback().await?;

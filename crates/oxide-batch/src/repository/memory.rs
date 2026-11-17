@@ -2566,27 +2566,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move { Ok(self.staged.instances_by_id.get(&id).cloned()) })
     }
 
-    fn job_executions(
-        &mut self,
-        job_instance_id: JobInstanceId,
-    ) -> BoxFuture<'_, Result<Vec<JobExecution>, RepositoryError>> {
-        Box::pin(async move {
-            if !self.staged.instances_by_id.contains_key(&job_instance_id) {
-                return Err(RepositoryError::JobInstanceNotFound {
-                    id: job_instance_id,
-                });
-            }
-            Ok(self
-                .staged
-                .job_executions_by_instance
-                .get(&job_instance_id)
-                .into_iter()
-                .flatten()
-                .filter_map(|id| self.staged.job_executions.get(id))
-                .cloned()
-                .collect())
-        })
-    }
 
     fn get_step_execution(
         &mut self,
@@ -2615,27 +2594,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         })
     }
 
-    fn step_executions(
-        &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>> {
-        Box::pin(async move {
-            if !self.staged.job_executions.contains_key(&job_execution_id) {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                });
-            }
-            Ok(self
-                .staged
-                .step_executions_by_job
-                .get(&job_execution_id)
-                .into_iter()
-                .flatten()
-                .filter_map(|id| self.staged.step_executions.get(id))
-                .cloned()
-                .collect())
-        })
-    }
 
     fn latest_flow_step<'a>(
         &'a mut self,
@@ -2832,35 +2790,6 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move { Ok(self.staged.flow_decisions.get(&id).cloned()) })
     }
 
-
-    fn flow_decisions(
-        &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
-        Box::pin(async move {
-            if !self.staged.job_executions.contains_key(&job_execution_id) {
-                return Err(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                });
-            }
-            let mut decisions = self
-                .staged
-                .flow_decisions_by_job
-                .get(&job_execution_id)
-                .into_iter()
-                .flatten()
-                .map(|id| {
-                    self.staged
-                        .flow_decisions
-                        .get(id)
-                        .cloned()
-                        .ok_or(RepositoryError::FlowStateCorrupt)
-                })
-                .collect::<Result<Vec<_>, _>>()?;
-            decisions.sort_by_key(|decision| (decision.sequence(), decision.id()));
-            Ok(decisions)
-        })
-    }
 
     fn repeat_execution<'a>(
         &'a mut self,

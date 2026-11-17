@@ -1106,10 +1106,7 @@ pub trait RepositoryUnitOfWork: Send {
     ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>>;
 
     /// Loads job execution snapshots in creation order.
-    fn job_executions(
-        &mut self,
-        job_instance_id: JobInstanceId,
-    ) -> BoxFuture<'_, Result<Vec<JobExecution>, RepositoryError>>;
+
 
     /// Loads one step execution snapshot for inspection.
     fn get_step_execution(
@@ -1118,10 +1115,7 @@ pub trait RepositoryUnitOfWork: Send {
     ) -> BoxFuture<'_, Result<Option<StepExecution>, RepositoryError>>;
 
     /// Loads step execution snapshots in creation order.
-    fn step_executions(
-        &mut self,
-        job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<StepExecution>, RepositoryError>>;
+
 
     /// Loads the latest durable attempt for one instance/logical-step pair.
     fn latest_flow_step<'a>(
@@ -1140,20 +1134,7 @@ pub trait RepositoryUnitOfWork: Send {
         &'a mut self,
         job_execution_id: JobExecutionId,
         node_id: &'a NodeId,
-    ) -> BoxFuture<'a, Result<Option<StepExecution>, RepositoryError>> {
-        Box::pin(async move {
-            let mut matches = self
-                .step_executions(job_execution_id)
-                .await?
-                .into_iter()
-                .filter(|step| step.step_name().as_str() == node_id.as_str());
-            let first = matches.next();
-            if matches.next().is_some() {
-                return Err(RepositoryError::FlowStateCorrupt);
-            }
-            Ok(first)
-        })
-    }
+    ) -> BoxFuture<'a, Result<Option<StepExecution>, RepositoryError>>;
 
     /// Loads the authoritative latest execution for one logical instance.
     ///
@@ -1163,9 +1144,7 @@ pub trait RepositoryUnitOfWork: Send {
     fn latest_job_execution(
         &mut self,
         job_instance_id: JobInstanceId,
-    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
-        Box::pin(async move { Ok(self.job_executions(job_instance_id).await?.pop()) })
-    }
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>>;
 
     /// Loads the durable one-based attempt ordinal bound to one execution.
     ///
@@ -1174,24 +1153,7 @@ pub trait RepositoryUnitOfWork: Send {
     fn job_execution_attempt(
         &mut self,
         job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<NonZeroU64, RepositoryError>> {
-        Box::pin(async move {
-            let execution = self
-                .get_job_execution(job_execution_id)
-                .await?
-                .ok_or(RepositoryError::JobExecutionNotFound {
-                    id: job_execution_id,
-                })?;
-            self.job_executions(execution.job_instance_id())
-                .await?
-                .iter()
-                .position(|candidate| candidate.id() == job_execution_id)
-                .and_then(|index| u64::try_from(index).ok())
-                .and_then(|index| index.checked_add(1))
-                .and_then(NonZeroU64::new)
-                .ok_or(RepositoryError::Unavailable)
-        })
-    }
+    ) -> BoxFuture<'_, Result<NonZeroU64, RepositoryError>>;
 
     /// Loads one exact flow-step attempt for scoped source re-resolution.
     fn scope_step_state(
@@ -1233,16 +1195,8 @@ pub trait RepositoryUnitOfWork: Send {
     fn get_flow_decision(
         &mut self,
         _id: FlowDecisionId,
-    ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>> {
-        Box::pin(async { Err(RepositoryError::Unavailable) })
-    }
+    ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>>;
 
-    fn flow_decisions(
-        &mut self,
-        _job_execution_id: JobExecutionId,
-    ) -> BoxFuture<'_, Result<Vec<FlowDecision>, RepositoryError>> {
-        Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
-    }
 
     /// Loads the current committed repeat record for one concrete step attempt.
     fn repeat_execution<'a>(
