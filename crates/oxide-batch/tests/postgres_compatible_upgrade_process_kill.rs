@@ -32,7 +32,7 @@ use oxide_batch::{
     FailureCategory, FailureId, FailureSummary, JobInstanceId, JobInstanceKey, JobName,
     JobParameters, JobRepository, LifecycleTransition, NodeId, PostgresJobRepository,
     PostgresMigrator, RepositoryError, StartLimit, StateLimits, StateSchemaId, StateSchemaVersion,
-    StepName,
+    StepExecutionId, StepName,
 };
 use sqlx::{Connection as _, PgConnection};
 
@@ -88,6 +88,7 @@ impl Phase {
 
 struct UpgradeFixture {
     instance_id: JobInstanceId,
+    source_step_id: StepExecutionId,
 }
 
 #[test]
@@ -130,6 +131,7 @@ async fn run_phase(
         runtime_url,
         migrator_url,
         fixture.instance_id,
+        fixture.source_step_id,
         &handshake,
         &mut child,
         &mut block,
@@ -154,6 +156,7 @@ async fn drive_kill(
     runtime_url: &str,
     migrator_url: &str,
     instance_id: JobInstanceId,
+    source_step_id: StepExecutionId,
     handshake: &Path,
     child: &mut Child,
     block: &mut PhaseBlock,
@@ -186,7 +189,7 @@ async fn drive_kill(
     block.release().await?;
     let expected_attempts = if phase == Phase::CommitInFlight { 2 } else { 1 };
     wait_for_attempt_count(runtime_url, phase.job_name(), expected_attempts).await?;
-    assert_phase_state(runtime_url, phase, instance_id).await
+    assert_phase_state(runtime_url, phase, instance_id, source_step_id).await
 }
 
 async fn prepare_source(runtime_url: &str, job: &str) -> Result<UpgradeFixture, Box<dyn Error>> {
@@ -270,6 +273,7 @@ async fn prepare_source(runtime_url: &str, job: &str) -> Result<UpgradeFixture, 
 
     Ok(UpgradeFixture {
         instance_id: instance.id(),
+        source_step_id: source_step.id(),
     })
 }
 
@@ -515,6 +519,7 @@ async fn assert_phase_state(
     runtime_url: &str,
     phase: Phase,
     instance_id: JobInstanceId,
+    source_step_id: StepExecutionId,
 ) -> Result<(), Box<dyn Error>> {
     let repository = PostgresJobRepository::connect(
         config(runtime_url.to_owned())?,
@@ -533,7 +538,7 @@ async fn assert_phase_state(
     );
 
     let source = inspect
-        .latest_flow_step(instance_id, &NodeId::new(SOURCE_NODE)?)
+        .scope_step_state(source_step_id)
         .await?
         .ok_or("source step disappeared after upgrade kill")?;
     let source_context = source.context().ok_or("source context disappeared")?;

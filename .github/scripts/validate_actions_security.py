@@ -602,8 +602,9 @@ def check_codeql_pr_runtime_contract_text(pr_ci: str, codeql: str, path: Path = 
     )
     for fragment in scope_fragments:
         if fragment not in scope: violations.append(f"{path}: trusted-base CodeQL classifier missing: {fragment}")
+    if "\n      - codeql-runtime\n" not in gate:
+        violations.append(f"{path}: Direct Merge Gate CodeQL dependency missing: codeql-runtime")
     gate_fragments = (
-        "needs: [scope, rust, dependency, evidence, supply, conformance, codeql-runtime]",
         "CODEQL_RUNTIME_CLASSIFICATION_OUTCOME:", "CODEQL_RUNTIME_REQUIRED:", "CODEQL_RUNTIME_RESULT:",
         'require_success codeql-runtime-scope "$CODEQL_RUNTIME_CLASSIFICATION_OUTCOME"',
         'require_success codeql-runtime "$CODEQL_RUNTIME_RESULT"', 'require_skipped codeql-runtime "$CODEQL_RUNTIME_RESULT"',
