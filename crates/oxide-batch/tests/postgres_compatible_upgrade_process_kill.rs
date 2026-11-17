@@ -539,6 +539,11 @@ async fn assert_phase_state(
     let source_context = source.context().ok_or("source context disappeared")?;
     assert_eq!(source_context.schema_version().get(), 1);
     assert_eq!(context_value(source_context)?, 7);
+    let source_execution = inspect
+        .get_job_execution(source.execution().job_execution_id())
+        .await?
+        .ok_or("source job execution disappeared")?;
+    assert_eq!(source_execution.metadata().status(), BatchStatus::Failed);
 
     if phase != Phase::CommitInFlight {
         assert!(
@@ -548,14 +553,14 @@ async fn assert_phase_state(
                 .is_none(),
             "pre-commit kill created a partial target step",
         );
-        assert_eq!(executions[0].metadata().status(), BatchStatus::Failed);
+        assert_eq!(latest.id(), source_execution.id());
         inspect.rollback().await?;
         repository.close().await?;
         return Ok(());
     }
 
-    assert_eq!(executions[0].metadata().status(), BatchStatus::Failed);
-    assert_eq!(executions[1].metadata().status(), BatchStatus::Starting);
+    assert_ne!(latest.id(), source_execution.id());
+    assert_eq!(latest.metadata().status(), BatchStatus::Starting);
     let target = inspect
         .latest_flow_step(instance_id, &NodeId::new(TARGET_NODE)?)
         .await?
@@ -566,7 +571,7 @@ async fn assert_phase_state(
     assert_eq!(target_context.schema_version().get(), 2);
     assert_eq!(context_value(target_context)?, 8);
     let target_definition = inspect
-        .scope_execution_definition(executions[1].id())
+        .scope_execution_definition(latest.id())
         .await?;
     assert_eq!(target_definition.revision().as_str(), "v2");
     inspect.rollback().await?;
@@ -585,7 +590,7 @@ async fn assert_phase_state(
             execution_id,
             status: BatchStatus::Starting,
             ..
-        }) if execution_id == executions[1].id()
+        }) if execution_id == latest.id()
     ));
     replay.rollback().await?;
 

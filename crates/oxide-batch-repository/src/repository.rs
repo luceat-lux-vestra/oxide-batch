@@ -813,7 +813,7 @@ pub trait RepositoryUnitOfWork: Send {
     /// Loads the bounded committed step-state snapshot of a locked fork source.
     ///
     /// Implementations declaring definition/fork support must return at most
-    /// MAX_FORK_SOURCE_STEPS states and fail before returning an oversized set.
+    /// `MAX_FORK_SOURCE_STEPS` states and fail before returning an oversized set.
     fn fork_source_step_states(
         &mut self,
         _source_execution_id: JobExecutionId,
@@ -1105,15 +1105,11 @@ pub trait RepositoryUnitOfWork: Send {
         id: JobExecutionId,
     ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>>;
 
-    /// Loads job execution snapshots in creation order.
-
     /// Loads one step execution snapshot for inspection.
     fn get_step_execution(
         &mut self,
         id: StepExecutionId,
     ) -> BoxFuture<'_, Result<Option<StepExecution>, RepositoryError>>;
-
-    /// Loads step execution snapshots in creation order.
 
     /// Loads the latest durable attempt for one instance/logical-step pair.
     fn latest_flow_step<'a>(
@@ -1184,8 +1180,6 @@ pub trait RepositoryUnitOfWork: Send {
     ) -> BoxFuture<'a, Result<Option<FlowDecision>, RepositoryError>> {
         Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
     }
-
-    /// Loads one execution's flow decisions in sequence order.
 
     /// Loads one exact durable flow decision by identifier.
     ///

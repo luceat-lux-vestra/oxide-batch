@@ -1394,12 +1394,42 @@ fn logical_backup_restores_restartable_state() -> Result<(), Box<dyn Error>> {
         assert_eq!(durable_source.metadata().status(), BatchStatus::Failed);
         assert_eq!(latest.metadata().status(), BatchStatus::Completed);
         assert_eq!(restarted.decisions().len(), 1);
+        let launched_decision = &restarted.decisions()[0];
+        let durable_decision = verify
+            .get_flow_decision(launched_decision.id())
+            .await?
+            .ok_or_else(|| std::io::Error::other("completed restart decision missing"))?;
+        assert_eq!(durable_decision.id(), launched_decision.id());
         assert_eq!(
-            verify
-                .get_flow_decision(restarted.decisions()[0].id())
-                .await?
-                .as_ref(),
-            Some(&restarted.decisions()[0])
+            durable_decision.job_execution_id(),
+            launched_decision.job_execution_id()
+        );
+        assert_eq!(durable_decision.sequence(), launched_decision.sequence());
+        assert_eq!(
+            durable_decision.source_node_id(),
+            launched_decision.source_node_id()
+        );
+        assert_eq!(
+            durable_decision.source_step_execution_id(),
+            launched_decision.source_step_execution_id()
+        );
+        assert_eq!(durable_decision.kind(), launched_decision.kind());
+        assert_eq!(
+            durable_decision.observed_outcome(),
+            launched_decision.observed_outcome()
+        );
+        assert_eq!(durable_decision.target(), launched_decision.target());
+        assert_eq!(
+            durable_decision.plan_fingerprint(),
+            launched_decision.plan_fingerprint()
+        );
+        assert_eq!(
+            durable_decision.input_digest(),
+            launched_decision.input_digest()
+        );
+        assert_eq!(
+            durable_decision.reused_decision_id(),
+            launched_decision.reused_decision_id()
         );
         verify.rollback().await?;
 

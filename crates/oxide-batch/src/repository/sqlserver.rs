@@ -522,17 +522,6 @@ impl TdsQuery {
             .await
     }
 
-    async fn all_raw(
-        self,
-        connection: &mut SqlServerConnection,
-    ) -> Result<Vec<TdsRow>, tiberius::error::Error> {
-        self.into_driver()
-            .query(&mut connection.client)
-            .await?
-            .into_first_result()
-            .await
-    }
-
     async fn one(self, connection: &mut SqlServerConnection) -> Result<TdsRow, RepositoryError> {
         self.optional_raw(connection)
             .await
@@ -545,15 +534,6 @@ impl TdsQuery {
         connection: &mut SqlServerConnection,
     ) -> Result<Option<TdsRow>, RepositoryError> {
         self.optional_raw(connection)
-            .await
-            .map_err(|error| map_driver_error(connection, &error))
-    }
-
-    async fn all(
-        self,
-        connection: &mut SqlServerConnection,
-    ) -> Result<Vec<TdsRow>, RepositoryError> {
-        self.all_raw(connection)
             .await
             .map_err(|error| map_driver_error(connection, &error))
     }

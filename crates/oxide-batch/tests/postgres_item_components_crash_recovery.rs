@@ -51,6 +51,7 @@ use sqlx::postgres::PgPoolOptions;
 
 const CRASH_MODE_ENV: &str = "OXIDEBATCH_149_CRASH_MODE";
 const CRASH_EXIT_CODE: i32 = 87;
+const STEP_NAME: &str = "import";
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ReaderKind {
@@ -258,7 +259,7 @@ async fn create_started_chunk_scope(
         .clone();
     let job = create.create_job_execution(instance.id()).await?;
     let step = create
-        .create_step_execution(job.id(), &StepName::new("import")?)
+        .create_step_execution(job.id(), &StepName::new(STEP_NAME)?)
         .await?;
     create.commit().await?;
 
