@@ -17,17 +17,18 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    BatchStatus, BoxFuture, Clock, CursorError, CursorKey, DefinitionDescriptor, DefinitionIdentity,
-    DefinitionRevision, DefinitionUpgrade, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
-    ExecutionVersion, ExitCode, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository,
-    FailureCategory, FailureId, FailureSummary, FlowDecision, FlowDecisionId, FlowDecisionRequest,
-    FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind, JobExecution,
-    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
-    JobInstanceProjection, JobInstanceSelection, JobName, JobParameter, JobParameters,
-    JobRepository, LifecycleError, LifecycleTransition, NodeId, ParameterDescriptor, ParameterName,
-    ParameterRole, ParameterValue, ParameterValueKind, QueryWindow, RecoveryDecision,
-    RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
-    RepositoryUnitOfWork, StartLimit, StepExecution, StepExecutionId, StepName, TerminalKind,
+    BatchStatus, BoxFuture, Clock, CursorError, CursorKey, DefinitionDescriptor,
+    DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, ExecutionCounts, ExecutionMetadata,
+    ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, ExplorerError, ExplorerQuery,
+    ExplorerRepository, FailureCategory, FailureId, FailureSummary, FlowDecision, FlowDecisionId,
+    FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind,
+    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
+    JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName, JobParameter,
+    JobParameters, JobRepository, LifecycleError, LifecycleTransition, NodeId, ParameterDescriptor,
+    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, QueryWindow,
+    RecoveryDecision, RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor,
+    RepositoryError, RepositoryUnitOfWork, StartLimit, StepExecution, StepExecutionId, StepName,
+    TerminalKind,
 };
 
 const SUPPORTED_SCHEMA_VERSION: u32 = 2;
@@ -486,7 +487,6 @@ impl fmt::Debug for MongoJobRepository {
             .field("available_uow_permits", &self.permits.available_permits())
             .finish_non_exhaustive()
     }
-
 }
 
 /// Read-only bounded Explorer adapter for MongoDB metadata.
@@ -545,8 +545,7 @@ impl ExplorerRepository for MongoExplorer {
         window: &'a QueryWindow,
     ) -> BoxFuture<'a, Result<Vec<JobInstanceProjection>, ExplorerError>> {
         Box::pin(async move {
-            let ceiling =
-                i64::try_from(window.ceiling()).map_err(|_| explorer_unavailable())?;
+            let ceiling = i64::try_from(window.ceiling()).map_err(|_| explorer_unavailable())?;
             let mut id_window = doc! { "$lte": ceiling };
             if let Some(after) = mongo_window_identity(window)? {
                 id_window.insert("$lt", after);
@@ -2244,7 +2243,6 @@ fn is_duplicate_key(kind: &ErrorKind) -> bool {
     }
 }
 
-
 fn explorer_unavailable() -> ExplorerError {
     ExplorerError::Repository(RepositoryError::Unavailable)
 }
@@ -2270,8 +2268,7 @@ fn decode_mongo_instance_projection(
         .map_err(ExplorerError::Repository)?
         .try_into()
         .map_err(|_| explorer_unavailable())?;
-    let encoded =
-        read_string(row, "identifying_parameters").map_err(ExplorerError::Repository)?;
+    let encoded = read_string(row, "identifying_parameters").map_err(ExplorerError::Repository)?;
     let value: Value = serde_json::from_str(&encoded).map_err(|_| explorer_unavailable())?;
     let parameters = decode_identifying_parameters(&value)
         .map_err(ExplorerError::Repository)?
@@ -2284,10 +2281,9 @@ fn decode_mongo_instance_projection(
             )
         })
         .collect();
-    let created_at = millis_system_time(
-        read_i64(row, "created_ms").map_err(ExplorerError::Repository)?,
-    )
-    .map_err(ExplorerError::Repository)?;
+    let created_at =
+        millis_system_time(read_i64(row, "created_ms").map_err(ExplorerError::Repository)?)
+            .map_err(ExplorerError::Repository)?;
     Ok(JobInstanceProjection::new(
         id,
         job_name,
@@ -2303,22 +2299,18 @@ fn decode_mongo_execution_projection(
 ) -> Result<JobExecutionProjection, ExplorerError> {
     let execution = decode_job_execution(row).map_err(ExplorerError::Repository)?;
     let metadata = execution.metadata();
-    let instance = joined_document(row, "explorer_instance")?
-        .ok_or_else(explorer_unavailable)?;
+    let instance = joined_document(row, "explorer_instance")?.ok_or_else(explorer_unavailable)?;
     let job_name =
         JobName::new(read_string(instance, "job_name").map_err(ExplorerError::Repository)?)
             .map_err(|_| explorer_unavailable())?;
-    let attempt = u32::try_from(
-        read_u64(row, "attempt").map_err(ExplorerError::Repository)?,
-    )
-    .map_err(|_| explorer_unavailable())?;
+    let attempt = u32::try_from(read_u64(row, "attempt").map_err(ExplorerError::Repository)?)
+        .map_err(|_| explorer_unavailable())?;
     let definition = joined_document(row, "explorer_definition")?
         .map(decode_mongo_definition_descriptor)
         .transpose()?;
-    let updated_at = millis_system_time(
-        read_i64(row, "updated_ms").map_err(ExplorerError::Repository)?,
-    )
-    .map_err(ExplorerError::Repository)?;
+    let updated_at =
+        millis_system_time(read_i64(row, "updated_ms").map_err(ExplorerError::Repository)?)
+            .map_err(ExplorerError::Repository)?;
 
     Ok(JobExecutionProjection::new(
         execution.id(),
@@ -2361,10 +2353,9 @@ fn decode_mongo_definition_descriptor(
         read_string(row, "definition_revision").map_err(ExplorerError::Repository)?,
     )
     .map_err(|_| explorer_unavailable())?;
-    let manifest_format = u16::try_from(
-        read_numeric_u64(row, "manifest_format").map_err(ExplorerError::Repository)?,
-    )
-    .map_err(|_| explorer_unavailable())?;
+    let manifest_format =
+        u16::try_from(read_numeric_u64(row, "manifest_format").map_err(ExplorerError::Repository)?)
+            .map_err(|_| explorer_unavailable())?;
     let manifest_digest: [u8; 32] = read_bytes(row, "manifest_digest")
         .map_err(ExplorerError::Repository)?
         .try_into()

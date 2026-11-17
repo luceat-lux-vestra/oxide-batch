@@ -508,3 +508,23 @@ One bounded durable value, `RestartPolicy`, is added to the shared core re-expor
 `FlowGraph::with_job_restart_policy`, `CompiledExecutionPlan::job_restart_policy`, and `StartControls::with_restart_policy` add no implementation, runtime, repository, credential, or payload types to the facade. The non-default policy is restart-relevant format-4 definition data, while the default remains omitted so legacy definition bytes and fingerprints are preserved. `FlowRuntimeError::NonRestartableJob` and `NonRestartableStep` expose only opaque framework IDs needed to classify the rejection and carry no parameter, context, checkpoint, component-state, SQL, or application-error payload.
 
 This review is bounded to #606 / `LIFE-NORESTART-001`. It does not promote `STEP-STARTLIMIT-001`, operator actions, explorer projections, or final #199/#200 acceptance.
+
+## M8 #646 MongoDB Explorer facade review (2026-11-18)
+
+One bounded read-only adapter entry point, `MongoExplorer`, is added to the
+`repository` re-export group. The group therefore increases from 30 to 31
+names and the total reviewed facade from 598 to 599. MongoDB's optional
+feature-gated adapter surface increases from 4 to 5 names; the other optional
+adapter counts are unchanged.
+
+`MongoExplorer` exposes only the existing driver-neutral Explorer contracts and
+owns no raw MongoDB client, collection, document, credential, executor, or
+implementation type in its public signatures. Its repository descriptor still
+declares zero optional repository capabilities, and unsupported Explorer queries
+continue to fail closed through the existing `ExplorerError` boundary.
+
+This review is bounded to the additive #646 Explorer baseline. It does not
+promote MongoDB support, approve operator/retention/definition-registry
+capabilities, claim backup/restore or crash evidence, or change the repository
+SPI.
+
