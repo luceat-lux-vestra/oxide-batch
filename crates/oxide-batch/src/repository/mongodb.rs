@@ -1204,12 +1204,11 @@ impl RepositoryUnitOfWork for MongoUnitOfWork<'_> {
         job_execution_id: JobExecutionId,
     ) -> BoxFuture<'_, Result<NonZeroU64, RepositoryError>> {
         Box::pin(async move {
-            let row = self
-                .raw_job_execution(job_execution_id)
-                .await?
-                .ok_or(RepositoryError::JobExecutionNotFound {
+            let row = self.raw_job_execution(job_execution_id).await?.ok_or(
+                RepositoryError::JobExecutionNotFound {
                     id: job_execution_id,
-                })?;
+                },
+            )?;
             NonZeroU64::new(read_u64(&row, "attempt")?).ok_or(RepositoryError::Unavailable)
         })
     }
@@ -1561,10 +1560,7 @@ impl RepositoryUnitOfWork for MongoUnitOfWork<'_> {
     {
         Box::pin(async move {
             let mut session = self.session.take().ok_or(RepositoryError::Unavailable)?;
-            session
-                .commit_transaction()
-                .await
-                .map_err(map_commit_error)
+            session.commit_transaction().await.map_err(map_commit_error)
         })
     }
     fn rollback<'a>(mut self: Box<Self>) -> BoxFuture<'a, Result<(), RepositoryError>>
