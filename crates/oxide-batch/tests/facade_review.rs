@@ -114,9 +114,9 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // interceptor traits and registrations, redacted failure/context values,
     // policy outcome, and the bounded secondary-failure ceiling.
     ("repeat_runtime", 14),
-    // #654, #656, and #674 add four concrete entry points per non-PostgreSQL
+    // #654, #656, #674, and #646 add four concrete entry points per non-PostgreSQL
     // adapter while the repository SPI itself remains driver-neutral.
-    ("repository", 26),
+    ("repository", 30),
     ("runtime", 18),
     // #277 exposes only process-local live-scope assembly contracts: opaque
     // handles, explicit factories/registrations, value-redacted errors, and the
@@ -138,6 +138,7 @@ const REVIEWED_CONSTANTS: usize = 1;
 
 /// Reviewed concrete-adapter entry points by feature.
 const REVIEWED_OPTIONAL: &[(&str, usize)] = &[
+    ("mongodb", 4),
     ("mysql", 4),
     ("postgres", 12),
     ("sqlite", 4),

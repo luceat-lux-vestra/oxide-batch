@@ -28,7 +28,7 @@ use std::path::{Path, PathBuf};
 const UPDATE_VARIABLE: &str = "OXIDEBATCH_UPDATE_FACADE_SNAPSHOT";
 
 /// Features that gate concrete durable-adapter entry points.
-const OPTIONAL_FEATURES: &[&str] = &["mysql", "postgres", "sqlite", "sqlserver"];
+const OPTIONAL_FEATURES: &[&str] = &["mongodb", "mysql", "postgres", "sqlite", "sqlserver"];
 
 /// Every supported `oxide-batch` import path.
 ///
@@ -177,6 +177,9 @@ mod resolves {
         ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration,
         ScopedFactoryContext, ScopedFactoryError,
     };
+
+    #[cfg(feature = "mongodb")]
+    pub use oxide_batch::{MongoConfig, MongoConfigError, MongoJobRepository, MongoMigrator};
 
     #[cfg(feature = "mysql")]
     pub use oxide_batch::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};

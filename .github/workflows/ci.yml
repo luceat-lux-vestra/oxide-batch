@@ -636,6 +636,10 @@ jobs:
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask -- release-crates
 
+      - name: Verify MongoDB runnable-core CI topology
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: python3 .github/scripts/validate_mongodb_ci_contract.py --self-test
+
   quality:
     name: quality
     needs: [quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-integration-3, quality-bin-doc, quality-contracts]
@@ -757,6 +761,89 @@ jobs:
           OXIDEBATCH_SQLSERVER_EXPECTED_PRODUCT_VERSION: ${{ matrix.product_version }}
           OXIDEBATCH_SQLSERVER_ENCRYPTION: ${{ matrix.encryption }}
         run: ./tests/fixtures/sqlserver/run-ci-runnable-core.sh
+
+  mongodb-repository-core:
+    name: mongodb-${{ matrix.lane }}-repository-core
+    if: ${{ github.event.pull_request.draft == false }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - lane: "8.0"
+            version: "8.0.38"
+            image: mongo:8.0.38@sha256:d97fea17ccb8d004cd137be8dab54d70d0df11be69c9f422aefe4484c8414ab7
+          - lane: "8.2"
+            version: "8.2.12"
+            image: mongo:8.2.12@sha256:e0ce8c35124d4a9f9785532d1f268f39e9728ffa1cb38f46fa482436424c4bd3
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Run pinned MongoDB runnable-core certification
+        env:
+          OXIDEBATCH_MONGODB_IMAGE: ${{ matrix.image }}
+          OXIDEBATCH_MONGODB_LANE: ${{ matrix.lane }}
+          OXIDEBATCH_MONGODB_EXPECTED_VERSION: ${{ matrix.version }}
+          OXIDEBATCH_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
+          OXIDEBATCH_MONGODB_TEST_DATABASE: oxide_batch_repository
+        shell: bash
+        run: |
+          set -euo pipefail
+          container="oxide-mongodb-$OXIDEBATCH_MONGODB_LANE"
+          cleanup() {
+            docker logs "$container" >/dev/null 2>&1 || true
+            docker rm --force "$container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker run --detach --rm \
+            --name "$container" \
+            --publish 27017:27017 \
+            "$OXIDEBATCH_MONGODB_IMAGE" \
+            --replSet rs0 --bind_ip_all
+
+          ready=false
+          for _ in $(seq 1 60); do
+            if docker exec "$container" mongosh --quiet \
+              --eval 'db.adminCommand({ ping: 1 }).ok' 2>/dev/null | grep -qx '1'; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != "true" ]; then
+            echo "::error::MongoDB did not become reachable"
+            docker logs "$container"
+            exit 1
+          fi
+
+          docker exec "$container" mongosh --quiet --eval \
+            'rs.initiate({_id:"rs0",members:[{_id:0,host:"127.0.0.1:27017"}]})'
+
+          primary=false
+          for _ in $(seq 1 60); do
+            if docker exec "$container" mongosh --quiet \
+              --eval 'db.hello().isWritablePrimary' 2>/dev/null | grep -qx 'true'; then
+              primary=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$primary" != "true" ]; then
+            echo "::error::MongoDB replica set did not elect a writable primary"
+            docker logs "$container"
+            exit 1
+          fi
+
+          cargo test -p oxide-batch --features mongodb \
+            --test mongodb_repository_core \
+            -- --nocapture --test-threads=1
 
   mysql-repository-core:
     name: mysql-8.4.13-repository-core

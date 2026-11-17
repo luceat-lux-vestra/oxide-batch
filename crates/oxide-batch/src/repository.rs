@@ -5,6 +5,8 @@
 //! concrete SQL adapters behind their respective facade features.
 
 mod memory;
+#[cfg(feature = "mongodb")]
+mod mongodb;
 #[cfg(feature = "mysql")]
 mod mysql;
 #[cfg(feature = "postgres")]
@@ -17,6 +19,8 @@ mod sqlite;
 mod sqlserver;
 
 pub use memory::{InMemoryExplorer, InMemoryJobRepository};
+#[cfg(feature = "mongodb")]
+pub use mongodb::{MongoConfig, MongoConfigError, MongoJobRepository, MongoMigrator};
 #[cfg(feature = "mysql")]
 pub use mysql::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};
 #[cfg(feature = "postgres")]

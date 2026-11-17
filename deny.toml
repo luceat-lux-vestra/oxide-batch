@@ -23,6 +23,10 @@ allow = [
     "Unicode-3.0",
     "Zlib",
 ]
+exceptions = [
+    { allow = ["CC0-1.0"], crate = "tiny-keccak@2.0.2" },
+    { allow = ["CDLA-Permissive-2.0"], crate = "webpki-roots@1.0.12" },
+]
 
 [licenses.private]
 ignore = false

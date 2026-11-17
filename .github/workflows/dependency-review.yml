@@ -27,7 +27,9 @@ jobs:
           # The crate ships canonical MIT and Apache-2.0 license files but its
           # manifest uses the legacy non-SPDX spelling `MIT/Apache-2.0`.
           # cargo-deny remains the authoritative full-graph license check.
-          allow-dependencies-licenses: pkg:cargo/unicode-properties@0.1.4
+          # The MongoDB graph's two unusual licenses are separately reviewed in
+          # .github/supply-chain-exceptions.json with an expiry of 2027-02-12.
+          allow-dependencies-licenses: pkg:cargo/tiny-keccak@2.0.2, pkg:cargo/unicode-properties@0.1.4, pkg:cargo/webpki-roots@1.0.12
 
   actions-security:
     name: actions-security

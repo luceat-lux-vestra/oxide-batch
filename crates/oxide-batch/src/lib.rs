@@ -575,6 +575,8 @@ pub use repository::{
     PostgresExplorer, PostgresFaultState, PostgresJobRepository, PostgresMigrator, TlsMode,
 };
 pub use repository::{InMemoryExplorer, InMemoryJobRepository};
+#[cfg(feature = "mongodb")]
+pub use repository::{MongoConfig, MongoConfigError, MongoJobRepository, MongoMigrator};
 #[cfg(feature = "mysql")]
 pub use repository::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};
 #[cfg(feature = "sqlserver")]
