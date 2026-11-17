@@ -527,4 +527,3 @@ This review is bounded to the additive #646 Explorer baseline. It does not
 promote MongoDB support, approve operator/retention/definition-registry
 capabilities, claim backup/restore or crash evidence, or change the repository
 SPI.
-
