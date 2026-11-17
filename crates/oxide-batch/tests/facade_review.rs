@@ -138,7 +138,7 @@ const REVIEWED_CONSTANTS: usize = 1;
 
 /// Reviewed concrete-adapter entry points by feature.
 const REVIEWED_OPTIONAL: &[(&str, usize)] = &[
-    ("mongodb", 4),
+    ("mongodb", 5),
     ("mysql", 4),
     ("postgres", 12),
     ("sqlite", 4),

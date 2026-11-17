@@ -179,7 +179,9 @@ mod resolves {
     };
 
     #[cfg(feature = "mongodb")]
-    pub use oxide_batch::{MongoConfig, MongoConfigError, MongoJobRepository, MongoMigrator};
+    pub use oxide_batch::{
+        MongoConfig, MongoConfigError, MongoExplorer, MongoJobRepository, MongoMigrator,
+    };
 
     #[cfg(feature = "mysql")]
     pub use oxide_batch::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};

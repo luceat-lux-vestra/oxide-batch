@@ -17,13 +17,15 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    BatchStatus, BoxFuture, Clock, DefinitionIdentity, DefinitionUpgrade, ExecutionCounts,
-    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus,
+    BatchStatus, BoxFuture, Clock, CursorError, CursorKey, DefinitionDescriptor, DefinitionIdentity,
+    DefinitionRevision, DefinitionUpgrade, ExecutionCounts, ExecutionMetadata, ExecutionTimestamps,
+    ExecutionVersion, ExitCode, ExitStatus, ExplorerError, ExplorerQuery, ExplorerRepository,
     FailureCategory, FailureId, FailureSummary, FlowDecision, FlowDecisionId, FlowDecisionRequest,
     FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind, JobExecution,
-    JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey, JobInstanceSelection, JobName,
-    JobParameter, JobParameters, JobRepository, LifecycleError, LifecycleTransition, NodeId,
-    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, RecoveryDecision,
+    JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey,
+    JobInstanceProjection, JobInstanceSelection, JobName, JobParameter, JobParameters,
+    JobRepository, LifecycleError, LifecycleTransition, NodeId, ParameterDescriptor, ParameterName,
+    ParameterRole, ParameterValue, ParameterValueKind, QueryWindow, RecoveryDecision,
     RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor, RepositoryError,
     RepositoryUnitOfWork, StartLimit, StepExecution, StepExecutionId, StepName, TerminalKind,
 };
@@ -484,7 +486,137 @@ impl fmt::Debug for MongoJobRepository {
             .field("available_uow_permits", &self.permits.available_permits())
             .finish_non_exhaustive()
     }
+
 }
+
+/// Read-only bounded Explorer adapter for MongoDB metadata.
+///
+/// This port is additive and deliberately does not advertise a
+/// `RepositoryCapability`. Unsupported queries retain the
+/// `ExplorerRepository` fail-closed defaults.
+#[derive(Clone)]
+pub struct MongoExplorer {
+    repository: MongoJobRepository,
+}
+
+impl MongoExplorer {
+    /// Binds one MongoDB repository to the bounded read port.
+    #[must_use]
+    pub const fn new(repository: MongoJobRepository) -> Self {
+        Self { repository }
+    }
+}
+
+impl fmt::Debug for MongoExplorer {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MongoExplorer")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ExplorerRepository for MongoExplorer {
+    fn identity_ceiling<'a>(
+        &'a self,
+        query: &'a ExplorerQuery,
+    ) -> BoxFuture<'a, Result<u64, ExplorerError>> {
+        Box::pin(async move {
+            let ExplorerQuery::Instances { job_name } = query else {
+                return Err(ExplorerError::UnsupportedCapability);
+            };
+            let row = self
+                .repository
+                .collection(INSTANCES)
+                .find_one(doc! { "job_name": job_name.as_str() })
+                .sort(doc! { "id": -1_i32 })
+                .projection(doc! { "_id": 0_i32, "id": 1_i32 })
+                .await
+                .map_err(|_| explorer_unavailable())?;
+            row.as_ref()
+                .map(|row| read_u64(row, "id").map_err(ExplorerError::Repository))
+                .transpose()
+                .map(Option::unwrap_or_default)
+        })
+    }
+
+    fn instances<'a>(
+        &'a self,
+        job_name: &'a JobName,
+        window: &'a QueryWindow,
+    ) -> BoxFuture<'a, Result<Vec<JobInstanceProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let ceiling =
+                i64::try_from(window.ceiling()).map_err(|_| explorer_unavailable())?;
+            let mut id_window = doc! { "$lte": ceiling };
+            if let Some(after) = mongo_window_identity(window)? {
+                id_window.insert("$lt", after);
+            }
+            let mut cursor = self
+                .repository
+                .collection(INSTANCES)
+                .find(doc! {
+                    "job_name": job_name.as_str(),
+                    "id": id_window,
+                })
+                .sort(doc! { "id": -1_i32 })
+                .limit(i64::from(window.limit()))
+                .await
+                .map_err(|_| explorer_unavailable())?;
+            let mut rows = Vec::with_capacity(usize::from(window.limit()));
+            while cursor.advance().await.map_err(|_| explorer_unavailable())? {
+                let row = cursor
+                    .deserialize_current()
+                    .map_err(|_| explorer_unavailable())?;
+                rows.push(decode_mongo_instance_projection(&row)?);
+            }
+            Ok(rows)
+        })
+    }
+
+    fn execution(
+        &self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Option<JobExecutionProjection>, ExplorerError>> {
+        Box::pin(async move {
+            let mut cursor = self
+                .repository
+                .collection(EXECUTIONS)
+                .aggregate(vec![
+                    doc! {
+                        "$match": {
+                            "id": u64_to_i64(job_execution_id.get())
+                                .map_err(ExplorerError::Repository)?
+                        }
+                    },
+                    doc! { "$limit": 1_i64 },
+                    doc! {
+                        "$lookup": {
+                            "from": INSTANCES,
+                            "localField": "job_instance_id",
+                            "foreignField": "id",
+                            "as": "explorer_instance",
+                        }
+                    },
+                    doc! {
+                        "$lookup": {
+                            "from": DEFINITIONS,
+                            "localField": "definition_id",
+                            "foreignField": "id",
+                            "as": "explorer_definition",
+                        }
+                    },
+                ])
+                .await
+                .map_err(|_| explorer_unavailable())?;
+            if !cursor.advance().await.map_err(|_| explorer_unavailable())? {
+                return Ok(None);
+            }
+            let row = cursor
+                .deserialize_current()
+                .map_err(|_| explorer_unavailable())?;
+            decode_mongo_execution_projection(&row).map(Some)
+        })
+    }
 
 impl JobRepository for MongoJobRepository {
     fn connection_capacity(&self) -> u32 {
@@ -2109,6 +2241,138 @@ fn is_duplicate_key(kind: &ErrorKind) -> bool {
         ErrorKind::Command(command) => command.code == 11000,
         _ => false,
     }
+}
+
+
+fn explorer_unavailable() -> ExplorerError {
+    ExplorerError::Repository(RepositoryError::Unavailable)
+}
+
+fn mongo_window_identity(window: &QueryWindow) -> Result<Option<i64>, ExplorerError> {
+    match window.after() {
+        Some(CursorKey::Identity(value)) => i64::try_from(*value)
+            .map(Some)
+            .map_err(|_| ExplorerError::Cursor(CursorError::CursorInvalid)),
+        Some(_) => Err(ExplorerError::Cursor(CursorError::CursorInvalid)),
+        None => Ok(None),
+    }
+}
+
+fn decode_mongo_instance_projection(
+    row: &Document,
+) -> Result<JobInstanceProjection, ExplorerError> {
+    let id = JobInstanceId::new(read_u64(row, "id").map_err(ExplorerError::Repository)?)
+        .map_err(|_| explorer_unavailable())?;
+    let job_name = JobName::new(read_string(row, "job_name").map_err(ExplorerError::Repository)?)
+        .map_err(|_| explorer_unavailable())?;
+    let digest: [u8; 32] = read_bytes(row, "instance_key")
+        .map_err(ExplorerError::Repository)?
+        .try_into()
+        .map_err(|_| explorer_unavailable())?;
+    let encoded =
+        read_string(row, "identifying_parameters").map_err(ExplorerError::Repository)?;
+    let value: Value = serde_json::from_str(&encoded).map_err(|_| explorer_unavailable())?;
+    let parameters = decode_identifying_parameters(&value)
+        .map_err(ExplorerError::Repository)?
+        .iter()
+        .map(|(name, parameter)| {
+            ParameterDescriptor::new(
+                name.clone(),
+                parameter.value().kind(),
+                parameter.is_identifying(),
+            )
+        })
+        .collect();
+    let created_at = millis_system_time(
+        read_i64(row, "created_ms").map_err(ExplorerError::Repository)?,
+    )
+    .map_err(ExplorerError::Repository)?;
+    Ok(JobInstanceProjection::new(
+        id,
+        job_name,
+        digest,
+        parameters,
+        Some(created_at),
+        None,
+    ))
+}
+
+fn decode_mongo_execution_projection(
+    row: &Document,
+) -> Result<JobExecutionProjection, ExplorerError> {
+    let execution = decode_job_execution(row).map_err(ExplorerError::Repository)?;
+    let metadata = execution.metadata();
+    let instance = joined_document(row, "explorer_instance")?
+        .ok_or_else(explorer_unavailable)?;
+    let job_name =
+        JobName::new(read_string(instance, "job_name").map_err(ExplorerError::Repository)?)
+            .map_err(|_| explorer_unavailable())?;
+    let attempt = u32::try_from(
+        read_u64(row, "attempt").map_err(ExplorerError::Repository)?,
+    )
+    .map_err(|_| explorer_unavailable())?;
+    let definition = joined_document(row, "explorer_definition")?
+        .map(decode_mongo_definition_descriptor)
+        .transpose()?;
+    let updated_at = millis_system_time(
+        read_i64(row, "updated_ms").map_err(ExplorerError::Repository)?,
+    )
+    .map_err(ExplorerError::Repository)?;
+
+    Ok(JobExecutionProjection::new(
+        execution.id(),
+        execution.job_instance_id(),
+        job_name,
+        attempt,
+        metadata.status(),
+        metadata.exit_status().clone(),
+        metadata.counts(),
+        execution.version(),
+        metadata.timestamps(),
+        updated_at,
+        metadata.failure(),
+        definition,
+        None,
+        None,
+        false,
+    ))
+}
+
+fn joined_document<'a>(
+    row: &'a Document,
+    field: &str,
+) -> Result<Option<&'a Document>, ExplorerError> {
+    match row.get(field) {
+        Some(Bson::Array(values)) => match values.first() {
+            Some(Bson::Document(document)) => Ok(Some(document)),
+            None => Ok(None),
+            Some(_) => Err(explorer_unavailable()),
+        },
+        None => Ok(None),
+        Some(_) => Err(explorer_unavailable()),
+    }
+}
+
+fn decode_mongo_definition_descriptor(
+    row: &Document,
+) -> Result<DefinitionDescriptor, ExplorerError> {
+    let revision = DefinitionRevision::new(
+        read_string(row, "definition_revision").map_err(ExplorerError::Repository)?,
+    )
+    .map_err(|_| explorer_unavailable())?;
+    let manifest_format = u16::try_from(
+        read_numeric_u64(row, "manifest_format").map_err(ExplorerError::Repository)?,
+    )
+    .map_err(|_| explorer_unavailable())?;
+    let manifest_digest: [u8; 32] = read_bytes(row, "manifest_digest")
+        .map_err(ExplorerError::Repository)?
+        .try_into()
+        .map_err(|_| explorer_unavailable())?;
+    Ok(DefinitionDescriptor::new(
+        revision,
+        manifest_format,
+        manifest_digest,
+    ))
 }
 
 fn namespace_missing(error: &MongoError) -> bool {

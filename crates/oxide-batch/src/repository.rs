@@ -20,7 +20,7 @@ mod sqlserver;
 
 pub use memory::{InMemoryExplorer, InMemoryJobRepository};
 #[cfg(feature = "mongodb")]
-pub use mongodb::{MongoConfig, MongoConfigError, MongoJobRepository, MongoMigrator};
+pub use mongodb::{MongoConfig, MongoConfigError, MongoExplorer, MongoJobRepository, MongoMigrator};
 #[cfg(feature = "mysql")]
 pub use mysql::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};
 #[cfg(feature = "postgres")]

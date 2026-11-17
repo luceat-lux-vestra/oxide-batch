@@ -321,6 +321,7 @@ oxide_batch::MetricUnit
 oxide_batch::MissingParameterPolicy
 oxide_batch::MongoConfig [mongodb]
 oxide_batch::MongoConfigError [mongodb]
+oxide_batch::MongoExplorer [mongodb]
 oxide_batch::MongoJobRepository [mongodb]
 oxide_batch::MongoMigrator [mongodb]
 oxide_batch::MonotonicClock
