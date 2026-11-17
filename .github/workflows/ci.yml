@@ -788,13 +788,14 @@ jobs:
       - name: Run pinned MongoDB runnable-core certification
         env:
           OXIDEBATCH_MONGODB_IMAGE: ${{ matrix.image }}
+          OXIDEBATCH_MONGODB_LANE: ${{ matrix.lane }}
           OXIDEBATCH_MONGODB_EXPECTED_VERSION: ${{ matrix.version }}
           OXIDEBATCH_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
           OXIDEBATCH_MONGODB_TEST_DATABASE: oxide_batch_repository
         shell: bash
         run: |
           set -euo pipefail
-          container="oxide-mongodb-${{ matrix.lane }}"
+          container="oxide-mongodb-$OXIDEBATCH_MONGODB_LANE"
           cleanup() {
             docker logs "$container" >/dev/null 2>&1 || true
             docker rm --force "$container" >/dev/null 2>&1 || true

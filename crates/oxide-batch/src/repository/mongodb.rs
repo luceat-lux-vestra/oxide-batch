@@ -1560,7 +1560,10 @@ impl RepositoryUnitOfWork for MongoUnitOfWork<'_> {
     {
         Box::pin(async move {
             let mut session = self.session.take().ok_or(RepositoryError::Unavailable)?;
-            session.commit_transaction().await.map_err(map_commit_error)
+            session
+                .commit_transaction()
+                .await
+                .map_err(|error| map_commit_error(&error))
         })
     }
     fn rollback<'a>(mut self: Box<Self>) -> BoxFuture<'a, Result<(), RepositoryError>>
@@ -2080,17 +2083,19 @@ fn decode_status(value: &str) -> Result<BatchStatus, RepositoryError> {
 }
 
 fn map_operation_error(error: MongoError) -> RepositoryError {
-    if error.contains_label(TRANSIENT_TRANSACTION_ERROR) {
+    let transient = error.contains_label(TRANSIENT_TRANSACTION_ERROR);
+    let kind = error.kind;
+    if transient {
         return RepositoryError::TransactionAborted;
     }
-    if is_duplicate_key(error.kind.as_ref()) {
+    if is_duplicate_key(kind.as_ref()) {
         RepositoryError::ConcurrentModification
     } else {
         RepositoryError::Unavailable
     }
 }
 
-fn map_commit_error(error: MongoError) -> RepositoryError {
+fn map_commit_error(error: &MongoError) -> RepositoryError {
     if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) {
         RepositoryError::CommitOutcomeUnknown
     } else {

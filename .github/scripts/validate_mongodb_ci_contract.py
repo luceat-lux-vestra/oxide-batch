@@ -21,6 +21,7 @@ REQUIRED_JOB_LITERALS = (
     "mongo:8.2.12@sha256:e0ce8c35124d4a9f9785532d1f268f39e9728ffa1cb38f46fa482436424c4bd3",
     "runs-on: ubuntu-24.04-arm",
     "if: ${{ github.event.pull_request.draft == false }}",
+    "OXIDEBATCH_MONGODB_LANE: ${{ matrix.lane }}",
     "OXIDEBATCH_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0",
     "OXIDEBATCH_MONGODB_TEST_DATABASE: oxide_batch_repository",
     "OXIDEBATCH_MONGODB_EXPECTED_VERSION: ${{ matrix.version }}",
@@ -32,6 +33,11 @@ REQUIRED_JOB_LITERALS = (
     "-- --nocapture --test-threads=1",
     "trap cleanup EXIT",
     "--publish 27017:27017",
+    'container="oxide-mongodb-$OXIDEBATCH_MONGODB_LANE"',
+)
+
+FORBIDDEN_JOB_LITERALS = (
+    'container="oxide-mongodb-${{ matrix.lane }}"',
 )
 
 
@@ -52,6 +58,11 @@ def validate(source: str) -> None:
             raise AssertionError(
                 f"MongoDB runnable-core job literal must appear exactly once: {literal}"
             )
+    for literal in FORBIDDEN_JOB_LITERALS:
+        if literal in job:
+            raise AssertionError(
+                f"MongoDB runnable-core job contains forbidden shell interpolation: {literal}"
+            )
     if source.count(INVOCATION) != 1:
         raise AssertionError("MongoDB CI contract validator must run exactly once")
 
@@ -67,6 +78,21 @@ def self_test(source: str) -> None:
         except AssertionError:
             continue
         raise AssertionError(f"negative fixture did not reject removal of {literal!r}")
+
+    for literal in FORBIDDEN_JOB_LITERALS:
+        mutated_job = job.replace(
+            'container="oxide-mongodb-$OXIDEBATCH_MONGODB_LANE"',
+            literal,
+            1,
+        )
+        mutated = source.replace(job, mutated_job, 1)
+        try:
+            validate(mutated)
+        except AssertionError:
+            continue
+        raise AssertionError(
+            f"negative fixture did not reject forbidden shell interpolation {literal!r}"
+        )
 
     mutated = source.replace(INVOCATION, "", 1)
     try:
