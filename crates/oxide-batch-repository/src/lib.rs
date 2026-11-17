@@ -91,6 +91,7 @@ pub use repository::{
     JobRepository, RecoveryDecision, RecoveryDisposition, RecoveryField, RecoveryRequest,
     RecoveryRequestError, RecoveryResult, RepositoryCapability, RepositoryDescriptor,
     RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
+    MAX_FORK_SOURCE_STEPS,
 };
 // Internal adapter helpers keep parent and child recovery transformations aligned
 // without extending the facade's supported public surface.

@@ -1563,6 +1563,60 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         Box::pin(async move { self.job_execution(id).await })
     }
 
+    fn latest_job_execution(
+        &mut self,
+        job_instance_id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
+        Box::pin(async move {
+            let instance_id = db_identifier(job_instance_id.get(), IdentifierKind::JobInstance)?;
+            let exists = {
+                let connection = self.connection()?;
+                TdsQuery::new("SELECT id FROM dbo.ob_job_instance WHERE id = @P1")
+                    .i64(instance_id)
+                    .optional(connection)
+                    .await?
+            };
+            if exists.is_none() {
+                return Err(RepositoryError::JobInstanceNotFound {
+                    id: job_instance_id,
+                });
+            }
+            let row = {
+                let connection = self.connection()?;
+                TdsQuery::new(job_execution_select(
+                    "WHERE execution.job_instance_id = @P1 ORDER BY execution.attempt DESC OFFSET 0 ROWS FETCH NEXT 1 ROW ONLY",
+                ))
+                .i64(instance_id)
+                .optional(connection)
+                .await?
+            };
+            row.map(|row| decode_job_execution(&row)).transpose()
+        })
+    }
+
+    fn job_execution_attempt(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
+        Box::pin(async move {
+            let row = {
+                let connection = self.connection()?;
+                TdsQuery::new("SELECT attempt FROM dbo.ob_job_execution WHERE id = @P1")
+                    .i64(db_identifier(
+                        job_execution_id.get(),
+                        IdentifierKind::JobExecution,
+                    )?)
+                    .optional(connection)
+                    .await?
+            }
+            .ok_or(RepositoryError::JobExecutionNotFound {
+                id: job_execution_id,
+            })?;
+            std::num::NonZeroU64::new(read_u64(&row, "attempt")?)
+                .ok_or(RepositoryError::Unavailable)
+        })
+    }
+
     fn job_executions(
         &mut self,
         job_instance_id: JobInstanceId,
@@ -1599,6 +1653,34 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
         id: StepExecutionId,
     ) -> BoxFuture<'_, Result<Option<StepExecution>, RepositoryError>> {
         Box::pin(async move { self.step_execution(id).await })
+    }
+
+    fn flow_step_execution<'a>(
+        &'a mut self,
+        job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<StepExecution>, RepositoryError>> {
+        Box::pin(async move {
+            if self.job_execution(job_execution_id).await?.is_none() {
+                return Err(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                });
+            }
+            let row = {
+                let connection = self.connection()?;
+                TdsQuery::new(step_execution_select(
+                    "WHERE execution.job_execution_id = @P1 AND execution.step_logical_id = @P2",
+                ))
+                .i64(db_identifier(
+                    job_execution_id.get(),
+                    IdentifierKind::JobExecution,
+                )?)
+                .text(node_id.as_str())
+                .optional(connection)
+                .await?
+            };
+            row.map(|row| decode_step_execution(&row)).transpose()
+        })
     }
 
     fn step_executions(
@@ -1887,6 +1969,23 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
             row.map(|row| decode_flow_decision(&row)).transpose()
         })
     }
+
+    fn get_flow_decision(
+        &mut self,
+        id: FlowDecisionId,
+    ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>> {
+        Box::pin(async move {
+            let row = {
+                let connection = self.connection()?;
+                TdsQuery::new(flow_decision_select("WHERE decision.id = @P1"))
+                    .i64(db_identifier(id.get(), IdentifierKind::FlowDecision)?)
+                    .optional(connection)
+                    .await?
+            };
+            row.map(|row| decode_flow_decision(&row)).transpose()
+        })
+    }
+
 
     fn flow_decisions(
         &mut self,

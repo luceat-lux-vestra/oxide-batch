@@ -20,7 +20,8 @@ use oxide_batch_core::{
 };
 
 use crate::{
-    ActorRef, DefinitionRegistration, FlowDecision, FlowDecisionRequest, FlowStepState,
+    ActorRef, DefinitionRegistration, FlowDecision, FlowDecisionId, FlowDecisionRequest,
+    FlowStepState,
     FlowTransitionKind, ForkLineage, NestedJobLink, NestedJobLinkRequest, OperationId,
     OperatorAction, OperatorRecord, OperatorRecordDraft, OwnerToken, PartitionAggregate,
     PartitionAggregationError, PartitionPlanEntry, PurgeCounts, PurgePlan, PurgePlanRequest,
@@ -30,6 +31,9 @@ use crate::{
 
 const MAX_RECOVERY_REASON_BYTES: usize = 64;
 const MAX_OPERATOR_REFERENCE_BYTES: usize = 128;
+/// Maximum committed step states one fork-source snapshot may return.
+#[doc(hidden)]
+pub const MAX_FORK_SOURCE_STEPS: usize = 1024;
 
 /// An owned, dynamically dispatched future used by public asynchronous ports.
 ///
@@ -805,6 +809,21 @@ pub trait RepositoryUnitOfWork: Send {
             })
         })
     }
+
+    /// Loads the bounded committed step-state snapshot of a locked fork source.
+    ///
+    /// Implementations declaring definition/fork support must return at most
+    /// MAX_FORK_SOURCE_STEPS states and fail before returning an oversized set.
+    fn fork_source_step_states(
+        &mut self,
+        _source_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<FlowStepState>, RepositoryError>> {
+        Box::pin(async {
+            Err(RepositoryError::UnsupportedCapability {
+                capability: RepositoryCapability::DefinitionRegistry,
+            })
+        })
+    }
     /// Appends immutable lineage within the target creation `UoW`.
     fn append_fork_lineage<'a>(
         &'a mut self,
@@ -1113,6 +1132,67 @@ pub trait RepositoryUnitOfWork: Send {
         Box::pin(async { Err(RepositoryError::FlowStateCorrupt) })
     }
 
+    /// Loads the exact logical step owned by one execution attempt.
+    ///
+    /// Production adapters override this with an indexed point lookup. This
+    /// display-name fallback is P1 migration scaffolding only.
+    fn flow_step_execution<'a>(
+        &'a mut self,
+        job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<StepExecution>, RepositoryError>> {
+        Box::pin(async move {
+            let mut matches = self
+                .step_executions(job_execution_id)
+                .await?
+                .into_iter()
+                .filter(|step| step.step_name().as_str() == node_id.as_str());
+            let first = matches.next();
+            if matches.next().is_some() {
+                return Err(RepositoryError::FlowStateCorrupt);
+            }
+            Ok(first)
+        })
+    }
+
+    /// Loads the authoritative latest execution for one logical instance.
+    ///
+    /// Production adapters override this with a bounded point/scalar query.
+    /// This history-based body exists only as P1 migration scaffolding and is
+    /// removed together with the legacy history methods in P2.
+    fn latest_job_execution(
+        &mut self,
+        job_instance_id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
+        Box::pin(async move { Ok(self.job_executions(job_instance_id).await?.pop()) })
+    }
+
+    /// Loads the durable one-based attempt ordinal bound to one execution.
+    ///
+    /// Production adapters override this with a bounded scalar read. This
+    /// fallback exists only until P2 removes the legacy history methods.
+    fn job_execution_attempt(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<NonZeroU64, RepositoryError>> {
+        Box::pin(async move {
+            let execution = self
+                .get_job_execution(job_execution_id)
+                .await?
+                .ok_or(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                })?;
+            self.job_executions(execution.job_instance_id())
+                .await?
+                .iter()
+                .position(|candidate| candidate.id() == job_execution_id)
+                .and_then(|index| u64::try_from(index).ok())
+                .and_then(|index| index.checked_add(1))
+                .and_then(NonZeroU64::new)
+                .ok_or(RepositoryError::Unavailable)
+        })
+    }
+
     /// Loads one exact flow-step attempt for scoped source re-resolution.
     fn scope_step_state(
         &mut self,
@@ -1146,6 +1226,17 @@ pub trait RepositoryUnitOfWork: Send {
     }
 
     /// Loads one execution's flow decisions in sequence order.
+
+    /// Loads one exact durable flow decision by identifier.
+    ///
+    /// Production adapters must override this with a bounded point lookup.
+    fn get_flow_decision(
+        &mut self,
+        _id: FlowDecisionId,
+    ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>> {
+        Box::pin(async { Err(RepositoryError::Unavailable) })
+    }
+
     fn flow_decisions(
         &mut self,
         _job_execution_id: JobExecutionId,

@@ -879,6 +879,13 @@ impl oxide_batch::RepositoryUnitOfWork for FaultingUnit<'_> {
         self.inner.append_operator_request(draft)
     }
 
+    fn fork_source_step_states(
+        &mut self,
+        source_execution_id: oxide_batch::JobExecutionId,
+    ) -> oxide_batch::BoxFuture<'_, Result<Vec<oxide_batch::FlowStepState>, RepositoryError>> {
+        self.inner.fork_source_step_states(source_execution_id)
+    }
+
     fn commit<'a>(self: Box<Self>) -> oxide_batch::BoxFuture<'a, Result<(), RepositoryError>>
     where
         Self: 'a,

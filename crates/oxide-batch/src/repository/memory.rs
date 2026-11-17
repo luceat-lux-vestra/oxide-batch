@@ -195,6 +195,7 @@ struct MemoryState {
     nested_job_links_by_instance: BTreeMap<(JobInstanceId, NodeId), Vec<JobExecutionId>>,
     step_executions: BTreeMap<StepExecutionId, StepExecution>,
     step_executions_by_job: BTreeMap<JobExecutionId, Vec<StepExecutionId>>,
+    step_execution_by_logical: BTreeMap<(JobExecutionId, NodeId), StepExecutionId>,
     step_logical_ids: BTreeMap<StepExecutionId, NodeId>,
     step_contexts: BTreeMap<StepExecutionId, ExecutionContext>,
     step_partitions: BTreeMap<StepPartitionId, StepPartition>,
@@ -912,7 +913,7 @@ impl InMemoryUnitOfWork<'_> {
         Ok(seeds)
     }
 
-    fn latest_job_execution(
+    fn latest_job_execution_snapshot(
         &self,
         instance_id: JobInstanceId,
     ) -> Result<Option<&JobExecution>, RepositoryError> {
@@ -1165,6 +1166,14 @@ impl InMemoryUnitOfWork<'_> {
         self.staged
             .repeat_executions
             .retain(|(step_id, _), _| *step_id != step_execution_id);
+        if let (Some(execution), Some(node_id)) = (
+            self.staged.step_executions.get(&step_execution_id),
+            self.staged.step_logical_ids.get(&step_execution_id),
+        ) {
+            self.staged
+                .step_execution_by_logical
+                .remove(&(execution.job_execution_id(), node_id.clone()));
+        }
         self.staged.step_executions.remove(&step_execution_id);
         self.staged.step_logical_ids.remove(&step_execution_id);
         self.staged.step_contexts.remove(&step_execution_id);
@@ -1671,6 +1680,47 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         })
     }
 
+    fn fork_source_step_states(
+        &mut self,
+        source_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<FlowStepState>, RepositoryError>> {
+        Box::pin(async move {
+            if !self.staged.job_executions.contains_key(&source_execution_id) {
+                return Err(RepositoryError::JobExecutionNotFound {
+                    id: source_execution_id,
+                });
+            }
+            let ids = self
+                .staged
+                .step_executions_by_job
+                .get(&source_execution_id)
+                .cloned()
+                .unwrap_or_default();
+            if ids.len() > oxide_batch_repository::MAX_FORK_SOURCE_STEPS {
+                return Err(RepositoryError::ForkStateCorrupt);
+            }
+            let mut states = Vec::with_capacity(ids.len());
+            for id in ids {
+                let execution = self
+                    .staged
+                    .step_executions
+                    .get(&id)
+                    .cloned()
+                    .ok_or(RepositoryError::ForkStateCorrupt)?;
+                let node_id = self
+                    .staged
+                    .step_logical_ids
+                    .get(&id)
+                    .cloned()
+                    .ok_or(RepositoryError::ForkStateCorrupt)?;
+                let context = self.staged.step_contexts.get(&id).cloned();
+                states.push(FlowStepState::new(node_id, execution, context));
+            }
+            states.sort_by_key(|state| state.execution().id());
+            Ok(states)
+        })
+    }
+
     fn append_fork_lineage<'a>(
         &'a mut self,
         lineage: &'a ForkLineage,
@@ -1882,7 +1932,7 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             self.ensure_definition(&job_name, &definition)?;
             let mut restart_parameters = None;
             let mut restart_source = None;
-            if let Some(latest) = self.latest_job_execution(job_instance_id)?.cloned() {
+            if let Some(latest) = self.latest_job_execution_snapshot(job_instance_id)?.cloned() {
                 restart_source = Some(latest.id());
                 restart_parameters = self.staged.job_parameters.get(&latest.id()).cloned();
                 match latest.metadata().status() {
@@ -2255,6 +2305,13 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
                 .upgrade_seeds
                 .get(&(job_execution_id, node_id.clone()))
                 .cloned();
+            if self
+                .staged
+                .step_execution_by_logical
+                .contains_key(&(job_execution_id, node_id.clone()))
+            {
+                return Err(RepositoryError::ConcurrentModification);
+            }
             let id = self.repository.ids.next_step_execution_id()?;
             if self.staged.step_executions.contains_key(&id) {
                 return Err(RepositoryError::DuplicateIdentifier {
@@ -2295,6 +2352,10 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             )?;
             let execution = StepExecution::new(id, job_execution_id, step_name.clone(), metadata);
             self.staged.step_executions.insert(id, execution.clone());
+            self.staged.step_execution_by_logical.insert(
+                (job_execution_id, node_id.clone()),
+                id,
+            );
             self.staged.step_logical_ids.insert(id, node_id.clone());
             if let Some(context) = inherited_context {
                 self.staged.step_contexts.insert(id, context);
@@ -2469,6 +2530,35 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         Box::pin(async move { Ok(self.staged.job_executions.get(&id).cloned()) })
     }
 
+    fn latest_job_execution(
+        &mut self,
+        job_instance_id: JobInstanceId,
+    ) -> BoxFuture<'_, Result<Option<JobExecution>, RepositoryError>> {
+        Box::pin(async move {
+            Ok(self
+                .latest_job_execution_snapshot(job_instance_id)?
+                .cloned())
+        })
+    }
+
+    fn job_execution_attempt(
+        &mut self,
+        job_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<std::num::NonZeroU64, RepositoryError>> {
+        Box::pin(async move {
+            if !self.staged.job_executions.contains_key(&job_execution_id) {
+                return Err(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                });
+            }
+            self.staged
+                .execution_attempts
+                .get(&job_execution_id)
+                .and_then(|attempt| std::num::NonZeroU64::new(attempt.get()))
+                .ok_or(RepositoryError::Unavailable)
+        })
+    }
+
     fn get_job_instance(
         &mut self,
         id: JobInstanceId,
@@ -2503,6 +2593,26 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
         id: StepExecutionId,
     ) -> BoxFuture<'_, Result<Option<StepExecution>, RepositoryError>> {
         Box::pin(async move { Ok(self.staged.step_executions.get(&id).cloned()) })
+    }
+
+    fn flow_step_execution<'a>(
+        &'a mut self,
+        job_execution_id: JobExecutionId,
+        node_id: &'a NodeId,
+    ) -> BoxFuture<'a, Result<Option<StepExecution>, RepositoryError>> {
+        Box::pin(async move {
+            if !self.staged.job_executions.contains_key(&job_execution_id) {
+                return Err(RepositoryError::JobExecutionNotFound {
+                    id: job_execution_id,
+                });
+            }
+            Ok(self
+                .staged
+                .step_execution_by_logical
+                .get(&(job_execution_id, node_id.clone()))
+                .and_then(|id| self.staged.step_executions.get(id))
+                .cloned())
+        })
     }
 
     fn step_executions(
@@ -2714,6 +2824,14 @@ impl RepositoryUnitOfWork for InMemoryUnitOfWork<'_> {
             Ok(None)
         })
     }
+
+    fn get_flow_decision(
+        &mut self,
+        id: FlowDecisionId,
+    ) -> BoxFuture<'_, Result<Option<FlowDecision>, RepositoryError>> {
+        Box::pin(async move { Ok(self.staged.flow_decisions.get(&id).cloned()) })
+    }
+
 
     fn flow_decisions(
         &mut self,

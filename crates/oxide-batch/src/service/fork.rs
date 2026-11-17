@@ -153,8 +153,8 @@ pub(crate) async fn stage_fork_in_unit(
     if !source.metadata().status().is_finished() {
         return Err(RepositoryError::ForkSourceNotTerminal.into());
     }
-    let attempts = unit.job_executions(source.job_instance_id()).await?;
-    if attempts.last().map(crate::JobExecution::id) != Some(source.id()) {
+    let latest = unit.latest_job_execution(source.job_instance_id()).await?;
+    if latest.as_ref().map(crate::JobExecution::id) != Some(source.id()) {
         return Err(RepositoryError::ForkSourceStale.into());
     }
     let source_definition = unit
@@ -198,23 +198,15 @@ pub(crate) async fn stage_fork_in_unit(
         .into());
     }
 
-    let mut steps = unit.step_executions(source.id()).await?;
-    if steps.len() > 1024 {
-        return Err(RepositoryError::ForkStateCorrupt.into());
-    }
-    steps.sort_by_key(crate::StepExecution::id);
+    let steps = unit.fork_source_step_states(source.id()).await?;
     let mut hash = Sha256::new();
     hash.update(b"oxide-batch.fork-source-committed-state.v2\0");
     hash.update(source.id().get().to_be_bytes());
     hash.update(source.version().get().to_be_bytes());
     hash.update(source.metadata().status().as_str().as_bytes());
-    for step in steps {
-        let committed = unit
-            .scope_step_state(step.id())
-            .await?
-            .ok_or(RepositoryError::ForkStateCorrupt)?;
-        if committed.execution() != &step || committed.execution().job_execution_id() != source.id()
-        {
+    for committed in steps {
+        let step = committed.execution();
+        if step.job_execution_id() != source.id() {
             return Err(RepositoryError::ForkStateCorrupt.into());
         }
         hash.update(step.id().get().to_be_bytes());

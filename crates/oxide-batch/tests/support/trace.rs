@@ -565,6 +565,13 @@ impl RepositoryUnitOfWork for RecordingUnitOfWork<'_> {
         self.inner.recovery_decision(id)
     }
 
+    fn fork_source_step_states(
+        &mut self,
+        source_execution_id: JobExecutionId,
+    ) -> BoxFuture<'_, Result<Vec<oxide_batch::FlowStepState>, RepositoryError>> {
+        self.inner.fork_source_step_states(source_execution_id)
+    }
+
     fn commit<'a>(self: Box<Self>) -> BoxFuture<'a, Result<(), RepositoryError>>
     where
         Self: 'a,

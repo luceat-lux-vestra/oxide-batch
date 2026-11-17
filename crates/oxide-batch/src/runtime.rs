@@ -1339,29 +1339,23 @@ impl<'a> JobLauncher<'a> {
                 )
                 .await?;
         }
-        let existing_steps = unit.step_executions(execution_id).await?;
-        let step_execution = match existing_steps.as_slice() {
-            [] => {
-                unit.create_step_execution(execution_id, job.step.name())
-                    .await?
-            }
-            [step]
+        let node_id =
+            NodeId::new(job.step.name().as_str()).map_err(|_| RepositoryError::FlowStateCorrupt)?;
+        let existing_step = unit.flow_step_execution(execution_id, &node_id).await?;
+        let step_execution = match existing_step {
+            None => unit.create_step_execution(execution_id, job.step.name()).await?,
+            Some(step)
                 if step.step_name() == job.step.name()
                     && step.metadata().status() == BatchStatus::Starting =>
             {
-                step.clone()
+                step
             }
-            _ => {
+            Some(_) => {
                 unit.rollback().await?;
                 return Err(RepositoryError::FlowStateCorrupt.into());
             }
         };
-        let attempt_count = unit.job_executions(instance_id).await?.len();
-        let attempt = u64::try_from(attempt_count)
-            .ok()
-            .and_then(NonZeroU64::new)
-            .map(ExecutionAttempt::new)
-            .ok_or(RepositoryError::Unavailable)?;
+        let attempt = ExecutionAttempt::new(unit.job_execution_attempt(execution_id).await?);
         unit.commit().await?;
         let correlation = ExecutionCorrelation::new(
             key.job_name().clone(),
@@ -1417,23 +1411,18 @@ impl<'a> JobLauncher<'a> {
         let step_execution = unit
             .create_step_execution(job_execution.id(), step_name)
             .await?;
-        let attempt_count = unit.job_executions(instance.id()).await?.len();
-        let attempt = u64::try_from(attempt_count)
-            .ok()
-            .and_then(NonZeroU64::new)
-            .map(ExecutionAttempt::new)
-            .ok_or(RepositoryError::Unavailable)?;
+        let attempt = ExecutionAttempt::new(unit.job_execution_attempt(job_execution.id()).await?);
         match unit.commit().await {
             Ok(()) => {}
             Err(RepositoryError::CommitOutcomeUnknown) if upgrade.is_some() => {
                 let mut recovery = self.repository.begin().await?;
                 let durable_job = recovery.get_job_execution(job_execution.id()).await?;
                 let durable_step = recovery.get_step_execution(step_execution.id()).await?;
-                let durable_attempts = recovery.job_executions(instance.id()).await?;
+                let durable_latest = recovery.latest_job_execution(instance.id()).await?;
                 recovery.rollback().await?;
                 let exact = durable_job.as_ref() == Some(&job_execution)
                     && durable_step.as_ref() == Some(&step_execution)
-                    && durable_attempts.last().map(JobExecution::id) == Some(job_execution.id());
+                    && durable_latest.as_ref().map(JobExecution::id) == Some(job_execution.id());
                 if !exact {
                     return Err(RepositoryError::CommitOutcomeUnknown.into());
                 }
