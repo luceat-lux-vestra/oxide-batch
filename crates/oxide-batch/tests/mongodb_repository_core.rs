@@ -61,9 +61,27 @@ const CONCURRENT_LAUNCH_JOB: &str = "repository_concurrent_launch";
 const TRANSIENT_MUTATION_JOB: &str = "repository_transient_mutation_fault";
 const TRANSIENT_COMMIT_JOB: &str = "repository_transient_commit_fault";
 const UNKNOWN_COMMIT_JOB: &str = "repository_unknown_commit_fault";
+const FAULT_PROBE_CHILD_ENV: &str = "OXIDEBATCH_MONGODB_FAULT_PROBE_CHILD";
+const TRANSIENT_MUTATION_TEST: &str =
+    "mongodb_transient_mutation_error_is_known_not_committed";
+const TRANSIENT_COMMIT_TEST: &str = "mongodb_transient_commit_error_is_known_not_committed";
+const UNKNOWN_COMMIT_TEST: &str = "mongodb_unknown_commit_result_is_never_guessed_rolled_back";
 
 fn mongodb_failpoints_enabled() -> bool {
     std::env::var("OXIDEBATCH_MONGODB_FAILPOINTS").as_deref() == Ok("1")
+}
+
+fn mongodb_fault_probe_child() -> bool {
+    std::env::var(FAULT_PROBE_CHILD_ENV).as_deref() == Ok("1")
+}
+
+fn fault_stage<T, E>(stage: &str, result: Result<T, E>) -> Result<T, Box<dyn Error>>
+where
+    E: std::fmt::Display,
+{
+    result.map_err(|error| {
+        std::io::Error::other(format!("MongoDB fault stage {stage} failed: {error}")).into()
+    })
 }
 
 async fn configure_fail_command(
@@ -143,6 +161,57 @@ async fn fault_fixture_counts(
     drop(database);
     client.shutdown().await;
     Ok((instance_count, execution_count))
+}
+
+fn run_isolated_fault_probe(
+    settings: &TestSettings,
+    test_name: &str,
+    job_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let output = Command::new(std::env::current_exe()?)
+        .arg("--exact")
+        .arg(test_name)
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env(FAULT_PROBE_CHILD_ENV, "1")
+        .output()?;
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    let cleanup_error = runtime.block_on(async {
+        let disable_error = disable_fail_command(settings)
+            .await
+            .err()
+            .map(|error| format!("disable failpoint: {error}"));
+        let fixture_error = clear_fault_fixture(settings, job_name)
+            .await
+            .err()
+            .map(|error| format!("clear fixture: {error}"));
+        match (disable_error, fixture_error) {
+            (None, None) => None,
+            (Some(disable), None) => Some(disable),
+            (None, Some(fixture)) => Some(fixture),
+            (Some(disable), Some(fixture)) => Some(format!("{disable}; {fixture}")),
+        }
+    });
+
+    if output.status.success() && cleanup_error.is_none() {
+        return Ok(());
+    }
+
+    let status = output
+        .status
+        .code()
+        .map_or_else(|| "signal".to_owned(), |code| code.to_string());
+    Err(std::io::Error::other(format!(
+        "MongoDB isolated fault probe {test_name} failed: status={status}; cleanup={}; \
+         stdout={}; stderr={}",
+        cleanup_error.as_deref().unwrap_or("ok"),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    ))
+    .into())
 }
 
 async fn clear_concurrent_launch_fixture(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
@@ -504,38 +573,85 @@ fn mongodb_transient_mutation_error_is_known_not_committed() -> Result<(), Box<d
         eprintln!("skipped: MongoDB failpoint evidence is not enabled");
         return Ok(());
     }
+    if !mongodb_fault_probe_child() {
+        return run_isolated_fault_probe(
+            &settings,
+            TRANSIENT_MUTATION_TEST,
+            TRANSIENT_MUTATION_JOB,
+        );
+    }
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let config = settings.config()?;
-        MongoMigrator::migrate(&config).await?;
-        clear_fault_fixture(&settings, TRANSIENT_MUTATION_JOB).await?;
-        let repository = MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
-        let key = JobInstanceKey::new(JobName::new(TRANSIENT_MUTATION_JOB)?, &JobParameters::new());
+        let config = fault_stage("transient-mutation/config", settings.config())?;
+        fault_stage(
+            "transient-mutation/migrate",
+            MongoMigrator::migrate(&config).await,
+        )?;
+        fault_stage(
+            "transient-mutation/pre-cleanup",
+            clear_fault_fixture(&settings, TRANSIENT_MUTATION_JOB).await,
+        )?;
+        let repository = fault_stage(
+            "transient-mutation/connect",
+            MongoJobRepository::connect(config, Arc::new(SystemClock)).await,
+        )?;
+        let job_name = fault_stage(
+            "transient-mutation/job-name",
+            JobName::new(TRANSIENT_MUTATION_JOB),
+        )?;
+        let key = JobInstanceKey::new(job_name, &JobParameters::new());
 
-        let mut unit = repository.begin().await?;
-        configure_fail_command(
-            &settings,
-            1,
-            doc! {
-                "failCommands": ["findAndModify"],
-                "errorCode": 112_i32,
-            },
-        )
-        .await?;
+        let mut unit = fault_stage("transient-mutation/begin", repository.begin().await)?;
+        fault_stage(
+            "transient-mutation/configure-failpoint",
+            configure_fail_command(
+                &settings,
+                1,
+                doc! {
+                    "failCommands": ["findAndModify"],
+                    "errorCode": 112_i32,
+                },
+            )
+            .await,
+        )?;
         let result = unit.select_or_create_job_instance(&key).await;
-        disable_fail_command(&settings).await?;
-        unit.rollback().await?;
+        fault_stage(
+            "transient-mutation/disable-failpoint",
+            disable_fail_command(&settings).await,
+        )?;
+        fault_stage("transient-mutation/rollback", unit.rollback().await)?;
 
-        assert_eq!(result, Err(RepositoryError::TransactionAborted));
-        assert_eq!(
-            fault_fixture_counts(&settings, TRANSIENT_MUTATION_JOB).await?,
-            (0, 0)
-        );
+        match result {
+            Err(RepositoryError::TransactionAborted) => {}
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "MongoDB fault stage transient-mutation/classification failed: \
+                     expected TransactionAborted, observed {other:?}"
+                ))
+                .into());
+            }
+        }
+
+        let counts = fault_stage(
+            "transient-mutation/readback",
+            fault_fixture_counts(&settings, TRANSIENT_MUTATION_JOB).await,
+        )?;
+        if counts != (0, 0) {
+            return Err(std::io::Error::other(format!(
+                "MongoDB fault stage transient-mutation/readback failed: \
+                 expected (0, 0), observed {counts:?}"
+            ))
+            .into());
+        }
 
         repository.close().await;
-        clear_fault_fixture(&settings, TRANSIENT_MUTATION_JOB).await?;
+        fault_stage(
+            "transient-mutation/post-cleanup",
+            clear_fault_fixture(&settings, TRANSIENT_MUTATION_JOB).await,
+        )?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
@@ -551,43 +667,88 @@ fn mongodb_transient_commit_error_is_known_not_committed() -> Result<(), Box<dyn
         eprintln!("skipped: MongoDB failpoint evidence is not enabled");
         return Ok(());
     }
+    if !mongodb_fault_probe_child() {
+        return run_isolated_fault_probe(&settings, TRANSIENT_COMMIT_TEST, TRANSIENT_COMMIT_JOB);
+    }
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let config = settings.config()?;
-        MongoMigrator::migrate(&config).await?;
-        clear_fault_fixture(&settings, TRANSIENT_COMMIT_JOB).await?;
-        let repository = MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
-        let key = JobInstanceKey::new(JobName::new(TRANSIENT_COMMIT_JOB)?, &JobParameters::new());
+        let config = fault_stage("transient-commit/config", settings.config())?;
+        fault_stage(
+            "transient-commit/migrate",
+            MongoMigrator::migrate(&config).await,
+        )?;
+        fault_stage(
+            "transient-commit/pre-cleanup",
+            clear_fault_fixture(&settings, TRANSIENT_COMMIT_JOB).await,
+        )?;
+        let repository = fault_stage(
+            "transient-commit/connect",
+            MongoJobRepository::connect(config, Arc::new(SystemClock)).await,
+        )?;
+        let job_name =
+            fault_stage("transient-commit/job-name", JobName::new(TRANSIENT_COMMIT_JOB))?;
+        let key = JobInstanceKey::new(job_name, &JobParameters::new());
 
-        let mut unit = repository.begin().await?;
-        let instance = unit
-            .select_or_create_job_instance(&key)
-            .await?
-            .instance()
-            .clone();
-        unit.create_job_execution(instance.id()).await?;
-        configure_fail_command(
-            &settings,
-            1,
-            doc! {
-                "failCommands": ["commitTransaction"],
-                "errorCode": 251_i32,
-            },
-        )
-        .await?;
+        let mut unit = fault_stage("transient-commit/begin", repository.begin().await)?;
+        let instance = fault_stage(
+            "transient-commit/select-or-create",
+            unit.select_or_create_job_instance(&key).await,
+        )?
+        .instance()
+        .clone();
+        fault_stage(
+            "transient-commit/create-execution",
+            unit.create_job_execution(instance.id()).await,
+        )?;
+        fault_stage(
+            "transient-commit/configure-failpoint",
+            configure_fail_command(
+                &settings,
+                1,
+                doc! {
+                    "failCommands": ["commitTransaction"],
+                    "errorCode": 251_i32,
+                },
+            )
+            .await,
+        )?;
         let result = unit.commit().await;
-        disable_fail_command(&settings).await?;
+        fault_stage(
+            "transient-commit/disable-failpoint",
+            disable_fail_command(&settings).await,
+        )?;
 
-        assert_eq!(result, Err(RepositoryError::TransactionAborted));
-        assert_eq!(
-            fault_fixture_counts(&settings, TRANSIENT_COMMIT_JOB).await?,
-            (0, 0)
-        );
+        match result {
+            Err(RepositoryError::TransactionAborted) => {}
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "MongoDB fault stage transient-commit/classification failed: \
+                     expected TransactionAborted, observed {other:?}"
+                ))
+                .into());
+            }
+        }
+
+        let counts = fault_stage(
+            "transient-commit/readback",
+            fault_fixture_counts(&settings, TRANSIENT_COMMIT_JOB).await,
+        )?;
+        if counts != (0, 0) {
+            return Err(std::io::Error::other(format!(
+                "MongoDB fault stage transient-commit/readback failed: \
+                 expected (0, 0), observed {counts:?}"
+            ))
+            .into());
+        }
 
         repository.close().await;
-        clear_fault_fixture(&settings, TRANSIENT_COMMIT_JOB).await?;
+        fault_stage(
+            "transient-commit/post-cleanup",
+            clear_fault_fixture(&settings, TRANSIENT_COMMIT_JOB).await,
+        )?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
@@ -603,48 +764,91 @@ fn mongodb_unknown_commit_result_is_never_guessed_rolled_back() -> Result<(), Bo
         eprintln!("skipped: MongoDB failpoint evidence is not enabled");
         return Ok(());
     }
+    if !mongodb_fault_probe_child() {
+        return run_isolated_fault_probe(&settings, UNKNOWN_COMMIT_TEST, UNKNOWN_COMMIT_JOB);
+    }
+
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
     runtime.block_on(async {
-        let config = settings.config()?;
-        MongoMigrator::migrate(&config).await?;
-        clear_fault_fixture(&settings, UNKNOWN_COMMIT_JOB).await?;
-        let repository = MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
-        let key = JobInstanceKey::new(JobName::new(UNKNOWN_COMMIT_JOB)?, &JobParameters::new());
+        let config = fault_stage("unknown-commit/config", settings.config())?;
+        fault_stage(
+            "unknown-commit/migrate",
+            MongoMigrator::migrate(&config).await,
+        )?;
+        fault_stage(
+            "unknown-commit/pre-cleanup",
+            clear_fault_fixture(&settings, UNKNOWN_COMMIT_JOB).await,
+        )?;
+        let repository = fault_stage(
+            "unknown-commit/connect",
+            MongoJobRepository::connect(config, Arc::new(SystemClock)).await,
+        )?;
+        let job_name = fault_stage("unknown-commit/job-name", JobName::new(UNKNOWN_COMMIT_JOB))?;
+        let key = JobInstanceKey::new(job_name, &JobParameters::new());
 
-        let mut unit = repository.begin().await?;
-        let instance = unit
-            .select_or_create_job_instance(&key)
-            .await?
-            .instance()
-            .clone();
-        unit.create_job_execution(instance.id()).await?;
-        configure_fail_command(
-            &settings,
-            1,
-            doc! {
-                "failCommands": ["commitTransaction"],
-                "writeConcernError": {
-                    "code": 64_i32,
-                    "errmsg": "injected write concern timeout",
-                    "errInfo": { "wtimeout": true },
+        let mut unit = fault_stage("unknown-commit/begin", repository.begin().await)?;
+        let instance = fault_stage(
+            "unknown-commit/select-or-create",
+            unit.select_or_create_job_instance(&key).await,
+        )?
+        .instance()
+        .clone();
+        fault_stage(
+            "unknown-commit/create-execution",
+            unit.create_job_execution(instance.id()).await,
+        )?;
+        fault_stage(
+            "unknown-commit/configure-failpoint",
+            configure_fail_command(
+                &settings,
+                1,
+                doc! {
+                    "failCommands": ["commitTransaction"],
+                    "writeConcernError": {
+                        "code": 64_i32,
+                        "errmsg": "injected write concern timeout",
+                        "errInfo": { "wtimeout": true },
+                    },
                 },
-            },
-        )
-        .await?;
+            )
+            .await,
+        )?;
         let result = unit.commit().await;
-        disable_fail_command(&settings).await?;
+        fault_stage(
+            "unknown-commit/disable-failpoint",
+            disable_fail_command(&settings).await,
+        )?;
 
-        assert_eq!(result, Err(RepositoryError::CommitOutcomeUnknown));
-        assert_eq!(
-            fault_fixture_counts(&settings, UNKNOWN_COMMIT_JOB).await?,
-            (1, 1),
-            "unknown commit outcome must not be guessed rolled back"
-        );
+        match result {
+            Err(RepositoryError::CommitOutcomeUnknown) => {}
+            other => {
+                return Err(std::io::Error::other(format!(
+                    "MongoDB fault stage unknown-commit/classification failed: \
+                     expected CommitOutcomeUnknown, observed {other:?}"
+                ))
+                .into());
+            }
+        }
+
+        let counts = fault_stage(
+            "unknown-commit/readback",
+            fault_fixture_counts(&settings, UNKNOWN_COMMIT_JOB).await,
+        )?;
+        if counts != (1, 1) {
+            return Err(std::io::Error::other(format!(
+                "MongoDB fault stage unknown-commit/readback failed: \
+                 expected (1, 1), observed {counts:?}"
+            ))
+            .into());
+        }
 
         repository.close().await;
-        clear_fault_fixture(&settings, UNKNOWN_COMMIT_JOB).await?;
+        fault_stage(
+            "unknown-commit/post-cleanup",
+            clear_fault_fixture(&settings, UNKNOWN_COMMIT_JOB).await,
+        )?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
