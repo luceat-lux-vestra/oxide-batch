@@ -1113,8 +1113,7 @@ fn mongodb_tls_validates_ca_identity_and_rejects_plaintext() -> Result<(), Box<d
             "MongoDB TLS URI must remain redacted from Debug output"
         );
         MongoMigrator::migrate(&valid_config).await?;
-        let repository =
-            MongoJobRepository::connect(valid_config, Arc::new(SystemClock)).await?;
+        let repository = MongoJobRepository::connect(valid_config, Arc::new(SystemClock)).await?;
 
         let job_name = JobName::new("mongodb_tls_runtime")?;
         let key = JobInstanceKey::new(job_name, &JobParameters::new());
