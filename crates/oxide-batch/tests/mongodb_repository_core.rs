@@ -365,8 +365,7 @@ fn wait_for_crash_handshake(path: &Path, child: &mut Child) -> Result<(), Box<dy
             let _ = child.kill();
             let _ = child.wait();
             return Err(std::io::Error::other(format!(
-                "MongoDB crash worker did not reach checkpoint commit within {:?}",
-                CRASH_RESTART_HANDSHAKE_BOUND
+                "MongoDB crash worker did not reach checkpoint commit within {CRASH_RESTART_HANDSHAKE_BOUND:?}"
             ))
             .into());
         }
@@ -433,7 +432,7 @@ async fn run_mongodb_checkpoint_crash_worker(
 
     std::fs::write(handshake.join("reached"), [])?;
     loop {
-        tokio::time::sleep(Duration::from_secs(60)).await;
+        tokio::time::sleep(Duration::from_mins(1)).await;
         let _ = std::hint::black_box(&repository);
     }
 }
