@@ -228,6 +228,43 @@ is bounded, deterministic, checksum-verified, and commits atomically with the
 new execution or import record. Failed upgrades leave prior durable bytes and
 execution lineage unchanged.
 
+### MongoDB authentication and runtime privilege baseline
+
+The M8 MongoDB profile treats authentication and database privilege as adapter
+certification inputs, not as application-owned implementation details. The
+connection URI remains private adapter configuration and may carry credentials
+and `authSource`; `MongoConfig` redacts the URI from `Debug` output. Production
+credentials must still come from deployment secret management rather than
+repository source, migration files, or retained evidence.
+
+The executable authenticated fixture uses three disposable principals:
+
+- a fixture bootstrap administrator exists only to create the test roles and
+  users and is never passed to `MongoMigrator` or `MongoJobRepository`;
+- the **migrator** role is scoped to the OxideBatch metadata database and may
+  read/write repository collections plus create collections and indexes needed
+  by the controlled schema bootstrap; it has no cluster or user-administration
+  role;
+- the **runtime** role may `find` within the metadata database and may
+  `insert`, `update`, and `remove` only from the runtime-owned collections
+  `ob_counter`, `ob_core_job_definition`, `ob_job_instance`,
+  `ob_job_execution`, `ob_step_execution`, and `ob_flow_decision`. It
+  receives no write authority over `ob_schema`, no index/collection DDL, and
+  no user or cluster administration.
+
+The pinned MongoDB certification lane proves the migrator can initialize the
+schema with its scoped credential, the runtime can open a repository and commit
+ordinary metadata DML with its narrower credential, schema-marker mutation and
+index creation are denied to the runtime, user-administration inspection is
+denied, and an invalid password fails closed as `RepositoryError::Unavailable`.
+
+This is an executable least-privilege baseline, not a production credential
+bootstrap mechanism. Deployments may use different usernames and secret
+providers, but broad `root`, `clusterAdmin`, `userAdminAnyDatabase`, or
+cross-database runtime grants are outside this profile. This slice does **not**
+certify TLS; MongoDB remains experimental until the separate TLS evidence and
+the rest of the support-level profile are complete.
+
 ## Pool, TLS, and timeout contract
 
 The application constructs facade-owned configuration. The PostgreSQL adapter

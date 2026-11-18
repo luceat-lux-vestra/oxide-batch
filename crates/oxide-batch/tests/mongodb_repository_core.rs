@@ -57,6 +57,25 @@ impl TestSettings {
     }
 }
 
+#[derive(Clone)]
+struct AuthTestSettings {
+    migrator_uri: String,
+    runtime_uri: String,
+    bad_runtime_uri: String,
+    database: String,
+}
+
+impl AuthTestSettings {
+    fn from_environment() -> Option<Self> {
+        Some(Self {
+            migrator_uri: std::env::var("OXIDEBATCH_MONGODB_AUTH_MIGRATOR_URI").ok()?,
+            runtime_uri: std::env::var("OXIDEBATCH_MONGODB_AUTH_RUNTIME_URI").ok()?,
+            bad_runtime_uri: std::env::var("OXIDEBATCH_MONGODB_AUTH_BAD_RUNTIME_URI").ok()?,
+            database: std::env::var("OXIDEBATCH_MONGODB_AUTH_TEST_DATABASE").ok()?,
+        })
+    }
+}
+
 async fn clear_runnable_core_fixture(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
     let client = Client::with_uri_str(&settings.uri).await?;
     let database = client.database(&settings.database);
@@ -910,6 +929,114 @@ fn explorer_contract_passes_on_mongodb() -> Result<(), Box<dyn Error>> {
         close_repository_registry(&repositories).await;
         contract_result?;
         clear_runnable_core_fixture(&settings).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn mongodb_authenticated_runtime_is_scoped_and_bad_credentials_fail_closed(
+) -> Result<(), Box<dyn Error>> {
+    let Some(settings) = AuthTestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB authenticated privilege fixture is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let migrator_config =
+            MongoConfig::new(settings.migrator_uri.clone(), settings.database.clone())?;
+        MongoMigrator::migrate(&migrator_config).await?;
+
+        let runtime_config =
+            MongoConfig::new(settings.runtime_uri.clone(), settings.database.clone())?;
+        let repository =
+            MongoJobRepository::connect(runtime_config, Arc::new(SystemClock)).await?;
+
+        let job_name = JobName::new("mongodb_authenticated_runtime")?;
+        let key = JobInstanceKey::new(job_name, &JobParameters::new());
+        let mut transaction = repository.begin().await?;
+        let instance = transaction
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        transaction.create_job_execution(instance.id()).await?;
+        transaction.commit().await?;
+        repository.close().await;
+
+        let runtime_client = Client::with_uri_str(&settings.runtime_uri).await?;
+        let database = runtime_client.database(&settings.database);
+
+        let schema_write = database
+            .collection::<Document>("ob_schema")
+            .update_one(
+                doc! { "_id": "schema" },
+                doc! { "$set": { "version": 999_i64 } },
+            )
+            .await;
+        assert!(
+            schema_write.is_err(),
+            "MongoDB runtime credential must not mutate the schema marker"
+        );
+
+        let index_create = database
+            .run_command(doc! {
+                "createIndexes": "ob_schema",
+                "indexes": [{
+                    "key": { "version": 1_i32 },
+                    "name": "forbidden_runtime_index",
+                }],
+            })
+            .await;
+        assert!(
+            index_create.is_err(),
+            "MongoDB runtime credential must not create repository indexes"
+        );
+
+        let admin = runtime_client.database("admin");
+        let users_info = admin.run_command(doc! { "usersInfo": 1_i32 }).await;
+        assert!(
+            users_info.is_err(),
+            "MongoDB runtime credential must not have user-administration privileges"
+        );
+        drop(admin);
+        drop(database);
+        runtime_client.shutdown().await;
+
+        let bad_config =
+            MongoConfig::new(settings.bad_runtime_uri.clone(), settings.database.clone())?
+                .with_connect_timeout(std::time::Duration::from_millis(500))?
+                .with_server_selection_timeout(std::time::Duration::from_millis(500))?;
+        let bad_result = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            MongoJobRepository::connect(bad_config, Arc::new(SystemClock)),
+        )
+        .await
+        .map_err(|_| {
+            std::io::Error::other(
+                "MongoDB invalid-credential connect exceeded the outer certification bound",
+            )
+        })?;
+
+        match bad_result {
+            Err(RepositoryError::Unavailable) => {}
+            Err(error) => {
+                return Err(std::io::Error::other(format!(
+                    "MongoDB invalid credentials returned unexpected error: {error:?}"
+                ))
+                .into());
+            }
+            Ok(repository) => {
+                repository.close().await;
+                return Err(std::io::Error::other(
+                    "MongoDB invalid credentials unexpectedly connected",
+                )
+                .into());
+            }
+        }
+
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())

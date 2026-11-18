@@ -33,6 +33,8 @@ REQUIRED_JOB_LITERALS = (
     "--test mongodb_repository_core",
     "-- --nocapture --test-threads=1",
     "trap cleanup EXIT",
+    "Run authenticated MongoDB privilege certification",
+    "./tests/fixtures/mongodb/run-auth-certification.sh",
     "--publish 27017:27017",
     'container="oxide-mongodb-$OXIDEBATCH_MONGODB_LANE"',
 )

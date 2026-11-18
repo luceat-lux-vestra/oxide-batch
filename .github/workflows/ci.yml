@@ -846,6 +846,14 @@ jobs:
             --test mongodb_repository_core \
             -- --nocapture --test-threads=1
 
+      - name: Run authenticated MongoDB privilege certification
+        run: >-
+          ./tests/fixtures/mongodb/run-auth-certification.sh
+          '${{ matrix.image }}'
+          '${{ matrix.lane }}'
+          '${{ matrix.version }}'
+          oxide_batch_repository
+
   mysql-repository-core:
     name: mysql-8.4.13-repository-core
     runs-on: ubuntu-24.04-arm
