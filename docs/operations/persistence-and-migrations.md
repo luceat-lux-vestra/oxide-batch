@@ -153,6 +153,18 @@ Runtime startup reads the singleton through its normal role:
 - the exact supported version is accepted;
 - a higher version is `NewerSchema` and is never guessed compatible.
 
+The MongoDB metadata adapter has a separate schema lineage. Its first
+implementation was created directly at MongoDB schema version 2; no MongoDB
+schema version 1 layout was ever defined. Version 2 is therefore the inception
+baseline: an uninitialized database may be bootstrapped to version 2, an
+installed version 2 migration is idempotent, and both runtime connection and
+migration reject any installed marker below 2 with `MigrationRequired`; the
+migrator does so before collection or index mutation.
+Versions above 2 remain `NewerSchema`. A future MongoDB schema bump must define
+and certify an explicit contiguous migration from every older source version it
+claims to support; a numeric marker alone never creates a compatibility claim.
+This policy does not promote MongoDB support.
+
 There is no released durable schema before M2 version 1. Therefore the first
 upgrade matrix contains the empty/uninitialized fixture and version 1. From the
 second durable schema onward, CI restores realistic fixtures for every released

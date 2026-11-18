@@ -330,13 +330,8 @@ impl MongoMigrator {
 }
 
 async fn migrate_database(database: &Database) -> Result<(), RepositoryError> {
-    if let Some(current) = installed_schema_version_in_database(database).await?
-        && current > SUPPORTED_SCHEMA_VERSION
-    {
-        return Err(RepositoryError::NewerSchema {
-            current,
-            supported: SUPPORTED_SCHEMA_VERSION,
-        });
+    if let Some(current) = installed_schema_version_in_database(database).await? {
+        verify_schema_version(current)?;
     }
 
     let existing = database
