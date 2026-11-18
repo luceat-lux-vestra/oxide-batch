@@ -7,8 +7,16 @@
 mod contract;
 
 use std::error::Error;
+#[cfg(unix)]
+use std::os::unix::process::ExitStatusExt;
+#[cfg(unix)]
+use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::process::Child;
 use std::process::Command;
 use std::sync::Arc;
+#[cfg(unix)]
+use std::time::{Duration, Instant};
 
 use contract::{
     CheckpointContextBackend, ServiceBackend, run_checkpoint_context_restart_contract,
@@ -22,6 +30,12 @@ use oxide_batch::{
     LifecycleTransition, MongoChunkStateError, MongoChunkStateProvider,
     MongoChunkTransactionManager, MongoConfig, MongoExplorer, MongoJobRepository, MongoMigrator,
     RepositoryError, StepName, SystemClock,
+};
+
+#[cfg(unix)]
+use oxide_batch::{
+    Checkpoint, ChunkCount, ChunkCounts, ChunkFaultProgress, ExecutionContext, FailureCategory,
+    FailureId, FailureSummary, NodeId, StateLimits,
 };
 
 #[derive(Clone)]
@@ -270,6 +284,295 @@ async fn clear_concurrent_launch_fixture(settings: &TestSettings) -> Result<(), 
 
 const LIFECYCLE_PROBE_TEST: &str = "mongodb_client_lifecycle_probe";
 const LIFECYCLE_PROBE_CYCLES: usize = 16;
+
+#[cfg(unix)]
+const CRASH_RESTART_JOB: &str = "repository_checkpoint_context_process_kill";
+#[cfg(unix)]
+const CRASH_RESTART_STEP: &str = "stateful";
+#[cfg(unix)]
+const CRASH_RESTART_WORKER_TEST: &str = "mongodb_checkpoint_context_process_kill_worker";
+#[cfg(unix)]
+const CRASH_RESTART_WORKER_ENV: &str = "OXIDEBATCH_MONGODB_CRASH_RESTART_WORKER";
+#[cfg(unix)]
+const CRASH_RESTART_HANDSHAKE_ENV: &str = "OXIDEBATCH_MONGODB_CRASH_RESTART_HANDSHAKE";
+#[cfg(unix)]
+const CRASH_RESTART_HANDSHAKE_BOUND: Duration = Duration::from_secs(20);
+
+#[cfg(unix)]
+fn crash_restart_state() -> Result<(Checkpoint, ExecutionContext), Box<dyn Error>> {
+    let checkpoint_json = serde_json::to_vec(&serde_json::json!({
+        "format": "oxide-batch.checkpoint",
+        "format_version": 1,
+        "schema": "mongodb.crash-restart",
+        "schema_version": 1,
+        "payload": {
+            "position": 2,
+            "sentinel": "mongodb-process-kill-checkpoint",
+        },
+    }))?;
+    let checkpoint = Checkpoint::from_json(&checkpoint_json, StateLimits::default())?;
+
+    let context_json = serde_json::to_vec(&serde_json::json!({
+        "format": "oxide-batch.execution-context",
+        "format_version": 1,
+        "schema": "mongodb.crash-restart",
+        "schema_version": 1,
+        "payload": {
+            "source": "process-kill-certification",
+            "sentinel": "mongodb-process-kill-context",
+        },
+    }))?;
+    let context = ExecutionContext::from_json(&context_json, StateLimits::default())?;
+    Ok((checkpoint, context))
+}
+
+#[cfg(unix)]
+fn crash_restart_counts() -> Result<ChunkCounts, Box<dyn Error>> {
+    Ok(ChunkCounts::new(
+        ChunkCount::new(2),
+        ChunkCount::new(2),
+        ChunkCount::new(2),
+        ChunkCount::ZERO,
+    )?)
+}
+
+#[cfg(unix)]
+fn crash_restart_handshake_dir() -> Result<PathBuf, Box<dyn Error>> {
+    let path = std::env::temp_dir().join(format!(
+        "oxide-batch-mongodb-checkpoint-crash-{}",
+        std::process::id()
+    ));
+    match std::fs::remove_dir_all(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    std::fs::create_dir_all(&path)?;
+    Ok(path)
+}
+
+#[cfg(unix)]
+fn wait_for_crash_handshake(path: &Path, child: &mut Child) -> Result<(), Box<dyn Error>> {
+    let started = Instant::now();
+    while !path.exists() {
+        if let Some(status) = child.try_wait()? {
+            return Err(std::io::Error::other(format!(
+                "MongoDB crash worker exited before handshake: {status}"
+            ))
+            .into());
+        }
+        if started.elapsed() >= CRASH_RESTART_HANDSHAKE_BOUND {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(std::io::Error::other(format!(
+                "MongoDB crash worker did not reach checkpoint commit within {:?}",
+                CRASH_RESTART_HANDSHAKE_BOUND
+            ))
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+async fn run_mongodb_checkpoint_crash_worker(
+    settings: &TestSettings,
+    handshake: &Path,
+) -> Result<(), Box<dyn Error>> {
+    let config = settings.config()?;
+    MongoMigrator::migrate(&config).await?;
+    let clock = Arc::new(SystemClock);
+    let repository =
+        MongoJobRepository::connect(config, Arc::clone(&clock) as Arc<dyn Clock>).await?;
+    let job_name = JobName::new(CRASH_RESTART_JOB)?;
+    let key = JobInstanceKey::new(job_name, &JobParameters::new());
+    let step_name = StepName::new(CRASH_RESTART_STEP)?;
+
+    let mut create = repository.begin().await?;
+    let instance = create
+        .select_or_create_job_instance(&key)
+        .await?
+        .instance()
+        .clone();
+    let job = create.create_job_execution(instance.id()).await?;
+    let step = create.create_step_execution(job.id(), &step_name).await?;
+    create.commit().await?;
+
+    let started_at = clock.now();
+    let mut start = repository.begin().await?;
+    start
+        .transition_job_execution(
+            job.id(),
+            job.version(),
+            LifecycleTransition::new(BatchStatus::Started, started_at),
+        )
+        .await?;
+    start
+        .transition_step_execution(
+            step.id(),
+            step.version(),
+            LifecycleTransition::new(BatchStatus::Started, started_at),
+        )
+        .await?;
+    start.commit().await?;
+
+    let (checkpoint, context) = crash_restart_state()?;
+    let expected_checkpoint = checkpoint.clone();
+    let expected_context = context.clone();
+    let state_provider: Arc<dyn MongoChunkStateProvider> = Arc::new(move |_, _| {
+        Ok(ChunkCommitReceipt::new(checkpoint.clone(), context.clone()))
+    });
+    let manager = MongoChunkTransactionManager::new(repository.clone(), state_provider);
+    let scope = ChunkTransactionContext::new(job.id(), step.id());
+    let mut transaction = manager.begin_for(scope).await?;
+    let receipt = transaction
+        .commit(crash_restart_counts()?, ChunkFaultProgress::NONE)
+        .await?;
+    assert_eq!(receipt.checkpoint(), &expected_checkpoint);
+    assert_eq!(receipt.execution_context(), &expected_context);
+
+    std::fs::write(handshake.join("reached"), [])?;
+    loop {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        let _ = std::hint::black_box(&repository);
+    }
+}
+
+#[cfg(unix)]
+async fn inspect_mongodb_checkpoint_after_kill_and_restart(
+    settings: &TestSettings,
+) -> Result<(), Box<dyn Error>> {
+    let config = settings.config()?;
+    let clock = Arc::new(SystemClock);
+    let repository =
+        MongoJobRepository::connect(config, Arc::clone(&clock) as Arc<dyn Clock>).await?;
+    let key = JobInstanceKey::new(JobName::new(CRASH_RESTART_JOB)?, &JobParameters::new());
+    let node_id = NodeId::new(CRASH_RESTART_STEP)?;
+    let step_name = StepName::new(CRASH_RESTART_STEP)?;
+    let (expected_checkpoint, expected_context) = crash_restart_state()?;
+    let provider_checkpoint = expected_checkpoint.clone();
+    let provider_context = expected_context.clone();
+    let state_provider: Arc<dyn MongoChunkStateProvider> = Arc::new(move |_, _| {
+        Ok(ChunkCommitReceipt::new(
+            provider_checkpoint.clone(),
+            provider_context.clone(),
+        ))
+    });
+    let manager = MongoChunkTransactionManager::new(repository.clone(), state_provider);
+
+    let mut inspect = repository.begin().await?;
+    let instance = inspect
+        .find_job_instance(&key)
+        .await?
+        .ok_or_else(|| std::io::Error::other("killed MongoDB worker left no job instance"))?;
+    let killed_job = inspect
+        .latest_job_execution(instance.id())
+        .await?
+        .ok_or_else(|| std::io::Error::other("killed MongoDB worker left no job execution"))?;
+    let killed_state = inspect
+        .latest_flow_step(instance.id(), &node_id)
+        .await?
+        .ok_or_else(|| std::io::Error::other("killed MongoDB worker left no step state"))?;
+    let killed_scope =
+        ChunkTransactionContext::new(killed_job.id(), killed_state.execution().id());
+    inspect.rollback().await?;
+
+    assert_eq!(killed_job.metadata().status(), BatchStatus::Started);
+    assert_eq!(killed_state.execution().metadata().counts().read(), 2);
+    assert_eq!(killed_state.context(), Some(&expected_context));
+
+    let killed_progress = manager.inherited_progress(killed_scope).await?;
+    assert_eq!(killed_progress.read_ordinal(), 2);
+    assert_eq!(
+        killed_progress.checkpoint_digest(),
+        expected_checkpoint.generation_digest()
+    );
+
+    let failed_at = clock.now();
+    let mut fail = repository.begin().await?;
+    let job = fail
+        .get_job_execution(killed_scope.job_execution_id())
+        .await?
+        .ok_or_else(|| std::io::Error::other("killed MongoDB job disappeared before recovery"))?;
+    let step = fail
+        .get_step_execution(killed_scope.step_execution_id())
+        .await?
+        .ok_or_else(|| std::io::Error::other("killed MongoDB step disappeared before recovery"))?;
+    fail.transition_step_execution(
+        step.id(),
+        step.version(),
+        LifecycleTransition::failed(
+            failed_at,
+            FailureSummary::new(FailureCategory::TransientInfrastructure, FailureId::new(1)?),
+        ),
+    )
+    .await?;
+    fail.transition_job_execution(
+        job.id(),
+        job.version(),
+        LifecycleTransition::failed(
+            failed_at,
+            FailureSummary::new(FailureCategory::TransientInfrastructure, FailureId::new(2)?),
+        ),
+    )
+    .await?;
+    fail.commit().await?;
+
+    let mut create = repository.begin().await?;
+    let restarted_job = create.create_job_execution(instance.id()).await?;
+    let restarted_step = create
+        .create_step_execution(restarted_job.id(), &step_name)
+        .await?;
+    create.commit().await?;
+
+    let restarted_at = clock.now();
+    let mut start = repository.begin().await?;
+    start
+        .transition_job_execution(
+            restarted_job.id(),
+            restarted_job.version(),
+            LifecycleTransition::new(BatchStatus::Started, restarted_at),
+        )
+        .await?;
+    start
+        .transition_step_execution(
+            restarted_step.id(),
+            restarted_step.version(),
+            LifecycleTransition::new(BatchStatus::Started, restarted_at),
+        )
+        .await?;
+    start.commit().await?;
+
+    let restarted_scope =
+        ChunkTransactionContext::new(restarted_job.id(), restarted_step.id());
+    let restarted_progress = manager.inherited_progress(restarted_scope).await?;
+    let mut observe = repository.begin().await?;
+    let restarted_state = observe
+        .latest_flow_step(instance.id(), &node_id)
+        .await?
+        .ok_or_else(|| std::io::Error::other("MongoDB restart step state is missing"))?;
+    observe.rollback().await?;
+
+    assert_ne!(
+        restarted_scope.step_execution_id(),
+        killed_scope.step_execution_id()
+    );
+    assert_eq!(restarted_progress.read_ordinal(), 2);
+    assert_eq!(
+        restarted_progress.checkpoint_digest(),
+        expected_checkpoint.generation_digest()
+    );
+    assert_eq!(
+        restarted_state.execution().id(),
+        restarted_scope.step_execution_id()
+    );
+    assert_eq!(restarted_state.execution().metadata().counts().read(), 2);
+    assert_eq!(restarted_state.context(), Some(&expected_context));
+
+    repository.close().await;
+    Ok(())
+}
 
 type RepositoryRegistry = Arc<tokio::sync::Mutex<Vec<MongoJobRepository>>>;
 
@@ -1002,6 +1305,81 @@ fn mongodb_unknown_commit_result_is_never_guessed_rolled_back() -> Result<(), Bo
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn mongodb_checkpoint_context_survives_process_kill_and_restarts() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        MongoMigrator::migrate(&settings.config()?).await?;
+        clear_runnable_core_fixture(&settings).await
+    })?;
+
+    let handshake = crash_restart_handshake_dir()?;
+    let reached = handshake.join("reached");
+    let mut child = Command::new(std::env::current_exe()?)
+        .arg("--exact")
+        .arg(CRASH_RESTART_WORKER_TEST)
+        .arg("--ignored")
+        .arg("--nocapture")
+        .arg("--test-threads=1")
+        .env(CRASH_RESTART_WORKER_ENV, "1")
+        .env(CRASH_RESTART_HANDSHAKE_ENV, &handshake)
+        .spawn()?;
+
+    if let Err(error) = wait_for_crash_handshake(&reached, &mut child) {
+        let _ = runtime.block_on(clear_runnable_core_fixture(&settings));
+        let _ = std::fs::remove_dir_all(&handshake);
+        return Err(error);
+    }
+
+    child.kill()?;
+    let status = child.wait()?;
+    assert_eq!(
+        status.signal(),
+        Some(9),
+        "MongoDB crash certification must observe SIGKILL rather than a graceful exit"
+    );
+
+    let evidence =
+        runtime.block_on(inspect_mongodb_checkpoint_after_kill_and_restart(&settings));
+    let cleanup = runtime.block_on(clear_runnable_core_fixture(&settings));
+    let handshake_cleanup = std::fs::remove_dir_all(&handshake);
+
+    evidence?;
+    cleanup?;
+    handshake_cleanup?;
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+#[ignore = "invoked by MongoDB process-kill crash/restart harness"]
+fn mongodb_checkpoint_context_process_kill_worker() -> Result<(), Box<dyn Error>> {
+    if std::env::var(CRASH_RESTART_WORKER_ENV).as_deref() != Ok("1") {
+        return Ok(());
+    }
+    let settings = TestSettings::from_environment()
+        .ok_or_else(|| std::io::Error::other("MongoDB crash worker lacks test settings"))?;
+    let handshake = std::env::var(CRASH_RESTART_HANDSHAKE_ENV)
+        .map(PathBuf::from)
+        .map_err(|error| {
+            std::io::Error::other(format!("MongoDB crash worker lacks handshake path: {error}"))
+        })?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(run_mongodb_checkpoint_crash_worker(
+        &settings,
+        &handshake,
+    ))
 }
 
 #[test]
