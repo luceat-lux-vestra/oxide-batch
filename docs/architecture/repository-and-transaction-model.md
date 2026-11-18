@@ -13,8 +13,11 @@ PostgreSQL remains the reference, capability-rich, release-backed supported
 durable adapter. MySQL/MariaDB and SQLite now have first-party
 **bootstrap-core implementations**: they pass the primitive repository
 contract but are not yet runnable-core certified or support-promoted. SQL
-Server and MongoDB remain planned M8 targets until their own implementation and
-evidence land. A code-bearing bootstrap adapter is not a support claim.
+Server remains a planned M8 target. MongoDB now has an **Implemented**
+support-level-core candidate on main: schema 3 is certified against MongoDB
+8.0.38 and 8.2.12, while optional capabilities remain explicit and fail closed.
+That candidate is not a release-backed support claim; `Verified` promotion
+still requires a named OxideBatch release.
 
 ## Adapter ownership and driver boundary
 
@@ -26,7 +29,7 @@ adapters:
 
 - PostgreSQL, MySQL/MariaDB, and SQLite may use their SQLx backends privately;
 - SQL Server may use a TDS client and adapter-private pool privately;
-- a future MongoDB adapter may use its native client privately;
+- the MongoDB adapter uses its native client privately;
 - driver, pool, connection, row, transaction, TLS, migration-library, and raw
   database-error types remain outside portable public signatures.
 

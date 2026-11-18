@@ -59,11 +59,13 @@ resource evidence. Their existence cannot reduce the PostgreSQL fast path.
 
 ### Current implementation status
 
-As of the M8 runnable-core reconciliation (#659), PostgreSQL remains the
-reference, capability-rich, release-backed supported durable adapter.
-MySQL/MariaDB and SQLite have first-party bootstrap-core implementations but
-have not yet passed the additive runnable-core profile or support-promotion
-evidence. SQL Server and MongoDB remain planned.
+PostgreSQL remains the reference, capability-rich, release-backed supported
+durable adapter. MySQL/MariaDB and SQLite have first-party bootstrap-core
+implementations but have not yet passed the additive runnable-core profile or
+support-promotion evidence. SQL Server remains planned. MongoDB has completed
+the M8 support-level core profile on main for versions 8.0.38 and 8.2.12 with
+schema 3 and is therefore an `Implemented` candidate; it is not release-backed
+`Verified` until a named OxideBatch release carries the claim.
 
 The current M8 sequencing also defers structural splitting of
 `RepositoryUnitOfWork` while adapters are brought to the runnable-core
