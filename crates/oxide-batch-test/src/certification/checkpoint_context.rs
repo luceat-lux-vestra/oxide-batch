@@ -270,7 +270,8 @@ where
 
     let step_failure = FailureSummary::new(
         FailureCategory::UserComponent,
-        FailureId::new(1).map_err(|error| stage_failure(backend, case, "step-failure-id", error))?,
+        FailureId::new(1)
+            .map_err(|error| stage_failure(backend, case, "step-failure-id", error))?,
     );
     let job_failure = FailureSummary::new(
         FailureCategory::UserComponent,
