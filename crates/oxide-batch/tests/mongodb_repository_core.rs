@@ -916,6 +916,72 @@ fn explorer_contract_passes_on_mongodb() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn mongodb_repository_pool_saturation_times_out_and_recovers() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let config = settings
+            .config()?
+            .with_pool_size(1)?
+            .with_acquire_timeout(std::time::Duration::from_millis(50))?;
+        MongoMigrator::migrate(&config).await?;
+        let repository = MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
+
+        let held = repository.begin().await?;
+        let contended = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            repository.begin(),
+        )
+        .await
+        .map_err(|_| {
+            std::io::Error::other(
+                "MongoDB repository permit contention exceeded the outer certification bound",
+            )
+        })?;
+
+        match contended {
+            Err(RepositoryError::Unavailable) => {}
+            Err(error) => {
+                return Err(std::io::Error::other(format!(
+                    "MongoDB repository permit contention returned unexpected error: {error}"
+                ))
+                .into());
+            }
+            Ok(unit) => {
+                unit.rollback().await?;
+                return Err(std::io::Error::other(
+                    "MongoDB repository acquired a second UoW despite pool_size=1",
+                )
+                .into());
+            }
+        }
+
+        held.rollback().await?;
+
+        let recovered = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            repository.begin(),
+        )
+        .await
+        .map_err(|_| {
+            std::io::Error::other(
+                "MongoDB repository did not recover capacity after the timed-out waiter",
+            )
+        })??;
+        recovered.rollback().await?;
+        repository.close().await;
+
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
 fn concurrent_launch_creates_one_mongodb_instance_and_attempt() -> Result<(), Box<dyn Error>> {
     const CONTENDERS: usize = 8;
 
