@@ -258,11 +258,37 @@ async fn client_and_database(config: &MongoConfig) -> Result<(Client, Database),
     let client = Client::with_options(config.client_options().await?)
         .map_err(|_| RepositoryError::Unavailable)?;
     let database = client.database(&config.database);
-    database
+    if database
         .run_command(doc! { "ping": 1_i32 })
         .await
-        .map_err(|_| RepositoryError::Unavailable)?;
+        .is_err()
+    {
+        drop(database);
+        client.shutdown().await;
+        return Err(RepositoryError::Unavailable);
+    }
     Ok((client, database))
+}
+
+async fn installed_schema_version_in_database(
+    database: &Database,
+) -> Result<Option<u32>, RepositoryError> {
+    let row = database
+        .collection::<Document>(SCHEMA)
+        .find_one(doc! { "_id": "schema" })
+        .await
+        .map_err(|error| {
+            if namespace_missing(&error) {
+                RepositoryError::SchemaUninitialized
+            } else {
+                RepositoryError::Unavailable
+            }
+        });
+    match row {
+        Ok(Some(row)) => Ok(Some(read_u32(&row, "version")?)),
+        Ok(None) | Err(RepositoryError::SchemaUninitialized) => Ok(None),
+        Err(error) => Err(error),
+    }
 }
 
 /// Owns `MongoDB` collection/index bootstrap and schema compatibility checks.
@@ -285,23 +311,11 @@ impl MongoMigrator {
     pub async fn installed_schema_version(
         config: &MongoConfig,
     ) -> Result<Option<u32>, RepositoryError> {
-        let (_, database) = client_and_database(config).await?;
-        let row = database
-            .collection::<Document>(SCHEMA)
-            .find_one(doc! { "_id": "schema" })
-            .await
-            .map_err(|error| {
-                if namespace_missing(&error) {
-                    RepositoryError::SchemaUninitialized
-                } else {
-                    RepositoryError::Unavailable
-                }
-            });
-        match row {
-            Ok(Some(row)) => Ok(Some(read_u32(&row, "version")?)),
-            Ok(None) | Err(RepositoryError::SchemaUninitialized) => Ok(None),
-            Err(error) => Err(error),
-        }
+        let (client, database) = client_and_database(config).await?;
+        let result = installed_schema_version_in_database(&database).await;
+        drop(database);
+        client.shutdown().await;
+        result
     }
 
     /// Creates or advances the adapter-owned collections, indexes, and schema marker.
@@ -311,109 +325,116 @@ impl MongoMigrator {
     /// Returns [`RepositoryError`] when bootstrap fails or the installed schema is
     /// newer than this adapter supports.
     pub async fn migrate(config: &MongoConfig) -> Result<(), RepositoryError> {
-        let (_, database) = client_and_database(config).await?;
-        if let Some(current) = Self::installed_schema_version(config).await?
-            && current > SUPPORTED_SCHEMA_VERSION
-        {
-            return Err(RepositoryError::NewerSchema {
-                current,
-                supported: SUPPORTED_SCHEMA_VERSION,
-            });
-        }
-
-        let existing = database
-            .list_collection_names()
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-        for name in [
-            SCHEMA,
-            COUNTERS,
-            DEFINITIONS,
-            INSTANCES,
-            EXECUTIONS,
-            STEPS,
-            DECISIONS,
-        ] {
-            if !existing.iter().any(|value| value == name) {
-                database
-                    .create_collection(name)
-                    .await
-                    .map_err(|_| RepositoryError::Unavailable)?;
-            }
-        }
-
-        create_unique_index(
-            &database.collection::<Document>(DEFINITIONS),
-            "uq_definition_identity",
-            doc! { "job_name": 1_i32, "definition_revision": 1_i32 },
-        )
-        .await?;
-        create_unique_index(
-            &database.collection::<Document>(DEFINITIONS),
-            "uq_definition_id",
-            doc! { "id": 1_i32 },
-        )
-        .await?;
-        create_unique_index(
-            &database.collection::<Document>(INSTANCES),
-            "uq_instance_identity",
-            doc! { "job_name": 1_i32, "instance_key": 1_i32 },
-        )
-        .await?;
-        create_unique_index(
-            &database.collection::<Document>(INSTANCES),
-            "uq_instance_id",
-            doc! { "id": 1_i32 },
-        )
-        .await?;
-        create_unique_index(
-            &database.collection::<Document>(EXECUTIONS),
-            "uq_execution_attempt",
-            doc! { "job_instance_id": 1_i32, "attempt": 1_i32 },
-        )
-        .await?;
-        create_unique_index(
-            &database.collection::<Document>(EXECUTIONS),
-            "uq_execution_id",
-            doc! { "id": 1_i32 },
-        )
-        .await?;
-        create_unique_index(
-            &database.collection::<Document>(STEPS),
-            "uq_step_logical_attempt",
-            doc! { "job_execution_id": 1_i32, "step_logical_id": 1_i32 },
-        )
-        .await?;
-        create_unique_index(
-            &database.collection::<Document>(STEPS),
-            "uq_step_id",
-            doc! { "id": 1_i32 },
-        )
-        .await?;
-        create_unique_index(
-            &database.collection::<Document>(DECISIONS),
-            "uq_decision_sequence",
-            doc! { "job_execution_id": 1_i32, "sequence": 1_i32 },
-        )
-        .await?;
-        create_unique_index(
-            &database.collection::<Document>(DECISIONS),
-            "uq_decision_id",
-            doc! { "id": 1_i32 },
-        )
-        .await?;
-
-        database
-            .collection::<Document>(SCHEMA)
-            .update_one(
-                doc! { "_id": "schema" },
-                doc! { "$set": { "version": i64::from(SUPPORTED_SCHEMA_VERSION) } },
-            )
-            .upsert(true)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-        Ok(())
+        let (client, database) = client_and_database(config).await?;
+        let result = migrate_database(&database).await;
+        drop(database);
+        client.shutdown().await;
+        result
     }
+}
+
+async fn migrate_database(database: &Database) -> Result<(), RepositoryError> {
+    if let Some(current) = installed_schema_version_in_database(database).await?
+        && current > SUPPORTED_SCHEMA_VERSION
+    {
+        return Err(RepositoryError::NewerSchema {
+            current,
+            supported: SUPPORTED_SCHEMA_VERSION,
+        });
+    }
+
+    let existing = database
+        .list_collection_names()
+        .await
+        .map_err(|_| RepositoryError::Unavailable)?;
+    for name in [
+        SCHEMA,
+        COUNTERS,
+        DEFINITIONS,
+        INSTANCES,
+        EXECUTIONS,
+        STEPS,
+        DECISIONS,
+    ] {
+        if !existing.iter().any(|value| value == name) {
+            database
+                .create_collection(name)
+                .await
+                .map_err(|_| RepositoryError::Unavailable)?;
+        }
+    }
+
+    create_unique_index(
+        &database.collection::<Document>(DEFINITIONS),
+        "uq_definition_identity",
+        doc! { "job_name": 1_i32, "definition_revision": 1_i32 },
+    )
+    .await?;
+    create_unique_index(
+        &database.collection::<Document>(DEFINITIONS),
+        "uq_definition_id",
+        doc! { "id": 1_i32 },
+    )
+    .await?;
+    create_unique_index(
+        &database.collection::<Document>(INSTANCES),
+        "uq_instance_identity",
+        doc! { "job_name": 1_i32, "instance_key": 1_i32 },
+    )
+    .await?;
+    create_unique_index(
+        &database.collection::<Document>(INSTANCES),
+        "uq_instance_id",
+        doc! { "id": 1_i32 },
+    )
+    .await?;
+    create_unique_index(
+        &database.collection::<Document>(EXECUTIONS),
+        "uq_execution_attempt",
+        doc! { "job_instance_id": 1_i32, "attempt": 1_i32 },
+    )
+    .await?;
+    create_unique_index(
+        &database.collection::<Document>(EXECUTIONS),
+        "uq_execution_id",
+        doc! { "id": 1_i32 },
+    )
+    .await?;
+    create_unique_index(
+        &database.collection::<Document>(STEPS),
+        "uq_step_logical_attempt",
+        doc! { "job_execution_id": 1_i32, "step_logical_id": 1_i32 },
+    )
+    .await?;
+    create_unique_index(
+        &database.collection::<Document>(STEPS),
+        "uq_step_id",
+        doc! { "id": 1_i32 },
+    )
+    .await?;
+    create_unique_index(
+        &database.collection::<Document>(DECISIONS),
+        "uq_decision_sequence",
+        doc! { "job_execution_id": 1_i32, "sequence": 1_i32 },
+    )
+    .await?;
+    create_unique_index(
+        &database.collection::<Document>(DECISIONS),
+        "uq_decision_id",
+        doc! { "id": 1_i32 },
+    )
+    .await?;
+
+    database
+        .collection::<Document>(SCHEMA)
+        .update_one(
+            doc! { "_id": "schema" },
+            doc! { "$set": { "version": i64::from(SUPPORTED_SCHEMA_VERSION) } },
+        )
+        .upsert(true)
+        .await
+        .map_err(|_| RepositoryError::Unavailable)?;
+    Ok(())
 }
 
 async fn create_unique_index(
@@ -460,11 +481,24 @@ impl MongoJobRepository {
         clock: Arc<dyn Clock>,
     ) -> Result<Self, RepositoryError> {
         let (client, database) = client_and_database(&config).await?;
-        verify_schema_version(
-            MongoMigrator::installed_schema_version(&config)
-                .await?
-                .ok_or(RepositoryError::SchemaUninitialized)?,
-        )?;
+        let schema_version = match installed_schema_version_in_database(&database).await {
+            Ok(Some(version)) => version,
+            Ok(None) => {
+                drop(database);
+                client.shutdown().await;
+                return Err(RepositoryError::SchemaUninitialized);
+            }
+            Err(error) => {
+                drop(database);
+                client.shutdown().await;
+                return Err(error);
+            }
+        };
+        if let Err(error) = verify_schema_version(schema_version) {
+            drop(database);
+            client.shutdown().await;
+            return Err(error);
+        }
         Ok(Self {
             client,
             database,
@@ -472,6 +506,14 @@ impl MongoJobRepository {
             permits: Arc::new(Semaphore::new(config.pool_size as usize)),
             config,
         })
+    }
+
+    /// Closes the repository-owned `MongoDB` client and its background workers.
+    ///
+    /// Call this after all repository units of work and derived server-side resources
+    /// have completed.
+    pub async fn close(&self) {
+        self.client.clone().shutdown().await;
     }
 
     fn collection(&self, name: &str) -> Collection<Document> {
