@@ -916,6 +916,56 @@ fn explorer_contract_passes_on_mongodb() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn mongodb_unreachable_endpoint_is_bounded_and_unavailable() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let config = MongoConfig::new(
+            "mongodb://127.0.0.1:1/?directConnection=true",
+            settings.database.clone(),
+        )?
+        .with_connect_timeout(std::time::Duration::from_millis(50))?
+        .with_server_selection_timeout(std::time::Duration::from_millis(50))?;
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            MongoJobRepository::connect(config, Arc::new(SystemClock)),
+        )
+        .await
+        .map_err(|_| {
+            std::io::Error::other(
+                "MongoDB unreachable-endpoint connect exceeded the outer certification bound",
+            )
+        })?;
+
+        match result {
+            Err(RepositoryError::Unavailable) => {}
+            Err(error) => {
+                return Err(std::io::Error::other(format!(
+                    "MongoDB unreachable-endpoint connect returned unexpected error: {error:?}"
+                ))
+                .into());
+            }
+            Ok(repository) => {
+                repository.close().await;
+                return Err(std::io::Error::other(
+                    "MongoDB unreachable endpoint unexpectedly connected",
+                )
+                .into());
+            }
+        }
+
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
 fn mongodb_repository_pool_saturation_times_out_and_recovers() -> Result<(), Box<dyn Error>> {
     let Some(settings) = TestSettings::from_environment() else {
         eprintln!("skipped: MongoDB test environment is not configured");
