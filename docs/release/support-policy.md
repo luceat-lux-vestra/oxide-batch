@@ -32,23 +32,44 @@ package evidence; a maintainer publishes the reviewed draft to authorize
 Trusted Publishing. A release is complete only after package content,
 documentation, provenance, and installation are verified.
 
-## MSRV
+## Rust toolchain and compiler support
 
-The accepted toolchain baseline is:
+[ADR-0014](../architecture/decisions/0014-floating-stable-toolchain-no-msrv.md)
+supersedes the historical D-008 Rust toolchain and MSRV baseline for future
+development and releases after its separate implementation is merged:
 
-- development, normal CI, and releases use pinned stable Rust 1.97.1;
-- the minimum supported Rust version is stable Rust 1.95;
-- beta/nightly compatibility CI is not part of the supported test matrix;
-- public crates do not require unstable language or Cargo features.
+- development and ordinary CI use rustup's floating `stable` channel; the
+  active compiler is resolved at run time, not pinned to a version number;
+- package manifests deliberately omit `rust-version`; no numeric minimum
+  supported Rust version (MSRV) is declared or independently guaranteed for
+  new versions built under this policy;
+- beta/nightly are not part of the required compiler support matrix, and
+  public crates must not use unstable Rust features;
+- all required formatting, lint, build, feature, test, integration, security
+  and release validations continue on the then-current stable compiler;
+- release evidence records the resolved `rustc -Vv`, Cargo version, revision,
+  and package artifacts so floating toolchains do not erase reproducibility.
 
-Required CI tests the workspace on the MSRV. Raising MSRV requires a release
-note and may occur:
+No numeric `rust-version` declaration does **not** mean Cargo automatically
+uses the most recent compiler as its minimum supported version. It means the
+project no longer promises older-compiler compatibility. The latest stable
+compiler must still be installed/upgraded locally with
+`rustup update stable`; CI resolves the channel on execution.
 
-- in any pre-1.0 minor release;
-- in a stable minor release only with documented justification and notice;
-- freely in a stable major release.
+**Release boundary.** Already-published release support statements (including
+0.6.0's Rust 1.95 MSRV and pinned 1.97.1 build evidence) remain authoritative
+for those historical artifacts and are not rewritten. Removing a previously
+advertised compiler floor is a support-contract change: announce it in release
+notes for the **next eligible pre-1.0 minor release**. It is not permitted to
+silently change the compiler support promise of an existing patch release.
 
-Patch releases must not raise MSRV.
+**Transition.** The superseding policy decision and its implementation are
+separate, bounded PRs under #699. Until the implementation PR merges, current
+`rust-toolchain.toml`, crate manifests and the required `msrv` CI check
+still enforce the earlier numeric configuration. The implementation must
+preserve required check-context identity while replacing obsolete MSRV
+semantics with meaningful current-Stable verification; no gate may simply be
+disabled or omitted.
 
 ## Metadata schema
 

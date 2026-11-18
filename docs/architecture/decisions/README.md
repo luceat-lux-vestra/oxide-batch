@@ -31,6 +31,7 @@ data, correctness, security, or dependency direction.
 | [0011](0011-extraction-order-and-value-placement.md) | Durable value placement across extracted boundaries | Accepted |
 | [0012](0012-json-item-representation-discloses-serde-json-value.md) | JSON item representation discloses `serde_json::Value` | Accepted |
 | [0013](0013-m7-advanced-flow-scope-repeat-and-evolution.md) | M7 advanced flow, scope, repeat, and definition evolution | Accepted |
+| [0014](0014-floating-stable-toolchain-no-msrv.md) | Floating Rust Stable toolchain and removal of numeric MSRV declaration | Accepted; supersedes D-008 for future versions |
 
 Copy [template.md](template.md) for a new decision. ADRs are immutable after
 acceptance except for status and links; changed decisions receive a new ADR.

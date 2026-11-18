@@ -35,6 +35,7 @@ rows below; their supersession is recorded separately after the table.
 | D-003 | [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) | M5 becomes Embedded Core Production Preview and M14 becomes project-wide 1.0/GA | 2026-07-30 |
 | D-010 | [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) | Final stable support commitment moves from the M5 gate to the M14 1.0 RC gate | 2026-07-30 |
 | D-012 | [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) | Distributed execution moves to M11 before project-wide 1.0; protocol implementation remains gated by proposed RFC-0009 | 2026-07-30 |
+| D-008 | [ADR-0014](../architecture/decisions/0014-floating-stable-toolchain-no-msrv.md) | Future development/CI follows floating Stable with no declared numeric MSRV; published 0.6.0 and earlier release support evidence remain historical | 2026-11-19 |
 
 ## Approval rule
 
