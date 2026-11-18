@@ -333,9 +333,9 @@ async fn seed_mongodb_backup_restore_source(
     let flow_job = backup_restore_flow_job(BACKUP_RESTORE_FLOW_JOB)?;
     let parameters = JobParameters::new();
     let ids = SequentialIdGenerator::new(NonZeroU64::MIN);
-    let (_, stop) = StopSource::new();
+    let (_, flow_stop) = StopSource::new();
     let report = FlowLauncher::new(&repository, clock.as_ref(), &ids)
-        .launch(&flow_job, &parameters, &stop)
+        .launch(&flow_job, &parameters, &flow_stop)
         .await?;
     assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
     assert_eq!(report.step_executions().len(), 1);
@@ -646,7 +646,7 @@ async fn verify_mongodb_backup_restore(
     let max_step_execution_id = source_state.step_execution_id.max(
         source_decision
             .source_step_execution_id()
-            .map_or(0, |id| id.get()),
+            .map_or(0, oxide_batch::StepExecutionId::get),
     );
 
     assert!(restarted_job.id().get() > max_job_execution_id);
