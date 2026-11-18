@@ -9,11 +9,12 @@ mod contract;
 use std::error::Error;
 use std::sync::Arc;
 
-use contract::run_runnable_core_repository_contract;
+use contract::{ServiceBackend, run_explorer_contract, run_runnable_core_repository_contract};
 use mongodb::Client;
 use mongodb::bson::doc;
 use oxide_batch::{
-    JobRepository, MongoConfig, MongoJobRepository, MongoMigrator, RepositoryError, SystemClock,
+    JobRepository, MongoConfig, MongoExplorer, MongoJobRepository, MongoMigrator, RepositoryError,
+    SystemClock,
 };
 
 #[derive(Clone)]
@@ -125,6 +126,44 @@ fn runnable_core_repository_contract_passes_on_mongodb() -> Result<(), Box<dyn E
                     clock,
                 )
                 .await
+            }
+        })
+        .await?;
+        clear_runnable_core_fixture(&settings).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn explorer_contract_passes_on_mongodb() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        MongoMigrator::migrate(&settings.config()?).await?;
+        run_explorer_contract("mongodb", |clock| {
+            let settings = settings.clone();
+            async move {
+                clear_runnable_core_fixture(&settings)
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                let repository = MongoJobRepository::connect(
+                    settings
+                        .config()
+                        .map_err(|_| RepositoryError::Unavailable)?,
+                    clock.clone(),
+                )
+                .await?;
+                Ok(ServiceBackend {
+                    explorer: MongoExplorer::new(repository.clone()),
+                    repository,
+                    clock,
+                })
             }
         })
         .await?;

@@ -62,6 +62,8 @@ pub struct ServiceBackend<R, S> {
 
 /// Runs the bounded explorer-query capability contract.
 ///
+/// Explorer certification seeds only mandatory core repository state; it does
+/// not require operator-audit or any other optional repository capability.
 /// Adapters may omit this group when they do not claim the corresponding
 /// explorer surface; unsupported reads remain fail-closed at the port.
 ///
@@ -298,6 +300,30 @@ where
         .ok_or_else(|| String::from("launch produced no execution").into())
 }
 
+async fn seed_core_launch<R, S>(
+    fixture: &Fixture<R, S>,
+    job: &str,
+    discriminator: &str,
+) -> Result<JobExecution, Box<dyn std::error::Error>>
+where
+    R: JobRepository + Clone,
+    S: ExplorerRepository,
+{
+    let key = instance_key(job, discriminator)?;
+    let definition = definition(job)?;
+    let mut unit = fixture.repository.begin().await?;
+    let instance = unit
+        .select_or_create_job_instance(&key)
+        .await?
+        .instance()
+        .clone();
+    let execution = unit
+        .create_job_execution_with_definition(instance.id(), &definition)
+        .await?;
+    unit.commit().await?;
+    Ok(execution)
+}
+
 async fn transition<R, S>(
     fixture: &Fixture<R, S>,
     execution: &JobExecution,
@@ -351,14 +377,9 @@ where
     let fixture = fixture(backend, CASE, factory).await?;
     let mut expected = Vec::new();
     for index in 0..5 {
-        let execution = launch(
-            &fixture,
-            JOB,
-            &format!("traversal-{index}"),
-            &format!("traverse-{index}"),
-        )
-        .await
-        .map_err(at!(backend, CASE))?;
+        let execution = seed_core_launch(&fixture, JOB, &format!("traversal-{index}"))
+            .await
+            .map_err(at!(backend, CASE))?;
         expected.push(execution.job_instance_id());
     }
     let observed = traverse_instances(&fixture, JOB, 2)
@@ -421,14 +442,9 @@ where
     const CASE: &str = "rows_created_after_traversal_start_are_not_returned";
     let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..3 {
-        launch(
-            &fixture,
-            JOB,
-            &format!("ceiling-{index}"),
-            &format!("ceiling-{index}"),
-        )
-        .await
-        .map_err(at!(backend, CASE))?;
+        seed_core_launch(&fixture, JOB, &format!("ceiling-{index}"))
+            .await
+            .map_err(at!(backend, CASE))?;
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
@@ -442,7 +458,7 @@ where
         .cloned()
         .ok_or_else(|| String::from("first page carried no cursor"))
         .map_err(at!(backend, CASE))?;
-    let late = launch(&fixture, JOB, "ceiling-late", "ceiling-late")
+    let late = seed_core_launch(&fixture, JOB, "ceiling-late")
         .await
         .map_err(at!(backend, CASE))?;
     let second = fixture
@@ -475,16 +491,11 @@ where
     const CASE: &str = "cursor_rejects_a_different_query_or_filter";
     let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..3 {
-        launch(
-            &fixture,
-            JOB,
-            &format!("mismatch-{index}"),
-            &format!("mismatch-{index}"),
-        )
-        .await
-        .map_err(at!(backend, CASE))?;
+        seed_core_launch(&fixture, JOB, &format!("mismatch-{index}"))
+            .await
+            .map_err(at!(backend, CASE))?;
     }
-    launch(&fixture, OTHER_JOB, "mismatch-other", "mismatch-other")
+    seed_core_launch(&fixture, OTHER_JOB, "mismatch-other")
         .await
         .map_err(at!(backend, CASE))?;
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
@@ -542,14 +553,9 @@ where
     const CASE: &str = "corrupt_cursor_checksum_is_rejected";
     let fixture = fixture(backend, CASE, factory).await?;
     for index in 0..3 {
-        launch(
-            &fixture,
-            JOB,
-            &format!("corrupt-{index}"),
-            &format!("corrupt-{index}"),
-        )
-        .await
-        .map_err(at!(backend, CASE))?;
+        seed_core_launch(&fixture, JOB, &format!("corrupt-{index}"))
+            .await
+            .map_err(at!(backend, CASE))?;
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
@@ -612,14 +618,9 @@ where
         "an oversized page size was accepted",
     )?;
     for index in 0..3 {
-        launch(
-            &fixture,
-            JOB,
-            &format!("bounds-{index}"),
-            &format!("bounds-{index}"),
-        )
-        .await
-        .map_err(at!(backend, CASE))?;
+        seed_core_launch(&fixture, JOB, &format!("bounds-{index}"))
+            .await
+            .map_err(at!(backend, CASE))?;
     }
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
     let size = PageSize::new(2).map_err(at!(backend, CASE))?;
@@ -648,7 +649,7 @@ where
 {
     const CASE: &str = "projection_excludes_parameter_and_context_values";
     let fixture = fixture(backend, CASE, factory).await?;
-    let execution = launch(&fixture, JOB, SENTINEL, "redaction")
+    let execution = seed_core_launch(&fixture, JOB, SENTINEL)
         .await
         .map_err(at!(backend, CASE))?;
     let name = JobName::new(JOB).map_err(at!(backend, CASE))?;
