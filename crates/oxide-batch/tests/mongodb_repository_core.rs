@@ -121,6 +121,87 @@ fn migration_is_idempotent_for_mongodb() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
+fn undefined_older_mongodb_schema_is_rejected_without_mutation() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let config = settings.config()?;
+        MongoMigrator::migrate(&config).await?;
+
+        let client = Client::with_uri_str(&settings.uri).await?;
+        let database = client.database(&settings.database);
+        let schema = database.collection::<Document>("ob_schema");
+        schema
+            .update_one(
+                doc! { "_id": "schema" },
+                doc! { "$set": { "version": 1_i64 } },
+            )
+            .await?;
+        database
+            .collection::<Document>("ob_flow_decision")
+            .drop()
+            .await?;
+
+        let connect_error =
+            match MongoJobRepository::connect(config.clone(), Arc::new(SystemClock)).await {
+                Ok(repository) => {
+                    repository.close().await;
+                    None
+                }
+                Err(error) => Some(error),
+            };
+        let migration_result = MongoMigrator::migrate(&config).await;
+        let version_after = schema
+            .find_one(doc! { "_id": "schema" })
+            .await?
+            .ok_or_else(|| std::io::Error::other("MongoDB schema marker disappeared"))?
+            .get_i64("version")?;
+        let collections_after = database.list_collection_names().await?;
+        let decisions_recreated = collections_after
+            .iter()
+            .any(|name| name == "ob_flow_decision");
+
+        schema
+            .update_one(
+                doc! { "_id": "schema" },
+                doc! { "$set": { "version": 2_i64 } },
+            )
+            .await?;
+        drop(schema);
+        drop(database);
+        client.shutdown().await;
+        MongoMigrator::migrate(&config).await?;
+
+        assert_eq!(
+            connect_error,
+            Some(RepositoryError::MigrationRequired {
+                current: 1,
+                supported: MongoMigrator::supported_schema_version(),
+            })
+        );
+        assert_eq!(
+            migration_result,
+            Err(RepositoryError::MigrationRequired {
+                current: 1,
+                supported: MongoMigrator::supported_schema_version(),
+            })
+        );
+        assert_eq!(version_after, 1);
+        assert!(
+            !decisions_recreated,
+            "lower unsupported schema was mutated before rejection"
+        );
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
 fn named_mongodb_lane_reports_expected_version() -> Result<(), Box<dyn Error>> {
     let Some(settings) = TestSettings::from_environment() else {
         eprintln!("skipped: MongoDB test environment is not configured");
