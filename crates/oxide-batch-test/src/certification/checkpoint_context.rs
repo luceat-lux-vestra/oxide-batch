@@ -10,9 +10,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use oxide_batch::{
-    BatchStatus, Checkpoint, ChunkCount, ChunkCounts, ChunkFaultProgress,
-    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, Clock,
-    ExecutionContext, ExitCode, ExitStatus, JobInstanceId, JobInstanceKey, JobName,
+    BatchStatus, Checkpoint, ChunkCount, ChunkCounts, ChunkFaultProgress, ChunkTransactionContext,
+    ChunkTransactionError, ChunkTransactionManager, Clock, ExecutionContext, ExitCode, ExitStatus,
+    FailureCategory, FailureId, FailureSummary, JobInstanceId, JobInstanceKey, JobName,
     JobParameters, JobRepository, LifecycleTransition, NodeId, RepositoryError, StateLimits,
     StepExecutionId, StepName,
 };
@@ -162,7 +162,7 @@ where
     let (checkpoint, context) = contract_state(backend, case)?;
     let fixture = factory(Arc::clone(&clock), checkpoint.clone(), context.clone())
         .await
-    .map_err(|error| stage_failure(backend, case, "factory", error))?;
+        .map_err(|error| stage_failure(backend, case, "factory", error))?;
     Ok((fixture, clock, checkpoint, context))
 }
 
@@ -268,17 +268,25 @@ where
         .map_err(|error| stage_failure(backend, case, "load-step-before-fail", error))?
         .ok_or_else(|| contract_failure(backend, case, "step execution missing before fail"))?;
 
+    let step_failure = FailureSummary::new(
+        FailureCategory::UserComponent,
+        FailureId::new(1).map_err(|error| stage_failure(backend, case, "step-failure-id", error))?,
+    );
+    let job_failure = FailureSummary::new(
+        FailureCategory::UserComponent,
+        FailureId::new(2).map_err(|error| stage_failure(backend, case, "job-failure-id", error))?,
+    );
     unit.transition_step_execution(
         step.id(),
         step.version(),
-        LifecycleTransition::new(BatchStatus::Failed, failed_at),
+        LifecycleTransition::failed(failed_at, step_failure),
     )
     .await
     .map_err(|error| stage_failure(backend, case, "fail-step", error))?;
     unit.transition_job_execution(
         job.id(),
         job.version(),
-        LifecycleTransition::new(BatchStatus::Failed, failed_at),
+        LifecycleTransition::failed(failed_at, job_failure),
     )
     .await
     .map_err(|error| stage_failure(backend, case, "fail-job", error))?;
@@ -596,18 +604,15 @@ where
         .await
         .map_err(|error| stage_failure(backend, CASE, "concurrent-commit", error))?;
 
-    let error = match transaction
+    let Err(error) = transaction
         .commit(contract_counts(backend, CASE)?, ChunkFaultProgress::NONE)
         .await
-    {
-        Err(error) => error,
-        Ok(_) => {
-            return Err(contract_failure(
-                backend,
-                CASE,
-                "stale chunk commit unexpectedly succeeded",
-            ));
-        }
+    else {
+        return Err(contract_failure(
+            backend,
+            CASE,
+            "stale chunk commit unexpectedly succeeded",
+        ));
     };
     ensure(
         error == ChunkTransactionError::NotCommitted,
