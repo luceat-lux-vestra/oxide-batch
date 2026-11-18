@@ -39,8 +39,8 @@ use oxide_batch::{
     BoxFuture, Checkpoint, ChunkCount, ChunkCounts, ChunkFaultProgress, ComponentRevision,
     DefinitionRevision, ExecutionContext, FailureCategory, FailureId, FailureSummary, FlowDecision,
     FlowDecisionId, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher, FlowNode, FlowTarget,
-    NodeId, SequentialIdGenerator, StartControls, StateLimits, StepComponents, StepNode, StopSource,
-    Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    NodeId, SequentialIdGenerator, StartControls, StateLimits, StepComponents, StepNode,
+    StopSource, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 #[derive(Clone)]
@@ -121,7 +121,10 @@ impl BackupRestoreTestSettings {
     }
 
     fn source_config(&self) -> Result<MongoConfig, Box<dyn Error>> {
-        Ok(MongoConfig::new(self.source_uri.clone(), self.database.clone())?)
+        Ok(MongoConfig::new(
+            self.source_uri.clone(),
+            self.database.clone(),
+        )?)
     }
 
     fn restored_config(&self) -> Result<MongoConfig, Box<dyn Error>> {
@@ -280,9 +283,8 @@ async fn seed_mongodb_backup_restore_source(
     let (checkpoint, context) = backup_restore_checkpoint_context()?;
     let expected_checkpoint = checkpoint.clone();
     let expected_context = context.clone();
-    let provider: Arc<dyn MongoChunkStateProvider> = Arc::new(move |_, _| {
-        Ok(ChunkCommitReceipt::new(checkpoint.clone(), context.clone()))
-    });
+    let provider: Arc<dyn MongoChunkStateProvider> =
+        Arc::new(move |_, _| Ok(ChunkCommitReceipt::new(checkpoint.clone(), context.clone())));
     let manager = MongoChunkTransactionManager::new(repository.clone(), provider);
     let state_scope = ChunkTransactionContext::new(job.id(), step.id());
     let mut chunk = manager.begin_for(state_scope).await?;
@@ -307,7 +309,10 @@ async fn seed_mongodb_backup_restore_source(
         current_step.version(),
         LifecycleTransition::failed(
             failed_at,
-            FailureSummary::new(FailureCategory::TransientInfrastructure, FailureId::new(91)?),
+            FailureSummary::new(
+                FailureCategory::TransientInfrastructure,
+                FailureId::new(91)?,
+            ),
         ),
     )
     .await?;
@@ -316,7 +321,10 @@ async fn seed_mongodb_backup_restore_source(
         current_job.version(),
         LifecycleTransition::failed(
             failed_at,
-            FailureSummary::new(FailureCategory::TransientInfrastructure, FailureId::new(92)?),
+            FailureSummary::new(
+                FailureCategory::TransientInfrastructure,
+                FailureId::new(92)?,
+            ),
         ),
     )
     .await?;
@@ -365,7 +373,10 @@ async fn backup_restore_state_snapshot(
         Arc::new(|_, _| Err(MongoChunkStateError::new()));
     let manager = MongoChunkTransactionManager::new(repository.clone(), provider);
     let progress = manager
-        .inherited_progress(ChunkTransactionContext::new(job.id(), state.execution().id()))
+        .inherited_progress(ChunkTransactionContext::new(
+            job.id(),
+            state.execution().id(),
+        ))
         .await?;
     let context = state
         .context()
@@ -517,7 +528,8 @@ async fn verify_mongodb_backup_restore(
     );
     assert_eq!(restored_state.context, expected_context);
 
-    let source_decision_id = only_flow_decision_id(&settings.source_uri, &settings.database).await?;
+    let source_decision_id =
+        only_flow_decision_id(&settings.source_uri, &settings.database).await?;
     let restored_decision_id =
         only_flow_decision_id(&settings.restored_uri, &settings.database).await?;
     assert_eq!(source_decision_id, restored_decision_id);
@@ -601,7 +613,10 @@ async fn verify_mongodb_backup_restore(
     );
     let mut observe = restored_repository.begin().await?;
     let restarted_state = observe
-        .latest_flow_step(state_instance.id(), &NodeId::new(BACKUP_RESTORE_STATE_STEP)?)
+        .latest_flow_step(
+            state_instance.id(),
+            &NodeId::new(BACKUP_RESTORE_STATE_STEP)?,
+        )
         .await?
         .ok_or_else(|| std::io::Error::other("restored restart step state is missing"))?;
     assert_eq!(restarted_state.context(), Some(&expected_context));
@@ -652,7 +667,10 @@ async fn verify_mongodb_backup_restore(
         &post_restore_stop,
     )
     .await?;
-    assert_eq!(post_restore_report.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(
+        post_restore_report.outcome(),
+        &FlowExecutionOutcome::Completed
+    );
     assert_eq!(post_restore_report.step_executions().len(), 1);
     assert_eq!(post_restore_report.decisions().len(), 1);
     assert!(post_restore_report.instance().id().get() > max_instance_id);
