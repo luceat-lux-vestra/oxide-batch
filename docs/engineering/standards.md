@@ -144,7 +144,8 @@ claim.
 
 ## Rust and API design
 
-- Rust 2024 edition and the workspace MSRV are mandatory.
+- Rust 2024 edition and the floating current-Stable toolchain are mandatory;
+  under ADR-0014, no numeric workspace MSRV is declared for future releases.
 - `unsafe` is forbidden unless a dedicated ADR defines the invariant, audit,
   and tests.
 - Production code does not use `unwrap`, `expect`, or `panic!` without a

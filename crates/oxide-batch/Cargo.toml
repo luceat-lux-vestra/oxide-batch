@@ -3,7 +3,7 @@ name = "oxide-batch"
 description = "Rust-native framework for reliable, restartable batch processing, inspired by Spring Batch"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
+
 license.workspace = true
 repository.workspace = true
 readme = "README.md"

@@ -63,13 +63,13 @@ advertised compiler floor is a support-contract change: announce it in release
 notes for the **next eligible pre-1.0 minor release**. It is not permitted to
 silently change the compiler support promise of an existing patch release.
 
-**Transition.** The superseding policy decision and its implementation are
-separate, bounded PRs under #699. Until the implementation PR merges, current
-`rust-toolchain.toml`, crate manifests and the required `msrv` CI check
-still enforce the earlier numeric configuration. The implementation must
-preserve required check-context identity while replacing obsolete MSRV
-semantics with meaningful current-Stable verification; no gate may simply be
-disabled or omitted.
+**CI context continuity.** The accepted decision (PR #700) and implementation
+are separate, bounded changes under #699. The historical `msrv` job/context
+name is retained for CI wiring compatibility; its body now verifies that
+manifests omit numeric MSRV declarations and compiles all targets/features on
+current Stable. The required gate cannot be disabled, skipped, or made a no-op.
+Compiler cache identities incorporate the resolved `rustc -Vv` and the
+toolchain contract so successive Stable releases do not reuse stale outputs.
 
 ## Metadata schema
 

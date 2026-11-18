@@ -29,7 +29,10 @@ one-time manual bootstrap and is never generalized by the workflow.
       immutable; point readers to the GitHub Release and crates.io for live
       publication state instead.
 - [ ] Confirm public API and feature changes match SemVer.
-- [ ] Confirm MSRV and supported database/platform matrix.
+- [ ] Confirm the compiler-support policy for the target release and the
+      supported database/platform matrix. For the first eligible pre-1.0 minor
+      release after ADR-0014, explicitly note removal of the previously
+      declared Rust 1.95 MSRV; do not rewrite 0.6.0's published support promise.
 - [ ] Review dependency advisories, licenses, sources, and exceptions.
 - [ ] Test schema upgrade from every supported source version.
 - [ ] Complete required crash/restart, recovery, and rollback exercises.
@@ -51,7 +54,9 @@ Before creating a **new** v* tag, public GitHub Release, or publishing crates:
 ## Build evidence
 
 - [ ] Run required, deep, and release-candidate CI suites.
-- [ ] Record source commit, toolchain, package file list, and checksums.
+- [ ] Record source commit, resolved `rustc -Vv` and Cargo versions, package
+      file list, and checksums. Floating `stable` alone is not an auditable
+      compiler version.
 - [ ] Generate SBOM, license report, and provenance/attestation.
 - [ ] Run `cargo package --workspace --list` and inspect every package.
 - [ ] Run `cargo publish --workspace --dry-run --locked`, which orders the

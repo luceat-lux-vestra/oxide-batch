@@ -37,6 +37,10 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
       - name: Verify repository-wide retained evidence policy
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         run: cargo run --package oxide-batch-xtask --bin retained_evidence_policy

@@ -96,6 +96,6 @@ framework-owned resource at all.
 
 - Import only used traits/items; avoid broad preludes inside implementation.
 - Macros must preserve useful diagnostics and not hide transaction/control flow.
-- Proc macros and code generation require extra compile-time, MSRV, and
+- Proc macros and code generation require extra compile-time, compiler-compatibility, and
   diagnostic review.
 - Feature-gated code has a test for presence and absence of the feature.

@@ -17,7 +17,9 @@ must not need globally mutable “latest” installations to run the basic build
 
 A fresh clone must be able to:
 
-1. install the pinned Rust toolchain automatically through rustup;
+1. install the Rust `stable` channel through rustup and refresh it with
+   `rustup update stable` (the toolchain file selects the channel but does not
+   upgrade an already-installed channel automatically);
 2. build and test without access to production credentials;
 3. start an isolated disposable PostgreSQL instance;
 4. run migrations and integration tests with one documented command;
@@ -61,7 +63,10 @@ minutes; `check` includes it.
 ## Reproducibility
 
 - The workspace commits `Cargo.lock`.
-- Rust is pinned; the MSRV is tested separately.
+- Development and CI follow the latest installed Rust Stable; no numeric
+  MSRV is declared. CI explicitly updates the channel before compilation.
+- For reproducibility, record resolved `rustc -Vv`/Cargo versions and source
+  revision alongside locked dependencies and release evidence.
 - Database images use an explicit major and immutable digest in CI once chosen.
 - Locale, timezone, and test clock are controlled.
 - Fixtures are synthetic, small, versioned, and license-safe.
@@ -70,7 +75,7 @@ minutes; `check` includes it.
 
 ## Editor support
 
-`.editorconfig` and `rustfmt.toml` define repository formatting. `clippy.toml`
-keeps lint assumptions aligned with the MSRV. Editor-specific files are optional
-and may be committed only when they do not impose a vendor or overwrite personal
-preferences. rust-analyzer must work from the workspace root.
+`.editorconfig` and `rustfmt.toml` define repository formatting. Clippy
+runs on current Stable with no numeric MSRV override. Editor-specific files
+are optional and may be committed only when they do not impose a vendor or
+overwrite personal preferences. rust-analyzer must work from the workspace root.

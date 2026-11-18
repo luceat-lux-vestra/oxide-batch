@@ -55,6 +55,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        run: bash .github/scripts/ensure-stable-rust.sh
+
       - name: Install the matching PostgreSQL client tools
         env:
           POSTGRES_VERSION: ${{ matrix.postgres }}

@@ -75,7 +75,9 @@ spike evidence rather than invented throughput numbers.
 - All supported behavior has a versioned contract and named conformance test.
 - Public features are additive; enabling one feature must not silently change
   unrelated behavior.
-- The supported MSRV builds every public crate and documented feature.
+- The then-current Rust Stable compiler builds every public crate and
+  documented feature; no numeric MSRV is declared for future releases
+  (ADR-0014).
 - Public errors are classified structurally; callers never need string parsing.
 - Metadata and serialized context declare a version and failure mode for newer
   unsupported data.

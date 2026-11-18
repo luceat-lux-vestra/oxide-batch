@@ -5,13 +5,14 @@
 **Accepted:** 2026-07-29 after the M0 architecture spikes
 
 Exact dependency versions are selected and locked when a crate is introduced.
-The project starts from the latest stable release compatible with the accepted
-MSRV, then records a concrete Cargo SemVer requirement and lockfile resolution.
+The project tests dependencies against current Rust Stable and then records
+a concrete Cargo SemVer requirement and lockfile resolution. No numeric MSRV
+is declared for future releases (ADR-0014).
 Floating `latest`, wildcard, and unbounded requirements are not used.
 
 | Concern | Proposed choice | Constraint or rationale |
 | --- | --- | --- |
-| Language | Rust 2024; stable 1.97.1 development/release; MSRV 1.95 | Accepted; stable-only required CI |
+| Language | Rust 2024; floating Stable development/CI, no declared MSRV for future releases | ADR-0014; historic release compiler evidence remains versioned |
 | Async runtime | Tokio 1.x | Mature I/O, scheduling, cancellation primitives; isolate from core |
 | Database | PostgreSQL reference adapter | Strong transactional and locking behavior; only currently accepted durable repository |
 | SQL access | SQLx with Tokio and Rustls features | Async PostgreSQL, compile-time/query tooling, migrations |
@@ -51,7 +52,7 @@ A production dependency needs:
 - license compatibility with Apache-2.0 distribution;
 - acceptable maintenance and security posture;
 - controlled features and minimal transitive surface;
-- MSRV compatibility;
+- compatibility with the then-current Rust Stable compiler;
 - a replacement/removal plan for dependencies exposed in public types.
 
 OpenTelemetry's Rust traces, metrics, and logs are currently documented as beta,

@@ -3,7 +3,6 @@ name = "oxide-batch-test"
 description = "Application-facing test kit for OxideBatch: deterministic clocks/IDs, job/step/component harnesses, failure injection, and a restart harness"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Compiler support transition for next pre-1.0 minor
+
+- Rust development, CI, and future release validation now track floating
+  Stable. Manifests no longer declare a numeric minimum supported Rust version;
+  older compilers are not independently supported or tested. This is a support
+  change from the previously advertised Rust 1.95 MSRV, requiring explicit
+  notice in the next eligible pre-1.0 minor release (ADR-0014 / #699).
+  Published 0.6.0 support and compiler evidence remain unchanged.
+
 ### Added
 
 - M7 Gate-E launcher/operator/explorer completion: deterministic parameter

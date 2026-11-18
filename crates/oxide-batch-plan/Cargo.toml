@@ -3,7 +3,6 @@ name = "oxide-batch-plan"
 description = "Internal OxideBatch implementation crate; use oxide-batch instead"
 version.workspace = true
 edition.workspace = true
-rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 readme = "README.md"

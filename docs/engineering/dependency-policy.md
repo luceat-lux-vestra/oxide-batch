@@ -11,7 +11,8 @@ Every production dependency change states:
 - public API exposure and replacement cost;
 - direct and important transitive dependencies;
 - required/default features;
-- MSRV and supported-platform compatibility;
+- current Rust Stable and supported-platform compatibility (no numeric
+  minimum compiler version is declared for future releases);
 - maintenance, advisory, and release posture;
 - license and source;
 - owner and removal/upgrade plan.
@@ -30,9 +31,9 @@ untrusted artifacts, access release credentials, or affect generated outputs.
 
 ## Version and feature rules
 
-- At introduction, evaluate the latest stable crate release compatible with the
-  project MSRV. Do not select an older release without a recorded compatibility,
-  regression, maintenance, or licensing reason.
+- At introduction, evaluate the latest stable crate release against the
+  then-current Rust Stable compiler. Do not select an older release without a
+  recorded compatibility, regression, maintenance, or licensing reason.
 - Use a concrete default/caret Cargo requirement such as `"1.53.1"` or
   `"0.9.0"`. This names the tested lower bound while allowing SemVer-compatible
   updates.
@@ -48,11 +49,11 @@ untrusted artifacts, access release credentials, or affect generated outputs.
 - Centralize shared workspace dependencies after the second real consumer.
 - Avoid duplicate major versions of security- or format-sensitive crates unless
   an exception explains why.
-- Test the lowest supported Rust toolchain; do not assume the pinned development
-  toolchain proves MSRV.
+- Run the required tests on the then-current Rust Stable toolchain; no
+  independent numeric MSRV compatibility claim is made.
 
 `cargo add` is the default addition mechanism because it selects a current
-MSRV-compatible release and writes a concrete requirement. The pull request
+compatible release and writes a concrete requirement. The pull request
 records the version/features actually evaluated. The lockfile is updated
 deliberately through reviewed dependency pull requests.
 
@@ -130,7 +131,7 @@ others:
 - Routine updates are grouped when that preserves diagnostic clarity.
 - Major updates receive an issue and compatibility review.
 - Dependency-update pull requests are never merged solely because CI is green;
-  behavior, MSRV, features, changelog, and supply-chain impact are reviewed.
+  behavior, current-Stable compatibility, features, changelog, and supply-chain impact are reviewed.
 - Historical retained campaign evidence binds the resolved package closure
   exercised by its recorded producer run, not the workspace's *current* graph.
   `Cargo.lock` remains the authoritative input for present builds/tests.
@@ -198,6 +199,6 @@ issue #41:
   job-instance identity algorithm. Digest bytes are persisted, while the
   implementation type and crate remain private.
 
-Both follow the workspace MSRV, registry-source, license, advisory, lockfile,
+Both follow the current Rust Stable, registry-source, license, advisory, lockfile,
 and replacement-review rules above. Disabling `postgres` removes both from the
 facade crate's active dependency graph.

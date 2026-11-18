@@ -15,7 +15,7 @@ additional maintainers join.
 | R-006 | Execution-context changes make jobs unrestartable | Medium | High | Core | Version format; size bounds; backward-read fixtures |
 | R-007 | Blocking or panicking user code destabilizes Tokio workers | High | High | Runtime | Blocking adapter, panic boundary, resource limits, diagnostics |
 | R-008 | Premature multi-crate/public API split slows design changes | Medium | Medium | Maintainer | Extract only gated boundaries; facade is the only supported contract |
-| R-009 | Dependency/MSRV churn breaks enterprise builds | Medium | Medium | Release | MSRV CI, dependency review, controlled update policy |
+| R-009 | Floating Stable and dependency updates break downstream builds | Medium | Medium | Release | Required current-Stable compilation/Clippy/feature gates, dependency review, versioned release compiler evidence, controlled updates (ADR-0014) |
 | R-010 | Telemetry leaks job parameters or creates cardinality incidents | Medium | High | Observability | Deny-by-default fields, safe wrappers, cardinality tests |
 | R-011 | PostgreSQL migrations cannot be rolled back safely | Medium | High | Repository | Forward-only policy, backup/restore drills, compatibility checks |
 | R-012 | Distributed features expand scope before local correctness | High | High | Product | M11 remains gated behind local correctness and proposed RFC-0009; roadmap placement does not authorize early work |
