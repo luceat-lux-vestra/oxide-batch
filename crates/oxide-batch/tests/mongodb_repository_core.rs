@@ -130,16 +130,15 @@ async fn fault_fixture_counts(
     let instance_count = instances
         .count_documents(doc! { "job_name": job_name })
         .await?;
-    let execution_count = if let Some(instance) =
-        instances.find_one(doc! { "job_name": job_name }).await?
-    {
-        database
-            .collection::<Document>("ob_job_execution")
-            .count_documents(doc! { "job_instance_id": instance.get_i64("id")? })
-            .await?
-    } else {
-        0
-    };
+    let execution_count =
+        if let Some(instance) = instances.find_one(doc! { "job_name": job_name }).await? {
+            database
+                .collection::<Document>("ob_job_execution")
+                .count_documents(doc! { "job_instance_id": instance.get_i64("id")? })
+                .await?
+        } else {
+            0
+        };
     drop(instances);
     drop(database);
     client.shutdown().await;
@@ -512,12 +511,8 @@ fn mongodb_transient_mutation_error_is_known_not_committed() -> Result<(), Box<d
         let config = settings.config()?;
         MongoMigrator::migrate(&config).await?;
         clear_fault_fixture(&settings, TRANSIENT_MUTATION_JOB).await?;
-        let repository =
-            MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
-        let key = JobInstanceKey::new(
-            JobName::new(TRANSIENT_MUTATION_JOB)?,
-            &JobParameters::new(),
-        );
+        let repository = MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
+        let key = JobInstanceKey::new(JobName::new(TRANSIENT_MUTATION_JOB)?, &JobParameters::new());
 
         let mut unit = repository.begin().await?;
         configure_fail_command(
@@ -563,12 +558,8 @@ fn mongodb_transient_commit_error_is_known_not_committed() -> Result<(), Box<dyn
         let config = settings.config()?;
         MongoMigrator::migrate(&config).await?;
         clear_fault_fixture(&settings, TRANSIENT_COMMIT_JOB).await?;
-        let repository =
-            MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
-        let key = JobInstanceKey::new(
-            JobName::new(TRANSIENT_COMMIT_JOB)?,
-            &JobParameters::new(),
-        );
+        let repository = MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
+        let key = JobInstanceKey::new(JobName::new(TRANSIENT_COMMIT_JOB)?, &JobParameters::new());
 
         let mut unit = repository.begin().await?;
         let instance = unit
@@ -619,12 +610,8 @@ fn mongodb_unknown_commit_result_is_never_guessed_rolled_back() -> Result<(), Bo
         let config = settings.config()?;
         MongoMigrator::migrate(&config).await?;
         clear_fault_fixture(&settings, UNKNOWN_COMMIT_JOB).await?;
-        let repository =
-            MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
-        let key = JobInstanceKey::new(
-            JobName::new(UNKNOWN_COMMIT_JOB)?,
-            &JobParameters::new(),
-        );
+        let repository = MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
+        let key = JobInstanceKey::new(JobName::new(UNKNOWN_COMMIT_JOB)?, &JobParameters::new());
 
         let mut unit = repository.begin().await?;
         let instance = unit
@@ -635,7 +622,7 @@ fn mongodb_unknown_commit_result_is_never_guessed_rolled_back() -> Result<(), Bo
         unit.create_job_execution(instance.id()).await?;
         configure_fail_command(
             &settings,
-            2,
+            1,
             doc! {
                 "failCommands": ["commitTransaction"],
                 "writeConcernError": {

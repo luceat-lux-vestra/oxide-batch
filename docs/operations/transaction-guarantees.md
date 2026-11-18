@@ -77,10 +77,12 @@ repository certification process and use bounded `failCommand` failpoints.
 The live cases prove a first transactional `findAndModify` WriteConflict is
 known not committed, a `NoSuchTransaction` commit is known not committed, and
 a write-concern timeout on `commitTransaction` is reported as unknown. The
-unknown case injects the commit failure twice because the MongoDB Rust driver
-internally retries a retryable `commitTransaction` once; the durable instance
-and execution are then inspected to demonstrate why an unknown result must not
-be downgraded to rollback.
+unknown case injects one write-concern failure because direct
+`ClientSession::commit_transaction` returns that unknown acknowledgement to the
+caller; the driver specification demonstrates retry with a second explicit
+caller commit rather than hiding the first result internally. The durable
+instance and execution are then inspected to demonstrate why an unknown result
+must not be downgraded to rollback.
 
 This evidence applies to repository metadata transactions only. MongoDB does
 not yet provide the framework's same-resource `ChunkTransactionManager`, so it
