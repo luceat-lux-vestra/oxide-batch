@@ -58,6 +58,93 @@ async fn clear_runnable_core_fixture(settings: &TestSettings) -> Result<(), Box<
 }
 
 const CONCURRENT_LAUNCH_JOB: &str = "repository_concurrent_launch";
+const TRANSIENT_MUTATION_JOB: &str = "repository_transient_mutation_fault";
+const TRANSIENT_COMMIT_JOB: &str = "repository_transient_commit_fault";
+const UNKNOWN_COMMIT_JOB: &str = "repository_unknown_commit_fault";
+
+fn mongodb_failpoints_enabled() -> bool {
+    std::env::var("OXIDEBATCH_MONGODB_FAILPOINTS").as_deref() == Ok("1")
+}
+
+async fn configure_fail_command(
+    settings: &TestSettings,
+    times: i32,
+    data: Document,
+) -> Result<(), Box<dyn Error>> {
+    let client = Client::with_uri_str(&settings.uri).await?;
+    let admin = client.database("admin");
+    admin
+        .run_command(doc! {
+            "configureFailPoint": "failCommand",
+            "mode": { "times": times },
+            "data": data,
+        })
+        .await?;
+    drop(admin);
+    client.shutdown().await;
+    Ok(())
+}
+
+async fn disable_fail_command(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
+    let client = Client::with_uri_str(&settings.uri).await?;
+    let admin = client.database("admin");
+    admin
+        .run_command(doc! {
+            "configureFailPoint": "failCommand",
+            "mode": "off",
+        })
+        .await?;
+    drop(admin);
+    client.shutdown().await;
+    Ok(())
+}
+
+async fn clear_fault_fixture(
+    settings: &TestSettings,
+    job_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let client = Client::with_uri_str(&settings.uri).await?;
+    let database = client.database(&settings.database);
+    let instances = database.collection::<Document>("ob_job_instance");
+    if let Some(instance) = instances.find_one(doc! { "job_name": job_name }).await? {
+        let instance_id = instance.get_i64("id")?;
+        database
+            .collection::<Document>("ob_job_execution")
+            .delete_many(doc! { "job_instance_id": instance_id })
+            .await?;
+    }
+    instances.delete_many(doc! { "job_name": job_name }).await?;
+    drop(instances);
+    drop(database);
+    client.shutdown().await;
+    Ok(())
+}
+
+async fn fault_fixture_counts(
+    settings: &TestSettings,
+    job_name: &str,
+) -> Result<(u64, u64), Box<dyn Error>> {
+    let client = Client::with_uri_str(&settings.uri).await?;
+    let database = client.database(&settings.database);
+    let instances = database.collection::<Document>("ob_job_instance");
+    let instance_count = instances
+        .count_documents(doc! { "job_name": job_name })
+        .await?;
+    let execution_count = if let Some(instance) =
+        instances.find_one(doc! { "job_name": job_name }).await?
+    {
+        database
+            .collection::<Document>("ob_job_execution")
+            .count_documents(doc! { "job_instance_id": instance.get_i64("id")? })
+            .await?
+    } else {
+        0
+    };
+    drop(instances);
+    drop(database);
+    client.shutdown().await;
+    Ok((instance_count, execution_count))
+}
 
 async fn clear_concurrent_launch_fixture(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
     let client = Client::with_uri_str(&settings.uri).await?;
@@ -403,6 +490,174 @@ fn concurrent_launch_creates_one_mongodb_instance_and_attempt() -> Result<(), Bo
 
         repository.close().await;
         clear_concurrent_launch_fixture(&settings).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn mongodb_transient_mutation_error_is_known_not_committed() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    if !mongodb_failpoints_enabled() {
+        eprintln!("skipped: MongoDB failpoint evidence is not enabled");
+        return Ok(());
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let config = settings.config()?;
+        MongoMigrator::migrate(&config).await?;
+        clear_fault_fixture(&settings, TRANSIENT_MUTATION_JOB).await?;
+        let repository =
+            MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
+        let key = JobInstanceKey::new(
+            JobName::new(TRANSIENT_MUTATION_JOB)?,
+            &JobParameters::new(),
+        );
+
+        let mut unit = repository.begin().await?;
+        configure_fail_command(
+            &settings,
+            1,
+            doc! {
+                "failCommands": ["findAndModify"],
+                "errorCode": 112_i32,
+            },
+        )
+        .await?;
+        let result = unit.select_or_create_job_instance(&key).await;
+        disable_fail_command(&settings).await?;
+        unit.rollback().await?;
+
+        assert_eq!(result, Err(RepositoryError::TransactionAborted));
+        assert_eq!(
+            fault_fixture_counts(&settings, TRANSIENT_MUTATION_JOB).await?,
+            (0, 0)
+        );
+
+        repository.close().await;
+        clear_fault_fixture(&settings, TRANSIENT_MUTATION_JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn mongodb_transient_commit_error_is_known_not_committed() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    if !mongodb_failpoints_enabled() {
+        eprintln!("skipped: MongoDB failpoint evidence is not enabled");
+        return Ok(());
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let config = settings.config()?;
+        MongoMigrator::migrate(&config).await?;
+        clear_fault_fixture(&settings, TRANSIENT_COMMIT_JOB).await?;
+        let repository =
+            MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
+        let key = JobInstanceKey::new(
+            JobName::new(TRANSIENT_COMMIT_JOB)?,
+            &JobParameters::new(),
+        );
+
+        let mut unit = repository.begin().await?;
+        let instance = unit
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        unit.create_job_execution(instance.id()).await?;
+        configure_fail_command(
+            &settings,
+            1,
+            doc! {
+                "failCommands": ["commitTransaction"],
+                "errorCode": 251_i32,
+            },
+        )
+        .await?;
+        let result = unit.commit().await;
+        disable_fail_command(&settings).await?;
+
+        assert_eq!(result, Err(RepositoryError::TransactionAborted));
+        assert_eq!(
+            fault_fixture_counts(&settings, TRANSIENT_COMMIT_JOB).await?,
+            (0, 0)
+        );
+
+        repository.close().await;
+        clear_fault_fixture(&settings, TRANSIENT_COMMIT_JOB).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn mongodb_unknown_commit_result_is_never_guessed_rolled_back() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    if !mongodb_failpoints_enabled() {
+        eprintln!("skipped: MongoDB failpoint evidence is not enabled");
+        return Ok(());
+    }
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let config = settings.config()?;
+        MongoMigrator::migrate(&config).await?;
+        clear_fault_fixture(&settings, UNKNOWN_COMMIT_JOB).await?;
+        let repository =
+            MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
+        let key = JobInstanceKey::new(
+            JobName::new(UNKNOWN_COMMIT_JOB)?,
+            &JobParameters::new(),
+        );
+
+        let mut unit = repository.begin().await?;
+        let instance = unit
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        unit.create_job_execution(instance.id()).await?;
+        configure_fail_command(
+            &settings,
+            2,
+            doc! {
+                "failCommands": ["commitTransaction"],
+                "writeConcernError": {
+                    "code": 64_i32,
+                    "errmsg": "injected write concern timeout",
+                    "errInfo": { "wtimeout": true },
+                },
+            },
+        )
+        .await?;
+        let result = unit.commit().await;
+        disable_fail_command(&settings).await?;
+
+        assert_eq!(result, Err(RepositoryError::CommitOutcomeUnknown));
+        assert_eq!(
+            fault_fixture_counts(&settings, UNKNOWN_COMMIT_JOB).await?,
+            (1, 1),
+            "unknown commit outcome must not be guessed rolled back"
+        );
+
+        repository.close().await;
+        clear_fault_fixture(&settings, UNKNOWN_COMMIT_JOB).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
