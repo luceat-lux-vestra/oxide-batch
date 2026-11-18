@@ -870,6 +870,18 @@ jobs:
           "$OXIDEBATCH_MONGODB_TLS_EXPECTED_VERSION"
           oxide_batch_repository
 
+      - name: Run MongoDB backup/restore certification
+        env:
+          OXIDEBATCH_MONGODB_BACKUP_IMAGE: ${{ matrix.image }}
+          OXIDEBATCH_MONGODB_BACKUP_LANE: ${{ matrix.lane }}
+          OXIDEBATCH_MONGODB_BACKUP_EXPECTED_VERSION: ${{ matrix.version }}
+        run: >-
+          ./tests/fixtures/mongodb/run-backup-restore-certification.sh
+          "$OXIDEBATCH_MONGODB_BACKUP_IMAGE"
+          "$OXIDEBATCH_MONGODB_BACKUP_LANE"
+          "$OXIDEBATCH_MONGODB_BACKUP_EXPECTED_VERSION"
+          oxide_batch_repository
+
   mysql-repository-core:
     name: mysql-8.4.13-repository-core
     runs-on: ubuntu-24.04-arm
