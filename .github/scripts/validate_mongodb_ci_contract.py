@@ -33,12 +33,23 @@ REQUIRED_JOB_LITERALS = (
     "--test mongodb_repository_core",
     "-- --nocapture --test-threads=1",
     "trap cleanup EXIT",
+    "Run authenticated MongoDB privilege certification",
+    "OXIDEBATCH_MONGODB_AUTH_IMAGE: ${{ matrix.image }}",
+    "OXIDEBATCH_MONGODB_AUTH_LANE: ${{ matrix.lane }}",
+    "OXIDEBATCH_MONGODB_AUTH_EXPECTED_VERSION: ${{ matrix.version }}",
+    "./tests/fixtures/mongodb/run-auth-certification.sh",
+    "\"$OXIDEBATCH_MONGODB_AUTH_IMAGE\"",
+    "\"$OXIDEBATCH_MONGODB_AUTH_LANE\"",
+    "\"$OXIDEBATCH_MONGODB_AUTH_EXPECTED_VERSION\"",
     "--publish 27017:27017",
     'container="oxide-mongodb-$OXIDEBATCH_MONGODB_LANE"',
 )
 
 FORBIDDEN_JOB_LITERALS = (
     'container="oxide-mongodb-${{ matrix.lane }}"',
+    "          '${{ matrix.image }}'",
+    "          '${{ matrix.lane }}'",
+    "          '${{ matrix.version }}'",
 )
 
 
@@ -81,11 +92,19 @@ def self_test(source: str) -> None:
         raise AssertionError(f"negative fixture did not reject removal of {literal!r}")
 
     for literal in FORBIDDEN_JOB_LITERALS:
-        mutated_job = job.replace(
-            'container="oxide-mongodb-$OXIDEBATCH_MONGODB_LANE"',
-            literal,
-            1,
-        )
+        if literal.startswith("container="):
+            mutated_job = job.replace(
+                'container="oxide-mongodb-$OXIDEBATCH_MONGODB_LANE"',
+                literal,
+                1,
+            )
+        else:
+            env_variable = {
+                "          '${{ matrix.image }}'": '"$OXIDEBATCH_MONGODB_AUTH_IMAGE"',
+                "          '${{ matrix.lane }}'": '"$OXIDEBATCH_MONGODB_AUTH_LANE"',
+                "          '${{ matrix.version }}'": '"$OXIDEBATCH_MONGODB_AUTH_EXPECTED_VERSION"',
+            }[literal]
+            mutated_job = job.replace(env_variable, literal.strip(), 1)
         mutated = source.replace(job, mutated_job, 1)
         try:
             validate(mutated)
