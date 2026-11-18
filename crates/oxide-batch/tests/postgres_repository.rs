@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use contract::{
-    ServiceBackend, run_repository_contract, run_runnable_core_repository_contract,
-    run_service_contract,
+    CheckpointContextBackend, ServiceBackend, run_checkpoint_context_restart_contract,
+    run_repository_contract, run_runnable_core_repository_contract, run_service_contract,
 };
 use oxide_batch::{
     BackoffPolicy, BatchStatus, BoxFuture, BusinessStatement, BusinessValue, CaCertificate,
@@ -413,6 +413,52 @@ fn shared_runnable_core_repository_contract_passes_on_postgres() -> Result<(), B
         })
         .await?;
         remove_contract_rows(&url).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn shared_checkpoint_context_restart_contract_passes_on_postgres() -> Result<(), Box<dyn Error>> {
+    const CONTRACT_JOB: &str = "repository_checkpoint_context_contract_job";
+
+    let Some(url) = runtime_url() else {
+        eprintln!("skipped: OXIDEBATCH_POSTGRES_TEST_URL is not set");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        run_checkpoint_context_restart_contract(
+            "postgres-checkpoint-context",
+            |clock, checkpoint, context| {
+                let url = url.clone();
+                async move {
+                    remove_job_rows(&url, CONTRACT_JOB)
+                        .await
+                        .map_err(|_| RepositoryError::Unavailable)?;
+                    let repository = PostgresJobRepository::connect(
+                        plaintext_config(url).map_err(|_| RepositoryError::Unavailable)?,
+                        clock as Arc<dyn Clock>,
+                    )
+                    .await
+                    .map_err(|_| RepositoryError::Unavailable)?;
+                    let state_provider: Arc<dyn PostgresChunkStateProvider> =
+                        Arc::new(move |_, _| {
+                            Ok(ChunkCommitReceipt::new(checkpoint.clone(), context.clone()))
+                        });
+                    let transactions =
+                        PostgresChunkTransactionManager::new(repository.clone(), state_provider);
+                    Ok(CheckpointContextBackend {
+                        repository,
+                        transactions,
+                    })
+                }
+            },
+        )
+        .await?;
+        remove_job_rows(&url, CONTRACT_JOB).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
