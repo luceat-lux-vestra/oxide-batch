@@ -389,15 +389,14 @@ async fn backup_restore_state_snapshot(
 fn first_batch_documents(response: &Document) -> Result<Vec<Document>, Box<dyn Error>> {
     let cursor = response.get_document("cursor")?;
     let batch = cursor.get_array("firstBatch")?;
-    batch
-        .iter()
-        .map(|value| {
-            value
-                .as_document()
-                .cloned()
-                .ok_or_else(|| std::io::Error::other("MongoDB command batch contained non-document").into())
-        })
-        .collect()
+    let mut documents = Vec::with_capacity(batch.len());
+    for value in batch {
+        let document = value
+            .as_document()
+            .ok_or_else(|| std::io::Error::other("MongoDB command batch contained non-document"))?;
+        documents.push(document.clone());
+    }
+    Ok(documents)
 }
 
 #[cfg(unix)]
@@ -614,6 +613,15 @@ async fn verify_mongodb_backup_restore(
         .await?
         .ok_or_else(|| std::io::Error::other("source flow execution is missing"))?;
     source_inspect.rollback().await?;
+
+    let mut restored_inspect = restored_repository.begin().await?;
+    let restored_flow_execution = restored_inspect
+        .get_job_execution(restored_decision.job_execution_id())
+        .await?
+        .ok_or_else(|| std::io::Error::other("restored flow execution is missing"))?;
+    restored_inspect.rollback().await?;
+    assert_eq!(source_flow_execution, restored_flow_execution);
+
     let max_instance_id = source_state
         .instance_id
         .max(source_flow_execution.job_instance_id().get());
