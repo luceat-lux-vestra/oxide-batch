@@ -579,7 +579,7 @@ impl Error for MongoChunkStateError {}
 
 /// `MongoDB` metadata-only chunk transaction manager.
 ///
-/// The manager commits OxideBatch metadata progress in one MongoDB transaction.
+/// The manager commits `OxideBatch` metadata progress in one `MongoDB` transaction.
 /// It deliberately exposes no same-resource business transaction.
 #[derive(Clone)]
 pub struct MongoChunkTransactionManager {
