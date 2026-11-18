@@ -935,8 +935,8 @@ fn explorer_contract_passes_on_mongodb() -> Result<(), Box<dyn Error>> {
 }
 
 #[test]
-fn mongodb_authenticated_runtime_is_scoped_and_bad_credentials_fail_closed(
-) -> Result<(), Box<dyn Error>> {
+fn mongodb_authenticated_runtime_is_scoped_and_bad_credentials_fail_closed()
+-> Result<(), Box<dyn Error>> {
     let Some(settings) = AuthTestSettings::from_environment() else {
         eprintln!("skipped: MongoDB authenticated privilege fixture is not configured");
         return Ok(());
@@ -951,8 +951,7 @@ fn mongodb_authenticated_runtime_is_scoped_and_bad_credentials_fail_closed(
 
         let runtime_config =
             MongoConfig::new(settings.runtime_uri.clone(), settings.database.clone())?;
-        let repository =
-            MongoJobRepository::connect(runtime_config, Arc::new(SystemClock)).await?;
+        let repository = MongoJobRepository::connect(runtime_config, Arc::new(SystemClock)).await?;
 
         let job_name = JobName::new("mongodb_authenticated_runtime")?;
         let key = JobInstanceKey::new(job_name, &JobParameters::new());

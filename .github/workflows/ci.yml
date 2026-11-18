@@ -847,11 +847,15 @@ jobs:
             -- --nocapture --test-threads=1
 
       - name: Run authenticated MongoDB privilege certification
+        env:
+          OXIDEBATCH_MONGODB_AUTH_IMAGE: ${{ matrix.image }}
+          OXIDEBATCH_MONGODB_AUTH_LANE: ${{ matrix.lane }}
+          OXIDEBATCH_MONGODB_AUTH_EXPECTED_VERSION: ${{ matrix.version }}
         run: >-
           ./tests/fixtures/mongodb/run-auth-certification.sh
-          '${{ matrix.image }}'
-          '${{ matrix.lane }}'
-          '${{ matrix.version }}'
+          "$OXIDEBATCH_MONGODB_AUTH_IMAGE"
+          "$OXIDEBATCH_MONGODB_AUTH_LANE"
+          "$OXIDEBATCH_MONGODB_AUTH_EXPECTED_VERSION"
           oxide_batch_repository
 
   mysql-repository-core:
