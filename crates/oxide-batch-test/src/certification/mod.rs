@@ -10,8 +10,14 @@
 //! adapters remain responsible for isolated setup, cleanup, version declarations,
 //! and the additional evidence required by the support matrix.
 
+mod checkpoint_context;
 mod services;
 
+#[allow(
+    unused_imports,
+    reason = "facade integration tests include this public module source but exercise only selected capability groups"
+)]
+pub use checkpoint_context::{CheckpointContextBackend, run_checkpoint_context_restart_contract};
 #[allow(
     unused_imports,
     reason = "facade integration tests include this public module source but exercise only selected capability groups"

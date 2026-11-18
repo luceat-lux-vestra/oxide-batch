@@ -37,16 +37,23 @@ migrate:
 - `run_runnable_core_repository_contract` composes that subset and proves an
   ordinary one-step tasklet `FlowLauncher`, manifest-bound strict restart,
   revision-label compatibility, logical flow-step/start-limit authority, and durable decision reuse
-  while optional capability declarations are masked to zero.
+  while optional capability declarations are masked to zero;
+- `run_checkpoint_context_restart_contract` is the separate mandatory
+  durable-state profile: a committed checkpoint/context receipt and counters
+  remain authoritative across restart, explicit rollback preserves prior state,
+  and a stale optimistic chunk commit is known-not-committed without payload
+  disclosure. It does not require same-resource business enlistment,
+  `ItemStream` state, or `CustomLeafState`.
 
 Optional definition-registry, partition, explorer, operator/control, and
 retention contract groups remain separate. The `run_full_*` aggregates exist
 for reference adapters that claim all represented capabilities; they are not
 the minimum portable contract.
 
-A runnable-core pass still does not certify checkpoint/context payload restart
-or operational support. An adapter that passes every applicable contract group
-also needs the versioned migration, crash/unknown-outcome, resource-bound,
-security, backup/restore, stateful restart, and capability-specific evidence
-required by the OxideBatch support matrix before it can be advertised as
-supported.
+A runnable-core pass still does not by itself certify checkpoint/context payload
+restart or operational support. Use
+`run_checkpoint_context_restart_contract` for the separate durable-state
+profile. An adapter that passes every applicable contract group also needs the
+versioned migration, crash/unknown-outcome, resource-bound, security,
+backup/restore, and capability-specific evidence required by the OxideBatch
+support matrix before it can be advertised as supported.
