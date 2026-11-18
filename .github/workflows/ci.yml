@@ -792,6 +792,7 @@ jobs:
           OXIDEBATCH_MONGODB_EXPECTED_VERSION: ${{ matrix.version }}
           OXIDEBATCH_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0
           OXIDEBATCH_MONGODB_TEST_DATABASE: oxide_batch_repository
+          OXIDEBATCH_MONGODB_FAILPOINTS: "1"
         shell: bash
         run: |
           set -euo pipefail
@@ -806,7 +807,7 @@ jobs:
             --name "$container" \
             --publish 27017:27017 \
             "$OXIDEBATCH_MONGODB_IMAGE" \
-            --replSet rs0 --bind_ip_all
+            --replSet rs0 --bind_ip_all --setParameter enableTestCommands=1
 
           ready=false
           for _ in $(seq 1 60); do

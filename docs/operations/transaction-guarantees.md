@@ -60,6 +60,34 @@ A disconnect before the adapter sends `COMMIT` is known not committed. A
 failure while receiving the `COMMIT` response is never guessed; it is
 `CommitOutcomeUnknown`.
 
+## MongoDB M8 repository transaction outcomes
+
+The first-party MongoDB metadata adapter uses a replica-set transaction with
+snapshot reads and majority+journaled writes. Its portable repository errors
+preserve the server/driver outcome boundary rather than exposing driver types:
+
+- a transactional operation carrying `TransientTransactionError` maps to
+  `TransactionAborted`;
+- a commit carrying `UnknownTransactionCommitResult` maps to
+  `CommitOutcomeUnknown`;
+- another failed commit maps to `TransactionAborted`.
+
+Pinned MongoDB 8.0.38 and 8.2.12 CI enable MongoDB test commands only for the
+repository certification process and use bounded `failCommand` failpoints.
+The live cases prove a first transactional `findAndModify` WriteConflict is
+known not committed, a `NoSuchTransaction` commit is known not committed, and
+a write-concern timeout on `commitTransaction` is reported as unknown. The
+unknown case injects one write-concern failure because direct
+`ClientSession::commit_transaction` returns that unknown acknowledgement to the
+caller; the driver specification demonstrates retry with a second explicit
+caller commit rather than hiding the first result internally. The durable
+instance and execution are then inspected to demonstrate why an unknown result
+must not be downgraded to rollback.
+
+This evidence applies to repository metadata transactions only. MongoDB does
+not yet provide the framework's same-resource `ChunkTransactionManager`, so it
+does not claim PostgreSQL's chunk business-write/checkpoint atomicity.
+
 ## Other resources
 
 The M2 evidence does not create a generic exactly-once guarantee. A writer that
