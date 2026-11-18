@@ -258,11 +258,7 @@ async fn client_and_database(config: &MongoConfig) -> Result<(Client, Database),
     let client = Client::with_options(config.client_options().await?)
         .map_err(|_| RepositoryError::Unavailable)?;
     let database = client.database(&config.database);
-    if database
-        .run_command(doc! { "ping": 1_i32 })
-        .await
-        .is_err()
-    {
+    if database.run_command(doc! { "ping": 1_i32 }).await.is_err() {
         drop(database);
         client.shutdown().await;
         return Err(RepositoryError::Unavailable);

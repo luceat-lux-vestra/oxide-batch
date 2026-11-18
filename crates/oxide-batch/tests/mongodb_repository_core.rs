@@ -454,7 +454,6 @@ fn newer_mongodb_schema_is_rejected_without_guessing_compatibility() -> Result<(
             )
             .await?;
         drop(schema);
-        drop(database);
         client.shutdown().await;
         Ok::<(), Box<dyn Error>>(())
     })?;
