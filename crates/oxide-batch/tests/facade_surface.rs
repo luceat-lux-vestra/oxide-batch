@@ -180,7 +180,8 @@ mod resolves {
 
     #[cfg(feature = "mongodb")]
     pub use oxide_batch::{
-        MongoConfig, MongoConfigError, MongoExplorer, MongoJobRepository, MongoMigrator,
+        MongoChunkStateError, MongoChunkStateProvider, MongoChunkTransactionManager, MongoConfig,
+        MongoConfigError, MongoExplorer, MongoJobRepository, MongoMigrator,
     };
 
     #[cfg(feature = "mysql")]

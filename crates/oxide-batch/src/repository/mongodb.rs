@@ -1,6 +1,7 @@
 use std::error::Error;
 use std::fmt;
 use std::num::NonZeroU64;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -17,21 +18,23 @@ use serde_json::{Map, Value, json};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use crate::{
-    BatchStatus, BoxFuture, Clock, CursorError, CursorKey, DefinitionDescriptor,
-    DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, ExecutionCounts, ExecutionMetadata,
-    ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, ExplorerError, ExplorerQuery,
-    ExplorerRepository, FailureCategory, FailureId, FailureSummary, FlowDecision, FlowDecisionId,
-    FlowDecisionRequest, FlowDecisionSequence, FlowStepState, FlowTarget, FlowTransitionKind,
-    JobExecution, JobExecutionId, JobExecutionProjection, JobInstance, JobInstanceId,
-    JobInstanceKey, JobInstanceProjection, JobInstanceSelection, JobName, JobParameter,
-    JobParameters, JobRepository, LifecycleError, LifecycleTransition, NodeId, ParameterDescriptor,
-    ParameterName, ParameterRole, ParameterValue, ParameterValueKind, QueryWindow,
-    RecoveryDecision, RecoveryRequest, RecoveryResult, RepositoryCapability, RepositoryDescriptor,
-    RepositoryError, RepositoryUnitOfWork, StartLimit, StepExecution, StepExecutionId, StepName,
-    TerminalKind,
+    BatchStatus, BoxFuture, BusinessTransaction, Checkpoint, ChunkCommitReceipt, ChunkCounts,
+    ChunkFaultProgress, ChunkTransaction, ChunkTransactionContext, ChunkTransactionError,
+    ChunkTransactionManager, Clock, CursorError, CursorKey, DefinitionDescriptor,
+    DefinitionIdentity, DefinitionRevision, DefinitionUpgrade, ExecutionContext, ExecutionCounts,
+    ExecutionMetadata, ExecutionTimestamps, ExecutionVersion, ExitCode, ExitStatus, ExplorerError,
+    ExplorerQuery, ExplorerRepository, FailureCategory, FailureId, FailureSummary, FaultProgress,
+    FlowDecision, FlowDecisionId, FlowDecisionRequest, FlowDecisionSequence, FlowStepState,
+    FlowTarget, FlowTransitionKind, InheritedStepProgress, JobExecution, JobExecutionId,
+    JobExecutionProjection, JobInstance, JobInstanceId, JobInstanceKey, JobInstanceProjection,
+    JobInstanceSelection, JobName, JobParameter, JobParameters, JobRepository, LifecycleError,
+    LifecycleTransition, NodeId, ParameterDescriptor, ParameterName, ParameterRole, ParameterValue,
+    ParameterValueKind, QueryWindow, RecoveryDecision, RecoveryRequest, RecoveryResult,
+    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, StartLimit,
+    StateLimits, StepExecution, StepExecutionId, StepName, TerminalKind,
 };
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 2;
+const SUPPORTED_SCHEMA_VERSION: u32 = 3;
 const DEFAULT_POOL_SIZE: u32 = 10;
 const MAX_POOL_SIZE: u32 = 1024;
 const MAX_INSTANCE_KEY_INPUT: usize = 1024 * 1024;
@@ -51,6 +54,9 @@ const INSTANCES: &str = "ob_job_instance";
 const EXECUTIONS: &str = "ob_job_execution";
 const STEPS: &str = "ob_step_execution";
 const DECISIONS: &str = "ob_flow_decision";
+const DEFAULT_STATE_SCHEMA: &str = "oxide_batch.empty.v1";
+const CHECKPOINT_ENVELOPE: &str = "checkpoint_envelope";
+const CONTEXT_ENVELOPE: &str = "context_envelope";
 
 /// Redacted first-party `MongoDB` repository configuration.
 ///
@@ -522,6 +528,352 @@ impl fmt::Debug for MongoJobRepository {
     }
 }
 
+/// Produces checkpoint and context state at a `MongoDB` metadata chunk commit boundary.
+pub trait MongoChunkStateProvider: Send + Sync {
+    /// Produces the durable state that commits with `chunk_counts`.
+    ///
+    /// # Errors
+    ///
+    /// Returns a value-redacted preparation failure.
+    fn state_for_commit(
+        &self,
+        committed_counts: ExecutionCounts,
+        chunk_counts: ChunkCounts,
+    ) -> Result<ChunkCommitReceipt, MongoChunkStateError>;
+}
+
+impl<F> MongoChunkStateProvider for F
+where
+    F: Fn(ExecutionCounts, ChunkCounts) -> Result<ChunkCommitReceipt, MongoChunkStateError>
+        + Send
+        + Sync,
+{
+    fn state_for_commit(
+        &self,
+        committed_counts: ExecutionCounts,
+        chunk_counts: ChunkCounts,
+    ) -> Result<ChunkCommitReceipt, MongoChunkStateError> {
+        self(committed_counts, chunk_counts)
+    }
+}
+
+/// Value-redacted failure while preparing `MongoDB` chunk state.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct MongoChunkStateError;
+
+impl MongoChunkStateError {
+    /// Constructs a redacted state-preparation failure.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self
+    }
+}
+
+impl fmt::Display for MongoChunkStateError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("MongoDB chunk state preparation failed")
+    }
+}
+
+impl Error for MongoChunkStateError {}
+
+/// `MongoDB` metadata-only chunk transaction manager.
+///
+/// The manager commits OxideBatch metadata progress in one MongoDB transaction.
+/// It deliberately exposes no same-resource business transaction.
+#[derive(Clone)]
+pub struct MongoChunkTransactionManager {
+    repository: MongoJobRepository,
+    state_provider: Arc<dyn MongoChunkStateProvider>,
+}
+
+impl MongoChunkTransactionManager {
+    /// Constructs a metadata-only chunk transaction manager.
+    #[must_use]
+    pub const fn new(
+        repository: MongoJobRepository,
+        state_provider: Arc<dyn MongoChunkStateProvider>,
+    ) -> Self {
+        Self {
+            repository,
+            state_provider,
+        }
+    }
+
+    async fn committed_step_document(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> Result<Document, ChunkTransactionError> {
+        self.repository
+            .collection(STEPS)
+            .find_one(doc! {
+                "id": chunk_i64(context.step_execution_id().get())?,
+                "job_execution_id": chunk_i64(context.job_execution_id().get())?,
+            })
+            .await
+            .map_err(|_| ChunkTransactionError::NotCommitted)?
+            .ok_or(ChunkTransactionError::NotCommitted)
+    }
+}
+
+impl fmt::Debug for MongoChunkTransactionManager {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("MongoChunkTransactionManager")
+            .field("repository", &self.repository)
+            .field("durable_state", &"<redacted>")
+            .finish_non_exhaustive()
+    }
+}
+
+impl ChunkTransactionManager for MongoChunkTransactionManager {
+    fn begin(
+        &self,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        Box::pin(async { Err(ChunkTransactionError::NotCommitted) })
+    }
+
+    fn begin_for(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<Box<dyn ChunkTransaction + '_>, ChunkTransactionError>> {
+        Box::pin(async move {
+            let step_id = chunk_i64(context.step_execution_id().get())?;
+            let job_id = chunk_i64(context.job_execution_id().get())?;
+            let permit = tokio::time::timeout(
+                self.repository.config.acquire_timeout,
+                Arc::clone(&self.repository.permits).acquire_owned(),
+            )
+            .await
+            .map_err(|_| ChunkTransactionError::NotCommitted)?
+            .map_err(|_| ChunkTransactionError::NotCommitted)?;
+            let mut session = self
+                .repository
+                .client
+                .start_session()
+                .await
+                .map_err(|_| ChunkTransactionError::NotCommitted)?;
+            session
+                .start_transaction()
+                .read_concern(ReadConcern::snapshot())
+                .write_concern(
+                    WriteConcern::builder()
+                        .w(Acknowledgment::Majority)
+                        .journal(true)
+                        .build(),
+                )
+                .max_commit_time(self.repository.config.max_commit_time)
+                .await
+                .map_err(|_| ChunkTransactionError::NotCommitted)?;
+            let row = self
+                .repository
+                .collection(STEPS)
+                .find_one(doc! {
+                    "id": step_id,
+                    "job_execution_id": job_id,
+                })
+                .session(&mut session)
+                .await;
+            let Ok(Some(row)) = row else {
+                let _ = session.abort_transaction().await;
+                return Err(ChunkTransactionError::NotCommitted);
+            };
+            let Ok(execution) = decode_step_execution(&row) else {
+                let _ = session.abort_transaction().await;
+                return Err(ChunkTransactionError::NotCommitted);
+            };
+            if execution.metadata().status() != BatchStatus::Started {
+                let _ = session.abort_transaction().await;
+                return Err(ChunkTransactionError::NotCommitted);
+            }
+            Ok(Box::new(MongoChunkTransaction {
+                repository: self.repository.clone(),
+                state_provider: Arc::clone(&self.state_provider),
+                context,
+                expected_version: execution.version(),
+                committed_counts: execution.metadata().counts(),
+                session: Some(session),
+                _permit: permit,
+            }) as Box<dyn ChunkTransaction>)
+        })
+    }
+
+    fn inherited_progress(
+        &self,
+        context: ChunkTransactionContext,
+    ) -> BoxFuture<'_, Result<InheritedStepProgress, ChunkTransactionError>> {
+        Box::pin(async move {
+            let row = self.committed_step_document(context).await?;
+            let checkpoint =
+                decode_checkpoint(&row).map_err(|_| ChunkTransactionError::NotCommitted)?;
+            let execution =
+                decode_step_execution(&row).map_err(|_| ChunkTransactionError::NotCommitted)?;
+            Ok(InheritedStepProgress::new(
+                execution.metadata().counts().read(),
+                checkpoint.generation_digest(),
+                FaultProgress::NONE,
+            ))
+        })
+    }
+}
+
+struct MongoChunkTransaction {
+    repository: MongoJobRepository,
+    state_provider: Arc<dyn MongoChunkStateProvider>,
+    context: ChunkTransactionContext,
+    expected_version: ExecutionVersion,
+    committed_counts: ExecutionCounts,
+    session: Option<ClientSession>,
+    _permit: OwnedSemaphorePermit,
+}
+
+struct PreparedMongoChunkCommit {
+    next_counts: ExecutionCounts,
+    receipt: ChunkCommitReceipt,
+    next_version: ExecutionVersion,
+    update: Document,
+    filter: Document,
+}
+
+impl MongoChunkTransaction {
+    fn session(&mut self) -> Result<&mut ClientSession, ChunkTransactionError> {
+        self.session
+            .as_mut()
+            .ok_or(ChunkTransactionError::NotCommitted)
+    }
+
+    fn prepare_commit(
+        &self,
+        counts: ChunkCounts,
+    ) -> Result<PreparedMongoChunkCommit, ChunkTransactionError> {
+        let next_counts = add_chunk_counts(self.committed_counts, counts)?;
+        let receipt = catch_unwind(AssertUnwindSafe(|| {
+            self.state_provider
+                .state_for_commit(self.committed_counts, counts)
+        }))
+        .ok()
+        .and_then(Result::ok)
+        .ok_or(ChunkTransactionError::NotCommitted)?;
+        let checkpoint = receipt
+            .checkpoint()
+            .to_json()
+            .map_err(|_| ChunkTransactionError::NotCommitted)?;
+        let context = receipt
+            .execution_context()
+            .to_json()
+            .map_err(|_| ChunkTransactionError::NotCommitted)?;
+        let next_version = self
+            .expected_version
+            .get()
+            .checked_add(1)
+            .map(ExecutionVersion::new)
+            .ok_or(ChunkTransactionError::NotCommitted)?;
+        let mut update = doc! {
+            "read_count": chunk_i64(next_counts.read())?,
+            "processed_count": chunk_i64(next_counts.processed())?,
+            "write_count": chunk_i64(next_counts.written())?,
+            "filter_count": chunk_i64(next_counts.filtered())?,
+            "commit_count": chunk_i64(next_counts.committed())?,
+            "rollback_count": chunk_i64(next_counts.rolled_back())?,
+            "updated_ms": system_time_millis(self.repository.clock.now())
+                .map_err(|_| ChunkTransactionError::NotCommitted)?,
+            "version": chunk_i64(next_version.get())?,
+        };
+        update.insert(CHECKPOINT_ENVELOPE, binary(&checkpoint));
+        update.insert(CONTEXT_ENVELOPE, binary(&context));
+        let filter = doc! {
+            "id": chunk_i64(self.context.step_execution_id().get())?,
+            "job_execution_id": chunk_i64(self.context.job_execution_id().get())?,
+            "version": chunk_i64(self.expected_version.get())?,
+            "status": "STARTED",
+        };
+        Ok(PreparedMongoChunkCommit {
+            next_counts,
+            receipt,
+            next_version,
+            update,
+            filter,
+        })
+    }
+
+    async fn abort_open_transaction(&mut self) {
+        if let Some(session) = self.session.as_mut() {
+            let _ = session.abort_transaction().await;
+        }
+        self.session = None;
+    }
+}
+
+impl ChunkTransaction for MongoChunkTransaction {
+    fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction> {
+        None
+    }
+
+    fn commit(
+        &mut self,
+        counts: ChunkCounts,
+        fault: ChunkFaultProgress,
+    ) -> BoxFuture<'_, Result<ChunkCommitReceipt, ChunkTransactionError>> {
+        Box::pin(async move {
+            if fault != ChunkFaultProgress::NONE {
+                self.abort_open_transaction().await;
+                return Err(ChunkTransactionError::NotCommitted);
+            }
+            let Ok(prepared) = self.prepare_commit(counts) else {
+                self.abort_open_transaction().await;
+                return Err(ChunkTransactionError::NotCommitted);
+            };
+            let PreparedMongoChunkCommit {
+                next_counts,
+                receipt,
+                next_version,
+                update,
+                filter,
+            } = prepared;
+            let collection = self.repository.collection(STEPS);
+            let result = collection
+                .update_one(filter, doc! { "$set": update })
+                .session(self.session()?)
+                .await;
+            let Ok(result) = result else {
+                self.abort_open_transaction().await;
+                return Err(ChunkTransactionError::NotCommitted);
+            };
+            if result.matched_count != 1 {
+                self.abort_open_transaction().await;
+                return Err(ChunkTransactionError::NotCommitted);
+            }
+            let mut session = self
+                .session
+                .take()
+                .ok_or(ChunkTransactionError::NotCommitted)?;
+            match session.commit_transaction().await {
+                Ok(()) => {
+                    self.expected_version = next_version;
+                    self.committed_counts = next_counts;
+                    Ok(receipt)
+                }
+                Err(error) if error.contains_label(UNKNOWN_TRANSACTION_COMMIT_RESULT) => {
+                    Err(ChunkTransactionError::CommitOutcomeUnknown)
+                }
+                Err(_) => Err(ChunkTransactionError::NotCommitted),
+            }
+        })
+    }
+
+    fn rollback(&mut self) -> BoxFuture<'_, Result<(), ChunkTransactionError>> {
+        Box::pin(async move {
+            let Some(mut session) = self.session.take() else {
+                return Ok(());
+            };
+            session
+                .abort_transaction()
+                .await
+                .map_err(|_| ChunkTransactionError::NotCommitted)
+        })
+    }
+}
+
 /// Read-only bounded Explorer adapter for `MongoDB` metadata.
 ///
 /// This port is additive and deliberately does not advertise a
@@ -811,6 +1163,62 @@ impl MongoUnitOfWork<'_> {
             .session(self.session()?)
             .await
             .map_err(map_operation_error)
+    }
+
+    async fn latest_flow_step_document(
+        &mut self,
+        instance_id: JobInstanceId,
+        node_id: &NodeId,
+    ) -> Result<Option<Document>, RepositoryError> {
+        let executions = self.repository.collection(EXECUTIONS);
+        let mut cursor = executions
+            .aggregate(vec![
+                doc! { "$match": { "job_instance_id": u64_to_i64(instance_id.get())? } },
+                doc! { "$sort": { "attempt": -1_i32 } },
+                doc! {
+                    "$lookup": {
+                        "from": STEPS,
+                        "let": { "execution_id": "$id" },
+                        "pipeline": [
+                            {
+                                "$match": {
+                                    "$expr": {
+                                        "$and": [
+                                            { "$eq": ["$job_execution_id", "$$execution_id"] },
+                                            { "$eq": ["$step_logical_id", node_id.as_str()] },
+                                        ]
+                                    }
+                                }
+                            },
+                            { "$limit": 1_i64 },
+                        ],
+                        "as": "matching_steps",
+                    }
+                },
+                doc! { "$match": { "matching_steps.0": { "$exists": true } } },
+                doc! { "$limit": 1_i64 },
+                doc! {
+                    "$project": {
+                        "_id": 0_i32,
+                        "step": { "$arrayElemAt": ["$matching_steps", 0_i32] },
+                    }
+                },
+            ])
+            .session(self.session()?)
+            .await
+            .map_err(map_operation_error)?;
+        let row = cursor
+            .next(self.session()?)
+            .await
+            .transpose()
+            .map_err(map_operation_error)?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        row.get_document("step")
+            .cloned()
+            .map(Some)
+            .map_err(|_| RepositoryError::Unavailable)
     }
 
     async fn classify_job_cas(
@@ -1110,26 +1518,21 @@ impl RepositoryUnitOfWork for MongoUnitOfWork<'_> {
                 });
             }
 
+            let source = self.latest_flow_step_document(instance_id, node_id).await?;
             let id = self.next_id("step_execution").await?;
             let created_at = self.repository.clock.now();
             let steps = self.repository.collection(STEPS);
+            let mut row =
+                step_execution_document(id, job_execution_id, step_name, node_id, created_at)?;
+            if let Some(source) = source.as_ref() {
+                copy_restart_step_state(&mut row, source)?;
+            }
             steps
-                .insert_one(step_execution_document(
-                    id,
-                    job_execution_id,
-                    step_name,
-                    node_id,
-                    created_at,
-                )?)
+                .insert_one(row.clone())
                 .session(self.session()?)
                 .await
                 .map_err(map_operation_error)?;
-            Ok(StepExecution::new(
-                StepExecutionId::new(id)?,
-                job_execution_id,
-                step_name.clone(),
-                starting_metadata(created_at)?,
-            ))
+            decode_step_execution(&row)
         })
     }
     fn transition_job_execution(
@@ -1480,10 +1883,16 @@ impl RepositoryUnitOfWork for MongoUnitOfWork<'_> {
             let step = row
                 .get_document("step")
                 .map_err(|_| RepositoryError::Unavailable)?;
+            let context = decode_execution_context(step)?;
+            let context = if context.schema_id().as_str() == DEFAULT_STATE_SCHEMA {
+                None
+            } else {
+                Some(context)
+            };
             Ok(Some(FlowStepState::new(
                 node_id.clone(),
                 decode_step_execution(step)?,
-                None,
+                context,
             )))
         })
     }
@@ -1812,7 +2221,9 @@ fn step_execution_document(
     created_at: SystemTime,
 ) -> Result<Document, RepositoryError> {
     let created_ms = system_time_millis(created_at)?;
-    Ok(doc! {
+    let checkpoint = empty_state_envelope("oxide-batch.checkpoint")?;
+    let context = empty_state_envelope("oxide-batch.execution-context")?;
+    let mut row = doc! {
         "id": u64_to_i64(id)?,
         "job_execution_id": u64_to_i64(job_execution_id.get())?,
         "step_name": step_name.as_str(),
@@ -1828,7 +2239,10 @@ fn step_execution_document(
         "filter_count": 0_i64,
         "commit_count": 0_i64,
         "rollback_count": 0_i64,
-    })
+    };
+    row.insert(CHECKPOINT_ENVELOPE, binary(&checkpoint));
+    row.insert(CONTEXT_ENVELOPE, binary(&context));
+    Ok(row)
 }
 
 fn execution_metadata_update(
@@ -1955,6 +2369,62 @@ fn decode_job_execution(row: &Document) -> Result<JobExecution, RepositoryError>
         decode_execution_metadata(row)?,
         ExecutionVersion::new(read_u64(row, "version")?),
     ))
+}
+
+fn durable_state_limits() -> StateLimits {
+    StateLimits::new(1_048_576, 64).unwrap_or_default()
+}
+
+fn empty_state_envelope(format: &str) -> Result<Vec<u8>, RepositoryError> {
+    serde_json::to_vec(&json!({
+        "format": format,
+        "format_version": 1,
+        "schema": DEFAULT_STATE_SCHEMA,
+        "schema_version": 1,
+        "payload": {},
+    }))
+    .map_err(|_| RepositoryError::Unavailable)
+}
+
+fn decode_checkpoint(row: &Document) -> Result<Checkpoint, RepositoryError> {
+    Checkpoint::from_json(
+        &read_bytes(row, CHECKPOINT_ENVELOPE)?,
+        durable_state_limits(),
+    )
+    .map_err(|_| RepositoryError::Unavailable)
+}
+
+fn decode_execution_context(row: &Document) -> Result<ExecutionContext, RepositoryError> {
+    ExecutionContext::from_json(
+        &read_bytes(row, CONTEXT_ENVELOPE)?,
+        durable_state_limits(),
+    )
+    .map_err(|_| RepositoryError::Unavailable)
+}
+
+fn copy_restart_step_state(
+    target: &mut Document,
+    source: &Document,
+) -> Result<(), RepositoryError> {
+    decode_checkpoint(source)?;
+    decode_execution_context(source)?;
+    for field in [
+        "read_count",
+        "processed_count",
+        "write_count",
+        "filter_count",
+        "commit_count",
+        "rollback_count",
+        CHECKPOINT_ENVELOPE,
+        CONTEXT_ENVELOPE,
+    ] {
+        let value = source
+            .get(field)
+            .cloned()
+            .ok_or(RepositoryError::Unavailable)?;
+        target.insert(field, value);
+    }
+    Ok(())
 }
 
 fn decode_step_execution(row: &Document) -> Result<StepExecution, RepositoryError> {
@@ -2247,6 +2717,39 @@ fn decode_status(value: &str) -> Result<BatchStatus, RepositoryError> {
     }
 }
 
+fn add_chunk_counts(
+    current: ExecutionCounts,
+    chunk: ChunkCounts,
+) -> Result<ExecutionCounts, ChunkTransactionError> {
+    Ok(ExecutionCounts::new(
+        current
+            .read()
+            .checked_add(chunk.read().get())
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current
+            .processed()
+            .checked_add(chunk.processed().get())
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current
+            .written()
+            .checked_add(chunk.written().get())
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current
+            .filtered()
+            .checked_add(chunk.filtered().get())
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current
+            .committed()
+            .checked_add(1)
+            .ok_or(ChunkTransactionError::NotCommitted)?,
+        current.rolled_back(),
+    ))
+}
+
+fn chunk_i64(value: u64) -> Result<i64, ChunkTransactionError> {
+    i64::try_from(value).map_err(|_| ChunkTransactionError::NotCommitted)
+}
+
 fn map_operation_error(error: MongoError) -> RepositoryError {
     let transient = error.contains_label(TRANSIENT_TRANSACTION_ERROR);
     let kind = error.kind;
@@ -2437,20 +2940,20 @@ mod tests {
     }
 
     #[test]
-    fn schema_version_guard_requires_runnable_core_schema() {
+    fn schema_version_guard_requires_checkpoint_context_schema() {
         assert!(matches!(
-            verify_schema_version(1),
+            verify_schema_version(2),
             Err(RepositoryError::MigrationRequired {
-                current: 1,
-                supported: 2
+                current: 2,
+                supported: 3
             })
         ));
-        assert!(verify_schema_version(2).is_ok());
+        assert!(verify_schema_version(3).is_ok());
         assert!(matches!(
-            verify_schema_version(3),
+            verify_schema_version(4),
             Err(RepositoryError::NewerSchema {
-                current: 3,
-                supported: 2
+                current: 4,
+                supported: 3
             })
         ));
     }
