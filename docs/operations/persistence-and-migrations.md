@@ -153,17 +153,19 @@ Runtime startup reads the singleton through its normal role:
 - the exact supported version is accepted;
 - a higher version is `NewerSchema` and is never guessed compatible.
 
-The MongoDB metadata adapter has a separate schema lineage. Its first
-implementation was created directly at MongoDB schema version 2; no MongoDB
-schema version 1 layout was ever defined. Version 2 is therefore the inception
-baseline: an uninitialized database may be bootstrapped to version 2, an
-installed version 2 migration is idempotent, and both runtime connection and
-migration reject any installed marker below 2 with `MigrationRequired`; the
-migrator does so before collection or index mutation.
-Versions above 2 remain `NewerSchema`. A future MongoDB schema bump must define
-and certify an explicit contiguous migration from every older source version it
-claims to support; a numeric marker alone never creates a compatibility claim.
-This policy does not promote MongoDB support.
+The MongoDB metadata adapter has a separate unreleased schema lineage.
+Schema version 2 existed as an implementation-stage runnable-core layout, and
+schema version 3 added the durable checkpoint/context state required by the
+current restart contract. No MongoDB schema version 1 layout was ever defined,
+and version 2 is not a release-backed migration source. The current support
+candidate therefore bootstraps an uninitialized database directly to schema
+version 3; runtime connection and migration accept exactly version 3, reject an
+installed marker below 3 with `MigrationRequired`, and reject a marker above 3
+with `NewerSchema`. The first MongoDB schema change after a release-backed
+version 3 profile must define and certify every older source version it claims
+to support, including pre-upgrade backup and restore-only rollback evidence. A
+numeric marker alone never creates a compatibility claim. This policy does not
+promote MongoDB support.
 
 There is no released durable schema before M2 version 1. Therefore the first
 upgrade matrix contains the empty/uninitialized fixture and version 1. From the
@@ -364,6 +366,28 @@ version and constraints, and runs representative repository reads. Production
 guidance additionally requires a deployment-specific physical or managed
 backup whose restore objective is tested; the small logical fixture is
 conformance evidence, not a substitute for that backup.
+
+For the first MongoDB support candidate, the portable Gate-C backup/restore
+floor is exercised as a same-schema version-3 rehearsal on each pinned MongoDB
+8.0.38 and 8.2.12 lane. The fixture creates bounded deterministic metadata
+through the ordinary repository API, closes the application writers, takes a
+logical `mongodump`, records a SHA-256 digest and bounded archive size, and
+restores with `mongorestore` into a separate clean replica set running the
+same named MongoDB version. The restore is verified **without running the
+migrator first**, so missing collections or indexes cannot be silently repaired
+before certification.
+
+Post-restore verification reopens the ordinary `MongoJobRepository` and
+reconciles schema version, durable job/step identity and lifecycle state,
+checkpoint/context restart authority, durable flow decisions, and the required
+unique-index set against the source fixture. It then performs a real restart
+mutation plus a fresh completed flow and requires all restored ID allocators to
+advance beyond pre-backup identities. A successful dump/restore process exit is
+therefore insufficient by itself. The logical fixture is disposable
+conformance evidence; production deployments still own authenticated backup
+identities, encryption, retention, physical or managed backup policy, and
+tested restore objectives. This evidence does not by itself promote MongoDB to
+a release-backed support tier.
 
 ## Retention and purge
 
