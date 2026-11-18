@@ -76,6 +76,27 @@ impl AuthTestSettings {
     }
 }
 
+#[derive(Clone)]
+struct TlsTestSettings {
+    valid_uri: String,
+    wrong_ca_uri: String,
+    wrong_identity_uri: String,
+    plaintext_uri: String,
+    database: String,
+}
+
+impl TlsTestSettings {
+    fn from_environment() -> Option<Self> {
+        Some(Self {
+            valid_uri: std::env::var("OXIDEBATCH_MONGODB_TLS_VALID_URI").ok()?,
+            wrong_ca_uri: std::env::var("OXIDEBATCH_MONGODB_TLS_WRONG_CA_URI").ok()?,
+            wrong_identity_uri: std::env::var("OXIDEBATCH_MONGODB_TLS_WRONG_IDENTITY_URI").ok()?,
+            plaintext_uri: std::env::var("OXIDEBATCH_MONGODB_TLS_PLAINTEXT_URI").ok()?,
+            database: std::env::var("OXIDEBATCH_MONGODB_TLS_TEST_DATABASE").ok()?,
+        })
+    }
+}
+
 async fn clear_runnable_core_fixture(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
     let client = Client::with_uri_str(&settings.uri).await?;
     let database = client.database(&settings.database);
@@ -1035,6 +1056,95 @@ fn mongodb_authenticated_runtime_is_scoped_and_bad_credentials_fail_closed()
                 .into());
             }
         }
+
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+async fn assert_mongodb_tls_connect_is_unavailable(
+    uri: &str,
+    database: &str,
+    label: &str,
+) -> Result<(), Box<dyn Error>> {
+    let config = MongoConfig::new(uri.to_owned(), database.to_owned())?
+        .with_connect_timeout(std::time::Duration::from_millis(500))?
+        .with_server_selection_timeout(std::time::Duration::from_millis(500))?;
+    let result = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        MongoJobRepository::connect(config, Arc::new(SystemClock)),
+    )
+    .await
+    .map_err(|_| {
+        std::io::Error::other(format!(
+            "MongoDB TLS negative case {label} exceeded the outer certification bound"
+        ))
+    })?;
+
+    match result {
+        Err(RepositoryError::Unavailable) => Ok(()),
+        Err(error) => Err(std::io::Error::other(format!(
+            "MongoDB TLS negative case {label} returned unexpected error: {error:?}"
+        ))
+        .into()),
+        Ok(repository) => {
+            repository.close().await;
+            Err(std::io::Error::other(format!(
+                "MongoDB TLS negative case {label} unexpectedly connected"
+            ))
+            .into())
+        }
+    }
+}
+
+#[test]
+fn mongodb_tls_validates_ca_identity_and_rejects_plaintext() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TlsTestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB TLS fixture is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let valid_config = MongoConfig::new(settings.valid_uri.clone(), settings.database.clone())?;
+        assert!(
+            !format!("{valid_config:?}").contains(&settings.valid_uri),
+            "MongoDB TLS URI must remain redacted from Debug output"
+        );
+        MongoMigrator::migrate(&valid_config).await?;
+        let repository = MongoJobRepository::connect(valid_config, Arc::new(SystemClock)).await?;
+
+        let job_name = JobName::new("mongodb_tls_runtime")?;
+        let key = JobInstanceKey::new(job_name, &JobParameters::new());
+        let mut transaction = repository.begin().await?;
+        let instance = transaction
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        transaction.create_job_execution(instance.id()).await?;
+        transaction.commit().await?;
+        repository.close().await;
+
+        assert_mongodb_tls_connect_is_unavailable(
+            &settings.wrong_ca_uri,
+            &settings.database,
+            "wrong-ca",
+        )
+        .await?;
+        assert_mongodb_tls_connect_is_unavailable(
+            &settings.wrong_identity_uri,
+            &settings.database,
+            "wrong-server-identity",
+        )
+        .await?;
+        assert_mongodb_tls_connect_is_unavailable(
+            &settings.plaintext_uri,
+            &settings.database,
+            "plaintext-to-require-tls-server",
+        )
+        .await?;
 
         Ok::<(), Box<dyn Error>>(())
     })?;

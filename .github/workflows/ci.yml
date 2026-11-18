@@ -858,6 +858,18 @@ jobs:
           "$OXIDEBATCH_MONGODB_AUTH_EXPECTED_VERSION"
           oxide_batch_repository
 
+      - name: Run MongoDB TLS certification
+        env:
+          OXIDEBATCH_MONGODB_TLS_IMAGE: ${{ matrix.image }}
+          OXIDEBATCH_MONGODB_TLS_LANE: ${{ matrix.lane }}
+          OXIDEBATCH_MONGODB_TLS_EXPECTED_VERSION: ${{ matrix.version }}
+        run: >-
+          ./tests/fixtures/mongodb/run-tls-certification.sh
+          "$OXIDEBATCH_MONGODB_TLS_IMAGE"
+          "$OXIDEBATCH_MONGODB_TLS_LANE"
+          "$OXIDEBATCH_MONGODB_TLS_EXPECTED_VERSION"
+          oxide_batch_repository
+
   mysql-repository-core:
     name: mysql-8.4.13-repository-core
     runs-on: ubuntu-24.04-arm
