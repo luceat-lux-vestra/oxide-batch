@@ -35,7 +35,7 @@ The accepted repository and transaction model remains authoritative:
 | MariaDB | Planned first-party relational adapter | Shares the MySQL protocol implementation family where semantics permit | Certified separately from MySQL |
 | SQLite | Planned first-party constrained profile | SQLx-backed adapter with explicit locking/concurrency limitations | Never implies server-database concurrency semantics |
 | SQL Server | Planned first-party relational adapter | Driver-private TDS implementation; not SQLx `Any` | Driver selection and named SQL Server versions require separate evidence |
-| MongoDB | Planned non-relational metadata adapter | Distinct implementation behind the same semantic ports | Experimental until the full Mongo profile passes certification |
+| MongoDB | Implemented non-relational metadata adapter candidate | Distinct implementation behind the same semantic ports | Support-level core certified on main for 8.0.38/8.2.12; release-backed support promotion remains separate |
 | Oracle | Later-tier explicit disposition | M13 extension/certification by default; first-party only with an accepted driver and demand case | No current support claim |
 | DB2 | Later-tier explicit disposition | M13 extension/certification by default; first-party only with an accepted driver and demand case | No current support claim |
 | SAP HANA | Later-tier explicit disposition | M13 extension/certification by default; first-party only with an accepted driver and demand case | No current support claim |
@@ -51,7 +51,10 @@ portability boundary.
 The pinned Spring Batch 6.0.4 baseline contains a MongoDB-backed job repository,
 so `DB-MONGO-001` is not NotApplicable. OxideBatch treats MongoDB as a
 separate non-relational metadata-adapter track rather than pretending it is a
-relational dialect.
+relational dialect. Gate-A originally admitted that track as `Planned`; #646
+subsequently completed its support-level core certification on main for MongoDB
+8.0.38 and 8.2.12 with schema 3. The resulting ledger disposition is
+`Implemented`, not release-backed `Verified`.
 
 ## External baseline evidence
 
@@ -319,7 +322,7 @@ separate from concrete relational dialect work.
 ## Gate-A exit checklist
 
 - [x] relational target set and support terminology are explicit;
-- [x] MongoDB has a bounded Planned disposition;
+- [x] MongoDB has a bounded M8 disposition; post-gate implementation/certification is tracked by #646;
 - [x] Oracle, DB2, and HANA have independent later-tier dispositions;
 - [x] driver types are excluded from the repository SPI;
 - [x] capability negotiation scope is separated from additive explorer reads;
