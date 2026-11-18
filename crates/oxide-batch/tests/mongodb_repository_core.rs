@@ -933,16 +933,13 @@ fn mongodb_repository_pool_saturation_times_out_and_recovers() -> Result<(), Box
         let repository = MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
 
         let held = repository.begin().await?;
-        let contended = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            repository.begin(),
-        )
-        .await
-        .map_err(|_| {
-            std::io::Error::other(
-                "MongoDB repository permit contention exceeded the outer certification bound",
-            )
-        })?;
+        let contended = tokio::time::timeout(std::time::Duration::from_secs(2), repository.begin())
+            .await
+            .map_err(|_| {
+                std::io::Error::other(
+                    "MongoDB repository permit contention exceeded the outer certification bound",
+                )
+            })?;
 
         match contended {
             Err(RepositoryError::Unavailable) => {}
@@ -963,16 +960,13 @@ fn mongodb_repository_pool_saturation_times_out_and_recovers() -> Result<(), Box
 
         held.rollback().await?;
 
-        let recovered = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            repository.begin(),
-        )
-        .await
-        .map_err(|_| {
-            std::io::Error::other(
-                "MongoDB repository did not recover capacity after the timed-out waiter",
-            )
-        })??;
+        let recovered = tokio::time::timeout(std::time::Duration::from_secs(2), repository.begin())
+            .await
+            .map_err(|_| {
+                std::io::Error::other(
+                    "MongoDB repository did not recover capacity after the timed-out waiter",
+                )
+            })??;
         recovered.rollback().await?;
         repository.close().await;
 
