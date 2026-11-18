@@ -56,9 +56,7 @@ async fn clear_runnable_core_fixture(settings: &TestSettings) -> Result<(), Box<
 
 const CONCURRENT_LAUNCH_JOB: &str = "repository_concurrent_launch";
 
-async fn clear_concurrent_launch_fixture(
-    settings: &TestSettings,
-) -> Result<(), Box<dyn Error>> {
+async fn clear_concurrent_launch_fixture(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
     let client = Client::with_uri_str(&settings.uri).await?;
     let database = client.database(&settings.database);
     let instances = database.collection::<Document>("ob_job_instance");
@@ -215,10 +213,7 @@ fn concurrent_launch_creates_one_mongodb_instance_and_attempt() -> Result<(), Bo
         clear_concurrent_launch_fixture(&settings).await?;
         let repository = MongoJobRepository::connect(config, Arc::new(SystemClock)).await?;
         let barrier = Arc::new(tokio::sync::Barrier::new(CONTENDERS));
-        let key = JobInstanceKey::new(
-            JobName::new(CONCURRENT_LAUNCH_JOB)?,
-            &JobParameters::new(),
-        );
+        let key = JobInstanceKey::new(JobName::new(CONCURRENT_LAUNCH_JOB)?, &JobParameters::new());
 
         let mut handles = Vec::with_capacity(CONTENDERS);
         for _ in 0..CONTENDERS {
@@ -255,9 +250,10 @@ fn concurrent_launch_creates_one_mongodb_instance_and_attempt() -> Result<(), Bo
         assert_eq!(rejected, CONTENDERS - 1);
 
         let mut inspection = repository.begin().await?;
-        let instance = inspection.find_job_instance(&key).await?.ok_or_else(|| {
-            std::io::Error::other("canonical MongoDB instance was not committed")
-        })?;
+        let instance = inspection
+            .find_job_instance(&key)
+            .await?
+            .ok_or_else(|| std::io::Error::other("canonical MongoDB instance was not committed"))?;
         let latest = inspection
             .latest_job_execution(instance.id())
             .await?
