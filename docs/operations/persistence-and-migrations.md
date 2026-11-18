@@ -15,8 +15,11 @@ release-backed supported durable profile under
 [ADR-0006](../architecture/decisions/0006-repository-capability-model.md).
 MySQL/MariaDB and SQLite now have first-party bootstrap-core implementations,
 but they are not yet runnable-core certified or support-promoted. SQL Server
-and MongoDB remain planned M8 targets. Planning text or a primitive contract
-pass does not constitute support.
+remains a planned M8 target. MongoDB now has an `Implemented` support-level-core
+candidate on main for versions 8.0.38 and 8.2.12 with schema 3; its optional
+capabilities remain explicit and fail closed. This does not add MongoDB to a
+released support promise: release-backed support still requires a named
+OxideBatch release and support-matrix promotion.
 
 M8 uses four deliberately different terms:
 
