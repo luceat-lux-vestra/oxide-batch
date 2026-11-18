@@ -156,7 +156,7 @@ the [compatibility contract](spring-batch.md).
 | DB-ORACLE-001 | 6.0.4 [schema] | Oracle | Documented relational metadata support | Certified adapter or reviewed bounded disposition | Feature | Planned | M8/M13 | Later-tier driver/licensing/CI evidence | R/R/R/R/R/R | — | [Persistence](../operations/persistence-and-migrations.md), [M8 Gate-A](../project/m8-gate-a-repository-portability.md) | M8 disposition complete; M13 owns residual ecosystem certification by default |
 | DB-DB2-001 | 6.0.4 [schema] | DB2 | Documented relational metadata support | Certified adapter or reviewed bounded disposition | Feature | Planned | M8/M13 | Later-tier driver/licensing/CI evidence | R/R/R/R/R/R | — | [Persistence](../operations/persistence-and-migrations.md), [M8 Gate-A](../project/m8-gate-a-repository-portability.md) | M8 disposition complete; M13 owns residual ecosystem certification by default |
 | DB-HANA-001 | 6.0.4 [schema] | SAP HANA | Documented relational metadata support | Certified adapter or reviewed bounded disposition | Feature | Planned | M8/M13 | Later-tier driver/licensing/CI evidence | R/R/R/R/R/R | — | [Persistence](../operations/persistence-and-migrations.md), [M8 Gate-A](../project/m8-gate-a-repository-portability.md) | M8 disposition complete; M13 owns residual ecosystem certification by default |
-| DB-MONGO-001 | 6.0.4 [api] | MongoDB metadata | Preserve repository identity/lifecycle/restart semantics on the baseline's non-relational metadata store | Certified non-relational metadata adapter/profile | Native equivalent | Planned | M8 | Distinct collection/transaction/identity mechanics; not a relational dialect | R/R/R/R/R/R | [M8 Gate-A decision](../project/m8-gate-a-repository-portability.md) | [Persistence](../operations/persistence-and-migrations.md) | Planned under #646; experimental until named-version certification |
+| DB-MONGO-001 | 6.0.4 [api] | MongoDB metadata | Preserve repository identity/lifecycle/restart semantics on the baseline's non-relational metadata store | Certified non-relational metadata adapter/profile | Native equivalent | Implemented | M8 | Distinct collection/transaction/identity mechanics; optional capabilities remain explicit and fail closed | R/R/R/R/R/R | [M8 MongoDB certification evidence](../project/m8-mongodb-certification-evidence.md), [M8 Gate-A decision](../project/m8-gate-a-repository-portability.md) | [Persistence](../operations/persistence-and-migrations.md) | Support-level core certified on main for MongoDB 8.0.38 and 8.2.12 with schema 3; release-backed `Verified` promotion requires a named OxideBatch release and is not claimed here |
 | MSG-KAFKA-001 | 6.0.4 [integration] | Kafka | Items/offsets participate in restart with documented delivery | Kafka item adapter and delivery profile | Native equivalent | Planned | M9 | Broker-native semantics | R/R/R/R/R/R | — | [Integration model](../architecture/integration-model.md) | — |
 | MSG-AMQP-001 | 6.0.4 [integration] | AMQP/JMS equivalent | Message ack/redelivery and item processing are explicit | AMQP adapter; JMS concepts mapped, not Java API | Native equivalent | Planned | M9 | No JMS API/source compatibility | R/R/R/R/R/R | — | [Integration model](../architecture/integration-model.md) | — |
 | MSG-OTHER-001 | 6.0.4 [api] | NATS/Pulsar/SQS/Redis/channel | Demand-tier queue/stream integrations are classified | Capability-specific adapters | Feature/native | Planned | M9/M13 | Some exceed Spring catalog | R/R/R/R/R/R | — | [Integration model](../architecture/integration-model.md) | Split before certification |
@@ -303,16 +303,26 @@ Additional database-adapter certification remains M8 scope.
 **Current candidate population and unreviewed rows.** After this M7 Gate-F
 ledger reconciliation, the 83-row population is `28` `Verified`, `28` `Implemented`, `9` `Partial`, `16` `Planned`, and `2` `Unknown`.
 
-**M8 Gate-A disposition update.** Gate-A #643 splits the aggregate enterprise
-row into Oracle, DB2, and HANA rows and resolves `DB-MONGO-001` from
-`Unknown` to `Planned` with a bounded M8 adapter owner. The current ledger is
-therefore 85 rows: `28` `Verified`, `28` `Implemented`, `9` `Partial`,
-`19` `Planned`, and `1` `Unknown`. This is a planning/disposition change,
-not implementation or verification evidence.
-The `Verified` population still represents named released claims; M7 candidate additions
-are not promoted by documentation alone. Remaining `Partial`/`Planned`/`Unknown`
-rows belong to later reviewed milestone owners or unresolved later-milestone
-disposition work, not unfinished M7 implementation.
+**M8 Gate-A disposition update.** Gate-A #643 split the aggregate enterprise
+row into Oracle, DB2, and HANA rows and resolved `DB-MONGO-001` from
+`Unknown` to `Planned` with a bounded M8 adapter owner. At that gate, the ledger
+became 85 rows: `28` `Verified`, `28` `Implemented`, `9` `Partial`, `19`
+`Planned`, and `1` `Unknown`; that was a planning/disposition change, not
+implementation evidence.
+
+**M8 MongoDB implementation update.** #646 has now completed the support-level
+core profile on main for MongoDB 8.0.38 and 8.2.12 with schema 3, including
+restart/crash, transaction ambiguity, bounded resource behavior, authentication,
+TLS, and backup/restore evidence. `DB-MONGO-001` therefore moves from `Planned`
+to `Implemented`. The current 85-row ledger is `28` `Verified`, `29`
+`Implemented`, `9` `Partial`, `18` `Planned`, and `1` `Unknown`. This remains
+candidate main-branch evidence: `Verified` still requires a named released
+OxideBatch version carrying the support claim.
+
+The `Verified` population still represents named released claims; M7/M8
+candidate additions are not promoted by documentation alone. Remaining
+`Partial`/`Planned`/`Unknown` rows belong to later reviewed milestone owners or
+unresolved later-milestone disposition work.
 
 The visibility of every non-advertised row prevents any full-parity,
 enterprise-readiness, or project-wide production claim by the preview.
