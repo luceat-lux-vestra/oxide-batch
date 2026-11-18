@@ -420,9 +420,8 @@ async fn run_mongodb_checkpoint_crash_worker(
     let (checkpoint, context) = crash_restart_state()?;
     let expected_checkpoint = checkpoint.clone();
     let expected_context = context.clone();
-    let state_provider: Arc<dyn MongoChunkStateProvider> = Arc::new(move |_, _| {
-        Ok(ChunkCommitReceipt::new(checkpoint.clone(), context.clone()))
-    });
+    let state_provider: Arc<dyn MongoChunkStateProvider> =
+        Arc::new(move |_, _| Ok(ChunkCommitReceipt::new(checkpoint.clone(), context.clone())));
     let manager = MongoChunkTransactionManager::new(repository.clone(), state_provider);
     let scope = ChunkTransactionContext::new(job.id(), step.id());
     let mut transaction = manager.begin_for(scope).await?;
@@ -474,8 +473,7 @@ async fn inspect_mongodb_checkpoint_after_kill_and_restart(
         .latest_flow_step(instance.id(), &node_id)
         .await?
         .ok_or_else(|| std::io::Error::other("killed MongoDB worker left no step state"))?;
-    let killed_scope =
-        ChunkTransactionContext::new(killed_job.id(), killed_state.execution().id());
+    let killed_scope = ChunkTransactionContext::new(killed_job.id(), killed_state.execution().id());
     inspect.rollback().await?;
 
     assert_eq!(killed_job.metadata().status(), BatchStatus::Started);
@@ -544,8 +542,7 @@ async fn inspect_mongodb_checkpoint_after_kill_and_restart(
         .await?;
     start.commit().await?;
 
-    let restarted_scope =
-        ChunkTransactionContext::new(restarted_job.id(), restarted_step.id());
+    let restarted_scope = ChunkTransactionContext::new(restarted_job.id(), restarted_step.id());
     let restarted_progress = manager.inherited_progress(restarted_scope).await?;
     let mut observe = repository.begin().await?;
     let restarted_state = observe
@@ -1348,8 +1345,7 @@ fn mongodb_checkpoint_context_survives_process_kill_and_restarts() -> Result<(),
         "MongoDB crash certification must observe SIGKILL rather than a graceful exit"
     );
 
-    let evidence =
-        runtime.block_on(inspect_mongodb_checkpoint_after_kill_and_restart(&settings));
+    let evidence = runtime.block_on(inspect_mongodb_checkpoint_after_kill_and_restart(&settings));
     let cleanup = runtime.block_on(clear_runnable_core_fixture(&settings));
     let handshake_cleanup = std::fs::remove_dir_all(&handshake);
 
@@ -1371,15 +1367,14 @@ fn mongodb_checkpoint_context_process_kill_worker() -> Result<(), Box<dyn Error>
     let handshake = std::env::var(CRASH_RESTART_HANDSHAKE_ENV)
         .map(PathBuf::from)
         .map_err(|error| {
-            std::io::Error::other(format!("MongoDB crash worker lacks handshake path: {error}"))
+            std::io::Error::other(format!(
+                "MongoDB crash worker lacks handshake path: {error}"
+            ))
         })?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    runtime.block_on(run_mongodb_checkpoint_crash_worker(
-        &settings,
-        &handshake,
-    ))
+    runtime.block_on(run_mongodb_checkpoint_crash_worker(&settings, &handshake))
 }
 
 #[test]
