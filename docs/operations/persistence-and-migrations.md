@@ -261,9 +261,33 @@ denied, and an invalid password fails closed as `RepositoryError::Unavailable`.
 This is an executable least-privilege baseline, not a production credential
 bootstrap mechanism. Deployments may use different usernames and secret
 providers, but broad `root`, `clusterAdmin`, `userAdminAnyDatabase`, or
-cross-database runtime grants are outside this profile. This slice does **not**
-certify TLS; MongoDB remains experimental until the separate TLS evidence and
-the rest of the support-level profile are complete.
+cross-database runtime grants are outside this profile.
+
+### MongoDB TLS transport baseline
+
+The MongoDB support-level profile requires certificate-validated TLS with
+server-identity verification for production-like transport. The connection URI
+may carry `tls=true` and a deployment-managed `tlsCAFile`; the URI remains
+redacted by `MongoConfig`. Disabling certificate validation, disabling
+hostname verification, or using broad insecure TLS modes is outside this
+profile.
+
+The executable TLS fixture creates a private CA and a server certificate whose
+only subject alternative name is `127.0.0.1`, starts MongoDB with
+`requireTLS`, and uses the same pinned 8.0.38 and 8.2.12 images as the
+repository certification matrix. It requires a valid CA plus matching server
+identity to migrate the schema, open `MongoJobRepository`, and commit ordinary
+metadata DML. It separately requires wrong-CA trust, hostname mismatch, and a
+plaintext connection to the TLS-only server to fail closed as
+`RepositoryError::Unavailable` within bounded connection/server-selection
+deadlines.
+
+Production deployments own CA rotation, certificate issuance, filesystem
+permissions, and secret delivery. OxideBatch does not mint production
+certificates and does not weaken driver verification to recover from expired,
+untrusted, or identity-mismatched certificates. Plaintext remains appropriate
+only for explicit isolated development/test fixtures and is not part of this
+MongoDB support-level transport profile.
 
 ## Pool, TLS, and timeout contract
 
