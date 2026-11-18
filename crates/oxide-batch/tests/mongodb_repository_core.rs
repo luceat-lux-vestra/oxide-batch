@@ -62,8 +62,7 @@ const TRANSIENT_MUTATION_JOB: &str = "repository_transient_mutation_fault";
 const TRANSIENT_COMMIT_JOB: &str = "repository_transient_commit_fault";
 const UNKNOWN_COMMIT_JOB: &str = "repository_unknown_commit_fault";
 const FAULT_PROBE_CHILD_ENV: &str = "OXIDEBATCH_MONGODB_FAULT_PROBE_CHILD";
-const TRANSIENT_MUTATION_TEST: &str =
-    "mongodb_transient_mutation_error_is_known_not_committed";
+const TRANSIENT_MUTATION_TEST: &str = "mongodb_transient_mutation_error_is_known_not_committed";
 const TRANSIENT_COMMIT_TEST: &str = "mongodb_transient_commit_error_is_known_not_committed";
 const UNKNOWN_COMMIT_TEST: &str = "mongodb_unknown_commit_result_is_never_guessed_rolled_back";
 
@@ -117,6 +116,15 @@ async fn disable_fail_command(settings: &TestSettings) -> Result<(), Box<dyn Err
     Ok(())
 }
 
+async fn terminate_fault_sessions(settings: &TestSettings) -> Result<(), Box<dyn Error>> {
+    let client = Client::with_uri_str(&settings.uri).await?;
+    let admin = client.database("admin");
+    admin.run_command(doc! { "killAllSessions": [] }).await?;
+    drop(admin);
+    client.shutdown().await;
+    Ok(())
+}
+
 async fn clear_fault_fixture(
     settings: &TestSettings,
     job_name: &str,
@@ -136,6 +144,29 @@ async fn clear_fault_fixture(
     drop(database);
     client.shutdown().await;
     Ok(())
+}
+
+async fn reset_fault_boundary(
+    settings: &TestSettings,
+    job_name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let mut errors = Vec::new();
+
+    if let Err(error) = disable_fail_command(settings).await {
+        errors.push(format!("disable failpoint: {error}"));
+    }
+    if let Err(error) = terminate_fault_sessions(settings).await {
+        errors.push(format!("kill server sessions: {error}"));
+    }
+    if let Err(error) = clear_fault_fixture(settings, job_name).await {
+        errors.push(format!("clear fixture: {error}"));
+    }
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(errors.join("; ")).into())
+    }
 }
 
 async fn fault_fixture_counts(
@@ -168,6 +199,14 @@ fn run_isolated_fault_probe(
     test_name: &str,
     job_name: &str,
 ) -> Result<(), Box<dyn Error>> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    fault_stage(
+        "isolated-fault/pre-boundary",
+        runtime.block_on(reset_fault_boundary(settings, job_name)),
+    )?;
+
     let output = Command::new(std::env::current_exe()?)
         .arg("--exact")
         .arg(test_name)
@@ -176,25 +215,10 @@ fn run_isolated_fault_probe(
         .env(FAULT_PROBE_CHILD_ENV, "1")
         .output()?;
 
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()?;
-    let cleanup_error = runtime.block_on(async {
-        let disable_error = disable_fail_command(settings)
-            .await
-            .err()
-            .map(|error| format!("disable failpoint: {error}"));
-        let fixture_error = clear_fault_fixture(settings, job_name)
-            .await
-            .err()
-            .map(|error| format!("clear fixture: {error}"));
-        match (disable_error, fixture_error) {
-            (None, None) => None,
-            (Some(disable), None) => Some(disable),
-            (None, Some(fixture)) => Some(fixture),
-            (Some(disable), Some(fixture)) => Some(format!("{disable}; {fixture}")),
-        }
-    });
+    let cleanup_error = runtime
+        .block_on(reset_fault_boundary(settings, job_name))
+        .err()
+        .map(|error| error.to_string());
 
     if output.status.success() && cleanup_error.is_none() {
         return Ok(());
@@ -688,8 +712,10 @@ fn mongodb_transient_commit_error_is_known_not_committed() -> Result<(), Box<dyn
             "transient-commit/connect",
             MongoJobRepository::connect(config, Arc::new(SystemClock)).await,
         )?;
-        let job_name =
-            fault_stage("transient-commit/job-name", JobName::new(TRANSIENT_COMMIT_JOB))?;
+        let job_name = fault_stage(
+            "transient-commit/job-name",
+            JobName::new(TRANSIENT_COMMIT_JOB),
+        )?;
         let key = JobInstanceKey::new(job_name, &JobParameters::new());
 
         let mut unit = fault_stage("transient-commit/begin", repository.begin().await)?;
