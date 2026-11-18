@@ -115,9 +115,10 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // policy outcome, and the bounded secondary-failure ceiling.
     ("repeat_runtime", 14),
     // #654, #656, and #674 add four concrete entry points for the other
-    // non-PostgreSQL adapters; #646 adds MongoExplorer as MongoDB's fifth.
+    // non-PostgreSQL adapters; #646 adds MongoDB explorer plus metadata-only
+    // chunk-state provider/manager/error entry points.
     // The repository SPI itself remains driver-neutral.
-    ("repository", 31),
+    ("repository", 34),
     ("runtime", 18),
     // #277 exposes only process-local live-scope assembly contracts: opaque
     // handles, explicit factories/registrations, value-redacted errors, and the
@@ -139,7 +140,7 @@ const REVIEWED_CONSTANTS: usize = 1;
 
 /// Reviewed concrete-adapter entry points by feature.
 const REVIEWED_OPTIONAL: &[(&str, usize)] = &[
-    ("mongodb", 5),
+    ("mongodb", 8),
     ("mysql", 4),
     ("postgres", 12),
     ("sqlite", 4),

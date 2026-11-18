@@ -319,6 +319,9 @@ oxide_batch::MetricLabel
 oxide_batch::MetricObservation
 oxide_batch::MetricUnit
 oxide_batch::MissingParameterPolicy
+oxide_batch::MongoChunkStateError [mongodb]
+oxide_batch::MongoChunkStateProvider [mongodb]
+oxide_batch::MongoChunkTransactionManager [mongodb]
 oxide_batch::MongoConfig [mongodb]
 oxide_batch::MongoConfigError [mongodb]
 oxide_batch::MongoExplorer [mongodb]

@@ -577,7 +577,8 @@ pub use repository::{
 pub use repository::{InMemoryExplorer, InMemoryJobRepository};
 #[cfg(feature = "mongodb")]
 pub use repository::{
-    MongoConfig, MongoConfigError, MongoExplorer, MongoJobRepository, MongoMigrator,
+    MongoChunkStateError, MongoChunkStateProvider, MongoChunkTransactionManager, MongoConfig,
+    MongoConfigError, MongoExplorer, MongoJobRepository, MongoMigrator,
 };
 #[cfg(feature = "mysql")]
 pub use repository::{MysqlConfig, MysqlConfigError, MysqlJobRepository, MysqlMigrator};

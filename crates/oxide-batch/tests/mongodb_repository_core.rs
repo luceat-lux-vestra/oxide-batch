@@ -10,12 +10,18 @@ use std::error::Error;
 use std::process::Command;
 use std::sync::Arc;
 
-use contract::{ServiceBackend, run_explorer_contract, run_runnable_core_repository_contract};
+use contract::{
+    CheckpointContextBackend, ServiceBackend, run_checkpoint_context_restart_contract,
+    run_explorer_contract, run_runnable_core_repository_contract,
+};
 use mongodb::Client;
 use mongodb::bson::{Document, doc};
 use oxide_batch::{
-    JobInstanceKey, JobName, JobParameters, JobRepository, MongoConfig, MongoExplorer,
-    MongoJobRepository, MongoMigrator, RepositoryError, SystemClock,
+    BatchStatus, ChunkCommitReceipt, ChunkTransactionContext, ChunkTransactionError,
+    ChunkTransactionManager, Clock, JobInstanceKey, JobName, JobParameters, JobRepository,
+    LifecycleTransition, MongoChunkStateError, MongoChunkStateProvider,
+    MongoChunkTransactionManager, MongoConfig, MongoExplorer, MongoJobRepository, MongoMigrator,
+    RepositoryError, StepName, SystemClock,
 };
 
 #[derive(Clone)]
@@ -318,7 +324,7 @@ fn undefined_older_mongodb_schema_is_rejected_without_mutation() -> Result<(), B
         schema
             .update_one(
                 doc! { "_id": "schema" },
-                doc! { "$set": { "version": 1_i64 } },
+                doc! { "$set": { "version": 2_i64 } },
             )
             .await?;
         database
@@ -348,7 +354,7 @@ fn undefined_older_mongodb_schema_is_rejected_without_mutation() -> Result<(), B
         schema
             .update_one(
                 doc! { "_id": "schema" },
-                doc! { "$set": { "version": 2_i64 } },
+                doc! { "$set": { "version": 3_i64 } },
             )
             .await?;
         drop(schema);
@@ -359,22 +365,140 @@ fn undefined_older_mongodb_schema_is_rejected_without_mutation() -> Result<(), B
         assert_eq!(
             connect_error,
             Some(RepositoryError::MigrationRequired {
-                current: 1,
+                current: 2,
                 supported: MongoMigrator::supported_schema_version(),
             })
         );
         assert_eq!(
             migration_result,
             Err(RepositoryError::MigrationRequired {
-                current: 1,
+                current: 2,
                 supported: MongoMigrator::supported_schema_version(),
             })
         );
-        assert_eq!(version_after, 1);
+        assert_eq!(version_after, 2);
         assert!(
             !decisions_recreated,
             "lower unsupported schema was mutated before rejection"
         );
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn shared_checkpoint_context_restart_contract_passes_on_mongodb() -> Result<(), Box<dyn Error>> {
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let config = settings.config()?;
+        MongoMigrator::migrate(&config).await?;
+        let repositories = Arc::new(tokio::sync::Mutex::new(Vec::new()));
+        let contract_repositories = Arc::clone(&repositories);
+        let contract_result = run_checkpoint_context_restart_contract(
+            "mongodb-checkpoint-context",
+            |clock, checkpoint, context| {
+                let settings = settings.clone();
+                let config = config.clone();
+                let repositories = Arc::clone(&contract_repositories);
+                async move {
+                    clear_runnable_core_fixture(&settings)
+                        .await
+                        .map_err(|_| RepositoryError::Unavailable)?;
+                    let repository =
+                        MongoJobRepository::connect(config, clock as Arc<dyn Clock>).await?;
+                    repositories.lock().await.push(repository.clone());
+                    let state_provider: Arc<dyn MongoChunkStateProvider> = Arc::new(move |_, _| {
+                        Ok(ChunkCommitReceipt::new(checkpoint.clone(), context.clone()))
+                    });
+                    let transactions =
+                        MongoChunkTransactionManager::new(repository.clone(), state_provider);
+                    Ok(CheckpointContextBackend {
+                        repository,
+                        transactions,
+                    })
+                }
+            },
+        )
+        .await;
+        close_repository_registry(&repositories).await;
+        contract_result?;
+        clear_runnable_core_fixture(&settings).await?;
+        Ok::<(), Box<dyn Error>>(())
+    })?;
+    Ok(())
+}
+
+#[test]
+fn mongodb_chunk_manager_is_metadata_only_and_requires_binding() -> Result<(), Box<dyn Error>> {
+    const JOB: &str = "mongodb_metadata_chunk_manager_contract";
+
+    let Some(settings) = TestSettings::from_environment() else {
+        eprintln!("skipped: MongoDB test environment is not configured");
+        return Ok(());
+    };
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    runtime.block_on(async {
+        let config = settings.config()?;
+        MongoMigrator::migrate(&config).await?;
+        clear_runnable_core_fixture(&settings).await?;
+        let clock = Arc::new(SystemClock);
+        let repository =
+            MongoJobRepository::connect(config, Arc::clone(&clock) as Arc<dyn Clock>).await?;
+        let state_provider: Arc<dyn MongoChunkStateProvider> =
+            Arc::new(|_, _| Err(MongoChunkStateError::new()));
+        let manager = MongoChunkTransactionManager::new(repository.clone(), state_provider);
+
+        assert!(matches!(
+            manager.begin().await,
+            Err(ChunkTransactionError::NotCommitted)
+        ));
+
+        let job_name = JobName::new(JOB)?;
+        let key = JobInstanceKey::new(job_name, &JobParameters::new());
+        let step_name = StepName::new("metadata-step")?;
+        let mut create = repository.begin().await?;
+        let instance = create
+            .select_or_create_job_instance(&key)
+            .await?
+            .instance()
+            .clone();
+        let job = create.create_job_execution(instance.id()).await?;
+        let step = create.create_step_execution(job.id(), &step_name).await?;
+        create.commit().await?;
+
+        let started_at = clock.now();
+        let mut start = repository.begin().await?;
+        start
+            .transition_job_execution(
+                job.id(),
+                job.version(),
+                LifecycleTransition::new(BatchStatus::Started, started_at),
+            )
+            .await?;
+        start
+            .transition_step_execution(
+                step.id(),
+                step.version(),
+                LifecycleTransition::new(BatchStatus::Started, started_at),
+            )
+            .await?;
+        start.commit().await?;
+
+        let scope = ChunkTransactionContext::new(job.id(), step.id());
+        let mut transaction = manager.begin_for(scope).await?;
+        assert!(transaction.business_transaction().is_none());
+        transaction.rollback().await?;
+
+        repository.close().await;
+        clear_runnable_core_fixture(&settings).await?;
         Ok::<(), Box<dyn Error>>(())
     })?;
     Ok(())
@@ -990,20 +1114,20 @@ fn newer_mongodb_schema_is_rejected_without_guessing_compatibility() -> Result<(
         schema
             .update_one(
                 doc! { "_id": "schema" },
-                doc! { "$set": { "version": 3_i64 } },
+                doc! { "$set": { "version": 4_i64 } },
             )
             .await?;
         assert_eq!(
             MongoMigrator::migrate(&config).await,
             Err(RepositoryError::NewerSchema {
-                current: 3,
+                current: 4,
                 supported: MongoMigrator::supported_schema_version(),
             })
         );
         schema
             .update_one(
                 doc! { "_id": "schema" },
-                doc! { "$set": { "version": 2_i64 } },
+                doc! { "$set": { "version": 3_i64 } },
             )
             .await?;
         drop(schema);
