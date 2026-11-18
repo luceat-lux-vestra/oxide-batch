@@ -413,10 +413,9 @@ fn shared_checkpoint_context_restart_contract_passes_on_mongodb() -> Result<(), 
                     let repository =
                         MongoJobRepository::connect(config, clock as Arc<dyn Clock>).await?;
                     repositories.lock().await.push(repository.clone());
-                    let state_provider: Arc<dyn MongoChunkStateProvider> =
-                        Arc::new(move |_, _| {
-                            Ok(ChunkCommitReceipt::new(checkpoint.clone(), context.clone()))
-                        });
+                    let state_provider: Arc<dyn MongoChunkStateProvider> = Arc::new(move |_, _| {
+                        Ok(ChunkCommitReceipt::new(checkpoint.clone(), context.clone()))
+                    });
                     let transactions =
                         MongoChunkTransactionManager::new(repository.clone(), state_provider);
                     Ok(CheckpointContextBackend {

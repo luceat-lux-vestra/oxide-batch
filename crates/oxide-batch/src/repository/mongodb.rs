@@ -2395,11 +2395,8 @@ fn decode_checkpoint(row: &Document) -> Result<Checkpoint, RepositoryError> {
 }
 
 fn decode_execution_context(row: &Document) -> Result<ExecutionContext, RepositoryError> {
-    ExecutionContext::from_json(
-        &read_bytes(row, CONTEXT_ENVELOPE)?,
-        durable_state_limits(),
-    )
-    .map_err(|_| RepositoryError::Unavailable)
+    ExecutionContext::from_json(&read_bytes(row, CONTEXT_ENVELOPE)?, durable_state_limits())
+        .map_err(|_| RepositoryError::Unavailable)
 }
 
 fn copy_restart_step_state(
