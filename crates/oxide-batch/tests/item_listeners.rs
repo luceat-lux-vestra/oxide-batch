@@ -275,7 +275,7 @@ fn item_listeners_nest_and_reverse_after_order() -> Result<(), Box<dyn Error>> {
 
     let item = 42_u32;
     let failures = block_on(set.after_read(entered.entered(), &item, context));
-    assert!(failures.is_empty());
+    assert_eq!(failures.len(), 0);
 
     assert_eq!(
         trace.entries(),
@@ -323,7 +323,7 @@ fn a_before_failure_prevents_its_component_call_and_unwinds_entered_listeners()
     );
 
     let failures = block_on(set.after_process(entered.entered(), &input, None, context));
-    assert!(failures.is_empty());
+    assert_eq!(failures.len(), 0);
     assert_eq!(
         trace.entries(),
         vec![
@@ -446,9 +446,9 @@ fn retry_callbacks_run_forward_before_backoff_and_reverse_after_completion()
     assert_eq!(entered.entered(), 2);
     let completion =
         block_on(set.after_retry(entered.entered(), fault, RetryOutcome::Recovered, context));
-    assert!(completion.is_empty());
+    assert_eq!(completion.len(), 0);
     let exhausted = block_on(set.on_retry_exhausted(entered.entered(), fault, context));
-    assert!(exhausted.is_empty());
+    assert_eq!(exhausted.len(), 0);
 
     assert_eq!(
         trace.entries(),
@@ -519,10 +519,10 @@ fn default_listener_methods_observe_without_failing() -> Result<(), Box<dyn Erro
     assert!(block_on(set.before_process(&input, context)).is_ok());
     let outputs = vec!["value".to_owned()];
     assert!(block_on(set.before_write(&outputs, context)).is_ok());
-    assert!(block_on(set.after_write(1, &outputs, context)).is_empty());
-    assert!(block_on(set.on_write_error(1, &outputs, fault()?, context)).is_empty());
-    assert!(block_on(set.on_process_error(1, &input, fault()?, context)).is_empty());
-    assert!(block_on(set.on_skip_in_process(&input, fault()?, context)).is_empty());
+    assert_eq!(block_on(set.after_write(1, &outputs, context)).len(), 0);
+    assert_eq!(block_on(set.on_write_error(1, &outputs, fault()?, context)).len(), 0);
+    assert_eq!(block_on(set.on_process_error(1, &input, fault()?, context)).len(), 0);
+    assert_eq!(block_on(set.on_skip_in_process(&input, fault()?, context)).len(), 0);
     Ok(())
 }
 

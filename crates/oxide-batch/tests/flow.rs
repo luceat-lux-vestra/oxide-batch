@@ -146,7 +146,7 @@ async fn process_shutdown_stops_a_flow_without_selecting_another_target()
         report.job_execution().metadata().status(),
         BatchStatus::Stopped
     );
-    assert!(report.decisions().is_empty());
+    assert_eq!(report.decisions().len(), 0);
     Ok(())
 }
 
@@ -485,7 +485,7 @@ async fn failed_start_consumes_limit() -> Result<(), Box<dyn Error>> {
         second.outcome(),
         &FlowExecutionOutcome::Failed(FlowFailure::StartLimitExceeded { node: only, limit })
     );
-    assert!(second.step_executions().is_empty());
+    assert_eq!(second.step_executions().len(), 0);
     let captured = match events.0.lock() {
         Ok(events) => events,
         Err(poisoned) => poisoned.into_inner(),
@@ -637,7 +637,7 @@ async fn unmapped_exit_fails_job() -> Result<(), Box<dyn Error>> {
         report.job_execution().metadata().status(),
         BatchStatus::Failed
     );
-    assert!(report.decisions().is_empty());
+    assert_eq!(report.decisions().len(), 0);
     Ok(())
 }
 
@@ -854,7 +854,7 @@ async fn decider_panic_is_redacted_failure() -> Result<(), Box<dyn Error>> {
         BatchStatus::Failed
     );
     assert!(!format!("{report:?}").contains("sensitive-decider-payload"));
-    assert!(report.decisions().is_empty());
+    assert_eq!(report.decisions().len(), 0);
     Ok(())
 }
 

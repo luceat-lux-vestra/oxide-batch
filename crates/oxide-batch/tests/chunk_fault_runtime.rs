@@ -1391,7 +1391,7 @@ fn unknown_commit_is_never_retried() {
 
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Unknown);
     assert_eq!(report.retry_counts().write(), 0);
-    assert!(sleeper.recorded().is_empty());
+    assert_eq!(sleeper.recorded().len(), 0);
     assert_eq!(
         trace.count("rollback"),
         0,

@@ -574,7 +574,7 @@ fn postgres_unique_violation_exposes_bounded_sqlstate_without_driver_error()
         }
 
         transaction.rollback().await?;
-        assert!(business_items(&runtime_url, JOB).await?.is_empty());
+        assert_eq!(business_items(&runtime_url, JOB).await?.len(), 0);
 
         repository.close().await?;
         remove_job_rows(&runtime_url, JOB).await?;
@@ -616,7 +616,7 @@ fn constraint_violation_rolls_back_the_whole_chunk_with_no_partial_write()
             report.chunk().ok_or("chunk report missing")?.outcome(),
             ChunkExecutionOutcome::Failed(_)
         ));
-        assert!(business_items(&runtime_url, JOB).await?.is_empty());
+        assert_eq!(business_items(&runtime_url, JOB).await?.len(), 0);
         let scope = ChunkTransactionContext::new(
             report.launch().job_execution().id(),
             report.launch().step_execution().id(),
@@ -767,7 +767,7 @@ fn disconnect_before_commit_leaves_writer_statements_uncommitted() -> Result<(),
 
         // No partial write survives: the writer's statements executed
         // against the (now-dead) connection but never became durable.
-        assert!(business_items(&runtime_url, JOB).await?.is_empty());
+        assert_eq!(business_items(&runtime_url, JOB).await?.len(), 0);
 
         admin.close().await;
         repository.close().await?;

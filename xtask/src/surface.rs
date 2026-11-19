@@ -766,7 +766,7 @@ mod tests {
         );
 
         assert!(!declared(&page).contains("either"));
-        assert!(disclosures("oxide_batch::JobName", 0, &page).is_empty());
+        assert_eq!(disclosures("oxide_batch::JobName", 0, &page).len(), 0);
     }
 
     #[test]

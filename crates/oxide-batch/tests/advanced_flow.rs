@@ -1148,8 +1148,8 @@ async fn split_subgraph_concurrency_one_matches_parallel_normalized_observation(
     let (sequential, sequential_order) = run_decision_split(1, None).await?;
     let (parallel, parallel_order) = run_decision_split(2, None).await?;
 
-    assert!(sequential_order.is_empty());
-    assert!(parallel_order.is_empty());
+    assert_eq!(sequential_order.len(), 0);
+    assert_eq!(parallel_order.len(), 0);
     assert_eq!(sequential, parallel);
     assert_eq!(sequential.job_status, BatchStatus::Completed);
     Ok(())

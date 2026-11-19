@@ -2168,10 +2168,11 @@ fn committed_chunk_advances_checkpoint() -> Result<(), Box<dyn Error>> {
             oxide_batch::ExecutionCounts::new(0, 0, 0, 0, 0, 1)
         );
         assert_ne!(durable.checkpoint(), &chunk_checkpoint(2)?);
-        assert!(
+        assert_eq!(
             business_items(&runtime_url, "postgres_chunk_rollback")
                 .await?
-                .is_empty()
+                .len(),
+            0
         );
 
         let (ack_failed, manager) =
@@ -2235,7 +2236,7 @@ fn writer_failure_rolls_back_business_and_checkpoint() -> Result<(), Box<dyn Err
             oxide_batch::ExecutionCounts::new(0, 0, 0, 0, 0, 1)
         );
         assert_ne!(durable.checkpoint(), &chunk_checkpoint(2)?);
-        assert!(business_items(&runtime_url, JOB).await?.is_empty());
+        assert_eq!(business_items(&runtime_url, JOB).await?.len(), 0);
 
         repository.close().await?;
         remove_job_rows(&runtime_url, JOB).await?;
@@ -2411,7 +2412,7 @@ fn postgres_chunk_disconnect_is_known_not_committed_before_commit() -> Result<()
             transaction.commit(counts, ChunkFaultProgress::NONE).await,
             Err(ChunkTransactionError::NotCommitted)
         );
-        assert!(business_items(&runtime_url, JOB).await?.is_empty());
+        assert_eq!(business_items(&runtime_url, JOB).await?.len(), 0);
         let durable = manager.load_committed_state(scope).await?;
         assert_eq!(
             durable.step_execution().metadata().counts(),

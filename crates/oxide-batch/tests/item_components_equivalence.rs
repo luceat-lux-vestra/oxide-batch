@@ -309,6 +309,6 @@ async fn typed_and_erased_decorated_pipelines_agree_on_stop() {
 
     assert_eq!(typed_report.outcome(), ChunkExecutionOutcome::Stopped);
     assert_eq!(erased_report.outcome(), ChunkExecutionOutcome::Stopped);
-    assert!(output_typed.lock().unwrap().is_empty());
-    assert!(output_erased.lock().unwrap().is_empty());
+    assert_eq!(output_typed.lock().unwrap().len(), 0);
+    assert_eq!(output_erased.lock().unwrap().len(), 0);
 }

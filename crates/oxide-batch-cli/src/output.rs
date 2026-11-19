@@ -552,7 +552,7 @@ mod tests {
         json_writer()
             .emit(&mut host, &response)
             .expect_err("the pipe is closed");
-        assert!(host.stdout_text().is_empty());
+        assert_eq!(host.stdout_text(), "");
     }
 
     #[test]
