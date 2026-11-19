@@ -2666,7 +2666,7 @@ fn skips_counters_and_fault_state_commit_with_the_chunk() -> Result<(), Box<dyn 
         assert_eq!(committed.fault_progress().skips().process(), 1);
         assert_eq!(committed.fault_progress().no_rollbacks(), 1);
         assert_eq!(committed.fault_progress().retries().write(), 1);
-        assert!(committed.fault_state().is_empty());
+        assert_eq!(committed.fault_state().len(), 0);
 
         let inherited = manager.inherited_progress(scope).await?;
         assert_eq!(inherited.read_ordinal(), 2);
