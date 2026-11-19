@@ -1006,8 +1006,7 @@ where
     let violations = observation
         .get("violations")
         .and_then(Value::as_array)
-        .map(Vec::as_slice)
-        .unwrap_or_default();
+        .map_or_default(Vec::as_slice);
     if !violations.is_empty() {
         for violation in violations {
             eprintln!("violation: {violation}");
@@ -1860,8 +1859,7 @@ async fn read_record(
 fn snapshot(invocations: &Arc<Mutex<BTreeMap<String, usize>>>) -> BTreeMap<String, usize> {
     invocations
         .lock()
-        .map(|counts| counts.clone())
-        .unwrap_or_default()
+        .map_or_default(|counts| counts.clone())
 }
 
 /// The partition keys the declared workload offers.
