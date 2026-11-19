@@ -143,7 +143,7 @@ decision changes it. Gate-B does not add enum variants.
 | Requirement/profile | Portable guarantee and non-guarantee |
 | --- | --- |
 | `AtomicSameResource` | one resource commit owns business mutation plus protected framework progress; no cross-resource claim |
-| `TransactionalMessage` | only the exact broker-native operations named by the adapter profile are atomic; unrelated repository work is not implied |
+| `TransactionalMessage` | only the exact broker-native operations named by the adapter profile are atomic; unrelated repository work is not implied; an unknown broker commit requires the adapter's certified safe-retry rule or reconciliation rather than a generic resend |
 | `Outbox` | the authorizing local mutation and outbound obligation commit together; later dispatch may duplicate |
 | `InboxDedup` | the stable inbound identity, protected local mutation, and consumed progress commit together; duplicate suppression lasts only for the certified marker window |
 | `IdempotentExternalEffect` | automatic replay is allowed only with the same certified remote key/request identity and within the provider contract's validity |
@@ -227,14 +227,31 @@ resource bounds. Merely having a table with a familiar name is insufficient.
 Runnable-core repository support requires none of the three. Plans that need
 one fail closed on an adapter that does not declare and certify it.
 
+The minimum semantic mapping is:
+
+- `IdempotentExternalEffect` requires effect-journal persistence plus a
+  certified remote idempotency contract;
+- `Outbox` requires Outbox persistence; effect-journal persistence is added
+  only when the selected composition also needs effect-level remote
+  reconciliation;
+- `InboxDedup` requires InboxDedup persistence plus a restart-stable inbound
+  identity in the authenticated producer/stream/message namespace;
+- `TransactionalMessage` relies on the named broker-native transaction
+  contract and does not imply unrelated repository persistence;
+- `AtLeastOnce` and `BestEffort` do not require an effect journal merely by
+  name, although an application may still choose one for provenance.
+
 ## Idempotency-key lifecycle and request identity
 
 The framework EffectId and a remote provider idempotency key are distinct.
 
-A remote key is bound to exactly one EffectId, provider/destination namespace,
-operation semantic class, and immutable canonical request identity within the
-provider's certified key domain. The binding is durable before exposure and
-cannot be rotated after exposure to escape an unknown outcome.
+A remote key is bound to exactly one EffectId and one immutable canonical
+request identity inside a reviewed provider key namespace. That namespace
+covers the logical application/tenant scope, provider/destination identity,
+non-secret provider account or credential scope, operation/endpoint semantic
+class, and environment/API version when the provider's uniqueness rules depend
+on them. The binding is durable before exposure and cannot be rotated after
+exposure to escape an unknown outcome.
 
 A key may be application-supplied under a validated deterministic contract or
 framework-derived from stable logical identity using a versioned,
@@ -310,8 +327,17 @@ request/response bodies, endpoints, SQL, business records, arbitrary remote
 error text, and unreviewed request digests.
 
 Effect list/query surfaces follow the existing explorer rules: keyset
-pagination, bounded page size and encoded response, immutable ordering identity,
-statement/service deadline, and no unbounded scans.
+pagination, immutable ordering identity, statement/service deadline, and no
+unbounded scans. The Gate-B diagnostic floor uses a default page size of 50, a
+maximum page size of 500, and a complete encoded-response ceiling of 256 KiB.
+Mutable-state filters are evaluated at page read time and do not imply a
+cross-page snapshot.
+
+EffectId may be used as a bounded correlation field in logs/spans, but EffectId,
+provider-key fingerprints, canonical request digests, OperationId, ActorRef,
+evidence digests, attempt identity, remote references, business identifiers,
+and arbitrary reason/error text must not become metric labels. Existing
+observability cardinality budgets remain authoritative.
 
 A mutating reconciliation request conceptually reuses the existing operator
 envelope: ActorRef, bounded ReasonCode, OperationId, RequestDigest,
@@ -319,8 +345,16 @@ ExpectedVersion, and an evidence/proposal digest. Deployment authentication and
 authorization remain outside the core.
 
 Accepted reconciliation appends immutable audit evidence and compare-and-swap
-advances local effect state in one local transaction. It does not blindly call
-the remote system and it does not silently rewrite job/execution lifecycle.
+advances local effect state in one local transaction. Rejected mutation
+attempts also append bounded audit evidence but do not change effect state.
+The audit record remains value-redacted and contains only reviewed bounded
+identity, version, disposition/outcome, reason, request/evidence digest, actor,
+and timing classes.
+
+The reconciliation transaction does not blindly call the remote system and it
+does not silently rewrite job/execution lifecycle. A later retry/dispatch is a
+separate action governed by the selected delivery requirements and the durable
+post-reconciliation state.
 
 Semantic dispositions may confirm applied/acknowledged, confirm not applied when
 the provider contract positively proves absence, keep the effect unresolved, or
