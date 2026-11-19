@@ -121,18 +121,17 @@ state that is neither reconstructible nor checkpointed.
 
 ## Transaction and delivery semantics
 
-For an enlisted same-resource PostgreSQL writer, one transaction contains:
+For an enlisted same-resource writer, one certified transaction contains the
+business writes and the framework progress they protect: affected counters,
+context/checkpoint, optimistic version, and any selected Outbox or InboxDedup
+record whose correctness depends on the same commit. All commit or roll back
+together. A separate metadata write before or after that business transaction
+does not satisfy the Outbox/Inbox atomicity contract.
 
-1. business writes for the chunk;
-2. affected durable counters;
-3. context and checkpoint;
-4. optimistic-lock version;
-5. relevant outbox/effect record when that mode is selected.
-
-All commit or roll back together. Telemetry and acknowledgement occur after
-commit and are not correctness authorities.
-
-Cross-resource modes are:
+Cross-resource delivery uses the semantic requirements defined by
+[RFC-0007](../rfcs/0007-repository-services-and-capabilities.md), the
+[repository model](../architecture/repository-and-transaction-model.md), and the
+[M8 Gate-B record](../project/m8-gate-b-durable-effect-delivery.md):
 
 - atomic same resource;
 - transactional message;
@@ -142,12 +141,21 @@ Cross-resource modes are:
 - at-least-once;
 - best effort with manual reconciliation.
 
-These capability names and plan-time validation are accepted by
-[RFC-0007](../rfcs/0007-repository-services-and-capabilities.md) and
-[ADR-0006](../architecture/decisions/0006-repository-capability-model.md). No
-generic exactly-once guarantee exists across arbitrary resources. Every adapter
-states acknowledgement, offset, commit, redelivery, and unknown-outcome
-behavior.
+These profiles are composable requirements, not seven mutually exclusive values
+or a strength ladder. For example, an Outbox obligation may later be delivered
+through an IdempotentExternalEffect profile. The current public
+`ChunkDeliveryMode` remains the existing compatibility surface until a later
+API decision.
+
+A durable cross-resource effect has one replay-stable logical EffectId and
+separate physical attempts. Durable-journal profiles record intent before
+exposure, commit an exposure-authorization fence before the remote call, retain
+acknowledgement/reconciliation evidence, and never infer remote absence from a
+timeout or missing acknowledgement.
+
+There is no generic exactly-once guarantee across arbitrary resources. Every
+adapter states acknowledgement, offset, commit, redelivery, idempotency-window,
+and unknown-outcome behavior. Telemetry is never correctness authority.
 
 ## Retry, skip, rollback, and repeat
 

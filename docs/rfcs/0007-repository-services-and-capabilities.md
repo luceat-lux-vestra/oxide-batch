@@ -35,7 +35,9 @@ capabilities rather than implied equivalence.
 - Negotiate schema, isolation, lock/CAS, transaction, size, migration, query,
   lease/fencing, and retention capabilities.
 - Define `AtomicSameResource`, `TransactionalMessage`, `Outbox`,
-  `InboxDedup`, `IdempotentExternalEffect`, `AtLeastOnce`, and `BestEffort`.
+  `InboxDedup`, `IdempotentExternalEffect`, `AtLeastOnce`, and `BestEffort`
+  as semantic delivery requirements/profiles. Gate-B permits explicit
+  composition; the vocabulary is not a requirement for one flat public enum.
 - Reject unsatisfied plan requirements; never silently weaken guarantees.
 - Keep PostgreSQL the reference/fast path while certifying additional
   relational adapters at M8.
@@ -63,10 +65,15 @@ changes follow pre-1.0 or stable deprecation policy.
 
 ## Metadata, restart, and transaction impact
 
-Capabilities and selected delivery mode become definition/plan-relevant.
+Capabilities and normalized delivery semantics that select or reinterpret
+durable state become definition/plan-relevant. Concrete endpoints, credentials,
+provider accounts, capacity knobs, and compatible deployment implementation
+choices remain runtime/deployment values and are revalidated by negotiation.
 Repository schema may add lease/fencing, effect journal, outbox/inbox, retention,
 and adapter metadata through forward migrations. Same-resource atomicity and
-unknown-commit handling remain unchanged.
+unknown-commit handling remain unchanged. The exact Gate-B fingerprint member
+set cannot change until the ADR-0009 follow-up required by the
+[Gate-B record](../project/m8-gate-b-durable-effect-delivery.md) is accepted.
 
 ## Migration and rollout
 
@@ -85,19 +92,36 @@ and retain restore rollback.
 - pagination/resource bounds and query plans;
 - capability mismatch plan/launch rejection.
 
-## Unresolved questions
+## M8 design reconciliation
 
-- Exact Tier-1 database set and external certification format.
-- Whether MongoDB metadata warrants a separate RFC.
-- Effect-journal schema and retention relation.
-- Which capabilities affect the definition fingerprint.
+The M8 design gates resolved the questions that were intentionally left open
+when this RFC was accepted:
+
+- [Gate-A](../project/m8-gate-a-repository-portability.md) owns database target
+  dispositions, repository capability negotiation, and adapter certification;
+  MongoDB is a distinct non-relational metadata-adapter profile rather than a
+  reason to introduce a second repository abstraction.
+- [Gate-B](../project/m8-gate-b-durable-effect-delivery.md) owns durable effect
+  identity, delivery requirements, idempotency, effect-journal/outbox/inbox
+  persistence semantics, unknown external outcomes, plan identity boundaries,
+  and the M9 handoff.
+- [Gate-C](../project/m8-gate-c-retention-portability.md) owns generic
+  retention/archive/export portability and restore evidence. Gate-B effect
+  evidence has an independent minimum survival floor and cannot be erased by an
+  ordinary history purge.
+
+Exact public API names, physical effect-journal schema, SQL, manifest member
+encoding, and adapter implementation remain implementation work rather than
+unresolved portable semantics.
 
 ## Decision
 
 **Accepted by the project owner on 2026-07-30.**
 
-The separated services, capability negotiation, and explicit delivery modes
-are the accepted target. PostgreSQL remains the current reference and only
-implemented durable adapter. Port migration requires a compatibility prototype
-and PostgreSQL behavior evidence; every additional adapter requires independent
-certification before a support claim.
+The separated services, capability negotiation, and explicit delivery
+semantics are the accepted target. PostgreSQL remains the reference fast path;
+additional adapters may implement the same ports only with independent
+capability-specific evidence and explicit limitations. A support claim remains
+release- and version-specific. Gate-A, Gate-B, and Gate-C are the M8 design
+records that specialize this RFC without creating a lowest-common-denominator
+database or delivery abstraction.
