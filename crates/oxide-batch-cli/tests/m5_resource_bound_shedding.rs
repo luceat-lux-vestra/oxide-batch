@@ -371,8 +371,7 @@ fn saturate_the_incident_buffer() -> Shed {
     }
 
     let retained = JobExecutionId::new(execution)
-        .map(|id| buffer.events_for(id).len())
-        .unwrap_or_default();
+        .map_or_default(|id| buffer.events_for(id).len());
 
     if retained > MAX_RETAINED_EVENTS_PER_EXECUTION {
         violations.push(format!(
@@ -414,8 +413,7 @@ fn overflow_the_operator_response() -> Shed {
         .map(|index| json!({ "id": index, "detail": row }))
         .collect::<Vec<_>>();
     let offered = serde_json::to_vec(&Value::Array(rows.clone()))
-        .map(|bytes| bytes.len())
-        .unwrap_or_default();
+        .map_or_default(|bytes| bytes.len());
 
     let mut host = TestHost::new();
     let writer = Writer::new(OutputForm::Json, false);
