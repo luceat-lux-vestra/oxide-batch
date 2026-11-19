@@ -352,6 +352,7 @@ impl ItemProcessor<i64, i64> for RecordingProcessor {
         item: &i64,
         _context: oxide_batch::ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         self.0.lock().unwrap().push(*item);
         Ok(ProcessOutcome::Item(*item))
     }
@@ -474,6 +475,7 @@ impl ItemWriter<i64> for RecordingWriter {
         items: &[i64],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         self.0.lock().unwrap().extend_from_slice(items);
         Ok(WriteOutcome::Written)
     }

@@ -35,6 +35,7 @@ impl ItemProcessor<i64, String> for FastPath {
         item: &i64,
         _context: oxide_batch::ProcessContext<'_>,
     ) -> Result<ProcessOutcome<String>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(format!("fast:{item}")))
     }
 }
@@ -51,6 +52,7 @@ impl ItemProcessor<i64, String> for SlowPath {
         item: &i64,
         _context: oxide_batch::ProcessContext<'_>,
     ) -> Result<ProcessOutcome<String>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(format!("{}:{item}", self.prefix)))
     }
 }
@@ -125,6 +127,7 @@ async fn classifying_processor_delegate_failure_propagates_unchanged() {
             _item: &i64,
             _context: oxide_batch::ProcessContext<'_>,
         ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+            std::future::ready(()).await;
             Err(ProcessorError::with_category(FailureCategory::Timeout))
         }
     }
@@ -154,6 +157,7 @@ impl ItemWriter<i64> for RecordingWriter {
         items: &[i64],
         _context: oxide_batch::WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         let mut seen = self.seen.lock().unwrap();
         for item in items {
             seen.push((self.label, *item));
@@ -305,6 +309,7 @@ impl ItemWriter<i64> for AlwaysFailsWriter {
         _items: &[i64],
         _context: oxide_batch::WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         Err(WriterError::with_category(FailureCategory::Timeout))
     }
 }

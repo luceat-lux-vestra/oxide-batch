@@ -146,6 +146,7 @@ impl ItemStream for FlagStream {
         &self,
         _context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         Ok(StreamOpenOutcome::Initial)
     }
 
@@ -153,6 +154,7 @@ impl ItemStream for FlagStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         ComponentStateEnvelope::encode(
             self.namespace.clone(),
             &1u8,
@@ -166,6 +168,7 @@ impl ItemStream for FlagStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         self.close_log.lock().unwrap().push(self.label);
         if self.fail_close {
             Err(StreamCloseError::with_category(FailureCategory::Timeout))

@@ -32,6 +32,7 @@ impl ItemProcessor<u64, u64> for Identity {
         item: &u64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<u64>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(*item))
     }
 }
@@ -44,6 +45,7 @@ impl ItemWriter<u64> for RecordingWriter {
         items: &[u64],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

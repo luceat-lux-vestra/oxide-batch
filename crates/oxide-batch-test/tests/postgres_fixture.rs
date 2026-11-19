@@ -28,6 +28,7 @@ struct OneItem(bool);
 
 impl ItemReader<i64> for OneItem {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
+        std::future::ready(()).await;
         Ok(if self.0 {
             self.0 = false;
             ReadOutcome::Item(1)
@@ -45,6 +46,7 @@ impl ItemProcessor<i64, i64> for Identity {
         item: &i64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(*item))
     }
 }
@@ -57,6 +59,7 @@ impl ItemWriter<i64> for NoopWriter {
         _items: &[i64],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         Ok(WriteOutcome::Written)
     }
 }
