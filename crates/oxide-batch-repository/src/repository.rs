@@ -1770,7 +1770,6 @@ impl RepositoryDescriptor {
     }
 
     /// Lists the declared capabilities in a stable order.
-    #[must_use]
     pub fn capabilities(&self) -> impl ExactSizeIterator<Item = RepositoryCapability> + '_ {
         self.capabilities.iter().copied()
     }

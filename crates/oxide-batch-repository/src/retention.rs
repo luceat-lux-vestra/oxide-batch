@@ -101,7 +101,6 @@ impl TerminalStatusSet {
     }
 
     /// Iterates the targeted statuses in stable order.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = BatchStatus> + '_ {
         self.0.iter().copied()
     }
