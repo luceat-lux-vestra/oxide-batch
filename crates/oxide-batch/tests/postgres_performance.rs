@@ -963,7 +963,7 @@ impl PartitionOccupancy {
 
     /// Returns the shortest and longest worker duration observed.
     fn skew(&self) -> (std::time::Duration, std::time::Duration) {
-        let durations = self.durations.lock().map(|d| d.clone()).unwrap_or_default();
+        let durations = self.durations.lock().map_or_default(|d| d.clone());
         let min = durations.iter().copied().min().unwrap_or_default();
         let max = durations.iter().copied().max().unwrap_or_default();
         (min, max)

@@ -292,7 +292,7 @@ fn every_declared_bound_is_classified() -> Result<(), Box<dyn Error>> {
                 resource.name,
             ))
         })?;
-        let values = declared.get(symbol).map(Vec::as_slice).unwrap_or_default();
+        let values = declared.get(symbol).map_or_default(Vec::as_slice);
         assert!(
             values.contains(&Some(ceiling)),
             "{} declares a ceiling of {ceiling} and {symbol} is {values:?} in the source",
@@ -312,8 +312,7 @@ fn every_declared_bound_is_classified() -> Result<(), Box<dyn Error>> {
         for dimension in &resource.dimensions {
             let values = declared
                 .get(&dimension.symbol)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
+                .map_or_default(Vec::as_slice);
             if values.iter().all(Option::is_none) {
                 // A duration constant, a call, or a cross-reference: the same
                 // limitation this module's own `declared_bounds` doc comment

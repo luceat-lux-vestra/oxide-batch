@@ -513,8 +513,7 @@ fn flaky_factory(
 fn invocation_snapshot(invocations: &Invocations) -> BTreeMap<String, usize> {
     invocations
         .lock()
-        .map(|counts| counts.clone())
-        .unwrap_or_default()
+        .map_or_default(|counts| counts.clone())
 }
 
 /// Reads the durable observation a partitioned attempt left behind.
