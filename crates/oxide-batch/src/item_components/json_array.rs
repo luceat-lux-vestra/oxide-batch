@@ -586,6 +586,7 @@ where
     Src: Read + Seek + Send,
 {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<I>, ReaderError> {
+        std::future::ready(()).await;
         self.ensure_started()?;
         if self.done {
             return Ok(ReadOutcome::EndOfInput);
@@ -646,6 +647,7 @@ impl crate::ItemStream for JsonArrayReaderStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         let codec = reader_position_codec();
         if let Some(envelope) = context.inherited_state() {
             let restored = envelope
@@ -663,6 +665,7 @@ impl crate::ItemStream for JsonArrayReaderStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         let codec = reader_position_codec();
         let current = *self.position.lock().unwrap_or_else(PoisonError::into_inner);
         ComponentStateEnvelope::encode(
@@ -678,6 +681,7 @@ impl crate::ItemStream for JsonArrayReaderStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         Ok(StreamCloseOutcome::Closed)
     }
 }
@@ -804,6 +808,7 @@ where
         items: &'a [I],
         context: WriteContext<'a>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         if context.stop_token().is_stop_requested() {
             return Ok(WriteOutcome::Stopped);
         }
@@ -846,6 +851,7 @@ impl crate::ItemStream for JsonArrayWriterStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         let codec = writer_position_codec();
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let (target, outcome) = if let Some(envelope) = context.inherited_state() {
@@ -898,6 +904,7 @@ impl crate::ItemStream for JsonArrayWriterStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         let codec = writer_position_codec();
         let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let current = WriterPosition {
@@ -918,6 +925,7 @@ impl crate::ItemStream for JsonArrayWriterStream {
         &self,
         context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         if context.outcome() == StreamRuntimeOutcome::Committed {
             let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
             let committed_bytes = state.committed_bytes;

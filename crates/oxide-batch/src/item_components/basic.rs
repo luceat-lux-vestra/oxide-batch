@@ -6,8 +6,6 @@
 //! exist to make the rest of the composition catalog practically usable and
 //! testable without every example standing up a resource-backed adapter.
 
-use std::future::Future;
-
 use crate::{
     ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
     WriteContext, WriteOutcome, WriterError,
@@ -52,16 +50,12 @@ where
     I: 'static,
     It: Iterator<Item = I> + Send,
 {
-    fn read<'a>(
-        &'a mut self,
-        _context: ReadContext<'a>,
-    ) -> impl Future<Output = Result<ReadOutcome<I>, ReaderError>> + Send + 'a {
-        async move {
-            Ok(self
-                .0
-                .next()
-                .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
-        }
+    async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<I>, ReaderError> {
+        std::future::ready(()).await;
+        Ok(self
+            .0
+            .next()
+            .map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
 }
 
@@ -90,17 +84,16 @@ impl<I> crate::ItemProcessor<I, I> for IdentityProcessor
 where
     I: Clone + Send + Sync,
 {
-    fn process<'a>(
-        &'a self,
-        item: &'a I,
-        context: ProcessContext<'a>,
-    ) -> impl Future<Output = Result<ProcessOutcome<I>, ProcessorError>> + Send + 'a {
-        async move {
-            if context.stop_token().is_stop_requested() {
-                return Ok(ProcessOutcome::Stopped);
-            }
-            Ok(ProcessOutcome::Item(item.clone()))
+    async fn process(
+        &self,
+        item: &I,
+        context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<I>, ProcessorError> {
+        std::future::ready(()).await;
+        if context.stop_token().is_stop_requested() {
+            return Ok(ProcessOutcome::Stopped);
         }
+        Ok(ProcessOutcome::Item(item.clone()))
     }
 }
 
@@ -132,16 +125,15 @@ impl<O> crate::ItemWriter<O> for NoopWriter
 where
     O: Send + Sync,
 {
-    fn write<'a>(
-        &'a self,
-        _items: &'a [O],
-        context: WriteContext<'a>,
-    ) -> impl Future<Output = Result<WriteOutcome, WriterError>> + Send + 'a {
-        async move {
-            if context.stop_token().is_stop_requested() {
-                return Ok(WriteOutcome::Stopped);
-            }
-            Ok(WriteOutcome::Written)
+    async fn write(
+        &self,
+        _items: &[O],
+        context: WriteContext<'_>,
+    ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
+        if context.stop_token().is_stop_requested() {
+            return Ok(WriteOutcome::Stopped);
         }
+        Ok(WriteOutcome::Written)
     }
 }

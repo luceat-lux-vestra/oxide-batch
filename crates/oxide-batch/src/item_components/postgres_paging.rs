@@ -219,6 +219,7 @@ impl crate::ItemStream for PostgresPagingReaderStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         let codec = paging_keyset_codec();
         if let Some(envelope) = context.inherited_state() {
             let restored = envelope
@@ -236,6 +237,7 @@ impl crate::ItemStream for PostgresPagingReaderStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         let codec = paging_keyset_codec();
         let current = self
             .position
@@ -255,6 +257,7 @@ impl crate::ItemStream for PostgresPagingReaderStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         // No server-side resource is ever held between pages, so there is
         // nothing to release here.
         Ok(StreamCloseOutcome::Closed)

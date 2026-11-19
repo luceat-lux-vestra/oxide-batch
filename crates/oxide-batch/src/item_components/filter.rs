@@ -3,7 +3,6 @@
 //! Filtering uses the existing [`ProcessOutcome::Filtered`] contract, never
 //! an error and never a magic output value.
 
-use std::future::Future;
 use std::marker::PhantomData;
 
 use crate::{ProcessContext, ProcessOutcome, ProcessorError};
@@ -72,20 +71,19 @@ where
     I: Clone + Send + Sync,
     F: ItemFilter<I>,
 {
-    fn process<'a>(
-        &'a self,
-        item: &'a I,
-        context: ProcessContext<'a>,
-    ) -> impl Future<Output = Result<ProcessOutcome<I>, ProcessorError>> + Send + 'a {
-        async move {
-            if context.stop_token().is_stop_requested() {
-                return Ok(ProcessOutcome::Stopped);
-            }
-            if self.predicate.keep(item) {
-                Ok(ProcessOutcome::Item(item.clone()))
-            } else {
-                Ok(ProcessOutcome::Filtered)
-            }
+    async fn process(
+        &self,
+        item: &I,
+        context: ProcessContext<'_>,
+    ) -> Result<ProcessOutcome<I>, ProcessorError> {
+        std::future::ready(()).await;
+        if context.stop_token().is_stop_requested() {
+            return Ok(ProcessOutcome::Stopped);
+        }
+        if self.predicate.keep(item) {
+            Ok(ProcessOutcome::Item(item.clone()))
+        } else {
+            Ok(ProcessOutcome::Filtered)
         }
     }
 }

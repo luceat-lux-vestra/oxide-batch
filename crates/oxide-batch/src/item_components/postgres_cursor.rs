@@ -311,6 +311,7 @@ impl crate::ItemStream for PostgresCursorReaderStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         let codec = cursor_keyset_codec();
         if let Some(envelope) = context.inherited_state() {
             let restored = envelope
@@ -328,6 +329,7 @@ impl crate::ItemStream for PostgresCursorReaderStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         let codec = cursor_keyset_codec();
         let current = self
             .position
