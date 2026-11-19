@@ -1200,7 +1200,10 @@ mod tests {
     #[test]
     fn exact_upload_artifact_contract_is_accepted() {
         let source = "uses: actions/upload-artifact@0123456789012345678901234567890123456789\nwith:\n  retention-days: 30\n";
-        assert!(super::verify_upload_workflow("workflow.yml", source, 30, 1).is_empty());
+        assert_eq!(
+            super::verify_upload_workflow("workflow.yml", source, 30, 1),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -1211,7 +1214,10 @@ mod tests {
             "uses: actions/upload-artifact@abcdefabcdefabcdefabcdefabcdefabcdefabcd\n",
             "  retention-days: 30\n",
         );
-        assert!(super::verify_upload_workflow("workflow.yml", source, 30, 2).is_empty());
+        assert_eq!(
+            super::verify_upload_workflow("workflow.yml", source, 30, 2),
+            Vec::<String>::new()
+        );
         assert!(
             super::verify_upload_workflow("workflow.yml", source, 30, 1)
                 .iter()

@@ -2872,9 +2872,9 @@ mod tests {
         ]);
         let (evidence, identity_violations) = collect_evidence(&scope, &runs);
         assert!(identity_violations.is_empty(), "{identity_violations:?}");
-        assert!(reconcile_denominator(&scope, &evidence).is_empty());
-        assert!(reconcile_stress(&scope, &evidence).is_empty());
-        assert!(reconcile_equivalence(&scope, &runs).is_empty());
+        assert_eq!(reconcile_denominator(&scope, &evidence), Vec::<String>::new());
+        assert_eq!(reconcile_stress(&scope, &evidence), Vec::<String>::new());
+        assert_eq!(reconcile_equivalence(&scope, &runs), Vec::<String>::new());
     }
 
     #[test]

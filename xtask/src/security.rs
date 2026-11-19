@@ -1432,7 +1432,7 @@ mod tests {
     #[test]
     fn a_valid_tls_observation_reconciles_clean() {
         let runs = runs_with("verify-full-tls", valid_tls_observation());
-        assert!(reconcile_tls(&scope(), &runs).is_empty());
+        assert_eq!(reconcile_tls(&scope(), &runs), Vec::<String>::new());
     }
 
     #[test]
@@ -1602,7 +1602,7 @@ mod tests {
     #[test]
     fn a_valid_role_matrix_observation_reconciles_clean() {
         let runs = runs_with("least-privilege-roles", valid_role_matrix_observation());
-        assert!(reconcile_classes(&scope(), &runs).is_empty());
+        assert_eq!(reconcile_classes(&scope(), &runs), Vec::<String>::new());
     }
 
     #[test]
@@ -1903,7 +1903,7 @@ mod tests {
     #[test]
     fn a_valid_redaction_observation_reconciles_clean() {
         let runs = runs_with("redaction-sweep", valid_redaction_observation());
-        assert!(reconcile_redaction(&scope(), &runs).is_empty());
+        assert_eq!(reconcile_redaction(&scope(), &runs), Vec::<String>::new());
     }
 
     #[test]

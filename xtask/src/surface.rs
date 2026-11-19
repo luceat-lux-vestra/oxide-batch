@@ -248,8 +248,7 @@ fn pages(root: &Path) -> Result<Vec<PathBuf>, String> {
 fn item_prefix(page: &Path) -> String {
     let name = page
         .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_default();
+        .map_or_default(|name| name.to_string_lossy().into_owned());
     let parts: Vec<&str> = name.trim_end_matches(".html").split('.').collect();
 
     match parts.as_slice() {
