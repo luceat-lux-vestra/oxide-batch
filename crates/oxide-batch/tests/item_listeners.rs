@@ -520,9 +520,18 @@ fn default_listener_methods_observe_without_failing() -> Result<(), Box<dyn Erro
     let outputs = vec!["value".to_owned()];
     assert!(block_on(set.before_write(&outputs, context)).is_ok());
     assert_eq!(block_on(set.after_write(1, &outputs, context)).len(), 0);
-    assert_eq!(block_on(set.on_write_error(1, &outputs, fault()?, context)).len(), 0);
-    assert_eq!(block_on(set.on_process_error(1, &input, fault()?, context)).len(), 0);
-    assert_eq!(block_on(set.on_skip_in_process(&input, fault()?, context)).len(), 0);
+    assert_eq!(
+        block_on(set.on_write_error(1, &outputs, fault()?, context)).len(),
+        0
+    );
+    assert_eq!(
+        block_on(set.on_process_error(1, &input, fault()?, context)).len(),
+        0
+    );
+    assert_eq!(
+        block_on(set.on_skip_in_process(&input, fault()?, context)).len(),
+        0
+    );
     Ok(())
 }
 

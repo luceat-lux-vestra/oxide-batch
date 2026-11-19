@@ -1662,9 +1662,15 @@ mod scan {
 
     #[test]
     fn a_constant_that_is_not_a_bound_is_not_read_as_one() {
-        assert_eq!(scan("pub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");").len(), 0);
+        assert_eq!(
+            scan("pub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");").len(),
+            0
+        );
         assert_eq!(scan("pub const CONFIG_VERSION: u64 = 1;").len(), 0);
-        assert_eq!(scan("impl S { pub const fn category(&self) -> ExitCategory { X } }").len(), 0);
+        assert_eq!(
+            scan("impl S { pub const fn category(&self) -> ExitCategory { X } }").len(),
+            0
+        );
         assert_eq!(scan("impl S { pub const ZERO: Self = Self(0); }").len(), 0);
         // A bound-shaped name on a catalogue is a list, not a quantity.
         assert_eq!(scan("pub const MAX_NAMES: &[&str] = &[\"a\"];").len(), 0);
