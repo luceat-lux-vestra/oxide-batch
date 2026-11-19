@@ -63,6 +63,7 @@ impl ItemProcessor<Record, Output> for OffsetProcessor {
         item: &Record,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<Output>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(Output {
             id: item.id,
             payload: item.payload.wrapping_add(self.offset),
