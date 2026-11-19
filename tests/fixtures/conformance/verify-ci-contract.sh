@@ -134,18 +134,21 @@ if any(re.match(r"^\s+include:$", line) for line in lines):
 expected_steps = {
     "conformance-shard-15": [
         "Check out repository",
+        "Resolve latest Rust Stable",
         "Fail closed if the execution contract drifts",
         "Run PostgreSQL 15 conformance shard",
         "Retain PostgreSQL 15 shard evidence",
     ],
     "conformance-shard-18": [
         "Check out repository",
+        "Resolve latest Rust Stable",
         "Fail closed if the execution contract drifts",
         "Run PostgreSQL 18 conformance shard",
         "Retain PostgreSQL 18 shard evidence",
     ],
     "conformance-deep-15": [
         "Check out repository",
+        "Resolve latest Rust Stable",
         "Fail closed if the execution contract drifts",
         "Download PostgreSQL 15 shard evidence",
         "Merge PostgreSQL 15 canonical conformance report",
@@ -153,6 +156,7 @@ expected_steps = {
     ],
     "conformance-deep-18": [
         "Check out repository",
+        "Resolve latest Rust Stable",
         "Fail closed if the execution contract drifts",
         "Download PostgreSQL 18 shard evidence",
         "Merge PostgreSQL 18 canonical conformance report",
@@ -171,6 +175,8 @@ for job, expected in expected_steps.items():
     if observed != expected:
         fail(f"{job} step inventory drifted: expected {expected}, observed {observed}")
 PY
+
+require_count "resolved Rust Stable setup in all four producer/merge jobs" "run: bash .github/scripts/ensure-stable-rust.sh" "4"
 
 shard_count="$(jq -er '.sharding.shard_count' "${contract}")"
 test "${shard_count}" = "2" || fail "this workflow contract requires exactly two shards"

@@ -989,6 +989,29 @@ fn contract_check_passes_on_the_canonical_workflow_and_script() -> Result<(), Bo
 }
 
 #[test]
+fn contract_check_fails_if_current_stable_preflight_is_removed() -> Result<(), Box<dyn Error>> {
+    let passed = run_conformance_contract_check(|sandbox| {
+        let workflow = sandbox.join(".github/workflows/m5-conformance.yml");
+        let source = fs::read_to_string(&workflow)?;
+        let preflight = "      - name: Resolve latest Rust Stable\n        run: bash .github/scripts/ensure-stable-rust.sh\n";
+        assert_eq!(
+            source.matches(preflight).count(),
+            4,
+            "every shard and merge job must have the latest-Stable preflight",
+        );
+        let mutated = source.replacen(preflight, "", 1);
+        assert_ne!(source, mutated, "the preflight was not found to mutate");
+        fs::write(&workflow, mutated)?;
+        Ok(())
+    })?;
+    assert!(
+        !passed,
+        "the conformance contract must reject a shard missing the required Stable preflight",
+    );
+    Ok(())
+}
+
+#[test]
 fn contract_check_fails_on_an_added_trigger() -> Result<(), Box<dyn Error>> {
     let passed = run_conformance_contract_check(|sandbox| {
         insert_after(

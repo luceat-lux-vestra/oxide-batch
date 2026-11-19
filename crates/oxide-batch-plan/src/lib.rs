@@ -698,7 +698,6 @@ impl CompiledFlowScope {
     }
 
     /// Iterates executable members in canonical logical-ID order.
-    #[must_use]
     pub fn members(&self) -> impl ExactSizeIterator<Item = &NodeId> {
         self.members.iter()
     }
@@ -1850,7 +1849,6 @@ impl CompiledExecutionPlan {
     }
 
     /// Iterates scoped component definitions in canonical scope/ID order.
-    #[must_use]
     pub fn scoped_components(&self) -> impl ExactSizeIterator<Item = &ScopedComponentDefinition> {
         self.scoped_components.values()
     }
@@ -1932,7 +1930,6 @@ impl CompiledExecutionPlan {
     /// The returned order is canonical and independent of builder declaration
     /// order. It is useful when binding executable components to an immutable
     /// plan before launch.
-    #[must_use]
     pub fn nodes(&self) -> impl ExactSizeIterator<Item = (&NodeId, &FlowNode)> {
         self.nodes.iter()
     }

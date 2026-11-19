@@ -16,6 +16,6 @@ note: required by a bound in `ItemReader::read::{anon_assoc#0}`
   --> src/chunk.rs
    |
    | pub trait ItemReader<I>: Send {
-   | ...
+...
    |     ) -> impl Future<Output = Result<ReadOutcome<I>, ReaderError>> + Send + 'a;
    |                                                                      ^^^^ required by this bound in `ItemReader::read::{anon_assoc#0}`
