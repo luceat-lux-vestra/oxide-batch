@@ -1859,7 +1859,7 @@ where
                 )
                 .await
                 {
-                    return report;
+                    return *report;
                 }
             }
             AttemptResult::RolledBack(ChunkExecutionOutcome::Completed) => {
@@ -2068,16 +2068,18 @@ async fn record_rolled_back_attempt<E>(
     context: ChunkListenerContext<'_>,
     state: &mut ExecutionState,
     emit: &mut E,
-) -> Result<(), ChunkExecutionReport>
+) -> Result<(), Box<ChunkExecutionReport>>
 where
     E: FnMut(ChunkRuntimeEvent),
 {
     state.rolled_back_chunks = match state.rolled_back_chunks.checked_increment() {
         Ok(count) => count,
         Err(_) => {
-            return Err(state
-                .drain()
-                .report(ChunkExecutionOutcome::Failed(ChunkFailure::Count), None));
+            return Err(Box::new(
+                state
+                    .drain()
+                    .report(ChunkExecutionOutcome::Failed(ChunkFailure::Count), None),
+            ));
         }
     };
     emit(ChunkRuntimeEvent::RolledBack(context.sequence()));
@@ -2087,15 +2089,17 @@ where
         .is_err();
     if let Some(first) = failures.first().copied() {
         state.listener_failures.extend(failures);
-        return Err(state
-            .drain()
-            .report(listener_failure_outcome(first.kind()), None));
+        return Err(Box::new(
+            state
+                .drain()
+                .report(listener_failure_outcome(first.kind()), None),
+        ));
     }
     if completion_policy_panicked {
-        return Err(state.drain().report(
+        return Err(Box::new(state.drain().report(
             ChunkExecutionOutcome::Failed(ChunkFailure::CompletionPolicyPanic),
             None,
-        ));
+        )));
     }
     Ok(())
 }

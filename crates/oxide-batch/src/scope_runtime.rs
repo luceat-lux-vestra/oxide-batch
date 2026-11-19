@@ -1541,7 +1541,7 @@ mod tests {
                 .await
                 .expect("provenance");
             inspect.rollback().await.expect("rollback");
-            assert!(provenance.is_empty());
+            assert_eq!(provenance, Vec::new());
         });
     }
 
@@ -2113,7 +2113,7 @@ mod tests {
                 .await
                 .expect("provenance");
             inspect.rollback().await.expect("rollback");
-            assert!(provenance.is_empty());
+            assert_eq!(provenance, Vec::new());
         });
     }
 
