@@ -39,6 +39,7 @@ struct ContractReader {
 
 impl ItemReader<u64> for ContractReader {
     async fn read(&mut self, context: ReadContext<'_>) -> Result<ReadOutcome<u64>, ReaderError> {
+        std::future::ready(()).await;
         if context.stop_token().is_stop_requested() {
             return Ok(ReadOutcome::Stopped);
         }
@@ -95,6 +96,7 @@ impl ItemProcessor<u64, String> for ContractProcessor {
         item: &u64,
         context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<String>, ProcessorError> {
+        std::future::ready(()).await;
         if context.stop_token().is_stop_requested() {
             return Ok(ProcessOutcome::Stopped);
         }

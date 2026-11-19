@@ -769,6 +769,7 @@ struct ChunkReader {
 
 impl ItemReader<i64> for ChunkReader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
+        std::future::ready(()).await;
         let item = self.items.pop_front();
         Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
@@ -782,6 +783,7 @@ impl ItemProcessor<i64, i64> for IdentityProcessor {
         item: &i64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(*item))
     }
 }

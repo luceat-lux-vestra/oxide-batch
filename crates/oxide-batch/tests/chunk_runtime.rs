@@ -109,6 +109,7 @@ impl Reader {
 
 impl ItemReader<i32> for Reader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
+        std::future::ready(()).await;
         match self.boundary {
             Boundary::Panic => panic!("reader secret"),
             Boundary::Error => Err(ReaderError::new()),
@@ -128,6 +129,7 @@ struct ShutdownRequestingReader {
 
 impl ItemReader<i32> for ShutdownRequestingReader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
+        std::future::ready(()).await;
         if let Some(source) = self.source.take() {
             source.request_stop();
         }
@@ -158,6 +160,7 @@ impl ItemProcessor<i32, i32> for Processor {
         item: &i32,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i32>, ProcessorError> {
+        std::future::ready(()).await;
         match self.boundary {
             Boundary::Panic => panic!("processor secret"),
             Boundary::Error => Err(ProcessorError::new()),
@@ -192,6 +195,7 @@ impl ItemWriter<i32> for Writer {
         items: &[i32],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         match self.boundary {
             Boundary::Panic => panic!("writer secret"),
             Boundary::Error => Err(WriterError::new()),
@@ -1356,6 +1360,7 @@ mod stream_contract {
             &self,
             context: StreamOpenContext<'_>,
         ) -> Result<StreamOpenOutcome, StreamOpenError> {
+            std::future::ready(()).await;
             self.open_calls.fetch_add(1, Ordering::SeqCst);
             let Some(envelope) = context.inherited_state() else {
                 return Ok(StreamOpenOutcome::Initial);
@@ -1371,6 +1376,7 @@ mod stream_contract {
             &self,
             _context: StreamUpdateContext<'_>,
         ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+            std::future::ready(()).await;
             Ok(encode_with(&codec(1, 1), 1))
         }
 
@@ -1378,6 +1384,7 @@ mod stream_contract {
             &self,
             _context: StreamCloseContext<'_>,
         ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            std::future::ready(()).await;
             Ok(StreamCloseOutcome::Closed)
         }
     }
@@ -1409,6 +1416,7 @@ mod stream_contract {
             &self,
             context: StreamOpenContext<'_>,
         ) -> Result<StreamOpenOutcome, StreamOpenError> {
+            std::future::ready(()).await;
             self.open_calls.fetch_add(1, Ordering::SeqCst);
             *self.observed_external.lock().expect("lock poisoned") = context
                 .inherited_state()
@@ -1420,6 +1428,7 @@ mod stream_contract {
             &self,
             _context: StreamUpdateContext<'_>,
         ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+            std::future::ready(()).await;
             Ok(external_with_versions(2, 2))
         }
 
@@ -1427,6 +1436,7 @@ mod stream_contract {
             &self,
             _context: StreamCloseContext<'_>,
         ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            std::future::ready(()).await;
             Ok(StreamCloseOutcome::Closed)
         }
     }
@@ -3427,6 +3437,7 @@ mod completion_policy_stream_ownership {
             &self,
             _context: StreamOpenContext<'_>,
         ) -> Result<StreamOpenOutcome, StreamOpenError> {
+            std::future::ready(()).await;
             self.opens.fetch_add(1, Ordering::SeqCst);
             Ok(StreamOpenOutcome::Initial)
         }
@@ -3435,6 +3446,7 @@ mod completion_policy_stream_ownership {
             &self,
             _context: StreamUpdateContext<'_>,
         ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+            std::future::ready(()).await;
             self.updates.fetch_add(1, Ordering::SeqCst);
             ComponentStateEnvelope::encode(
                 self.identity.clone(),
@@ -3449,6 +3461,7 @@ mod completion_policy_stream_ownership {
             &self,
             _context: StreamCloseContext<'_>,
         ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            std::future::ready(()).await;
             self.closes.fetch_add(1, Ordering::SeqCst);
             Ok(StreamCloseOutcome::Closed)
         }

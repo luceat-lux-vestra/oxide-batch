@@ -164,6 +164,7 @@ impl ItemStream for RecordingStream {
         &self,
         _context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         record(&self.trace, format!("{}.open", self.name));
         if self.fail_open {
             Err(StreamOpenError::new())
@@ -176,6 +177,7 @@ impl ItemStream for RecordingStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         record(&self.trace, format!("{}.update", self.name));
         Ok(minimal_envelope(self.update_namespace.unwrap_or(self.name)))
     }
@@ -184,6 +186,7 @@ impl ItemStream for RecordingStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         record(&self.trace, format!("{}.close", self.name));
         if self.fail_close {
             Err(StreamCloseError::new())
@@ -217,6 +220,7 @@ impl Reader {
 
 impl ItemReader<i32> for Reader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
+        std::future::ready(()).await;
         record(&self.trace, "reader.read");
         match self.boundary {
             Boundary::Error => Err(ReaderError::new()),
@@ -238,6 +242,7 @@ impl ItemProcessor<i32, i32> for Processor {
         item: &i32,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i32>, ProcessorError> {
+        std::future::ready(()).await;
         record(&self.trace, "processor.process");
         Ok(ProcessOutcome::Item(*item))
     }
@@ -254,6 +259,7 @@ impl ItemWriter<i32> for Writer {
         _items: &[i32],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         record(&self.trace, "writer.write");
         match self.boundary {
             Boundary::Error => Err(WriterError::new()),

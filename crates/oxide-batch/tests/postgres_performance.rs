@@ -478,6 +478,7 @@ impl ItemReader<ReferenceRow> for CsvRowReader {
         &mut self,
         _context: ReadContext<'_>,
     ) -> Result<ReadOutcome<ReferenceRow>, ReaderError> {
+        std::future::ready(()).await;
         Ok(self
             .rows
             .pop_front()
@@ -493,6 +494,7 @@ impl ItemProcessor<ReferenceRow, ReferenceRow> for ReferenceIdentityProcessor {
         item: &ReferenceRow,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<ReferenceRow>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(*item))
     }
 }

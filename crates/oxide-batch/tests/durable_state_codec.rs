@@ -508,6 +508,7 @@ struct Items(VecDeque<i32>);
 
 impl ItemReader<i32> for Items {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
+        std::future::ready(()).await;
         Ok(self
             .0
             .pop_front()
@@ -523,6 +524,7 @@ impl ItemProcessor<i32, i32> for Identity {
         item: &i32,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i32>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(*item))
     }
 }
@@ -535,6 +537,7 @@ impl ItemWriter<i32> for Sink {
         _items: &[i32],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         Ok(WriteOutcome::Written)
     }
 }

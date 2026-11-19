@@ -27,6 +27,7 @@ impl Source {
 
 impl ItemReader<i64> for Source {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
+        std::future::ready(()).await;
         Ok(self
             .0
             .pop_front()
@@ -42,6 +43,7 @@ impl ItemProcessor<i64, i64> for Double {
         item: &i64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(item * 2))
     }
 }
@@ -54,6 +56,7 @@ impl ItemWriter<i64> for Sink {
         items: &[i64],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         self.0
             .lock()
             .expect("sink lock poisoned")

@@ -292,6 +292,7 @@ impl ItemStream for RowCountStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         let Some(envelope) = context.inherited_state() else {
             return Ok(StreamOpenOutcome::Initial);
         };
@@ -307,6 +308,7 @@ impl ItemStream for RowCountStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         Err(StreamUpdateError::new())
     }
 
@@ -314,6 +316,7 @@ impl ItemStream for RowCountStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         Ok(StreamCloseOutcome::Closed)
     }
 }

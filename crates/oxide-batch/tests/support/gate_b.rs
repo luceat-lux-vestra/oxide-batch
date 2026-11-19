@@ -243,6 +243,7 @@ impl SequenceReader {
 
 impl ItemReader<i64> for SequenceReader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
+        std::future::ready(()).await;
         let next = self.next.load(Ordering::Acquire);
         if next >= self.len {
             return Ok(ReadOutcome::EndOfInput);
@@ -264,6 +265,7 @@ impl ItemStream for SequenceReaderStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         if let Some(inherited) = context.inherited_state() {
             let position = inherited
                 .decode::<u64>(&sequence_codec())
@@ -280,6 +282,7 @@ impl ItemStream for SequenceReaderStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         let position = self.next.load(Ordering::Acquire);
         ComponentStateEnvelope::encode(
             self.namespace.clone(),
@@ -294,6 +297,7 @@ impl ItemStream for SequenceReaderStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         Ok(StreamCloseOutcome::Closed)
     }
 }
@@ -307,6 +311,7 @@ impl ItemProcessor<i64, i64> for IdentityProcessor {
         item: &i64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(*item))
     }
 }
