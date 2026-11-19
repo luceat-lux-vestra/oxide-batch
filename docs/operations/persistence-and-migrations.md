@@ -405,12 +405,18 @@ Retention policy must define:
 - emitted audit evidence.
 
 No purge operation may target a running, stopping, or ambiguous execution.
+The [M8 Gate-C retention portability record](../project/m8-gate-c-retention-portability.md)
+freezes the cross-adapter rule: a held instance or an instance with any
+`STARTING`, `STARTED`, `STOPPING`, or `UNKNOWN` sibling is excluded as a whole.
+Planning is advisory; apply revalidates the exact digest, candidate versions,
+eligibility, sibling state, and holds in one bounded atomic batch.
 
-Archive and purge primitives are bounded, paginated, resumable, and
-idempotent where specified. They preserve legal/audit holds, definition and
+Archive and purge primitives are bounded, paginated or segmented, resumable,
+and idempotent where specified. They preserve legal/audit holds, definition and
 migration lineage required to interpret retained executions, and a
-verification summary. Export is not a successful archive until checksums,
-record counts, and restore/read evidence pass.
+verification summary. Export is not a successful archive until identity,
+checksums, record counts, compatibility, and representative read/reconciliation
+evidence pass. A partial export never authorizes purge.
 
 The M4 slice implements only holds and a guarded two-phase purge of terminal
 history on the PostgreSQL reference adapter, as specified by the
@@ -419,9 +425,16 @@ A purge plan returns bounded candidates and a plan digest; application
 re-validates eligibility and observed versions and rejects a stale plan
 without deleting anything. Purge requires the operator-writer role and its
 narrowly granted deletes; the runtime role cannot purge and the operator-reader
-role can plan but not apply. Archive packages, export/import, checksum
-verification of exported data, retention policy storage, scheduled purge, and
-cross-adapter portability remain M8 scope.
+role can plan but not apply. The retained PostgreSQL 15/18 M5 security campaign
+already exercises the corresponding least-privilege separation; Gate-C treats
+those names as backend-specific evidence for portable semantic roles.
+
+M8 Gate-C owns purge portability and the semantic profile that makes a neutral
+metadata package valid retention archive evidence. Archive/export is an
+optional framework operational service, backup/restore remains backend-private
+support tooling, and scheduled purge remains external orchestration. General
+neutral package encoding and metadata migration import/export remain M12 scope
+under RFC-0010.
 
 ## Metadata export and import
 
@@ -430,6 +443,16 @@ and schema versions, counts, checksums, lineage, bounded records, and redaction
 classification. It may represent definitions, parameters, instances,
 executions, step executions, statuses, counters, contexts with approved codecs,
 and retention metadata.
+
+RFC-0010/M12 owns the general package encoding, parser/importer, Spring mapping,
+and one-way migration tooling. When that package is used for retention archive,
+Gate-C additionally requires a bounded source-scope identity, immutable package
+or root digest, represented definition/context/checkpoint version identities,
+restorability class (`history_only` or `restart_restorable`), verification
+verdict, and retained archive evidence. Archive-required purge binds that
+evidence to the exact source selection and, when applicable, exact purge-plan
+digest; a stale plan requires reconciliation rather than silently reusing old
+authority.
 
 Export/import MUST:
 
@@ -440,7 +463,9 @@ Export/import MUST:
 - record mapping/tool versions and every omitted or transformed field;
 - fail closed on unknown context, definition, or status semantics;
 - reconcile counts, fingerprints, statuses, and representative explorer reads;
-- preserve a rollback path through backup/restore.
+- preserve a rollback path through backup/restore;
+- stream through explicit finite page/segment, record-count, byte-size, object-count, and deadline bounds rather than materializing unbounded history;
+- publish no completed-archive marker until all required verification succeeds.
 
 The [Spring Batch migration contract](../compatibility/spring-batch-migration.md)
 owns Spring-specific extraction and mapping. Spring Batch and OxideBatch never
