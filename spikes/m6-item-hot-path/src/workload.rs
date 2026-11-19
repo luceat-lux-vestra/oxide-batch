@@ -109,6 +109,7 @@ impl ItemReader<Record> for RangeReader {
         &mut self,
         _context: ReadContext<'_>,
     ) -> Result<ReadOutcome<Record>, ReaderError> {
+        std::future::ready(()).await;
         let index = self.next;
         match self.fault.filter(|fault| fault.fires_at(index)) {
             Some(Fault::Stop(_)) => return Ok(ReadOutcome::Stopped),
@@ -169,6 +170,7 @@ impl ItemProcessor<Record, Output> for ScalingProcessor {
         item: &Record,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<Output>, ProcessorError> {
+        std::future::ready(()).await;
         match self.fault.filter(|fault| fault.fires_at(item.id)) {
             Some(Fault::Stop(_)) => return Ok(ProcessOutcome::Stopped),
             Some(Fault::Fail(_)) => return Err(ProcessorError::new()),
@@ -241,6 +243,7 @@ impl ItemWriter<Output> for ChecksumWriter {
         items: &[Output],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         let ordinal = self.batches.load(Ordering::Relaxed) + 1;
         match self.fault.filter(|fault| fault.fires_at(ordinal)) {
             Some(Fault::Stop(_)) => return Ok(WriteOutcome::Stopped),
