@@ -1857,9 +1857,7 @@ async fn read_record(
 
 /// Takes a copy of the per-key invocation counts.
 fn snapshot(invocations: &Arc<Mutex<BTreeMap<String, usize>>>) -> BTreeMap<String, usize> {
-    invocations
-        .lock()
-        .map_or_default(|counts| counts.clone())
+    invocations.lock().map_or_default(|counts| counts.clone())
 }
 
 /// The partition keys the declared workload offers.
