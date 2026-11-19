@@ -38,10 +38,12 @@ All list/query operations are bounded, paginated, or streamed. Plan and runtime
 validation use versioned capability descriptors and reject unsupported
 requirements rather than weakening guarantees.
 
-Delivery modes distinguish atomic same-resource, transactional messaging,
-outbox, inbox/deduplication, idempotent external effects, at-least-once, and
-best effort. No universal distributed transaction or blanket exactly-once
-abstraction is provided.
+Delivery requirements/profiles distinguish atomic same-resource,
+transactional messaging, outbox, inbox/deduplication, idempotent external
+effects, at-least-once, and best effort. M8 Gate-B later froze these names as
+composable semantic requirements rather than a requirement for one flat public
+enum. No universal distributed transaction or blanket exactly-once abstraction
+is provided.
 
 Additional database adapters may enter the M8 support matrix only after
 independent contract, migration, crash, concurrency, backup/restore, and
@@ -50,8 +52,8 @@ resource evidence. Their existence cannot reduce the PostgreSQL fast path.
 ## Consequences
 
 - the target public/internal surface has more focused ports;
-- capabilities and selected delivery mode affect plan validation and may affect
-  definition identity;
+- capabilities and normalized delivery requirement/profile selections affect
+  plan validation and may affect definition identity;
 - every adapter carries a significant certification and support obligation;
 - at ADR acceptance time, PostgreSQL was the only implemented durable adapter;
 - future schemas may add effect, retention, lease, or capability metadata
@@ -73,6 +75,12 @@ boundary. It remains the adapter-owned atomic transaction aggregate; database
 portability may not use that deferral to add a generic SQL abstraction or
 silently expand optional capability families. Explorer remains a separate
 bounded read port.
+
+The canonical M8 durable-effect specialization is the
+[Gate-B record](../../project/m8-gate-b-durable-effect-delivery.md). It owns
+EffectId/effect-attempt semantics, composition, Outbox/Inbox/effect-journal
+atomicity, idempotency, unknown external outcomes, plan-identity classification,
+and the M9 handoff without changing this ADR's repository-service split.
 
 ## Alternatives considered
 

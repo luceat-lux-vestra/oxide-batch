@@ -30,7 +30,7 @@ Each adapter declares:
 - read/write direction, format and schema versions;
 - restart and checkpoint ownership;
 - ordering, partitioning, thread-safety, and reentrancy;
-- transaction participation and supported delivery modes;
+- transaction participation and supported Gate-B delivery requirements/profiles;
 - acknowledgement, offset, redelivery, rebalance, and poison-message behavior;
 - idempotency, deduplication, outbox/inbox, and effect-journal hooks;
 - bounded buffering, concurrency, rate, timeout, and cancellation behavior;
@@ -48,9 +48,34 @@ external publication occur relative to metadata commit. Broker-native
 semantics are preserved; they are not hidden behind a fictitious universal
 exactly-once interface.
 
-Duplicate and unknown outcomes are expected. Adapters expose stable effect or
-message IDs so applications can use idempotency, inbox/deduplication, outbox,
-or reconciliation.
+Duplicate and unknown outcomes are expected. Adapters expose or derive the
+stable message/effect identity required by the selected profile; payload
+equality is never a deduplication identity.
+
+## M8 Gate-B handoff
+
+The [M8 Gate-B record](../project/m8-gate-b-durable-effect-delivery.md) is the
+single shared correctness model for outbox, inbox/dedup, effect journals,
+idempotency, exposure ambiguity, and reconciliation. M9 adapters map concrete
+protocol mechanics to that model rather than defining independent delivery
+semantics.
+
+Each effect/message adapter profile names at least the identity scope,
+acknowledgement meaning, offset/cursor/visibility owner, exposure boundary,
+redelivery and duplicate behavior, exact native transaction scope,
+known/unknown outcome mapping, idempotency/dedup validity when claimed,
+required Gate-B persistence capabilities, checkpoint/ack ordering, resource
+bounds, redaction policy, and exact supported remote product/protocol versions.
+
+Broker-native "exactly once", publisher confirms, finite dedup windows,
+visibility timeouts, or HTTP status codes are accepted only for their certified
+scope. They never imply that unrelated repository progress committed atomically.
+
+Certification is profile-specific. Generic read/write tests or mocks do not
+certify delivery guarantees; claimed crash/redelivery/rebalance/ambiguity
+behavior requires retained evidence against the named real remote version.
+Object-storage and HTTP readers remain ordinary checkpoint/restart integrations
+unless they actually perform duplicate-sensitive external mutation.
 
 ## Support tiers
 

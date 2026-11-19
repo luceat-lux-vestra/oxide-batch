@@ -33,6 +33,7 @@ rows below; their supersession is recorded separately after the table.
 | --- | --- | --- | --- |
 | D-002 | [RFC-0002](../rfcs/0002-full-spring-batch-feature-ledger-parity.md) | Complete Spring Batch 6.x feature-ledger coverage replaces selected compatibility as the long-term target; existing verified semantics remain valid | 2026-07-30 |
 | D-003 | [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) | M5 becomes Embedded Core Production Preview and M14 becomes project-wide 1.0/GA | 2026-07-30 |
+| D-006 | [RFC-0007](../rfcs/0007-repository-services-and-capabilities.md) | The proven same-resource atomic baseline remains; cross-resource delivery expands from the initial at-least-once baseline to explicit capability-scoped transactional-message, Outbox, InboxDedup, idempotent-effect, at-least-once, and best-effort semantics without a blanket exactly-once claim | 2026-07-30 |
 | D-010 | [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) | Final stable support commitment moves from the M5 gate to the M14 1.0 RC gate | 2026-07-30 |
 | D-012 | [RFC-0001](../rfcs/0001-m5-preview-and-project-wide-1-0.md) | Distributed execution moves to M11 before project-wide 1.0; protocol implementation remains gated by proposed RFC-0009 | 2026-07-30 |
 | D-008 | [ADR-0014](../architecture/decisions/0014-floating-stable-toolchain-no-msrv.md) | Future development/CI follows floating Stable with no declared numeric MSRV; published 0.6.0 and earlier release support evidence remain historical | 2026-11-19 |

@@ -55,6 +55,14 @@ the whole instance is excluded.
 Definitions, definition lineage needed to interpret retained history, schema
 markers, and retained retention evidence are never implicit purge candidates.
 
+Gate-B durable-effect authority has an independent survival floor. A generic
+history purge must not cascade away an unresolved effect journal record, pending
+or exposed-unknown Outbox obligation, live InboxDedup marker, or the minimum
+identity/non-reuse/reconciliation tombstone required by the
+[Gate-B record](m8-gate-b-durable-effect-delivery.md). Effect/dedup cleanup is a
+separately authorized bounded operation whose own replay/collision window must
+have ended.
+
 ### Plan and apply
 
 Purge remains two phase.

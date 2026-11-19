@@ -214,12 +214,17 @@ correctness-relevant and must survive every adapter mapping.
 
 ## Durable-effect boundary
 
-Gate-B #644 owns outbox, inbox/dedup, effect journal, idempotent external
-effects, at-least-once/best-effort semantics, and unknown external-effect
-reconciliation.
+Gate-B #644 and the
+[Gate-B durable-effect record](m8-gate-b-durable-effect-delivery.md) own
+replay-stable effect identity, composable outbox/inbox/effect-journal and
+idempotent-external-effect requirements, at-least-once/best-effort semantics,
+and unknown external-effect reconciliation.
 
 Gate-A owns only the repository capability mechanism needed to persist or
-declare those primitives. A database adapter cannot invent a stronger delivery
+declare those primitives. Outbox/Inbox atomic records must be able to
+participate in the protected `ChunkTransaction` boundary where their profile
+requires business/progress atomicity; an independent metadata write is not a
+portable substitute. A database adapter cannot invent a stronger delivery
 guarantee than Gate-B defines.
 
 ## Retention boundary

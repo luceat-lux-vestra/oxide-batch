@@ -135,21 +135,66 @@ scan/delete path. Archive/export and retention scheduling are not inferred from
 those repository capabilities; the [M8 Gate-C record](../project/m8-gate-c-retention-portability.md)
 owns their separate operational-service boundary.
 
-## Transaction and delivery modes
+## Transaction and delivery requirements
 
-| Mode | Required behavior |
+The canonical M8 durable-effect semantics are frozen by the
+[Gate-B record](../project/m8-gate-b-durable-effect-delivery.md).
+
+| Requirement/profile | Required behavior |
 | --- | --- |
-| `AtomicSameResource` | business writes and progress commit in one resource transaction |
-| `TransactionalMessage` | broker transaction/ack/offset behavior is explicit and adapter-specific |
-| `Outbox` | business state and an outbox record commit together; delivery is separate and deduplicated |
-| `InboxDedup` | durable message/effect identity suppresses replayed input or commands |
-| `IdempotentExternalEffect` | application idempotency key and effect journal support safe retry/reconciliation |
-| `AtLeastOnce` | duplicates are possible and documented |
-| `BestEffort` | automatic reconciliation is unavailable; operator action may be required |
+| `AtomicSameResource` | business writes and protected progress commit in one resource transaction |
+| `TransactionalMessage` | only the exact broker transaction/ack/offset operations named by the adapter profile are atomic |
+| `Outbox` | the authorizing local mutation and outbound obligation commit together; later dispatch may duplicate |
+| `InboxDedup` | inbound identity, protected local mutation, and consumed progress commit together within the certified dedup window |
+| `IdempotentExternalEffect` | the same logical EffectId/request/key may replay only under the certified provider idempotency contract |
+| `AtLeastOnce` | retry is allowed with documented duplicate possibility |
+| `BestEffort` | no default automatic retry after possible exposure; reconciliation/operator action may be required |
+
+These names are semantic requirements/profiles, not a strength ladder and not a
+requirement for one flat public enum. Valid plans may compose requirements such
+as Outbox plus IdempotentExternalEffect or InboxDedup plus an Outbox obligation.
+The current `ChunkDeliveryMode` compatibility surface remains unchanged until a
+separate API decision.
 
 There is no universal transaction-manager abstraction and no generic
-cross-resource exactly-once claim. A component cannot advertise a stronger
-mode than its resource supplies.
+cross-resource exactly-once claim. A component or adapter cannot advertise a
+stronger profile than its local and remote resources actually certify.
+
+### Durable effect authority
+
+A cross-resource durable effect uses a replay-stable logical `EffectId` and
+separate physical attempts. Durable-journal profiles progress monotonically
+through `IntentDurable`, an `ExposureGranted` authorization fence,
+`Acknowledged` evidence, and `Terminal` local disposition. From
+`ExposureGranted` onward the remote effect is conservatively treated as
+possibly applied even if the process crashed before the actual network call.
+
+Repository-commit ambiguity and remote-effect ambiguity remain distinct.
+Repository ambiguity is resolved by a fresh repository read before another
+external call. Remote ambiguity is resolved only through the selected
+idempotency/query/reconciliation contract; timeout or missing acknowledgement
+never proves non-application.
+
+### Effect persistence and chunk atomicity
+
+Effect-journal persistence, Outbox persistence, and InboxDedup persistence are
+separate optional semantic capabilities even if an adapter shares their
+physical storage.
+
+Outbox and InboxDedup correctness is defined by the transaction that protects
+business work and framework progress. For chunk execution, their required
+records must be able to participate in the same `ChunkTransaction` boundary:
+an Outbox obligation commits with the authorizing business mutation and
+checkpoint/progress; an Inbox marker commits with the protected business effect
+and consumed progress. Implementing either only as an independent
+`JobRepository` unit of work before or after the business transaction does not
+satisfy the profile.
+
+The effect journal owns cross-resource intent/fencing/acknowledgement/
+reconciliation evidence. It records `ExposureGranted` before remote invocation
+and never treats its own missing acknowledgement as proof of remote absence.
+Exact port names and schema layout are implementation decisions deferred until
+the portable transaction shape is accepted.
 
 ## Same-resource path
 
