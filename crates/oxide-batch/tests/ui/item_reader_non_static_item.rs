@@ -18,6 +18,7 @@ impl<'buf> ItemReader<&'buf str> for BorrowingReader<'buf> {
         &mut self,
         _context: ReadContext<'_>,
     ) -> Result<ReadOutcome<&'buf str>, ReaderError> {
+        std::future::ready(()).await;
         let item = self.items.get(self.next).copied();
         self.next += 1;
         Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
