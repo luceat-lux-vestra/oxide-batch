@@ -320,7 +320,8 @@ service split, capability negotiation, and adapter certification.
 ### Model transactions and delivery honestly
 
 The preferred PostgreSQL path enlists business writes and checkpoint metadata
-in the same transaction. Other resources require explicit modes:
+in the same transaction. Other resources require explicit delivery
+requirements/profiles drawn from:
 
 - `AtomicSameResource`;
 - `TransactionalMessage`;
@@ -330,11 +331,15 @@ in the same transaction. Other resources require explicit modes:
 - `AtLeastOnce`;
 - `BestEffort`.
 
-A step declares its required delivery mode. Plan compilation rejects a
-component/adapter combination that cannot supply it. No abstraction may imply
-distributed ACID or generic exactly-once behavior. The repository/transaction
-and integration documents own these accepted target capabilities under
-RFC-0007 and ADR-0006.
+These names are not a strength ladder or a requirement for one flat enum.
+A plan declares the normalized requirements it needs, and valid compositions
+include Outbox plus IdempotentExternalEffect and InboxDedup protecting local
+work that also creates an Outbox obligation. Plan compilation rejects a
+component/adapter combination that cannot supply every selected requirement.
+No abstraction may imply distributed ACID or generic exactly-once behavior.
+RFC-0007, ADR-0006, and the
+[M8 Gate-B record](m8-gate-b-durable-effect-delivery.md) own these target
+semantics.
 
 ## Supporting model improvements
 

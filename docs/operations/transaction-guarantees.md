@@ -95,10 +95,15 @@ does not receive an enlisted `BusinessTransaction` remains outside the
 same-resource atomic boundary and follows its documented delivery mode, which
 may permit duplicates or require reconciliation.
 
-Future transaction modes include transactional messages, outbox, inbox/dedup,
-idempotent external effects, at-least-once, and best effort. Each adapter must
-publish its acknowledgement, redelivery, ordering, and unknown-outcome
-behavior before claiming one of those modes.
+The accepted cross-resource transaction/delivery requirements include
+transactional messages, outbox, inbox/dedup, idempotent external effects,
+at-least-once, and best effort. They are composable semantic profiles rather
+than an assumption that a step selects one value from one flat enum. The
+[M8 Gate-B record](../project/m8-gate-b-durable-effect-delivery.md) owns their
+EffectId, persistence, idempotency, unknown-outcome, and reconciliation
+semantics. Each adapter must publish its acknowledgement, redelivery, ordering,
+transaction scope, idempotency window, and unknown-outcome behavior before
+claiming a profile.
 
 ## Executable evidence
 

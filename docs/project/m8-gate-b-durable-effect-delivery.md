@@ -167,9 +167,17 @@ An effect journal persists EffectId state, canonical request identity,
 provider-key binding where required, attempt provenance, acknowledgement,
 reconciliation evidence, and terminal disposition.
 
-Durable intent exists before first external exposure. `ExposureGranted` is
-committed before the remote call. If that commit is unknown, no remote call may
-occur until a healthy repository read resolves the local state.
+Durable intent exists before first external exposure. If a local business or
+framework mutation creates an effect obligation whose correctness requires that
+the obligation cannot be lost, the intent and that authorizing mutation must
+commit in one certified local transaction, or the authorizing mutation/progress
+must remain uncommitted and unadvanced until durable intent is proven. A
+best-effort dual write to an independent journal cannot claim the stronger
+no-lost-obligation contract.
+
+`ExposureGranted` is committed before the remote call. If that commit is
+unknown, no remote call may occur until a healthy repository read resolves the
+local state.
 
 The effect journal owns local evidence only; it is not proof that the remote
 effect is present or absent.
@@ -201,6 +209,12 @@ repeat work.
 Concurrent deliveries serialize through durable uniqueness/CAS/transactional
 conflict. Matching identity plus matching request identity returns the recorded
 disposition. Matching identity with a conflicting request is rejected.
+
+For a non-transactional broker acknowledgement, ack/delete/offset advancement
+must not become durable before the Inbox marker, protected effect, and consumed
+progress commit when that ordering could lose the message. If that local commit
+is unknown, a fresh repository read resolves the Inbox authority before either
+reprocessing or acknowledging the delivery.
 
 ### Capability declaration
 
