@@ -1,5 +1,6 @@
 # OxideBatch
 
+[![GitHub Stars](https://img.shields.io/github/stars/luceat-lux-vestra/oxide-batch?style=flat&label=Stars)](https://www.star-history.com/?repos=luceat-lux-vestra%2Foxide-batch&type=date)
 [![CI](https://github.com/luceat-lux-vestra/oxide-batch/actions/workflows/ci.yml/badge.svg)](https://github.com/luceat-lux-vestra/oxide-batch/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
