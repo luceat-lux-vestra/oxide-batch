@@ -1518,15 +1518,13 @@ impl Scope {
         {
             fixtures.insert(
                 name.clone(),
-                variables
-                    .as_array()
-                    .map_or_default(|entries| {
-                        entries
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    }),
+                variables.as_array().map_or_default(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                }),
             );
         }
 
@@ -1673,7 +1671,10 @@ mod tests {
     #[test]
     fn identity_passes_when_matrix_env_is_unset_and_identity_is_recorded() {
         let observation = identified("15", "15.4 (Debian 15.4-1)");
-        assert_eq!(verify_matrix_identity("db-report", None, &observation), Vec::<String>::new());
+        assert_eq!(
+            verify_matrix_identity("db-report", None, &observation),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -2423,7 +2424,10 @@ mod tests {
     #[test]
     fn phase_cancellation_point_passes_when_both_observations_are_true() {
         let phase = phase_with_cancellation_point(true, true);
-        assert_eq!(reconcile_phase_cancellation_point("async", &phase), Vec::<String>::new());
+        assert_eq!(
+            reconcile_phase_cancellation_point("async", &phase),
+            Vec::<String>::new()
+        );
     }
 
     #[test]

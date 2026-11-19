@@ -1073,15 +1073,13 @@ impl Scope {
                     .map(|(name, variables)| {
                         (
                             name.clone(),
-                            variables
-                                .as_array()
-                                .map_or_default(|entries| {
-                                    entries
-                                        .iter()
-                                        .filter_map(Value::as_str)
-                                        .map(str::to_owned)
-                                        .collect()
-                                }),
+                            variables.as_array().map_or_default(|entries| {
+                                entries
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_owned)
+                                    .collect()
+                            }),
                         )
                     })
                     .collect()

@@ -267,11 +267,7 @@ fn find_cycle(
     current: &str,
     path: &mut Vec<String>,
 ) -> Option<String> {
-    for dependency in graph
-        .all
-        .get(current)
-        .map_or_default(Vec::as_slice)
-    {
+    for dependency in graph.all.get(current).map_or_default(Vec::as_slice) {
         if !graph.members.contains(dependency) {
             continue;
         }
