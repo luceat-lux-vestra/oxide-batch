@@ -57,7 +57,7 @@ backends look alike.
 | `ExecutionTransaction` | atomic metadata changes for one bounded operation |
 | `ChunkTransaction` | enlisted business writes plus checkpoint, context, counters, and version |
 | `RepositoryCapabilities` | adapter dialect, isolation, locking, schema, transaction, query, and migration features |
-| `RetentionRepository` | bounded archive, purge, hold, and verification primitives |
+| `RetentionRepository` | optional durable holds and bounded two-phase purge primitives; archive/export is a higher-level operational service/profile |
 
 Command and query interfaces are separate. Unbounded list APIs and
 implementation-driver types are prohibited at the facade boundary.
@@ -126,6 +126,14 @@ primitive/bootstrap subset; `run_runnable_core_repository_contract` is the
 portable execution contract. Neither contract alone is a release support
 badge: checkpoint/context payload restart and the applicable operational
 evidence remain additional support requirements.
+
+Retention is additive to runnable core. `InstanceHolds` and `RetentionPurge`
+are optional repository capabilities, and a purge profile necessarily includes
+holds because held-history exclusion is part of purge correctness. Missing
+retention capability fails explicitly rather than degrading to an unguarded
+scan/delete path. Archive/export and retention scheduling are not inferred from
+those repository capabilities; the [M8 Gate-C record](../project/m8-gate-c-retention-portability.md)
+owns their separate operational-service boundary.
 
 ## Transaction and delivery modes
 
