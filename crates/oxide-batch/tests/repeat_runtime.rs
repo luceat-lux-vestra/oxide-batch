@@ -1247,7 +1247,7 @@ async fn before_failure_unwinds_only_successfully_entered_interceptors()
                 }
                 other => panic!("unexpected repeat primary: {other:?}"),
             }
-            assert!(failure.secondary().is_empty());
+            assert_eq!(failure.secondary(), []);
         }
         other => panic!("unexpected flow outcome: {other:?}"),
     }
@@ -1441,7 +1441,7 @@ async fn contained_before_panic_is_primary_and_unwinds_prior_entries() -> Result
                 }
                 other => panic!("unexpected repeat primary: {other:?}"),
             }
-            assert!(failure.secondary().is_empty());
+            assert_eq!(failure.secondary(), []);
         }
         other => panic!("unexpected flow outcome: {other:?}"),
     }
@@ -1655,7 +1655,7 @@ async fn assert_policy_failure(
                 }
                 other => panic!("unexpected repeat primary: {other:?}"),
             }
-            assert!(failure.secondary().is_empty());
+            assert_eq!(failure.secondary(), []);
         }
         other => panic!("unexpected flow outcome: {other:?}"),
     }
@@ -1725,7 +1725,7 @@ async fn after_panic_is_primary_when_body_and_policy_succeed() -> Result<(), Box
                 }
                 other => panic!("unexpected repeat primary: {other:?}"),
             }
-            assert!(failure.secondary().is_empty());
+            assert_eq!(failure.secondary(), []);
         }
         other => panic!("unexpected flow outcome: {other:?}"),
     }

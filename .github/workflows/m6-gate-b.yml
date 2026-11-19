@@ -50,6 +50,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        run: bash .github/scripts/ensure-stable-rust.sh
+
       - name: Fail closed if the execution contract drifts
         run: ./tests/fixtures/gate-b/verify-ci-contract.sh .github/workflows/m6-gate-b.yml
 

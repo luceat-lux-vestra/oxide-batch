@@ -51,6 +51,7 @@ where
     It: Iterator<Item = I> + Send,
 {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<I>, ReaderError> {
+        std::future::ready(()).await;
         Ok(self
             .0
             .next()
@@ -88,6 +89,7 @@ where
         item: &I,
         context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<I>, ProcessorError> {
+        std::future::ready(()).await;
         if context.stop_token().is_stop_requested() {
             return Ok(ProcessOutcome::Stopped);
         }
@@ -128,6 +130,7 @@ where
         _items: &[O],
         context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         if context.stop_token().is_stop_requested() {
             return Ok(WriteOutcome::Stopped);
         }

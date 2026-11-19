@@ -87,6 +87,7 @@ struct OneItemReader(VecDeque<i64>);
 
 impl ItemReader<i64> for OneItemReader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
+        std::future::ready(()).await;
         Ok(self
             .0
             .pop_front()
@@ -102,6 +103,7 @@ impl ItemProcessor<i64, i64> for IdentityProcessor {
         item: &i64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(*item))
     }
 }
@@ -114,6 +116,7 @@ impl ItemProcessor<i64, i64> for FailingProcessor {
         _item: &i64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         Err(ProcessorError::with_category(
             FailureCategory::UserComponent,
         ))
@@ -128,6 +131,7 @@ impl ItemWriter<i64> for NoopWriter {
         _items: &[i64],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         Ok(WriteOutcome::Written)
     }
 }

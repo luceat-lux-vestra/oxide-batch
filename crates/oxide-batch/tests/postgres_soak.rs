@@ -1605,10 +1605,7 @@ async fn read_record(
 
 /// Reads the current per-partition invocation counts.
 fn snapshot(invocations: &Arc<Mutex<BTreeMap<String, usize>>>) -> BTreeMap<String, usize> {
-    invocations
-        .lock()
-        .map(|counts| counts.clone())
-        .unwrap_or_default()
+    invocations.lock().map_or_default(|counts| counts.clone())
 }
 
 /// Builds the identifying parameter that makes each cycle its own instance.

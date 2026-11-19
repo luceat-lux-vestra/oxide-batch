@@ -8,6 +8,7 @@ struct Counter(u64);
 
 impl ItemReader<u64> for Counter {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<u64>, ReaderError> {
+        std::future::ready(()).await;
         self.0 += 1;
         Ok(ReadOutcome::Item(self.0))
     }
@@ -17,6 +18,7 @@ struct Empty;
 
 impl ItemReader<u64> for Empty {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<u64>, ReaderError> {
+        std::future::ready(()).await;
         Ok(ReadOutcome::EndOfInput)
     }
 }

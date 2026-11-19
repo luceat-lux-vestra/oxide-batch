@@ -25,6 +25,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
       - name: Check diff hygiene
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -44,7 +48,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          toolchain_hash="$(bash .github/scripts/rust-cache-identity.sh)"
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
@@ -189,6 +193,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
@@ -199,7 +207,7 @@ jobs:
           set -euo pipefail
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          toolchain_hash="$(bash .github/scripts/rust-cache-identity.sh)"
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
@@ -290,6 +298,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
@@ -300,7 +312,7 @@ jobs:
           set -euo pipefail
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          toolchain_hash="$(bash .github/scripts/rust-cache-identity.sh)"
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
@@ -391,6 +403,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
@@ -401,7 +417,7 @@ jobs:
           set -euo pipefail
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          toolchain_hash="$(bash .github/scripts/rust-cache-identity.sh)"
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
@@ -492,6 +508,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
@@ -502,7 +522,7 @@ jobs:
           set -euo pipefail
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          toolchain_hash="$(bash .github/scripts/rust-cache-identity.sh)"
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
@@ -593,6 +613,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
 
       - name: Run final-only binary tests
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -614,6 +638,10 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
 
 
       - name: Check facade without optional adapters
@@ -700,6 +728,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
 
       - name: Package and dry-run every publishable crate
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -718,14 +750,20 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
-
-      - name: Install minimum supported Rust
+      - name: Resolve latest Rust Stable
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        run: rustup toolchain install 1.95.0 --profile minimal
+        run: bash .github/scripts/ensure-stable-rust.sh
 
-      - name: Check workspace on minimum supported Rust
+
+      # Preserve the historic required msrv context as a real Stable check;
+      # no numeric MSRV is declared by future package versions.
+      - name: Verify floating Rust Stable support contract
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        run: cargo +1.95.0 check --workspace --all-targets --all-features --locked
+        run: python3 .github/scripts/check_rust_stable_policy.py --self-test
+
+      - name: Check workspace on current Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: cargo +stable check --workspace --all-targets --all-features --locked
 
 
 
@@ -753,6 +791,10 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
 
       - name: Run pinned SQL Server runnable-core certification
         env:
@@ -784,6 +826,10 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
 
       - name: Run pinned MongoDB runnable-core certification
         env:
@@ -912,6 +958,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
       - name: Run database-neutral core repository certification on MySQL
         if: ${{ github.event.pull_request.draft == false }}
         run: >-
@@ -949,6 +999,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
       - name: Run database-neutral core repository certification on MariaDB
         if: ${{ github.event.pull_request.draft == false }}
         run: >-
@@ -972,6 +1026,10 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
 
 
       - name: Run TLS, roles, schema, and restore fixture
@@ -1014,6 +1072,10 @@ jobs:
           repository: ${{ github.repository }}
           ref: ${{ github.sha }}
           persist-credentials: false
+
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
 
 
       # Build the exact 14 integration-test executables plus --lib in one
@@ -1238,6 +1300,10 @@ jobs:
           ref: ${{ github.sha }}
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        run: bash .github/scripts/ensure-stable-rust.sh
+
 
       - name: Resolve protected-main compiler cache identity
         id: integration-cache-id
@@ -1248,7 +1314,7 @@ jobs:
           set -euo pipefail
           [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]]
 
-          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          toolchain_hash="$(bash .github/scripts/rust-cache-identity.sh)"
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]

@@ -104,6 +104,7 @@ impl ItemProcessor<BusinessRow, BusinessRow> for Identity {
         item: &BusinessRow,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<BusinessRow>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(item.clone()))
     }
 }
@@ -116,6 +117,7 @@ impl oxide_batch::ItemWriter<BusinessRow> for RecordingWriter {
         items: &[BusinessRow],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

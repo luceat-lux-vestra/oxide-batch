@@ -377,11 +377,10 @@ fn verify_remote_record(name: &str, entry: &Value) -> Vec<String> {
             "{name} records a remote verification that did not pass"
         ));
     }
-    for field in ["verified_at"] {
-        match remote.get(field).and_then(Value::as_str) {
-            Some(value) if !value.trim().is_empty() => {}
-            _ => violations.push(format!("{name} records no remote verification {field}")),
-        }
+    let field = "verified_at";
+    match remote.get(field).and_then(Value::as_str) {
+        Some(value) if !value.trim().is_empty() => {}
+        _ => violations.push(format!("{name} records no remote verification {field}")),
     }
     // Machine-readable results, not a prose method line. Each of these is one
     // thing the retention step confirmed, and the campaign requires all of them
@@ -872,14 +871,13 @@ fn campaign_closures(document: &Value) -> Result<BTreeMap<String, Campaign>, Str
         let required = entry
             .get("required_matrix")
             .and_then(Value::as_array)
-            .map(|points| {
+            .map_or_default(|points| {
                 points
                     .iter()
                     .filter_map(Value::as_str)
                     .map(str::to_owned)
                     .collect::<BTreeSet<_>>()
-            })
-            .unwrap_or_default();
+            });
         if required.is_empty() {
             return Err(format!("{name} requires no matrix point"));
         }

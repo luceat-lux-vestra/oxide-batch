@@ -150,7 +150,7 @@ impl Cursor {
         }
         let mut bytes = Vec::with_capacity(value.len() / 2);
         let raw = value.as_bytes();
-        for pair in raw.chunks_exact(2) {
+        for pair in raw.as_chunks::<2>().0 {
             let high = hex_value(pair[0]).ok_or(CursorError::CursorInvalid)?;
             let low = hex_value(pair[1]).ok_or(CursorError::CursorInvalid)?;
             bytes.push((high << 4) | low);

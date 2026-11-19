@@ -313,6 +313,7 @@ struct ScriptedReader {
 
 impl ItemReader<i32> for ScriptedReader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
+        std::future::ready(()).await;
         if self.fail {
             return Err(ReaderError::new());
         }
@@ -329,6 +330,7 @@ impl ItemProcessor<i32, i32> for DoublingProcessor {
         item: &i32,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i32>, ProcessorError> {
+        std::future::ready(()).await;
         let output = item * 2;
         Ok(ProcessOutcome::Item(output))
     }
@@ -342,6 +344,7 @@ impl ItemWriter<i32> for DiscardingWriter {
         _items: &[i32],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         Ok(WriteOutcome::Written)
     }
 }

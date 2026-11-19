@@ -1204,7 +1204,7 @@ fn strings(value: &Value, name: &str) -> Vec<String> {
     value
         .get(name)
         .and_then(Value::as_array)
-        .map(|entries| {
+        .map_or_default(|entries| {
             entries
                 .iter()
                 .map(|entry| {
@@ -1214,7 +1214,6 @@ fn strings(value: &Value, name: &str) -> Vec<String> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 /// The one finalized verdict consumed by the report and the command exit path.
@@ -1519,16 +1518,13 @@ impl Scope {
         {
             fixtures.insert(
                 name.clone(),
-                variables
-                    .as_array()
-                    .map(|entries| {
-                        entries
-                            .iter()
-                            .filter_map(Value::as_str)
-                            .map(str::to_owned)
-                            .collect()
-                    })
-                    .unwrap_or_default(),
+                variables.as_array().map_or_default(|entries| {
+                    entries
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                }),
             );
         }
 
@@ -1675,7 +1671,10 @@ mod tests {
     #[test]
     fn identity_passes_when_matrix_env_is_unset_and_identity_is_recorded() {
         let observation = identified("15", "15.4 (Debian 15.4-1)");
-        assert!(verify_matrix_identity("db-report", None, &observation).is_empty());
+        assert_eq!(
+            verify_matrix_identity("db-report", None, &observation),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -1702,27 +1701,30 @@ mod tests {
     fn identity_fails_on_missing_major_with_matrix_env_set() {
         let observation = json!({ "server_version": "15.4" });
         let violations = verify_matrix_identity("db-report", Some("15"), &observation);
-        assert!(!violations.is_empty());
+        assert_ne!(violations, Vec::<String>::new());
     }
 
     #[test]
     fn identity_fails_on_missing_server_version_with_matrix_env_set() {
         let observation = json!({ "postgres_major_version": "15" });
         let violations = verify_matrix_identity("db-report", Some("15"), &observation);
-        assert!(!violations.is_empty());
+        assert_ne!(violations, Vec::<String>::new());
     }
 
     #[test]
     fn identity_fails_when_observed_major_disagrees_with_expected() {
         let observation = identified("18", "18.0");
         let violations = verify_matrix_identity("db-report", Some("15"), &observation);
-        assert!(!violations.is_empty());
+        assert_ne!(violations, Vec::<String>::new());
     }
 
     #[test]
     fn identity_passes_when_observed_major_matches_expected() {
         let observation = identified("15", "15.4");
-        assert!(verify_matrix_identity("db-report", Some("15"), &observation).is_empty());
+        assert_eq!(
+            verify_matrix_identity("db-report", Some("15"), &observation),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -1922,7 +1924,7 @@ mod tests {
     fn complete_campaign_has_one_passing_verdict_everywhere() {
         let (scope, runs) = valid_campaign();
         let verdict = finalize_verdict(&scope, &runs, Vec::new(), Some("15"));
-        assert!(verdict.violations.is_empty());
+        assert_eq!(verdict.violations, Vec::<String>::new());
         let document = report_document(&scope, &std::collections::BTreeMap::new(), &runs, &verdict);
         assert_eq!(document["passed"], json!(true));
         assert_eq!(document["violations"], json!([]));
@@ -1941,7 +1943,7 @@ mod tests {
         let (scope, runs) = valid_campaign();
         let (manifest, violations) = execution_manifest(&scope.reports, &runs);
         assert_eq!(manifest, json!({ "tree": "same" }));
-        assert!(violations.is_empty());
+        assert_eq!(violations, Vec::<String>::new());
     }
 
     #[test]
@@ -1953,7 +1955,7 @@ mod tests {
                 .expect("synthetic observation is an object")
                 .remove("execution_manifest");
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -1963,7 +1965,7 @@ mod tests {
                 .get_mut("phase-separation")
                 .expect("present")["execution_manifest"] = serde_json::Value::Null;
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -1971,7 +1973,7 @@ mod tests {
         let verdict = mutated_verdict(|runs| {
             runs.observations.remove("phase-separation");
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -1981,7 +1983,7 @@ mod tests {
                 .get_mut("phase-separation")
                 .expect("present")["execution_manifest"] = json!({ "tree": "different" });
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -1994,7 +1996,7 @@ mod tests {
                     .remove("execution_manifest");
             }
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2007,7 +2009,7 @@ mod tests {
         let document = report_document(&scope, &std::collections::BTreeMap::new(), &runs, &verdict);
         assert_eq!(document["passed"], json!(false));
         assert_eq!(document["violations"], json!(&verdict.violations));
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
         let campaign = Campaign {
             violations: verdict.violations,
             report: std::path::PathBuf::from("unused.json"),
@@ -2027,7 +2029,7 @@ mod tests {
                 .expect("object")
                 .remove("postgres_major_version");
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2039,7 +2041,7 @@ mod tests {
                 .expect("object")
                 .remove("server_version");
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2050,7 +2052,7 @@ mod tests {
             observation["server_version"] = json!("18.0");
         }
         let verdict = finalize_verdict(&scope, &runs, Vec::new(), Some("15"));
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2060,7 +2062,7 @@ mod tests {
             assert_eq!(operator["passed"], json!(true));
             operator["checkpoint"]["preserved"] = json!(false);
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2069,7 +2071,7 @@ mod tests {
             runs.observations.get_mut("operator-stop").expect("present")["checkpoint"]["partition_statuses"] =
                 json!({});
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2083,7 +2085,7 @@ mod tests {
                 .expect("array");
             phases[2] = phases[0].clone();
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2096,7 +2098,7 @@ mod tests {
                 .expect("array")
                 .pop();
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2106,7 +2108,7 @@ mod tests {
                 .get_mut("phase-separation")
                 .expect("present")["phases"][0]["exit_status"] = json!("FAILED");
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     fn mutate_deadlines(runs: &mut Runs, mutate: impl FnOnce(&mut Vec<serde_json::Value>)) {
@@ -2124,7 +2126,7 @@ mod tests {
         let verdict = mutated_verdict(|runs| {
             mutate_deadlines(runs, |deadlines| deadlines.push(deadlines[0].clone()));
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2134,7 +2136,7 @@ mod tests {
                 deadlines.pop();
             });
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2146,7 +2148,7 @@ mod tests {
                 deadlines.push(extra);
             });
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2159,7 +2161,7 @@ mod tests {
                     .remove("deadline");
             });
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2169,7 +2171,7 @@ mod tests {
                 deadlines[0]["deadline_millis"] = json!(999);
             });
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2179,7 +2181,7 @@ mod tests {
                 deadlines[0]["held_tasks"] = json!(2);
             });
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2189,7 +2191,7 @@ mod tests {
                 .get_mut("deadline-unjoined")
                 .expect("present")["escalation"]["phases"][0]["count"] = json!(3);
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2202,7 +2204,7 @@ mod tests {
                 .expect("object")
                 .remove("phases");
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2212,7 +2214,7 @@ mod tests {
                 .get_mut("deadline-unjoined")
                 .expect("present")["escalation"]["phases"][0]["phase"] = json!("FlowDecision");
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2222,7 +2224,7 @@ mod tests {
                 .get_mut("deadline-unjoined")
                 .expect("present")["escalation"]["phases"][0]["count"] = json!("four");
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2235,7 +2237,7 @@ mod tests {
                     .remove("phases");
             });
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2257,7 +2259,7 @@ mod tests {
                 .get_mut("deadline-unjoined")
                 .expect("present")["escalation"]["escalated"] = json!(false);
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2269,7 +2271,7 @@ mod tests {
                 .expect("present")["escalation"];
             escalation["request_to_escalated_report_micros"] = json!(30_000_000);
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2282,7 +2284,7 @@ mod tests {
                     .remove("request_to_drain_complete_micros");
             });
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2292,7 +2294,7 @@ mod tests {
                 .get_mut("restart-after-cancellation")
                 .expect("present")["cancelled_attempt"]["committed_partitions"] = json!(0);
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2302,7 +2304,7 @@ mod tests {
                 .get_mut("restart-after-cancellation")
                 .expect("present")["cancelled_attempt"]["batch_status"] = json!("COMPLETED");
         });
-        assert!(!verdict.violations.is_empty());
+        assert_ne!(verdict.violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2320,7 +2322,7 @@ mod tests {
 
         let (major, violations) = postgres_major(&reports, &runs);
         assert_eq!(major.as_deref(), Some("15"));
-        assert!(violations.is_empty());
+        assert_eq!(violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2338,7 +2340,7 @@ mod tests {
 
         let (major, violations) = postgres_major(&reports, &runs);
         assert!(major.is_none());
-        assert!(!violations.is_empty());
+        assert_ne!(violations, Vec::<String>::new());
     }
 
     #[test]
@@ -2404,7 +2406,7 @@ mod tests {
             restart_observation(1),
         );
         let violations = reconcile_recovery(&runs);
-        assert!(violations.is_empty());
+        assert_eq!(violations, Vec::<String>::new());
     }
 
     /// A phase entry carrying both required cancellation-point booleans,
@@ -2422,7 +2424,10 @@ mod tests {
     #[test]
     fn phase_cancellation_point_passes_when_both_observations_are_true() {
         let phase = phase_with_cancellation_point(true, true);
-        assert!(reconcile_phase_cancellation_point("async", &phase).is_empty());
+        assert_eq!(
+            reconcile_phase_cancellation_point("async", &phase),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
@@ -2500,7 +2505,7 @@ mod tests {
             named_phase("blocking"),
             named_phase("transaction"),
         ];
-        assert!(reconcile_phase_set(&phases).is_empty());
+        assert_eq!(reconcile_phase_set(&phases), Vec::<String>::new());
     }
 
     #[test]

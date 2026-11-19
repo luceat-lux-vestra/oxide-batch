@@ -107,7 +107,7 @@
     "merge_timeout_minutes": 15
   },
   "git_blobs": {
-    "workflow": "a1aca935dfa4a1c2cc2cf1526edb6e6c35d527a9",
+    "workflow": "de6e0989f44e4489a151ad6507dc602fe46a962b",
     "script": "367726d79cf96f9a109261df313b9544e92d77de",
     "merge_script": "be228e6adcd1ff9981985b5179e553c494457f46"
   }

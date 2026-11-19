@@ -175,12 +175,15 @@ jobs:
           test "$RUNNER_ARCH" = "$EXPECTED_RUNNER_ARCH"
           test "$(uname -m)" = "$EXPECTED_UNAME_ARCH"
 
+      - name: Resolve latest Rust Stable
+        run: bash .github/scripts/ensure-stable-rust.sh
+
       - name: Resolve bounded compiler-cache identity
         id: cache-id
         shell: bash
         run: |
           set -euo pipefail
-          toolchain_hash="$(sha256sum rust-toolchain.toml | awk '{print $1}')"
+          toolchain_hash="$(bash .github/scripts/rust-cache-identity.sh)"
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]

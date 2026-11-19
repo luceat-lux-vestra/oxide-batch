@@ -67,7 +67,7 @@ fn reload(envelope: &FaultStateEnvelope) -> Result<FaultStateEnvelope, FaultStat
 #[test]
 fn empty_state_matches_the_published_migration_vector() -> Result<(), Box<dyn Error>> {
     let empty = FaultStateEnvelope::empty();
-    assert!(empty.is_empty());
+    assert_eq!(empty.len(), 0);
     assert_eq!(empty.checkpoint_digest(), &[0_u8; 32]);
     assert_eq!(
         String::from_utf8(empty.to_canonical_json()?)?,

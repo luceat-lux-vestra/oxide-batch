@@ -2,7 +2,7 @@
 name = "oxide-batch-m0-spikes"
 version = "0.0.0"
 edition.workspace = true
-rust-version.workspace = true
+
 license.workspace = true
 publish = false
 

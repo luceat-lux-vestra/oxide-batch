@@ -311,6 +311,6 @@ mod tests {
     fn diagnostics_carry_no_driver_text() {
         let diagnostic = repository_diagnostic(&RepositoryError::Unavailable);
         assert_eq!(diagnostic.code, "REPOSITORY_UNAVAILABLE");
-        assert!(!diagnostic.detail.is_empty());
+        assert_ne!(diagnostic.detail, "");
     }
 }

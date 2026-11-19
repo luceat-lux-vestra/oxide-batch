@@ -98,6 +98,7 @@ pub struct RangeReader {
 
 impl ItemReader<u64> for RangeReader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<u64>, ReaderError> {
+        std::future::ready(()).await;
         let current = self.position.load(Ordering::SeqCst);
         Ok(if current >= self.len {
             ReadOutcome::EndOfInput
@@ -122,6 +123,7 @@ impl ItemStream for RangeStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         if let Some(envelope) = context.inherited_state() {
             let position = envelope
                 .decode::<u64>(&self.codec)
@@ -138,6 +140,7 @@ impl ItemStream for RangeStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         let position = self.position.load(Ordering::SeqCst);
         ComponentStateEnvelope::encode(
             self.namespace.clone(),
@@ -152,6 +155,7 @@ impl ItemStream for RangeStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         Ok(StreamCloseOutcome::Closed)
     }
 }

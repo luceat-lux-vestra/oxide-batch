@@ -469,6 +469,7 @@ impl ObjectStoreCapability for InMemoryObjectStore {
         id: &ObjectIdentity,
         max_bytes: usize,
     ) -> Result<(Vec<u8>, ObjectMetadata), ObjectStoreError> {
+        std::future::ready(()).await;
         let objects = self.objects.lock().unwrap_or_else(PoisonError::into_inner);
         let stored = objects.get(id.as_str()).ok_or_else(|| {
             ObjectStoreError::with_category(FailureCategory::UnsupportedCapability)
@@ -492,6 +493,7 @@ impl ObjectStoreCapability for InMemoryObjectStore {
         id: &ObjectIdentity,
         bytes: &[u8],
     ) -> Result<ObjectMetadata, ObjectStoreError> {
+        std::future::ready(()).await;
         if bytes.len() > self.max_object_bytes {
             return Err(ObjectStoreError::with_category(FailureCategory::Invariant));
         }
@@ -514,6 +516,7 @@ impl ObjectStoreCapability for InMemoryObjectStore {
     }
 
     async fn stat(&self, id: &ObjectIdentity) -> Result<ObjectMetadata, ObjectStoreError> {
+        std::future::ready(()).await;
         let objects = self.objects.lock().unwrap_or_else(PoisonError::into_inner);
         let stored = objects.get(id.as_str()).ok_or_else(|| {
             ObjectStoreError::with_category(FailureCategory::UnsupportedCapability)
@@ -530,6 +533,7 @@ impl ObjectStoreCapability for InMemoryObjectStore {
         page_size: usize,
         continuation: Option<&ObjectListContinuation>,
     ) -> Result<ObjectListPage, ObjectStoreError> {
+        std::future::ready(()).await;
         let objects = self.objects.lock().unwrap_or_else(PoisonError::into_inner);
         let start_after = continuation.map(|token| token.0.clone());
         let mut entries = Vec::new();
@@ -656,6 +660,7 @@ where
     I: Clone + Send + 'static,
 {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<I>, ReaderError> {
+        std::future::ready(()).await;
         let mut ordinal = self.ordinal.lock().unwrap_or_else(PoisonError::into_inner);
         let index = usize::try_from(*ordinal).unwrap_or(usize::MAX);
         match self.items.get(index) {
@@ -684,6 +689,7 @@ impl ItemStream for ObjectItemReaderStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         let codec = object_read_position_codec();
         let fetched = self
             .fetched_version
@@ -722,6 +728,7 @@ impl ItemStream for ObjectItemReaderStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<crate::ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         let codec = object_read_position_codec();
         let item_ordinal = *self.ordinal.lock().unwrap_or_else(PoisonError::into_inner);
         let version_token = self
@@ -744,6 +751,7 @@ impl ItemStream for ObjectItemReaderStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         Ok(StreamCloseOutcome::Closed)
     }
 }
@@ -1181,6 +1189,7 @@ impl<C: ObjectStoreCapability> ItemStream for ObjectItemWriterStream<C> {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         Ok(StreamCloseOutcome::Closed)
     }
 }
@@ -1235,6 +1244,7 @@ where
         resource_ordinal: u32,
         delegate_identity: &ComponentStreamIdentity,
     ) -> Result<(Self::Writer, Self::Stream, StreamStateContract), MultiResourceOpenError> {
+        std::future::ready(()).await;
         let id = ObjectIdentity::new(resource.as_str())
             .map_err(|_| MultiResourceOpenError::new(resource_ordinal))?;
         let accumulator = Arc::new(AsyncMutex::new(WriteAccumulator {
@@ -1766,6 +1776,7 @@ mod tests {
             id: &ObjectIdentity,
             max_bytes: usize,
         ) -> Result<(Vec<u8>, ObjectMetadata), ObjectStoreError> {
+            std::future::ready(()).await;
             let len = *self
                 .declared_len
                 .lock()
@@ -1788,6 +1799,7 @@ mod tests {
             id: &ObjectIdentity,
             bytes: &[u8],
         ) -> Result<ObjectMetadata, ObjectStoreError> {
+            std::future::ready(()).await;
             self.declare(id.as_str(), bytes.len());
             Ok(ObjectMetadata::new(
                 u64::try_from(bytes.len()).unwrap_or(u64::MAX),
@@ -1796,6 +1808,7 @@ mod tests {
         }
 
         async fn stat(&self, id: &ObjectIdentity) -> Result<ObjectMetadata, ObjectStoreError> {
+            std::future::ready(()).await;
             let len = *self
                 .declared_len
                 .lock()
@@ -1816,6 +1829,7 @@ mod tests {
             _page_size: usize,
             _continuation: Option<&ObjectListContinuation>,
         ) -> Result<ObjectListPage, ObjectStoreError> {
+            std::future::ready(()).await;
             Ok(ObjectListPage {
                 entries: Vec::new(),
                 continuation: None,
@@ -2232,6 +2246,7 @@ mod tests {
                 &mut self,
                 _context: ReadContext<'_>,
             ) -> Result<ReadOutcome<u64>, ReaderError> {
+                std::future::ready(()).await;
                 Ok(self
                     .0
                     .pop_front()
@@ -2246,6 +2261,7 @@ mod tests {
                 item: &u64,
                 _context: ProcessContext<'_>,
             ) -> Result<ProcessOutcome<u64>, ProcessorError> {
+                std::future::ready(()).await;
                 Ok(ProcessOutcome::Item(*item))
             }
         }

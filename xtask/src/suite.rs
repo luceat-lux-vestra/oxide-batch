@@ -420,14 +420,14 @@ mod tests {
 
     #[test]
     fn program_output_is_never_read_as_a_result() {
-        assert!(
+        assert_eq!(
             record(&[
                 "test the operator command with two words ... ok",
                 "test something ... maybe",
                 "ok",
                 "testing the connection",
-            ])
-            .is_empty()
+            ]),
+            Vec::<(String, String)>::new()
         );
     }
 }

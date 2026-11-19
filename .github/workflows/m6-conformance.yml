@@ -50,6 +50,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Resolve latest Rust Stable
+        run: bash .github/scripts/ensure-stable-rust.sh
+
       - name: Fail closed if the execution contract drifts
         run: ./tests/fixtures/m6-conformance/verify-ci-contract.sh .github/workflows/m6-conformance.yml
 
@@ -99,6 +102,9 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Resolve latest Rust Stable
+        run: bash .github/scripts/ensure-stable-rust.sh
 
       - name: Fail closed if the execution contract drifts
         run: ./tests/fixtures/m6-conformance/verify-ci-contract.sh .github/workflows/m6-conformance.yml

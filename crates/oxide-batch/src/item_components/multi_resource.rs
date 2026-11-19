@@ -1895,6 +1895,7 @@ mod tests {
             &self,
             _context: StreamCloseContext<'_>,
         ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            std::future::ready(()).await;
             Ok(StreamCloseOutcome::Closed)
         }
     }
@@ -1915,6 +1916,7 @@ mod tests {
             delegate_identity: &ComponentStreamIdentity,
         ) -> Result<(Self::Reader, Self::Stream, StreamStateContract), MultiResourceOpenError>
         {
+            std::future::ready(()).await;
             if self.fail.contains(resource.as_str()) {
                 return Err(MultiResourceOpenError::new(resource_ordinal));
             }
@@ -2265,6 +2267,7 @@ mod tests {
             &self,
             context: StreamCloseContext<'_>,
         ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            std::future::ready(()).await;
             log_event(
                 &self.log,
                 LifecycleEvent::Close(self.resource.clone(), context.outcome().into()),
@@ -2294,6 +2297,7 @@ mod tests {
             delegate_identity: &ComponentStreamIdentity,
         ) -> Result<(Self::Reader, Self::Stream, StreamStateContract), MultiResourceOpenError>
         {
+            std::future::ready(()).await;
             if self.fail_open.contains(resource.as_str()) {
                 return Err(MultiResourceOpenError::new(resource_ordinal));
             }
@@ -2520,6 +2524,7 @@ mod tests {
                 &self,
                 context: StreamOpenContext<'_>,
             ) -> Result<StreamOpenOutcome, StreamOpenError> {
+                std::future::ready(()).await;
                 Ok(if context.inherited_state().is_some() {
                     StreamOpenOutcome::Restored
                 } else {
@@ -2530,6 +2535,7 @@ mod tests {
                 &self,
                 _context: StreamUpdateContext<'_>,
             ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+                std::future::ready(()).await;
                 // A buggy/malicious delegate that ignores the identity the
                 // multi-resource opener assigned it and reports a different
                 // namespace of its own choosing.
@@ -2545,6 +2551,7 @@ mod tests {
                 &self,
                 _context: StreamCloseContext<'_>,
             ) -> Result<StreamCloseOutcome, StreamCloseError> {
+                std::future::ready(()).await;
                 Ok(StreamCloseOutcome::Closed)
             }
         }
@@ -2562,6 +2569,7 @@ mod tests {
                 _delegate_identity: &ComponentStreamIdentity,
             ) -> Result<(Self::Reader, Self::Stream, StreamStateContract), MultiResourceOpenError>
             {
+                std::future::ready(()).await;
                 Ok((
                     VecItemReader {
                         items: vec![1],
@@ -2846,6 +2854,7 @@ mod tests {
             &self,
             _context: StreamCloseContext<'_>,
         ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            std::future::ready(()).await;
             Ok(StreamCloseOutcome::Closed)
         }
     }
@@ -2865,6 +2874,7 @@ mod tests {
             delegate_identity: &ComponentStreamIdentity,
         ) -> Result<(Self::Writer, Self::Stream, StreamStateContract), MultiResourceOpenError>
         {
+            std::future::ready(()).await;
             let committed_len = Arc::new(AsyncMutex::new(0));
             let writer = VecItemWriter {
                 resource: resource.as_str().to_owned(),
@@ -3176,6 +3186,7 @@ mod tests {
             &self,
             context: StreamCloseContext<'_>,
         ) -> Result<StreamCloseOutcome, StreamCloseError> {
+            std::future::ready(()).await;
             log_event(
                 &self.log,
                 LifecycleEvent::Close(self.resource.clone(), context.outcome().into()),
@@ -3205,6 +3216,7 @@ mod tests {
             delegate_identity: &ComponentStreamIdentity,
         ) -> Result<(Self::Writer, Self::Stream, StreamStateContract), MultiResourceOpenError>
         {
+            std::future::ready(()).await;
             if self.fail_open.contains(resource.as_str()) {
                 return Err(MultiResourceOpenError::new(resource_ordinal));
             }
@@ -3431,12 +3443,14 @@ mod tests {
                 &self,
                 _context: StreamOpenContext<'_>,
             ) -> Result<StreamOpenOutcome, StreamOpenError> {
+                std::future::ready(()).await;
                 Ok(StreamOpenOutcome::Initial)
             }
             async fn update(
                 &self,
                 _context: StreamUpdateContext<'_>,
             ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+                std::future::ready(()).await;
                 ComponentStateEnvelope::encode(
                     self.namespace.clone(),
                     &VecPosition(0),
@@ -3471,6 +3485,7 @@ mod tests {
                 delegate_identity: &ComponentStreamIdentity,
             ) -> Result<(Self::Writer, Self::Stream, StreamStateContract), MultiResourceOpenError>
             {
+                std::future::ready(()).await;
                 let writer = VecItemWriter {
                     resource: resource.as_str().to_owned(),
                     sink: Arc::clone(&self.sink),
@@ -3578,6 +3593,7 @@ mod tests {
                 &self,
                 context: StreamOpenContext<'_>,
             ) -> Result<StreamOpenOutcome, StreamOpenError> {
+                std::future::ready(()).await;
                 Ok(if context.inherited_state().is_some() {
                     StreamOpenOutcome::Restored
                 } else {
@@ -3588,6 +3604,7 @@ mod tests {
                 &self,
                 _context: StreamUpdateContext<'_>,
             ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+                std::future::ready(()).await;
                 ComponentStateEnvelope::encode(
                     self.wrong_namespace.clone(),
                     &VecPosition(0),
@@ -3600,6 +3617,7 @@ mod tests {
                 &self,
                 _context: StreamCloseContext<'_>,
             ) -> Result<StreamCloseOutcome, StreamCloseError> {
+                std::future::ready(()).await;
                 Ok(StreamCloseOutcome::Closed)
             }
         }
@@ -3618,6 +3636,7 @@ mod tests {
                 _delegate_identity: &ComponentStreamIdentity,
             ) -> Result<(Self::Writer, Self::Stream, StreamStateContract), MultiResourceOpenError>
             {
+                std::future::ready(()).await;
                 Ok((
                     VecItemWriter {
                         resource: resource.as_str().to_owned(),

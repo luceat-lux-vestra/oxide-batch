@@ -555,8 +555,7 @@ pub fn measurement_environment(worker_threads: usize) -> Value {
                          latencies and are not release figures.",
         "tokio_worker_threads": worker_threads,
         "available_parallelism": std::thread::available_parallelism()
-            .map(std::num::NonZeroUsize::get)
-            .unwrap_or_default(),
+            .map_or_default(std::num::NonZeroUsize::get),
         "os": env::consts::OS,
         "arch": env::consts::ARCH,
         "resident_kib": resident_kib(),

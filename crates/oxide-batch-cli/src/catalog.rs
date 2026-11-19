@@ -116,7 +116,6 @@ impl DefinitionCatalog {
     }
 
     /// Iterates registered job names in canonical order.
-    #[must_use]
     pub fn job_names(&self) -> impl ExactSizeIterator<Item = &JobName> {
         self.entries.keys()
     }

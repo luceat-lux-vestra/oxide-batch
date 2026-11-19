@@ -377,7 +377,7 @@ fn destructive_command_without_yes_exits_confirmation_required() {
     );
     assert_eq!(category, ExitCategory::ConfirmationRequired);
     assert!(host.stderr_text().contains("requires --yes"));
-    assert!(host.stdout_text().is_empty());
+    assert_eq!(host.stdout_text(), "");
 
     // Interactive and explicitly declined: still refused.
     let mut host = TestHost::new().interactive("no");
@@ -542,7 +542,7 @@ fn broken_stdout_stops_output_and_repeats_no_mutation() {
     let category = run(&mut host, &services, "job list --output json");
     assert_eq!(category, ExitCategory::OutputFailure);
     assert_eq!(host.writes, 1, "output was retried after a closed pipe");
-    assert!(host.stdout_text().is_empty());
+    assert_eq!(host.stdout_text(), "");
 }
 
 #[test]

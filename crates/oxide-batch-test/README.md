@@ -16,7 +16,8 @@ runtime, per the M6 design gate's
   implementation type.
 - It leaks no `SQLx`, Tokio runtime-handle, or other database-driver concrete
   type in its public API.
-- Its MSRV and release cadence track `oxide-batch`; it makes no independent
+- Its Rust Stable compiler-support policy and release cadence track
+  `oxide-batch`; it makes no independent numeric MSRV claim or
   stability promise while both are pre-1.0.
 
 See the crate documentation for the full harness catalog: reusable adapter

@@ -186,7 +186,7 @@ impl Graph {
         let mut seen = BTreeSet::new();
         let mut pending = vec![root.to_owned()];
         while let Some(id) = pending.pop() {
-            for dependency in self.shipped.get(&id).map(Vec::as_slice).unwrap_or_default() {
+            for dependency in self.shipped.get(&id).map_or_default(Vec::as_slice) {
                 if seen.insert(dependency.clone()) {
                     pending.push(dependency.clone());
                 }
@@ -267,12 +267,7 @@ fn find_cycle(
     current: &str,
     path: &mut Vec<String>,
 ) -> Option<String> {
-    for dependency in graph
-        .all
-        .get(current)
-        .map(Vec::as_slice)
-        .unwrap_or_default()
-    {
+    for dependency in graph.all.get(current).map_or_default(Vec::as_slice) {
         if !graph.members.contains(dependency) {
             continue;
         }
@@ -414,7 +409,7 @@ mod tests {
             1,
         );
 
-        assert!(check_forbidden(&graph).is_empty());
+        assert_eq!(check_forbidden(&graph), Vec::<String>::new());
     }
 
     #[test]
@@ -424,7 +419,7 @@ mod tests {
             1,
         );
 
-        assert!(check_forbidden(&graph).is_empty());
+        assert_eq!(check_forbidden(&graph), Vec::<String>::new());
     }
 
     #[test]
@@ -437,7 +432,7 @@ mod tests {
             2,
         );
 
-        assert!(check_forbidden(&graph).is_empty());
+        assert_eq!(check_forbidden(&graph), Vec::<String>::new());
 
         let inverted = graph_with_plan();
 
@@ -484,7 +479,7 @@ mod tests {
             2,
         );
 
-        assert!(check_cycles(&graph).is_empty());
+        assert_eq!(check_cycles(&graph), Vec::<String>::new());
     }
 
     #[test]

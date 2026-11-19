@@ -104,8 +104,7 @@ pub fn run() -> Result<Verification, String> {
     let document_dir = root
         .join(DOCUMENT)
         .parent()
-        .map(Path::to_path_buf)
-        .unwrap_or_default();
+        .map_or_default(Path::to_path_buf);
 
     let mut violations = Vec::new();
     violations.extend(verify_criterion_table(&source));

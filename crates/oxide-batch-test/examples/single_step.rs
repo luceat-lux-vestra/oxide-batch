@@ -15,6 +15,7 @@ struct Source(VecDeque<i64>);
 
 impl ItemReader<i64> for Source {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
+        std::future::ready(()).await;
         Ok(self
             .0
             .pop_front()
@@ -30,6 +31,7 @@ impl ItemProcessor<i64, i64> for Square {
         item: &i64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(item * item))
     }
 }
@@ -42,6 +44,7 @@ impl ItemWriter<i64> for Sink {
         items: &[i64],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         println!("wrote {items:?}");
         Ok(WriteOutcome::Written)
     }

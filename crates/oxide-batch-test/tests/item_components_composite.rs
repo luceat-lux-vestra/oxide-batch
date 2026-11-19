@@ -160,6 +160,7 @@ impl ItemProcessor<i64, i64> for Double {
         item: &i64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(item * 2))
     }
 }
@@ -302,6 +303,7 @@ impl ItemWriter<i64> for FailingWriter {
         _items: &[i64],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         Err(WriterError::with_category(FailureCategory::Timeout))
     }
 }
@@ -314,6 +316,7 @@ impl ItemWriter<i64> for PanicOnTouchWriter {
         _items: &[i64],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         panic!("fan-out writer must not invoke a delegate after an earlier one failed");
     }
 }

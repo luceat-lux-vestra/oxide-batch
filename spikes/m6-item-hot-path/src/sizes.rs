@@ -61,6 +61,7 @@ impl<const N: usize> ItemReader<Tagged<N>> for TaggedReader<N> {
         &mut self,
         _context: ReadContext<'_>,
     ) -> Result<ReadOutcome<Tagged<N>>, ReaderError> {
+        std::future::ready(()).await;
         if self.next >= self.end {
             return Ok(ReadOutcome::EndOfInput);
         }
@@ -85,6 +86,7 @@ impl<const N: usize> ItemProcessor<Tagged<N>, Tagged<N>> for TaggedProcessor<N> 
         item: &Tagged<N>,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<Tagged<N>>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(Tagged {
             id: item.id,
             payload: item
@@ -122,6 +124,7 @@ impl<const N: usize> ItemWriter<Tagged<N>> for TaggedWriter<N> {
         items: &[Tagged<N>],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         let mut fold = 0_u64;
         for output in items {
             fold = fold.rotate_left(7).wrapping_add(output.payload ^ output.id);

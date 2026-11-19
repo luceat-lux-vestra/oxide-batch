@@ -769,6 +769,7 @@ struct ChunkReader {
 
 impl ItemReader<i64> for ChunkReader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i64>, ReaderError> {
+        std::future::ready(()).await;
         let item = self.items.pop_front();
         Ok(item.map_or(ReadOutcome::EndOfInput, ReadOutcome::Item))
     }
@@ -782,6 +783,7 @@ impl ItemProcessor<i64, i64> for IdentityProcessor {
         item: &i64,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i64>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(*item))
     }
 }
@@ -2166,10 +2168,11 @@ fn committed_chunk_advances_checkpoint() -> Result<(), Box<dyn Error>> {
             oxide_batch::ExecutionCounts::new(0, 0, 0, 0, 0, 1)
         );
         assert_ne!(durable.checkpoint(), &chunk_checkpoint(2)?);
-        assert!(
+        assert_eq!(
             business_items(&runtime_url, "postgres_chunk_rollback")
                 .await?
-                .is_empty()
+                .len(),
+            0
         );
 
         let (ack_failed, manager) =
@@ -2233,7 +2236,7 @@ fn writer_failure_rolls_back_business_and_checkpoint() -> Result<(), Box<dyn Err
             oxide_batch::ExecutionCounts::new(0, 0, 0, 0, 0, 1)
         );
         assert_ne!(durable.checkpoint(), &chunk_checkpoint(2)?);
-        assert!(business_items(&runtime_url, JOB).await?.is_empty());
+        assert_eq!(business_items(&runtime_url, JOB).await?.len(), 0);
 
         repository.close().await?;
         remove_job_rows(&runtime_url, JOB).await?;
@@ -2409,7 +2412,7 @@ fn postgres_chunk_disconnect_is_known_not_committed_before_commit() -> Result<()
             transaction.commit(counts, ChunkFaultProgress::NONE).await,
             Err(ChunkTransactionError::NotCommitted)
         );
-        assert!(business_items(&runtime_url, JOB).await?.is_empty());
+        assert_eq!(business_items(&runtime_url, JOB).await?.len(), 0);
         let durable = manager.load_committed_state(scope).await?;
         assert_eq!(
             durable.step_execution().metadata().counts(),
@@ -2663,7 +2666,7 @@ fn skips_counters_and_fault_state_commit_with_the_chunk() -> Result<(), Box<dyn 
         assert_eq!(committed.fault_progress().skips().process(), 1);
         assert_eq!(committed.fault_progress().no_rollbacks(), 1);
         assert_eq!(committed.fault_progress().retries().write(), 1);
-        assert!(committed.fault_state().is_empty());
+        assert_eq!(committed.fault_state().len(), 0);
 
         let inherited = manager.inherited_progress(scope).await?;
         assert_eq!(inherited.read_ordinal(), 2);

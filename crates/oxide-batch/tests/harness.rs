@@ -86,7 +86,7 @@ fn event_capture_preserves_order_and_bounded_receive_never_waits_forever()
     assert_eq!(snapshot[0].name(), "execution.created");
     assert_eq!(snapshot[1].detail(), "id=41");
     events.clear();
-    assert!(events.snapshot().is_empty());
+    assert_eq!(events.snapshot().len(), 0);
 
     let timeout = BoundedTimeout::new(Duration::from_millis(10))?;
     assert_eq!(timeout.duration(), Duration::from_millis(10));
@@ -118,7 +118,7 @@ fn matrix_rows_are_valid_unique_and_reported_with_executable_names() -> Result<(
         assert_eq!(report.scenario_name(), *name);
         assert_eq!(report.status(), ScenarioStatus::Passed);
         assert_eq!(report.seed(), 17);
-        assert!(report.events().is_empty());
+        assert_eq!(report.events().len(), 0);
     }
     assert_eq!(ScenarioId::new("job-instance-001"), Err(ScenarioIdError));
     assert_eq!(

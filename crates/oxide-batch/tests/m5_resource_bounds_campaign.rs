@@ -292,7 +292,7 @@ fn every_declared_bound_is_classified() -> Result<(), Box<dyn Error>> {
                 resource.name,
             ))
         })?;
-        let values = declared.get(symbol).map(Vec::as_slice).unwrap_or_default();
+        let values = declared.get(symbol).map_or_default(Vec::as_slice);
         assert!(
             values.contains(&Some(ceiling)),
             "{} declares a ceiling of {ceiling} and {symbol} is {values:?} in the source",
@@ -312,8 +312,7 @@ fn every_declared_bound_is_classified() -> Result<(), Box<dyn Error>> {
         for dimension in &resource.dimensions {
             let values = declared
                 .get(&dimension.symbol)
-                .map(Vec::as_slice)
-                .unwrap_or_default();
+                .map_or_default(Vec::as_slice);
             if values.iter().all(Option::is_none) {
                 // A duration constant, a call, or a cross-reference: the same
                 // limitation this module's own `declared_bounds` doc comment
@@ -1663,13 +1662,19 @@ mod scan {
 
     #[test]
     fn a_constant_that_is_not_a_bound_is_not_read_as_one() {
-        assert!(scan("pub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");").is_empty());
-        assert!(scan("pub const CONFIG_VERSION: u64 = 1;").is_empty());
-        assert!(scan("impl S { pub const fn category(&self) -> ExitCategory { X } }").is_empty());
-        assert!(scan("impl S { pub const ZERO: Self = Self(0); }").is_empty());
+        assert_eq!(
+            scan("pub const VERSION: &str = env!(\"CARGO_PKG_VERSION\");").len(),
+            0
+        );
+        assert_eq!(scan("pub const CONFIG_VERSION: u64 = 1;").len(), 0);
+        assert_eq!(
+            scan("impl S { pub const fn category(&self) -> ExitCategory { X } }").len(),
+            0
+        );
+        assert_eq!(scan("impl S { pub const ZERO: Self = Self(0); }").len(), 0);
         // A bound-shaped name on a catalogue is a list, not a quantity.
-        assert!(scan("pub const MAX_NAMES: &[&str] = &[\"a\"];").is_empty());
-        assert!(scan("pub const MAX_LABEL: &str = \"other\";").is_empty());
+        assert_eq!(scan("pub const MAX_NAMES: &[&str] = &[\"a\"];").len(), 0);
+        assert_eq!(scan("pub const MAX_LABEL: &str = \"other\";").len(), 0);
     }
 
     #[test]

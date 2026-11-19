@@ -478,6 +478,7 @@ impl ItemReader<ReferenceRow> for CsvRowReader {
         &mut self,
         _context: ReadContext<'_>,
     ) -> Result<ReadOutcome<ReferenceRow>, ReaderError> {
+        std::future::ready(()).await;
         Ok(self
             .rows
             .pop_front()
@@ -493,6 +494,7 @@ impl ItemProcessor<ReferenceRow, ReferenceRow> for ReferenceIdentityProcessor {
         item: &ReferenceRow,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<ReferenceRow>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(*item))
     }
 }
@@ -961,7 +963,7 @@ impl PartitionOccupancy {
 
     /// Returns the shortest and longest worker duration observed.
     fn skew(&self) -> (std::time::Duration, std::time::Duration) {
-        let durations = self.durations.lock().map(|d| d.clone()).unwrap_or_default();
+        let durations = self.durations.lock().map_or_default(|d| d.clone());
         let min = durations.iter().copied().min().unwrap_or_default();
         let max = durations.iter().copied().max().unwrap_or_default();
         (min, max)

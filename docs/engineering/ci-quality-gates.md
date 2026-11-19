@@ -15,7 +15,7 @@ expensive and probabilistic checks run on a schedule or release candidate.
 | Rustdoc warnings denied | Public documentation integrity | Now |
 | Facade surface disclosure | No forbidden dependency class in the rendered public surface | Now |
 | Dependency review | New vulnerability/license risk | Now |
-| MSRV build/test | Enforce declared Rust support | Before M1 |
+| Current Stable compiler policy (legacy `msrv` context) | Require no declared numeric MSRV and compile all workspace targets/features on resolved Stable | Active |
 | Dependency/license/source policy | RustSec, license, bans, source control | Before M1 |
 | CodeQL Actions analysis | GitHub Actions workflow security analysis (`Analyze (actions)`) | Now; required |
 | CodeQL Rust analysis | Rust source security analysis (`Analyze (rust)`) | Now; advisory |
@@ -30,12 +30,18 @@ refactor must not create a skipped required job that appears successful.
 
 ## Rust channels
 
-- stable Rust 1.97.1 is the pinned development, normal CI, and release toolchain;
-- stable Rust 1.95 is the MSRV required check;
-- beta/nightly compatibility jobs are not run;
-- nightly-only language features are not allowed in public or production code;
-- a future nightly-only analysis tool requires a separate decision and is not
-  implied by this plan.
+- development, normal CI and future release validation track floating `stable`;
+  CI explicitly refreshes that installed channel before compiling;
+- workspace and published member manifests intentionally omit `rust-version`;
+  no independent numeric MSRV is guaranteed for future versions;
+- the historical `msrv` job/context is retained as a *real* current-Stable
+  workspace compilation and manifest-policy gate, never a successful no-op;
+- protected-main cache producers and PR consumers hash the actual resolved
+  compiler identity (`rustc -Vv`) and toolchain contract in the same cache key;
+- beta/nightly compatibility jobs are not run, and nightly-only language
+  features remain forbidden in public and production code;
+- historical 0.6.0 Rust 1.95 support/release compiler evidence is unchanged
+  by this next-minor policy shift (ADR-0014).
 
 ## Scheduled/deep checks
 
@@ -86,7 +92,7 @@ build artifact, and the retained copies live in
 ## Release gates
 
 - clean source and reproducible package contents;
-- all supported platform/database/MSRV checks;
+- all supported platform/database/current-Stable checks;
 - API SemVer and feature compatibility;
 - schema migration from each supported source version;
 - conformance matrix with no unexplained required gap;
@@ -139,5 +145,5 @@ plan.
 - `cargo-hack` for feature powersets;
 - `cargo-deny` and RustSec advisories for dependency policy.
 
-Tool adoption requires immutable CI pinning, license/MSRV review, and a local
+Tool adoption requires immutable CI pinning, license/current-Stable review, and a local
 equivalent command.

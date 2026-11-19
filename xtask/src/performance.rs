@@ -807,7 +807,7 @@ fn strings(value: &Value, name: &str) -> Vec<String> {
     value
         .get(name)
         .and_then(Value::as_array)
-        .map(|entries| {
+        .map_or_default(|entries| {
             entries
                 .iter()
                 .map(|entry| {
@@ -817,7 +817,6 @@ fn strings(value: &Value, name: &str) -> Vec<String> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 /// The one finalized verdict consumed by the report and the command exit
@@ -1069,26 +1068,22 @@ impl Scope {
         let fixtures = document
             .get("fixtures")
             .and_then(Value::as_object)
-            .map(|map| {
+            .map_or_default(|map| {
                 map.iter()
                     .map(|(name, variables)| {
                         (
                             name.clone(),
-                            variables
-                                .as_array()
-                                .map(|entries| {
-                                    entries
-                                        .iter()
-                                        .filter_map(Value::as_str)
-                                        .map(str::to_owned)
-                                        .collect()
-                                })
-                                .unwrap_or_default(),
+                            variables.as_array().map_or_default(|entries| {
+                                entries
+                                    .iter()
+                                    .filter_map(Value::as_str)
+                                    .map(str::to_owned)
+                                    .collect()
+                            }),
                         )
                     })
                     .collect()
-            })
-            .unwrap_or_default();
+            });
 
         let (p010_partitions, p010_worker_points) = Self::read_p010_workload(&document)?;
 
@@ -1269,7 +1264,7 @@ mod tests {
             .expect("points is an array")
             .truncate(2);
         let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
-        assert!(!violations.is_empty());
+        assert_ne!(violations, Vec::<String>::new());
     }
 
     #[test]
@@ -1281,7 +1276,7 @@ mod tests {
             .expect("points is an array")
             .push(duplicate);
         let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
-        assert!(!violations.is_empty());
+        assert_ne!(violations, Vec::<String>::new());
     }
 
     #[test]
@@ -1290,7 +1285,7 @@ mod tests {
         observation["observation"]["points"][1]["workers"] = json!(5);
         observation["observation"]["points"][1]["peak_active_workers"] = json!(5);
         let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
-        assert!(!violations.is_empty());
+        assert_ne!(violations, Vec::<String>::new());
     }
 
     #[test]
@@ -1398,6 +1393,6 @@ mod tests {
         let mut observation = canonical_observation();
         observation["observation"]["points"][0]["partitions"] = json!(64);
         let violations = reconcile_p010(&observation, 100, EXPECTED_WORKERS);
-        assert!(!violations.is_empty());
+        assert_ne!(violations, Vec::<String>::new());
     }
 }

@@ -76,6 +76,7 @@ where
         item: &I,
         context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<I>, ProcessorError> {
+        std::future::ready(()).await;
         if context.stop_token().is_stop_requested() {
             return Ok(ProcessOutcome::Stopped);
         }

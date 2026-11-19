@@ -143,6 +143,7 @@ impl Reader {
 
 impl ItemReader<i32> for Reader {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<i32>, ReaderError> {
+        std::future::ready(()).await;
         self.trace.record("reader");
         let remaining = self.failures.get_mut().expect("failure lock poisoned");
         if *remaining > 0
@@ -192,6 +193,7 @@ impl ItemProcessor<i32, i32> for Processor {
         item: &i32,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i32>, ProcessorError> {
+        std::future::ready(()).await;
         self.trace.record(format!("processor:{item}"));
         if self.failing_item == Some(*item) {
             let mut remaining = self.remaining.lock().expect("failure lock poisoned");
@@ -243,6 +245,7 @@ impl ItemWriter<i32> for Writer {
         items: &[i32],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         self.trace.record("writer");
         let mut remaining = self.remaining.lock().expect("failure lock poisoned");
         if *remaining > 0 {
@@ -1388,7 +1391,7 @@ fn unknown_commit_is_never_retried() {
 
     assert_eq!(report.outcome(), ChunkExecutionOutcome::Unknown);
     assert_eq!(report.retry_counts().write(), 0);
-    assert!(sleeper.recorded().is_empty());
+    assert_eq!(sleeper.recorded().len(), 0);
     assert_eq!(
         trace.count("rollback"),
         0,
@@ -1896,6 +1899,7 @@ impl ItemProcessor<i32, i32> for DualFaultProcessor {
         item: &i32,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<i32>, ProcessorError> {
+        std::future::ready(()).await;
         self.trace.record(format!("processor:{item}"));
         if *item == self.retry_once_for {
             let mut retried = self.retried.lock().expect("retry flag lock poisoned");

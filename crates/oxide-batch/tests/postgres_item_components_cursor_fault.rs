@@ -235,6 +235,7 @@ impl oxide_batch::ItemWriter<BusinessRow> for RecordingWriter {
         items: &[BusinessRow],
         context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         if context.stop_token().is_stop_requested() {
             return Ok(WriteOutcome::Stopped);
         }

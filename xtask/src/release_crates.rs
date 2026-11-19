@@ -2543,6 +2543,9 @@ mod tests {
             .iter()
             .map(|s| (*s).to_owned())
             .collect();
-        assert!(compare("test source", &found, EnforceOrder::Yes).is_empty());
+        assert_eq!(
+            compare("test source", &found, EnforceOrder::Yes),
+            Vec::<String>::new()
+        );
     }
 }

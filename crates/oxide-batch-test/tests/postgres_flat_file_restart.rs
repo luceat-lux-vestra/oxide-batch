@@ -79,6 +79,7 @@ impl ItemProcessor<DelimitedRecord, DelimitedRecord> for Identity {
         item: &DelimitedRecord,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<DelimitedRecord>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(item.clone()))
     }
 }
@@ -91,6 +92,7 @@ impl ItemWriter<DelimitedRecord> for RecordingWriter {
         items: &[DelimitedRecord],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -561,6 +563,7 @@ impl ItemProcessor<FixedWidthRecord, FixedWidthRecord> for FixedIdentity {
         item: &FixedWidthRecord,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<FixedWidthRecord>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(item.clone()))
     }
 }

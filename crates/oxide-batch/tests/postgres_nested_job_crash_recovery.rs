@@ -739,7 +739,7 @@ async fn run_parent_scenario(
         Some("original")
     );
     assert_eq!(restart_decisions.len(), 1);
-    assert!(original_decisions.is_empty());
+    assert_eq!(original_decisions.len(), 0);
 
     if let Some(first_link) = first_link {
         assert_eq!(

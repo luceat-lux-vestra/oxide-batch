@@ -255,8 +255,7 @@ pub fn measurement_environment(worker_threads: usize) -> Value {
                          Nothing here is asserted against a number regardless of profile.",
         "tokio_worker_threads": worker_threads,
         "available_parallelism": std::thread::available_parallelism()
-            .map(std::num::NonZeroUsize::get)
-            .unwrap_or_default(),
+            .map_or_default(std::num::NonZeroUsize::get),
         "os": env::consts::OS,
         "arch": env::consts::ARCH,
         "cpu_model": cpu_model(),

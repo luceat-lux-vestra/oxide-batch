@@ -734,6 +734,7 @@ where
     Src: Read + Seek + Send,
 {
     async fn read(&mut self, _context: ReadContext<'_>) -> Result<ReadOutcome<I>, ReaderError> {
+        std::future::ready(()).await;
         self.ensure_headers_and_seek()?;
         let before = *self.position.lock().unwrap_or_else(PoisonError::into_inner);
         let outcome = self.read_raw_record().map_err(|_| {
@@ -800,6 +801,7 @@ impl crate::ItemStream for DelimitedReaderStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         let codec = reader_position_codec();
         if let Some(envelope) = context.inherited_state() {
             let restored = envelope
@@ -817,6 +819,7 @@ impl crate::ItemStream for DelimitedReaderStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         let codec = reader_position_codec();
         let current = *self.position.lock().unwrap_or_else(PoisonError::into_inner);
         ComponentStateEnvelope::encode(
@@ -832,6 +835,7 @@ impl crate::ItemStream for DelimitedReaderStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         Ok(StreamCloseOutcome::Closed)
     }
 }
@@ -968,6 +972,7 @@ where
         items: &'a [I],
         context: WriteContext<'a>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         if context.stop_token().is_stop_requested() {
             return Ok(WriteOutcome::Stopped);
         }
@@ -1015,6 +1020,7 @@ impl crate::ItemStream for DelimitedWriterStream {
         &self,
         context: StreamOpenContext<'_>,
     ) -> Result<StreamOpenOutcome, StreamOpenError> {
+        std::future::ready(()).await;
         let codec = writer_position_codec();
         let (target, outcome) = if let Some(envelope) = context.inherited_state() {
             let restored = envelope
@@ -1053,6 +1059,7 @@ impl crate::ItemStream for DelimitedWriterStream {
         &self,
         _context: StreamUpdateContext<'_>,
     ) -> Result<ComponentStateEnvelope, StreamUpdateError> {
+        std::future::ready(()).await;
         let codec = writer_position_codec();
         let current = self
             .state
@@ -1072,6 +1079,7 @@ impl crate::ItemStream for DelimitedWriterStream {
         &self,
         _context: StreamCloseContext<'_>,
     ) -> Result<StreamCloseOutcome, StreamCloseError> {
+        std::future::ready(()).await;
         Ok(StreamCloseOutcome::Closed)
     }
 }
