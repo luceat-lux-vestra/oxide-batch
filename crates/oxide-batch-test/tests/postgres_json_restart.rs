@@ -77,6 +77,7 @@ impl ItemProcessor<Value, Value> for Identity {
         item: &Value,
         _context: ProcessContext<'_>,
     ) -> Result<ProcessOutcome<Value>, ProcessorError> {
+        std::future::ready(()).await;
         Ok(ProcessOutcome::Item(item.clone()))
     }
 }
@@ -89,6 +90,7 @@ impl ItemWriter<Value> for RecordingWriter {
         items: &[Value],
         _context: WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

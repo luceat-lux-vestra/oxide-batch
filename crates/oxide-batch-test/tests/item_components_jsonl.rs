@@ -619,6 +619,7 @@ impl ItemWriter<Value> for RecordingWriter {
         items: &[Value],
         _context: oxide_batch::WriteContext<'_>,
     ) -> Result<WriteOutcome, WriterError> {
+        std::future::ready(()).await;
         self.0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
