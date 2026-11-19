@@ -253,9 +253,11 @@ core guard.
 
 ## Retention primitives
 
-The M4 slice is deliberately smaller than the M8 portability program. It adds
-holds and a guarded, bounded purge of terminal history for the PostgreSQL
-reference adapter only.
+M4 established holds and a guarded, bounded purge of terminal history for the
+PostgreSQL reference adapter. M8 Gate-C promotes those observable semantics to
+the portable purge floor without making PostgreSQL SQL or physical layout part
+of the contract. The full M8 boundary, including archive/export evidence, is
+frozen by the [M8 Gate-C retention portability record](../project/m8-gate-c-retention-portability.md).
 
 ### Holds
 
@@ -289,14 +291,23 @@ Purge is two phase and target guarded.
    identities, per-table row counts, and a 32-byte plan digest computed over
    the canonical candidate list and the observed execution versions.
 2. `apply_purge` accepts that digest, the operation ID, actor, and reason. It
-   re-validates eligibility and versions inside one transaction. Any candidate
-   that changed produces a typed `RetentionPlanStale` rejection and deletes
-   nothing.
+   re-validates eligibility and versions inside one transaction, including the
+   absence of an active/stopping/`UNKNOWN` sibling and the absence of an active
+   hold. Any candidate that changed produces a typed `RetentionPlanStale`
+   rejection and deletes nothing.
+
+The version-1 digest covers the request and canonical candidate identities plus
+observed execution versions; projected row counts are informational rather than
+deletion authority. Portable adapters may use different lock/CAS/isolation
+mechanics, but apply must make concurrent lifecycle, hold, and purge changes
+resolve without deleting an invalid candidate.
 
 Application deletes within one instance-owned order and one transaction per
 batch: flow decisions, recovery decisions, operator requests, step partitions,
 step executions, job executions, and finally job instances that retain no
-execution. A surviving flow decision that cites a purged decision as its reused
+execution. This is the PostgreSQL reference order; the portable requirement is
+dependency-safe deletion or detachment with no dangling durable references,
+not an identical table/statement sequence. A surviving flow decision that cites a purged decision as its reused
 provenance has that citation cleared first, because the evidence it names no
 longer exists. A retention audit row outlives the instance it protected, so its
 instance reference is cleared rather than cascading the row away. Interrupting a run leaves completed batches durable; re-running is
@@ -312,13 +323,20 @@ Purge requires the operator-writer role plus the narrowly granted delete
 privileges recorded in
 [persistence and migrations](../operations/persistence-and-migrations.md). The
 runtime role cannot purge. The operator-reader role can plan but not apply.
+Those names are PostgreSQL deployment identities, not portable API concepts;
+Gate-C requires equivalent semantic separation on every backend that claims
+retention. A profile claiming `RetentionPurge` also provides `InstanceHolds`,
+because hold exclusion is part of purge correctness.
 
 ### M4 boundary
 
-M4 retention does not provide archive packages, export or import, checksum
-verification of exported data, scheduled or automatic purge, retention policy
-storage, cross-adapter portability, or partial-row redaction. Those remain M8
-scope under [RFC-0007](../rfcs/0007-repository-services-and-capabilities.md).
+M4 retention does not provide archive packages, export/import, checksum
+verification of exported data, scheduled or automatic purge, or retention
+policy storage. M8 Gate-C owns the portable purge profile and the semantic
+archive-evidence profile; archive/export stays a higher-level optional
+operational service rather than a mandatory `JobRepository` method. Neutral
+package encoding and general migration import/export remain M12/RFC-0010, and
+retention scheduling remains external orchestration.
 
 ## Evidence
 
