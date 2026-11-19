@@ -1,8 +1,9 @@
 # M8 Gate-B — Durable Effects, Idempotency, and Delivery Semantics
 
-**State:** Proposed canonical record; P133-P139 semantics are frozen in Gate-B
-[#644](https://github.com/luceat-lux-vestra/oxide-batch/issues/644), while
-merge and final Gate-B closure remain separate work.
+**State:** Accepted design by Gate-B
+[#644](https://github.com/luceat-lux-vestra/oxide-batch/issues/644). P133-P139
+semantics are frozen; implementation and support claims remain separately
+evidence-gated under M8/M9 ownership.
 **Owner:** M8 tracker
 [#201](https://github.com/luceat-lux-vestra/oxide-batch/issues/201)
 **M9 consumer:** integration tracker
