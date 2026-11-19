@@ -120,7 +120,7 @@ impl SequentialIdGenerator {
 
     fn next_raw(&self, kind: IdentifierKind) -> Result<u64, IdGenerationError> {
         self.next
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 if current == 0 {
                     None
                 } else {

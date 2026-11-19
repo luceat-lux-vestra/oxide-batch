@@ -295,7 +295,6 @@ impl JobParameters {
     }
 
     /// Iterates in canonical name order.
-    #[must_use]
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (&ParameterName, &JobParameter)> {
         self.values.iter()
     }
@@ -420,7 +419,6 @@ impl JobInstanceKey {
 
     /// Iterates over identifying parameter names and value kinds in canonical
     /// order without exposing their values.
-    #[must_use]
     pub fn identifying_fields(
         &self,
     ) -> impl ExactSizeIterator<Item = (&ParameterName, ParameterValueKind)> {
