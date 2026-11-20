@@ -1,6 +1,6 @@
 # ADR-0015: Gate-B Definition Identity and Manifest Fingerprint Projection
 
-- **State:** Proposed
+- **State:** Accepted
 - **Date:** 2026-11-20
 - **Owners:** runtime, API, repository, and integration maintainers
 - **Deciders:** project owner
