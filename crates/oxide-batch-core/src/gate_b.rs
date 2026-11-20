@@ -294,31 +294,37 @@ impl GateBRequirements {
         })
     }
 
+    /// Returns the local-atomicity requirement.
     #[must_use]
     pub const fn local_atomicity(&self) -> GateBLocalAtomicity {
         self.local_atomicity
     }
 
+    /// Returns the effect-journal requirement.
     #[must_use]
     pub const fn effect_journal(&self) -> GateBEffectJournal {
         self.effect_journal
     }
 
+    /// Returns the outbound-obligation requirement.
     #[must_use]
     pub const fn outbound_obligation(&self) -> GateBOutboundObligation {
         self.outbound_obligation
     }
 
+    /// Returns the inbound-protection requirement.
     #[must_use]
     pub const fn inbound_protection(&self) -> GateBInboundProtection {
         self.inbound_protection
     }
 
+    /// Returns the remote ambiguity/replay requirement.
     #[must_use]
     pub const fn ambiguity_replay(&self) -> GateBAmbiguityReplay {
         self.ambiguity_replay
     }
 
+    /// Borrows the broker-native transaction requirement.
     #[must_use]
     pub const fn native_message_transaction(&self) -> &GateBNativeMessageTransaction {
         &self.native_message_transaction
@@ -564,6 +570,11 @@ impl GateBDefinitionContract {
     /// a concrete portable remote profile and its provider-key compatibility is
     /// a later negotiation concern; provider/deployment identity never enters
     /// this value.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing or forbidden remote contracts, provider-key binding
+    /// inconsistencies, and an InboxDedup floor without InboxDedup protection.
     pub fn new(
         requirements: GateBRequirements,
         effect_identity: GateBEffectIdentity,
