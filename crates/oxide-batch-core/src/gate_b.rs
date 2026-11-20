@@ -151,6 +151,10 @@ pub struct EffectScopeId(String);
 
 impl EffectScopeId {
     /// Validates and constructs one effect scope identifier.
+    ///
+    /// # Errors
+    ///
+    /// Rejects identifiers outside the Gate-B bounded token discipline.
     pub fn new(value: impl Into<String>) -> Result<Self, GateBContractError> {
         let value = value.into();
         validate_identifier(&value)?;
@@ -170,6 +174,10 @@ pub struct EffectSlotId(String);
 
 impl EffectSlotId {
     /// Validates and constructs one effect slot identifier.
+    ///
+    /// # Errors
+    ///
+    /// Rejects identifiers outside the Gate-B bounded token discipline.
     pub fn new(value: impl Into<String>) -> Result<Self, GateBContractError> {
         let value = value.into();
         validate_identifier(&value)?;
@@ -321,7 +329,7 @@ impl GateBRequirements {
     pub fn requires_remote_contract(&self) -> bool {
         self.ambiguity_replay != GateBAmbiguityReplay::None
             || matches!(
-                self.native_message_transaction,
+                &self.native_message_transaction,
                 GateBNativeMessageTransaction::Required(_)
             )
     }
@@ -335,6 +343,7 @@ pub struct GateBEffectSlot {
 }
 
 impl GateBEffectSlot {
+    /// Constructs one stable effect-slot declaration.
     #[must_use]
     pub const fn new(
         id: EffectSlotId,
@@ -346,11 +355,13 @@ impl GateBEffectSlot {
         }
     }
 
+    /// Borrows the stable slot identifier.
     #[must_use]
     pub const fn id(&self) -> &EffectSlotId {
         &self.id
     }
 
+    /// Borrows the logical-destination identity contract when selected.
     #[must_use]
     pub const fn logical_destination_contract(&self) -> Option<&GateBContractId> {
         self.logical_destination_contract.as_ref()
@@ -381,11 +392,13 @@ impl GateBEffectScope {
         Ok(Self { id, slots })
     }
 
+    /// Borrows the stable effect-scope identifier.
     #[must_use]
     pub const fn id(&self) -> &EffectScopeId {
         &self.id
     }
 
+    /// Iterates slots in canonical identifier order.
     pub fn slots(&self) -> impl ExactSizeIterator<Item = &GateBEffectSlot> {
         self.slots.iter()
     }
@@ -448,26 +461,31 @@ impl GateBEffectIdentity {
         })
     }
 
+    /// Returns the EffectId derivation contract version.
     #[must_use]
     pub const fn derivation_contract_version(&self) -> GateBContractVersion {
         self.derivation_contract_version
     }
 
+    /// Returns the occurrence-key contract version.
     #[must_use]
     pub const fn occurrence_key_contract_version(&self) -> GateBContractVersion {
         self.occurrence_key_contract_version
     }
 
+    /// Returns the canonical request-identity contract version.
     #[must_use]
     pub const fn request_identity_contract_version(&self) -> GateBContractVersion {
         self.request_identity_contract_version
     }
 
+    /// Returns the provider-key binding contract version when selected.
     #[must_use]
     pub const fn provider_key_binding_contract_version(&self) -> Option<GateBContractVersion> {
         self.provider_key_binding_contract_version
     }
 
+    /// Iterates effect scopes in canonical identifier order.
     pub fn scopes(&self) -> impl ExactSizeIterator<Item = &GateBEffectScope> {
         self.scopes.iter()
     }
@@ -483,6 +501,7 @@ pub struct GateBRemoteContract {
 }
 
 impl GateBRemoteContract {
+    /// Constructs a portable remote contract without a minimum validity floor.
     #[must_use]
     pub const fn new(
         semantic_profile: GateBSemanticContract,
@@ -497,27 +516,32 @@ impl GateBRemoteContract {
         }
     }
 
+    /// Selects the definition-level remote replay/idempotency validity floor.
     #[must_use]
     pub const fn with_minimum_validity(mut self, minimum: GateBMinimumValidityMs) -> Self {
         self.minimum_validity_ms = Some(minimum);
         self
     }
 
+    /// Borrows the portable semantic profile identity.
     #[must_use]
     pub const fn semantic_profile(&self) -> &GateBSemanticContract {
         &self.semantic_profile
     }
 
+    /// Borrows the acknowledgement interpretation contract.
     #[must_use]
     pub const fn acknowledgement(&self) -> &GateBSemanticContract {
         &self.acknowledgement
     }
 
+    /// Borrows the unknown-outcome interpretation contract.
     #[must_use]
     pub const fn unknown_outcome(&self) -> &GateBSemanticContract {
         &self.unknown_outcome
     }
 
+    /// Returns the optional definition-level remote validity floor.
     #[must_use]
     pub const fn minimum_validity_ms(&self) -> Option<GateBMinimumValidityMs> {
         self.minimum_validity_ms
@@ -582,26 +606,31 @@ impl GateBDefinitionContract {
         })
     }
 
+    /// Returns the fixed Gate-B contract version.
     #[must_use]
     pub const fn contract_version(&self) -> u16 {
         GATE_B_CONTRACT_VERSION
     }
 
+    /// Borrows the six normalized requirement dimensions.
     #[must_use]
     pub const fn requirements(&self) -> &GateBRequirements {
         &self.requirements
     }
 
+    /// Borrows the static effect-identity declaration.
     #[must_use]
     pub const fn effect_identity(&self) -> &GateBEffectIdentity {
         &self.effect_identity
     }
 
+    /// Borrows the portable remote contract when selected.
     #[must_use]
     pub const fn remote_contract(&self) -> Option<&GateBRemoteContract> {
         self.remote_contract.as_ref()
     }
 
+    /// Returns the definition-required InboxDedup floor when selected.
     #[must_use]
     pub const fn inbox_dedup_minimum_validity_ms(&self) -> Option<GateBMinimumValidityMs> {
         self.inbox_dedup_minimum_validity_ms
@@ -720,6 +749,12 @@ fn validate_identifier(value: &str) -> Result<(), GateBContractError> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(
+        clippy::expect_used,
+        clippy::unwrap_used,
+        reason = "contract fixtures use statically valid values and assert the error cases separately"
+    )]
+
     use super::*;
 
     fn version(value: u16) -> GateBContractVersion {
@@ -872,6 +907,53 @@ mod tests {
 
         GateBDefinitionContract::new(none, identity(None).unwrap(), None, None)
             .expect("no remote semantics means no remote contract");
+    }
+
+    #[test]
+    fn native_message_transaction_requires_remote_contract_independently() {
+        let native = GateBNativeMessageTransaction::Required(contract("broker-native"));
+        let requirements = GateBRequirements::new(
+            GateBLocalAtomicity::None,
+            GateBEffectJournal::NotRequired,
+            GateBOutboundObligation::None,
+            GateBInboundProtection::None,
+            GateBAmbiguityReplay::None,
+            native,
+        )
+        .unwrap();
+
+        assert_eq!(
+            GateBDefinitionContract::new(requirements, identity(None).unwrap(), None, None),
+            Err(GateBContractError::RemoteContractRequired)
+        );
+    }
+
+    #[test]
+    fn provider_key_binding_is_allowed_when_a_remote_profile_selects_it() {
+        let requirements = GateBRequirements::new(
+            GateBLocalAtomicity::None,
+            GateBEffectJournal::NotRequired,
+            GateBOutboundObligation::None,
+            GateBInboundProtection::None,
+            GateBAmbiguityReplay::AtLeastOnce,
+            GateBNativeMessageTransaction::None,
+        )
+        .unwrap();
+
+        let definition = GateBDefinitionContract::new(
+            requirements,
+            identity(Some(version(7))).unwrap(),
+            Some(remote()),
+            None,
+        )
+        .expect("a recognized remote profile may select provider-key binding");
+
+        assert_eq!(
+            definition
+                .effect_identity()
+                .provider_key_binding_contract_version(),
+            Some(version(7))
+        );
     }
 
     #[test]
