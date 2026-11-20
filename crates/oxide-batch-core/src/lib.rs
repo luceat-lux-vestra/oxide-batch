@@ -28,6 +28,7 @@ mod definition;
 mod domain;
 mod fault;
 mod flow;
+mod gate_b;
 mod scope;
 mod state;
 
@@ -66,6 +67,14 @@ pub use fault::{
     BackoffKind, BackoffPolicy, FaultAction, FaultClassifier, FaultDecision, FaultDescriptor,
     FaultEvidence, FaultPhase, FaultPolicy, FaultPolicyError, FaultRule, RetryLimit, RetryOrdinal,
     RetryStateLimit, RollbackDisposition, SkipCounts, SkipLimit,
+};
+pub use gate_b::{
+    EffectId, EffectScopeId, EffectSlotId, GATE_B_CONTRACT_VERSION, GateBAmbiguityReplay,
+    GateBContractError, GateBContractId, GateBContractVersion, GateBDefinitionContract,
+    GateBEffectIdentity, GateBEffectJournal, GateBEffectScope, GateBEffectSlot,
+    GateBInboundProtection, GateBLocalAtomicity, GateBMinimumValidityMs,
+    GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract,
+    GateBRequirements, GateBSemanticContract, MAX_GATE_B_IDENTIFIER_BYTES,
 };
 pub use flow::{
     FlowTarget, MAX_PARTITIONS, NodeId, RestartPolicy, StartControls, StartLimit, TerminalKind,
