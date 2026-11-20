@@ -157,12 +157,13 @@ For `contract_version = 1`, the recursively closed `gate_b` projection uses the
 following exact member grammar. This fixes serialization shape only; it does not
 add a seventh requirement dimension or change the accepted Gate-B semantics.
 
-The `gate_b` object has exactly these members:
+The `gate_b` object has exactly these allowed members:
 
 - required `contract_version`;
 - required `requirements`;
 - required `effect_identity`;
-- conditionally present `remote_contract`.
+- conditionally present `remote_contract`;
+- conditionally present `inbox_dedup_minimum_validity_ms`.
 
 No member in this grammar accepts JSON `null`. A conditionally absent value is
 omitted rather than serialized as `null`. Unknown members at any level fail
@@ -200,17 +201,27 @@ Their exact version-1 spellings are:
   `{"mode":"none"}`, or exactly `mode`, `semantic_contract_id`, and
   `semantic_contract_version` where `mode="required"`.
 
-The `effect_identity` object has exactly five required members:
+The `effect_identity` object has exactly four required members and one
+conditionally present member:
 
 ~~~json
 {
   "derivation_contract_version": 1,
   "occurrence_key_contract_version": 1,
-  "provider_key_binding_contract_version": 1,
   "request_identity_contract_version": 1,
   "scopes": []
 }
 ~~~
+
+The required members are `derivation_contract_version`,
+`occurrence_key_contract_version`, `request_identity_contract_version`, and
+`scopes`. `provider_key_binding_contract_version` is a non-zero unsigned
+16-bit integer that is present only when the selected Gate-B semantics use a
+provider-key binding or derivation contract. It is required for
+`ambiguity_replay=idempotent_external_effect`. A recognized remote semantic
+profile may also require it when that profile explicitly defines provider-key
+binding semantics. It is omitted when no provider-key contract is selected and
+is never `null`.
 
 `scopes` is an array canonically sorted by `id`. Each scope object has exactly
 required `id` and required `slots`. Scope IDs are unique. `slots` is an array
@@ -242,8 +253,26 @@ optional member:
 
 The first six members are required whenever `remote_contract` is present.
 `minimum_validity_ms` is optional and, when present, is a positive unsigned
-64-bit integer. It is omitted when no definition-level remote validity floor is
+64-bit integer. It represents only a definition-level remote
+idempotency/replay validity floor and is omitted when no such remote floor is
 selected.
+
+`inbox_dedup_minimum_validity_ms` is a conditionally present positive unsigned
+64-bit integer at the `gate_b` level. It represents only the
+definition-required minimum InboxDedup safety window:
+
+- it is allowed only when `inbound_protection=inbox_dedup`;
+- it is present when the application definition selects an explicit minimum
+  InboxDedup window;
+- it is omitted when no explicit definition-level InboxDedup floor is selected;
+- it is forbidden when `inbound_protection=none`;
+- it is never `null`.
+
+The adapter's effective InboxDedup window is deployment capability rather than a
+manifest member. When `inbox_dedup_minimum_validity_ms` is present, launch or
+restart fails closed unless the selected certified InboxDedup profile advertises
+an effective window greater than or equal to that floor. Any effective window
+above the required floor remains outside definition identity.
 
 Canonical JSON map keys use the existing byte-sorted map encoding. Declaration
 order therefore cannot change object bytes. Scope and slot arrays are
@@ -263,13 +292,14 @@ The static Gate-B identity members are:
 - canonical `EffectSlotId` declarations within each scope;
 - occurrence-key contract version;
 - canonical request-identity contract version;
-- provider-key binding/derivation contract version;
+- provider-key binding/derivation contract version when such a contract is
+  selected;
 - logical destination contract identity when destination identity selects the
   obligation;
 - portable remote semantic-profile version and its acknowledgement and
   unknown-outcome contract versions;
-- definition-level minimum validity or deduplication floors that change replay
-  or dedup interpretation.
+- definition-level remote validity floors and InboxDedup minimum-validity
+  floors when they change replay or dedup interpretation.
 
 `EffectScopeId` declarations are canonically ordered by identifier, and slots
 within one scope are canonically ordered by `EffectSlotId`. Identifiers use
@@ -321,10 +351,15 @@ must describe a compatible portable semantic profile for the selected
 composition; two competing remote-contract authorities are invalid.
 
 A definition-level remote validity floor is fingerprint material only when
-changing that floor would change whether an existing durable effect may be
-replayed or deduplicated. An effective provider or inbox window above a
-definition-required floor is deployment capability and remains outside the
-fingerprint.
+changing that floor would change whether an existing durable remote effect may
+be replayed safely. `remote_contract.minimum_validity_ms` is remote-only and
+does not encode InboxDedup repository retention.
+
+InboxDedup uses the independent
+`gate_b.inbox_dedup_minimum_validity_ms` floor defined in section 3. The
+repository's effective InboxDedup window is deployment capability; only the
+definition-required floor enters the fingerprint. A remote validity floor and
+an InboxDedup floor may coexist and neither substitutes for the other.
 
 ### 6. Format-5 validation is recursively fail closed
 
@@ -358,8 +393,18 @@ Cross-field and presence rules are normative:
 - `native_message_transaction.mode=required` requires both of those members;
 - `remote_contract` is required exactly under the selection predicates in
   section 5 and is forbidden otherwise;
-- `minimum_validity_ms` is allowed only inside a present `remote_contract` and
-  must be positive;
+- `remote_contract.minimum_validity_ms` is allowed only inside a present
+  `remote_contract` and must be positive;
+- `inbox_dedup_minimum_validity_ms` is allowed only with
+  `inbound_protection=inbox_dedup` and must be positive;
+- `provider_key_binding_contract_version` is required for
+  `ambiguity_replay=idempotent_external_effect`;
+- `provider_key_binding_contract_version` without `remote_contract` is invalid;
+- when a recognized remote semantic profile explicitly defines provider-key
+  binding/derivation semantics, the member is required and must name a
+  compatible recognized binding-contract version;
+- when the selected remote profile defines no provider-key binding semantics,
+  `provider_key_binding_contract_version` is forbidden;
 - duplicate scope IDs, duplicate slot IDs within one scope, or unsorted
   canonical scope/slot declarations are invalid;
 - a slot whose compiled Gate-B identity contract makes logical destination part
@@ -517,6 +562,17 @@ the following.
 
 - mutate every included static Gate-B semantic member independently and prove
   the format-5 digest changes;
+- prove adding, removing, or changing a selected
+  `inbox_dedup_minimum_validity_ms` changes the format-5 digest;
+- prove changing an adapter's effective InboxDedup window above the
+  definition-required floor does not change canonical bytes, while an effective
+  window below the floor fails launch or restart;
+- prove `inbox_dedup_minimum_validity_ms` without InboxDedup fails closed;
+- prove `idempotent_external_effect` without
+  `provider_key_binding_contract_version` fails closed;
+- prove profiles with no provider-key binding semantics omit
+  `provider_key_binding_contract_version`, and changing that version when
+  present changes the digest;
 - prove concrete occurrence values, `EffectId`, provider-key values,
   acknowledgement values, execution IDs, adapter/provider selection,
   credentials, compatible schema version, worker/pool capacity, pure timeouts,
