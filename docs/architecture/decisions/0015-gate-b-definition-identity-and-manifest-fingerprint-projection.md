@@ -151,6 +151,105 @@ semantic contract ID and non-zero contract version. It does not record a
 concrete broker implementation, cluster, endpoint, region, account, credential,
 or client object.
 
+#### Contract-version-1 canonical member grammar
+
+For `contract_version = 1`, the recursively closed `gate_b` projection uses the
+following exact member grammar. This fixes serialization shape only; it does not
+add a seventh requirement dimension or change the accepted Gate-B semantics.
+
+The `gate_b` object has exactly these members:
+
+- required `contract_version`;
+- required `requirements`;
+- required `effect_identity`;
+- conditionally present `remote_contract`.
+
+No member in this grammar accepts JSON `null`. A conditionally absent value is
+omitted rather than serialized as `null`. Unknown members at any level fail
+closed.
+
+`contract_version` is the integer `1`. Contract and semantic-contract versions
+below are unsigned non-zero 16-bit integers. Contract IDs and logical identifiers
+use the existing definition-token bound: 1-128 UTF-8 bytes, no surrounding
+whitespace, and no control characters.
+
+`requirements` has exactly six members, all required:
+
+~~~json
+{
+  "ambiguity_replay": "none",
+  "effect_journal": "not_required",
+  "inbound_protection": "none",
+  "local_atomicity": "none",
+  "native_message_transaction": {
+    "mode": "none"
+  },
+  "outbound_obligation": "none"
+}
+~~~
+
+Their exact version-1 spellings are:
+
+- `local_atomicity`: `none` or `atomic_same_resource`;
+- `effect_journal`: `not_required` or `required`;
+- `outbound_obligation`: `none` or `outbox`;
+- `inbound_protection`: `none` or `inbox_dedup`;
+- `ambiguity_replay`: `none`, `best_effort`, `at_least_once`, or
+  `idempotent_external_effect`;
+- `native_message_transaction`: an object with either exactly
+  `{"mode":"none"}`, or exactly `mode`, `semantic_contract_id`, and
+  `semantic_contract_version` where `mode="required"`.
+
+The `effect_identity` object has exactly five required members:
+
+~~~json
+{
+  "derivation_contract_version": 1,
+  "occurrence_key_contract_version": 1,
+  "provider_key_binding_contract_version": 1,
+  "request_identity_contract_version": 1,
+  "scopes": []
+}
+~~~
+
+`scopes` is an array canonically sorted by `id`. Each scope object has exactly
+required `id` and required `slots`. Scope IDs are unique. `slots` is an array
+canonically sorted by `id`; each slot object has required `id` and may have
+`logical_destination_contract` only when destination identity is part of that
+slot's logical obligation identity. Slot IDs are unique within a scope. When
+present, `logical_destination_contract` is one bounded definition token. It is
+omitted otherwise and is never `null`.
+
+The number of scopes is at most the reader's current `MAX_NODES`; the total
+number of slots across all scopes is at most its current `MAX_TRANSITIONS`.
+Those ceilings are reader capability checks and are not serialized as
+fingerprint members.
+
+When present, `remote_contract` has exactly these required members and one
+optional member:
+
+~~~json
+{
+  "acknowledgement_contract_id": "portable-token",
+  "acknowledgement_contract_version": 1,
+  "semantic_profile_id": "portable-token",
+  "semantic_profile_version": 1,
+  "unknown_outcome_contract_id": "portable-token",
+  "unknown_outcome_contract_version": 1,
+  "minimum_validity_ms": 1
+}
+~~~
+
+The first six members are required whenever `remote_contract` is present.
+`minimum_validity_ms` is optional and, when present, is a positive unsigned
+64-bit integer. It is omitted when no definition-level remote validity floor is
+selected.
+
+Canonical JSON map keys use the existing byte-sorted map encoding. Declaration
+order therefore cannot change object bytes. Scope and slot arrays are
+semantically unordered declarations and are normalized by their identifiers as
+specified above; no other array is reordered by this ADR.
+
 ### 4. Static effect contract enters the fingerprint; dynamic effect values do not
 
 Format 5 fingerprints the static contract needed to reconstruct and interpret
@@ -209,15 +308,23 @@ Each identity is a bounded definition token plus a non-zero version. These
 values describe the semantic contract an adapter must satisfy; they do not name
 the concrete provider implementation or deployment.
 
-The remote contract is required when the selected ambiguity/replay or native
-message-transaction semantics require external acknowledgement/ambiguity
-interpretation. A definition that requires no remote semantic contract records
-no provider binding merely for completeness.
+For contract version 1, `remote_contract` presence is deterministic:
 
-A definition-level validity floor is fingerprint material only when changing
-that floor would change whether an existing durable effect may be replayed or
-deduplicated. An effective provider or inbox window above the required floor is
-deployment capability and remains outside the fingerprint.
+- it is required when `ambiguity_replay` is not `none`;
+- it is required when `native_message_transaction.mode` is `required`;
+- it is omitted when both conditions are false;
+- it is never emitted merely to record a provider, broker, endpoint, account,
+  credential, or other deployment binding.
+
+If both conditions require a remote contract, the one `remote_contract` object
+must describe a compatible portable semantic profile for the selected
+composition; two competing remote-contract authorities are invalid.
+
+A definition-level remote validity floor is fingerprint material only when
+changing that floor would change whether an existing durable effect may be
+replayed or deduplicated. An effective provider or inbox window above a
+definition-required floor is deployment capability and remains outside the
+fingerprint.
 
 ### 6. Format-5 validation is recursively fail closed
 
@@ -237,17 +344,33 @@ A format-5 reader validates in this order:
 9. validate requirement cross-field consistency;
 10. only then accept the manifest as definition identity.
 
-Cross-field failures include, at minimum:
+Cross-field and presence rules are normative:
 
-- `idempotent_external_effect` without the required effect-journal contract;
-- a selected Outbox contract without the outbound-obligation requirement;
-- a selected InboxDedup contract without the inbound-protection requirement;
-- `native_message_transaction=required` without its portable semantic
-  contract ID/version;
-- a remote replay profile without its required remote semantic contract;
-- duplicate scope/slot declarations;
-- a slot that requires logical destination identity but omits the destination
-  contract.
+- `idempotent_external_effect` requires `effect_journal=required`;
+- `outbound_obligation=outbox` is the sole version-1 Outbox selector; there is
+  no second Outbox contract member to infer or reconcile;
+- `inbound_protection=inbox_dedup` is the sole version-1 InboxDedup selector;
+  there is no second InboxDedup contract member to infer or reconcile;
+- Outbox by itself does not imply EffectJournal, and InboxDedup by itself does
+  not imply EffectJournal;
+- `native_message_transaction.mode=none` forbids
+  `semantic_contract_id` and `semantic_contract_version`;
+- `native_message_transaction.mode=required` requires both of those members;
+- `remote_contract` is required exactly under the selection predicates in
+  section 5 and is forbidden otherwise;
+- `minimum_validity_ms` is allowed only inside a present `remote_contract` and
+  must be positive;
+- duplicate scope IDs, duplicate slot IDs within one scope, or unsorted
+  canonical scope/slot declarations are invalid;
+- a slot whose compiled Gate-B identity contract makes logical destination part
+  of the obligation must contain `logical_destination_contract`; a slot for
+  which destination is not identity-bearing must omit it.
+
+These rules do not strengthen one requirement into another. In particular,
+`outbox`, `inbox_dedup`, a native message transaction, and an effect journal
+remain independently selected dimensions except for the explicit
+`idempotent_external_effect -> effect_journal=required` dependency frozen by
+Gate-B.
 
 A reader that recognizes outer format 5 MUST NOT ignore an unknown
 correctness-relevant nested member. A later semantic extension requires a
