@@ -516,6 +516,14 @@ pub use oxide_batch_core::{
     StateSchemaVersion, StateSensitivity, StepDefinitionUpgrade, StepExecution, StepExecutionId,
     StepName, StepPartitionId, StreamStateContract, TerminalKind, VersionedStateCodec,
 };
+pub use oxide_batch_core::{
+    EffectId, EffectScopeId, EffectSlotId, GATE_B_CONTRACT_VERSION, GateBAmbiguityReplay,
+    GateBContractError, GateBContractId, GateBContractVersion, GateBDefinitionContract,
+    GateBEffectIdentity, GateBEffectJournal, GateBEffectScope, GateBEffectSlot,
+    GateBInboundProtection, GateBLocalAtomicity, GateBMinimumValidityMs,
+    GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract,
+    GateBRequirements, GateBSemanticContract, MAX_GATE_B_IDENTIFIER_BYTES,
+};
 pub use oxide_batch_plan::{
     CompiledExecutionPlan, CompiledFlowScope, CustomLeafKind, CustomLeafNode, DeciderRevision,
     DecisionInputVersion, DecisionNode, ExitPattern, FlowGraph, FlowNode, FlowSelectionError,
