@@ -216,14 +216,14 @@ oxide_batch::GateBDefinitionContract
 oxide_batch::GateBEffectIdentity
 oxide_batch::GateBEffectIntent
 oxide_batch::GateBEffectJournal
+oxide_batch::GateBEffectScope
+oxide_batch::GateBEffectSlot
 oxide_batch::GateBEnlistment
 oxide_batch::GateBEnlistmentError
 oxide_batch::GateBEnlistmentOutcome
-oxide_batch::GateBEffectScope
-oxide_batch::GateBEffectSlot
+oxide_batch::GateBInboundProtection
 oxide_batch::GateBInboxGuard
 oxide_batch::GateBInboxGuardOutcome
-oxide_batch::GateBInboundProtection
 oxide_batch::GateBLocalAtomicity
 oxide_batch::GateBMinimumValidityMs
 oxide_batch::GateBNativeMessageTransaction
