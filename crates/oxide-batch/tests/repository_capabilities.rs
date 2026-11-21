@@ -35,8 +35,13 @@ use oxide_batch::{
     ChunkDeliveryMode, ChunkExecutionOutcome, ChunkFailure, ChunkFaultProgress,
     ChunkRestartContract, ChunkSize, ChunkStep, ChunkTransaction, ChunkTransactionError,
     ChunkTransactionManager, CompiledExecutionPlan, ComponentRevision, DefinitionRevision,
-    ExecutionAttempt, ExecutionContext, ExecutionCorrelation, FlowExecutionOutcome, FlowGraph,
-    FlowJob, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, InMemoryJobRepository,
+    DurableEffectNegotiationError, DurableEffectPersistenceDescriptor, ExecutionAttempt,
+    ExecutionContext, ExecutionCorrelation, FlowExecutionOutcome, FlowGraph, FlowJob, FlowLauncher,
+    FlowNode, FlowRuntimeError, FlowTarget, GateBAmbiguityReplay, GateBContractId,
+    GateBContractVersion, GateBDefinitionContract, GateBEffectIdentity, GateBEffectJournal,
+    GateBInboundProtection, GateBLocalAtomicity, GateBMinimumValidityMs,
+    GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract, GateBRequirements,
+    GateBSemanticContract, InMemoryJobRepository,
     ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId, JobName, JobParameters,
     JobRepository, LateBoundInput, LateBoundSource, MissingParameterPolicy, NodeId,
     NoopChunkCompletion, OwnerToken, ParameterCoercion, ParameterName, ParameterValueKind,
@@ -69,6 +74,73 @@ fn reference_repository() -> InMemoryJobRepository {
     )
 }
 
+fn gate_b_version(value: u16) -> GateBContractVersion {
+    GateBContractVersion::new(value).expect("test Gate-B version is nonzero")
+}
+
+fn gate_b_validity(milliseconds: u64) -> GateBMinimumValidityMs {
+    GateBMinimumValidityMs::new(milliseconds).expect("test validity window is positive")
+}
+
+fn gate_b_semantic_contract(id: &str) -> GateBSemanticContract {
+    GateBSemanticContract::new(
+        GateBContractId::new(id).expect("test semantic contract id is valid"),
+        gate_b_version(1),
+    )
+}
+
+fn gate_b_remote_contract() -> GateBRemoteContract {
+    GateBRemoteContract::new(
+        gate_b_semantic_contract("remote-profile"),
+        gate_b_semantic_contract("ack"),
+        gate_b_semantic_contract("unknown-outcome"),
+    )
+}
+
+fn gate_b_identity(
+    provider_key_binding: Option<GateBContractVersion>,
+) -> GateBEffectIdentity {
+    GateBEffectIdentity::new(
+        gate_b_version(1),
+        gate_b_version(1),
+        gate_b_version(1),
+        provider_key_binding,
+        Vec::new(),
+    )
+    .expect("test Gate-B identity is valid")
+}
+
+fn gate_b_definition(
+    effect_journal: GateBEffectJournal,
+    outbound_obligation: GateBOutboundObligation,
+    inbound_protection: GateBInboundProtection,
+    ambiguity_replay: GateBAmbiguityReplay,
+    inbox_dedup_minimum_validity_ms: Option<GateBMinimumValidityMs>,
+) -> GateBDefinitionContract {
+    let requirements = GateBRequirements::new(
+        GateBLocalAtomicity::None,
+        effect_journal,
+        outbound_obligation,
+        inbound_protection,
+        ambiguity_replay,
+        GateBNativeMessageTransaction::None,
+    )
+    .expect("test Gate-B requirements are valid");
+    let remote_contract = (ambiguity_replay != GateBAmbiguityReplay::None)
+        .then(gate_b_remote_contract);
+    let provider_key_binding =
+        (ambiguity_replay == GateBAmbiguityReplay::IdempotentExternalEffect)
+            .then(|| gate_b_version(1));
+
+    GateBDefinitionContract::new(
+        requirements,
+        gate_b_identity(provider_key_binding),
+        remote_contract,
+        inbox_dedup_minimum_validity_ms,
+    )
+    .expect("test Gate-B definition is valid")
+}
+
 /// Every capability this milestone defines.
 fn all_capabilities() -> [RepositoryCapability; 11] {
     [
@@ -90,7 +162,8 @@ fn all_capabilities() -> [RepositoryCapability; 11] {
 fn descriptor_declares_and_requires_each_capability() {
     // A deployment that declares everything satisfies every requirement.
     let complete = RepositoryDescriptor::new(3, all_capabilities());
-    assert_eq!(complete.descriptor_version(), 1);
+    assert_eq!(complete.descriptor_version(), 2);
+    assert!(complete.durable_effect_persistence().is_none());
     assert_eq!(complete.schema_version(), 3);
     for capability in all_capabilities() {
         assert!(complete.declares(capability));
@@ -123,12 +196,170 @@ fn descriptor_declares_and_requires_each_capability() {
 
     // The reference adapter declares the capabilities it actually implements.
     let reference = reference_repository().descriptor();
+    assert!(reference.durable_effect_persistence().is_none());
     for capability in all_capabilities() {
         assert!(
             reference.declares(capability),
             "the reference adapter implements {capability} and must declare it",
         );
     }
+}
+
+#[test]
+fn durable_effect_profile_round_trips_versions_windows_and_chunk_limits() {
+    let max_records = NonZeroU64::new(128).expect("static record bound is nonzero");
+    let max_bytes = NonZeroU64::new(1_048_576).expect("static byte bound is nonzero");
+    let profile = DurableEffectPersistenceDescriptor::new(gate_b_version(1))
+        .with_effect_journal(gate_b_version(2))
+        .with_outbox(gate_b_version(3))
+        .with_inbox_dedup(gate_b_version(4), gate_b_validity(60_000))
+        .with_chunk_enlistment_limits(max_records, max_bytes);
+
+    assert_eq!(profile.contract_version(), gate_b_version(1));
+    assert_eq!(
+        profile.effect_journal_profile_version(),
+        Some(gate_b_version(2))
+    );
+    assert_eq!(profile.outbox_profile_version(), Some(gate_b_version(3)));
+    assert_eq!(
+        profile.inbox_dedup_profile_version(),
+        Some(gate_b_version(4))
+    );
+    assert_eq!(
+        profile.inbox_dedup_effective_window_ms(),
+        Some(gate_b_validity(60_000))
+    );
+    assert_eq!(profile.max_chunk_effect_records(), Some(max_records));
+    assert_eq!(profile.max_chunk_effect_encoded_bytes(), Some(max_bytes));
+
+    let descriptor =
+        RepositoryDescriptor::new(7, []).with_durable_effect_persistence(profile);
+    assert_eq!(descriptor.descriptor_version(), 2);
+    assert_eq!(descriptor.durable_effect_persistence(), Some(&profile));
+}
+
+#[test]
+fn durable_effect_negotiation_fails_closed_for_missing_profiles_and_version() {
+    let journal = gate_b_definition(
+        GateBEffectJournal::Required,
+        GateBOutboundObligation::None,
+        GateBInboundProtection::None,
+        GateBAmbiguityReplay::None,
+        None,
+    );
+    let outbox = gate_b_definition(
+        GateBEffectJournal::NotRequired,
+        GateBOutboundObligation::Outbox,
+        GateBInboundProtection::None,
+        GateBAmbiguityReplay::None,
+        None,
+    );
+    let inbox = gate_b_definition(
+        GateBEffectJournal::NotRequired,
+        GateBOutboundObligation::None,
+        GateBInboundProtection::InboxDedup,
+        GateBAmbiguityReplay::None,
+        None,
+    );
+
+    let absent = RepositoryDescriptor::new(0, []);
+    assert_eq!(
+        absent.require_durable_effect_persistence(&journal),
+        Err(DurableEffectNegotiationError::PersistenceProfileMissing)
+    );
+
+    let empty_profile = RepositoryDescriptor::new(0, []).with_durable_effect_persistence(
+        DurableEffectPersistenceDescriptor::new(gate_b_version(1)),
+    );
+    assert_eq!(
+        empty_profile.require_durable_effect_persistence(&journal),
+        Err(DurableEffectNegotiationError::EffectJournalProfileMissing)
+    );
+    assert_eq!(
+        empty_profile.require_durable_effect_persistence(&outbox),
+        Err(DurableEffectNegotiationError::OutboxProfileMissing)
+    );
+    assert_eq!(
+        empty_profile.require_durable_effect_persistence(&inbox),
+        Err(DurableEffectNegotiationError::InboxDedupProfileMissing)
+    );
+
+    let wrong_contract = RepositoryDescriptor::new(0, []).with_durable_effect_persistence(
+        DurableEffectPersistenceDescriptor::new(gate_b_version(2))
+            .with_effect_journal(gate_b_version(1)),
+    );
+    assert_eq!(
+        wrong_contract.require_durable_effect_persistence(&journal),
+        Err(DurableEffectNegotiationError::ContractVersionMismatch {
+            required: 1,
+            advertised: gate_b_version(2),
+        })
+    );
+}
+
+#[test]
+fn inbox_dedup_effective_window_enforces_definition_floor() {
+    let required = gate_b_validity(5_000);
+    let definition = gate_b_definition(
+        GateBEffectJournal::NotRequired,
+        GateBOutboundObligation::None,
+        GateBInboundProtection::InboxDedup,
+        GateBAmbiguityReplay::None,
+        Some(required),
+    );
+
+    let too_short = gate_b_validity(4_999);
+    let short = RepositoryDescriptor::new(0, []).with_durable_effect_persistence(
+        DurableEffectPersistenceDescriptor::new(gate_b_version(1))
+            .with_inbox_dedup(gate_b_version(1), too_short),
+    );
+    assert_eq!(
+        short.require_durable_effect_persistence(&definition),
+        Err(DurableEffectNegotiationError::InboxDedupWindowTooShort {
+            required,
+            effective: too_short,
+        })
+    );
+
+    for effective in [required, gate_b_validity(10_000)] {
+        let sufficient = RepositoryDescriptor::new(0, []).with_durable_effect_persistence(
+            DurableEffectPersistenceDescriptor::new(gate_b_version(1))
+                .with_inbox_dedup(gate_b_version(1), effective),
+        );
+        assert_eq!(
+            sufficient.require_durable_effect_persistence(&definition),
+            Ok(())
+        );
+    }
+}
+
+#[test]
+fn repository_persistence_negotiation_does_not_claim_remote_semantics() {
+    let local_only = gate_b_definition(
+        GateBEffectJournal::NotRequired,
+        GateBOutboundObligation::None,
+        GateBInboundProtection::None,
+        GateBAmbiguityReplay::None,
+        None,
+    );
+    let remote_only = gate_b_definition(
+        GateBEffectJournal::NotRequired,
+        GateBOutboundObligation::None,
+        GateBInboundProtection::None,
+        GateBAmbiguityReplay::BestEffort,
+        None,
+    );
+    let descriptor = RepositoryDescriptor::new(0, []);
+
+    assert_eq!(
+        descriptor.require_durable_effect_persistence(&local_only),
+        Ok(())
+    );
+    assert_eq!(
+        descriptor.require_durable_effect_persistence(&remote_only),
+        Ok(())
+    );
+    assert!(descriptor.durable_effect_persistence().is_none());
 }
 
 /// Every capability except `missing`.
