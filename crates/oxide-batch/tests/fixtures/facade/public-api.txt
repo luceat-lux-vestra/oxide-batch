@@ -130,6 +130,8 @@ oxide_batch::DiagnosticField
 oxide_batch::DomainError
 oxide_batch::DrainResult
 oxide_batch::DropReportWindow
+oxide_batch::DurableEffectNegotiationError
+oxide_batch::DurableEffectPersistenceDescriptor
 oxide_batch::DurableStateKind
 oxide_batch::EffectId
 oxide_batch::EffectScopeId
