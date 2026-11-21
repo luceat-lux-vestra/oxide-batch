@@ -113,9 +113,7 @@ fn existing_chunk_transactions_default_to_no_gate_b_capability() {
     };
 
     assert_eq!(
-        transaction
-            .require_gate_b_enlistment()
-            .map(|_| ()),
+        transaction.require_gate_b_enlistment().map(|_| ()),
         Err(GateBEnlistmentError::Unsupported)
     );
 
@@ -134,9 +132,7 @@ fn legacy_write_context_enlisted_constructor_remains_business_only() {
     assert!(context.transaction().is_some());
     assert!(!context.has_gate_b_enlistment());
     assert_eq!(
-        context
-            .require_gate_b_enlistment()
-            .map(|_| ()),
+        context.require_gate_b_enlistment().map(|_| ()),
         Err(GateBEnlistmentError::Unsupported)
     );
 }
