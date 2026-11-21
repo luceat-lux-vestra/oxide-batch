@@ -1,3 +1,8 @@
+//! Gate-B transaction-port compatibility and redaction integration tests.
+//!
+//! These tests preserve legacy business-only transaction behavior while exercising
+//! the additive Gate-B writer-resource boundary and value-redacted diagnostics.
+
 #![allow(
     clippy::expect_used,
     reason = "the fixtures exercise statically constructed transaction-port contracts"
