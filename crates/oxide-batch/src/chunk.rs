@@ -5,8 +5,8 @@ use std::fmt;
 use std::future::Future;
 
 use crate::{
-    BoxFuture, Checkpoint, ChunkCounts, ComponentStateEnvelope, ExecutionContext, FailureCategory,
-    FaultProgress, JobExecutionId, SkipCounts, StepExecutionId, StopToken,
+    BoxFuture, Checkpoint, ChunkCounts, ComponentStateEnvelope, EffectId, ExecutionContext,
+    FailureCategory, FaultProgress, JobExecutionId, SkipCounts, StepExecutionId, StopToken,
 };
 
 /// Borrowed call state for a reader.
@@ -440,6 +440,317 @@ pub trait BusinessTransaction: Send {
     ) -> BoxFuture<'a, Result<BusinessWriteResult, BusinessTransactionError>>;
 }
 
+/// One bounded inbound-delivery guard request staged in the open chunk transaction.
+///
+/// The identities are runtime-only opaque bytes. Their canonicalization and
+/// maximum encoded sizes are defined by the selected Gate-B contract and the
+/// negotiated repository capability profile; an enlistment implementation must
+/// reject values outside those bounds rather than truncate or reinterpret them.
+pub struct GateBInboxGuard<'a> {
+    inbound_identity: &'a [u8],
+    request_identity: &'a [u8],
+}
+
+impl<'a> GateBInboxGuard<'a> {
+    /// Constructs one runtime inbound guard request.
+    #[must_use]
+    pub const fn new(inbound_identity: &'a [u8], request_identity: &'a [u8]) -> Self {
+        Self {
+            inbound_identity,
+            request_identity,
+        }
+    }
+
+    /// Borrows the restart-stable inbound identity.
+    #[must_use]
+    pub const fn inbound_identity(&self) -> &'a [u8] {
+        self.inbound_identity
+    }
+
+    /// Borrows the canonical request identity.
+    #[must_use]
+    pub const fn request_identity(&self) -> &'a [u8] {
+        self.request_identity
+    }
+}
+
+impl fmt::Debug for GateBInboxGuard<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GateBInboxGuard")
+            .field("inbound_identity_bytes", &self.inbound_identity.len())
+            .field("request_identity_bytes", &self.request_identity.len())
+            .finish()
+    }
+}
+
+/// Outcome of transaction-scoped `InboxDedup` guarding.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum GateBInboxGuardOutcome {
+    /// No matching durable marker exists in this transaction's authority.
+    FirstDelivery,
+    /// The same inbound and request identities are already protected.
+    DuplicateSameRequest,
+    /// The inbound identity exists with a conflicting request identity.
+    Conflict,
+}
+
+/// One durable effect-intent request staged in the open chunk transaction.
+///
+/// Request, destination, and provider-binding identities remain opaque and are
+/// never rendered by this type. Their bounds come from the selected portable
+/// contract and negotiated repository profile rather than from a second set of
+/// hard-coded runtime limits.
+pub struct GateBEffectIntent<'a> {
+    effect_id: &'a EffectId,
+    request_identity: &'a [u8],
+    destination_identity: &'a [u8],
+    provider_key_binding: Option<&'a [u8]>,
+}
+
+impl<'a> GateBEffectIntent<'a> {
+    /// Constructs one transaction-scoped durable effect intent.
+    #[must_use]
+    pub const fn new(
+        effect_id: &'a EffectId,
+        request_identity: &'a [u8],
+        destination_identity: &'a [u8],
+        provider_key_binding: Option<&'a [u8]>,
+    ) -> Self {
+        Self {
+            effect_id,
+            request_identity,
+            destination_identity,
+            provider_key_binding,
+        }
+    }
+
+    /// Borrows the replay-stable logical effect identity.
+    #[must_use]
+    pub const fn effect_id(&self) -> &'a EffectId {
+        self.effect_id
+    }
+
+    /// Borrows the canonical request identity.
+    #[must_use]
+    pub const fn request_identity(&self) -> &'a [u8] {
+        self.request_identity
+    }
+
+    /// Borrows the logical destination/operation identity.
+    #[must_use]
+    pub const fn destination_identity(&self) -> &'a [u8] {
+        self.destination_identity
+    }
+
+    /// Borrows the provider-key binding identity when the selected profile uses one.
+    #[must_use]
+    pub const fn provider_key_binding(&self) -> Option<&'a [u8]> {
+        self.provider_key_binding
+    }
+}
+
+impl fmt::Debug for GateBEffectIntent<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GateBEffectIntent")
+            .field("effect_id", self.effect_id)
+            .field("request_identity_bytes", &self.request_identity.len())
+            .field("destination_identity_bytes", &self.destination_identity.len())
+            .field(
+                "provider_key_binding_bytes",
+                &self.provider_key_binding.map(<[u8]>::len),
+            )
+            .finish()
+    }
+}
+
+/// One bounded outbound obligation staged in the open chunk transaction.
+///
+/// The encoded obligation is runtime persistence material, not definition
+/// identity. Its maximum encoded size is negotiated by the repository
+/// capability profile and must be enforced by the enlistment implementation.
+pub struct GateBOutboxObligation<'a> {
+    effect_id: &'a EffectId,
+    destination_identity: &'a [u8],
+    encoded_obligation: &'a [u8],
+}
+
+impl<'a> GateBOutboxObligation<'a> {
+    /// Constructs one transaction-scoped outbound obligation.
+    #[must_use]
+    pub const fn new(
+        effect_id: &'a EffectId,
+        destination_identity: &'a [u8],
+        encoded_obligation: &'a [u8],
+    ) -> Self {
+        Self {
+            effect_id,
+            destination_identity,
+            encoded_obligation,
+        }
+    }
+
+    /// Borrows the logical effect identity.
+    #[must_use]
+    pub const fn effect_id(&self) -> &'a EffectId {
+        self.effect_id
+    }
+
+    /// Borrows the logical destination identity.
+    #[must_use]
+    pub const fn destination_identity(&self) -> &'a [u8] {
+        self.destination_identity
+    }
+
+    /// Borrows the adapter-neutral encoded obligation.
+    #[must_use]
+    pub const fn encoded_obligation(&self) -> &'a [u8] {
+        self.encoded_obligation
+    }
+}
+
+impl fmt::Debug for GateBOutboxObligation<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("GateBOutboxObligation")
+            .field("effect_id", self.effect_id)
+            .field("destination_identity_bytes", &self.destination_identity.len())
+            .field("encoded_obligation_bytes", &self.encoded_obligation.len())
+            .finish()
+    }
+}
+
+/// Result of idempotently staging one Gate-B durable record.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum GateBEnlistmentOutcome {
+    /// The record was created or already matched the same immutable identity.
+    CreatedOrMatching,
+    /// The stable identity exists with incompatible content.
+    Conflict,
+}
+
+/// Stable, value-redacted Gate-B enlistment failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum GateBEnlistmentError {
+    /// This transaction exposes no Gate-B enlistment capability.
+    Unsupported,
+    /// The transaction's certified capability profile cannot satisfy the request.
+    IncompatibleCapability,
+    /// The selected repository profile's bounded record/count limit would be exceeded.
+    LimitExceeded,
+    /// Adapter infrastructure failed before a successful chunk commit became authoritative.
+    Infrastructure,
+    /// Cooperative cancellation interrupted the enlistment operation.
+    Cancelled,
+}
+
+impl fmt::Display for GateBEnlistmentError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(match self {
+            Self::Unsupported => "chunk transaction does not expose Gate-B enlistment",
+            Self::IncompatibleCapability => {
+                "chunk transaction Gate-B capability is incompatible with the request"
+            }
+            Self::LimitExceeded => "chunk transaction Gate-B bound was exceeded",
+            Self::Infrastructure => "chunk transaction Gate-B enlistment failed",
+            Self::Cancelled => "chunk transaction Gate-B enlistment was cancelled",
+        })
+    }
+}
+
+impl Error for GateBEnlistmentError {}
+
+/// Transaction-scoped Gate-B persistence port owned by the real chunk transaction.
+///
+/// Every successful operation is provisional until the enclosing
+/// [`ChunkTransaction`] commits. Rollback discards the staged Gate-B records,
+/// and an unknown final commit remains governed by
+/// [`ChunkTransactionError::CommitOutcomeUnknown`]. Implementations must use the
+/// same physical correctness transaction as protected business/progress state;
+/// an independent pre/post repository write does not satisfy this contract.
+pub trait GateBEnlistment: Send {
+    /// Guards one inbound identity before the protected local mutation.
+    fn guard_inbox<'a>(
+        &'a mut self,
+        guard: GateBInboxGuard<'a>,
+    ) -> BoxFuture<'a, Result<GateBInboxGuardOutcome, GateBEnlistmentError>>;
+
+    /// Ensures one durable effect intent exists with matching immutable identity.
+    fn ensure_effect_intent<'a>(
+        &'a mut self,
+        intent: GateBEffectIntent<'a>,
+    ) -> BoxFuture<'a, Result<GateBEnlistmentOutcome, GateBEnlistmentError>>;
+
+    /// Enqueues one outbound obligation in the same chunk transaction.
+    fn enqueue_outbox<'a>(
+        &'a mut self,
+        obligation: GateBOutboxObligation<'a>,
+    ) -> BoxFuture<'a, Result<GateBEnlistmentOutcome, GateBEnlistmentError>>;
+}
+
+/// Additive writer view over resources owned by one open [`ChunkTransaction`].
+///
+/// The view exists so a transaction implementation can lend disjoint business
+/// and Gate-B ports together without the runtime borrowing the transaction
+/// object twice. Existing business-only implementations continue to use the
+/// default [`ChunkTransaction::writer_resources`] implementation.
+pub struct ChunkWriterResources<'a> {
+    business_transaction: Option<&'a mut dyn BusinessTransaction>,
+    gate_b_enlistment: Option<&'a mut dyn GateBEnlistment>,
+}
+
+impl<'a> ChunkWriterResources<'a> {
+    /// Constructs a writer resource view from the ports owned by one transaction.
+    #[must_use]
+    pub const fn new(
+        business_transaction: Option<&'a mut dyn BusinessTransaction>,
+        gate_b_enlistment: Option<&'a mut dyn GateBEnlistment>,
+    ) -> Self {
+        Self {
+            business_transaction,
+            gate_b_enlistment,
+        }
+    }
+
+    /// Reborrows the enlisted business transaction when present.
+    #[must_use]
+    pub fn business_transaction(&mut self) -> Option<&mut (dyn BusinessTransaction + 'a)> {
+        self.business_transaction.as_deref_mut()
+    }
+
+    /// Reborrows the transaction-scoped Gate-B enlistment when present.
+    #[must_use]
+    pub fn gate_b_enlistment(&mut self) -> Option<&mut (dyn GateBEnlistment + 'a)> {
+        self.gate_b_enlistment.as_deref_mut()
+    }
+
+    /// Returns whether the legacy business-transaction port is present.
+    #[must_use]
+    pub const fn is_enlisted(&self) -> bool {
+        self.business_transaction.is_some()
+    }
+
+    /// Returns whether this writer call can stage Gate-B records.
+    #[must_use]
+    pub const fn has_gate_b_enlistment(&self) -> bool {
+        self.gate_b_enlistment.is_some()
+    }
+}
+
+impl fmt::Debug for ChunkWriterResources<'_> {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ChunkWriterResources")
+            .field("business_enlisted", &self.business_transaction.is_some())
+            .field("gate_b_enlisted", &self.gate_b_enlistment.is_some())
+            .finish()
+    }
+}
+
 /// Evidence returned after one chunk transaction is known to have committed.
 ///
 /// The receipt owns the durable checkpoint and execution context so
@@ -554,6 +865,32 @@ pub trait ChunkTransaction: Send {
     /// Reborrows an enlisted business transaction when the selected delivery
     /// mode supports same-resource atomicity.
     fn business_transaction(&mut self) -> Option<&mut dyn BusinessTransaction>;
+
+    /// Reborrows transaction-scoped Gate-B enlistment when this transaction certifies it.
+    ///
+    /// Existing transaction implementations retain the no-capability default.
+    /// Callers that require Gate-B semantics must fail closed instead of
+    /// interpreting `None` as permission to perform an independent repository write.
+    fn gate_b_enlistment(&mut self) -> Option<&mut dyn GateBEnlistment> {
+        None
+    }
+
+    /// Requires transaction-scoped Gate-B enlistment or returns a typed unsupported failure.
+    fn require_gate_b_enlistment(
+        &mut self,
+    ) -> Result<&mut dyn GateBEnlistment, GateBEnlistmentError> {
+        self.gate_b_enlistment()
+            .ok_or(GateBEnlistmentError::Unsupported)
+    }
+
+    /// Lends all writer-visible ports through one borrow of the chunk transaction.
+    ///
+    /// The default preserves every existing business-only implementation.
+    /// A Gate-B-capable transaction overrides this method to borrow its disjoint
+    /// business and Gate-B fields together and return them in one view.
+    fn writer_resources(&mut self) -> ChunkWriterResources<'_> {
+        ChunkWriterResources::new(self.business_transaction(), None)
+    }
 
     /// Commits business work and the supplied progress, returning the durable
     /// checkpoint and context that became authoritative.
@@ -962,7 +1299,7 @@ impl Error for BusinessTransactionError {}
 /// Borrowed call state for a writer.
 pub struct WriteContext<'a> {
     stop: &'a StopToken,
-    transaction: Option<&'a mut dyn BusinessTransaction>,
+    resources: ChunkWriterResources<'a>,
 }
 
 impl<'a> WriteContext<'a> {
@@ -971,17 +1308,27 @@ impl<'a> WriteContext<'a> {
     pub const fn non_transactional(stop: &'a StopToken) -> Self {
         Self {
             stop,
-            transaction: None,
+            resources: ChunkWriterResources::new(None, None),
         }
     }
 
-    /// Constructs a writer call enlisted in an OxideBatch-owned transaction.
+    /// Constructs a writer call enlisted in an OxideBatch-owned business transaction.
+    ///
+    /// This source-compatible constructor intentionally supplies no Gate-B
+    /// capability. The runtime uses [`Self::with_resources`] when the owning
+    /// [`ChunkTransaction`] lends the additive combined resource view.
     #[must_use]
     pub fn enlisted(stop: &'a StopToken, transaction: &'a mut dyn BusinessTransaction) -> Self {
         Self {
             stop,
-            transaction: Some(transaction),
+            resources: ChunkWriterResources::new(Some(transaction), None),
         }
+    }
+
+    /// Constructs a writer call from one transaction-owned combined resource view.
+    #[must_use]
+    pub const fn with_resources(stop: &'a StopToken, resources: ChunkWriterResources<'a>) -> Self {
+        Self { stop, resources }
     }
 
     /// Borrows the cooperative stop token.
@@ -990,16 +1337,38 @@ impl<'a> WriteContext<'a> {
         self.stop
     }
 
-    /// Reborrows the enlisted transaction when one is present.
+    /// Reborrows the enlisted business transaction when one is present.
+    ///
+    /// The method retains the pre-Gate-B source and semantic contract.
     #[must_use]
     pub fn transaction(&mut self) -> Option<&mut (dyn BusinessTransaction + 'a)> {
-        self.transaction.as_deref_mut()
+        self.resources.business_transaction()
     }
 
-    /// Returns whether this call participates in the chunk transaction.
+    /// Reborrows transaction-scoped Gate-B enlistment when the transaction supplies it.
+    #[must_use]
+    pub fn gate_b_enlistment(&mut self) -> Option<&mut (dyn GateBEnlistment + 'a)> {
+        self.resources.gate_b_enlistment()
+    }
+
+    /// Requires the writer's Gate-B enlistment or fails closed.
+    pub fn require_gate_b_enlistment(
+        &mut self,
+    ) -> Result<&mut (dyn GateBEnlistment + 'a), GateBEnlistmentError> {
+        self.gate_b_enlistment()
+            .ok_or(GateBEnlistmentError::Unsupported)
+    }
+
+    /// Returns whether this call participates in the legacy business transaction.
     #[must_use]
     pub const fn is_enlisted(&self) -> bool {
-        self.transaction.is_some()
+        self.resources.is_enlisted()
+    }
+
+    /// Returns whether this writer call may stage Gate-B records in the chunk transaction.
+    #[must_use]
+    pub const fn has_gate_b_enlistment(&self) -> bool {
+        self.resources.has_gate_b_enlistment()
     }
 }
 
@@ -1008,7 +1377,7 @@ impl fmt::Debug for WriteContext<'_> {
         formatter
             .debug_struct("WriteContext")
             .field("stop_requested", &self.stop.is_stop_requested())
-            .field("enlisted", &self.transaction.is_some())
+            .field("enlisted", &self.resources.is_enlisted())
             .finish()
     }
 }
