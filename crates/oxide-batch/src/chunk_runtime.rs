@@ -2666,10 +2666,8 @@ where
         return Verdict::Terminal(item_listener_outcome(failure.kind()));
     }
 
-    let write_context = match transaction.business_transaction() {
-        Some(business) => WriteContext::enlisted(scope.stop, business),
-        None => WriteContext::non_transactional(scope.stop),
-    };
+    let write_context =
+        WriteContext::with_resources(scope.stop, transaction.writer_resources());
     match invoke_writer(components.writer, &outputs.values, write_context).await {
         Invoked::Completed(WriteOutcome::Written) => {
             let failures = components
