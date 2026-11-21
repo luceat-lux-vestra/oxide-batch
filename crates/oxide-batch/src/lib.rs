@@ -438,10 +438,12 @@ pub use chunk::{
     BusinessTransactionError, BusinessTransactionErrorKind, BusinessValue, BusinessValueKind,
     BusinessWriteResult, ChunkCommitReceipt, ChunkCompletion, ChunkCompletionContext,
     ChunkCompletionError, ChunkCompletionOutcome, ChunkFaultProgress, ChunkTransaction,
-    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, FailureCode,
-    FailureOutcome, FailureProvenance, InheritedStepProgress, ItemProcessor, ItemReader,
-    ItemWriter, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
-    ReaderError, SqlStateCode, WriteContext, WriteOutcome, WriterError,
+    ChunkTransactionContext, ChunkTransactionError, ChunkTransactionManager, ChunkWriterResources,
+    FailureCode, FailureOutcome, FailureProvenance, GateBEffectIntent, GateBEnlistment,
+    GateBEnlistmentError, GateBEnlistmentOutcome, GateBInboxGuard, GateBInboxGuardOutcome,
+    GateBOutboxObligation, InheritedStepProgress, ItemProcessor, ItemReader, ItemWriter,
+    ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome, ReaderError,
+    SqlStateCode, WriteContext, WriteOutcome, WriterError,
 };
 pub use chunk_builder::{ChunkPipelineBuilder, NoopChunkCompletion};
 pub use chunk_runtime::{

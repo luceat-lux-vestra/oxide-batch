@@ -66,7 +66,8 @@ enum Withheld {
 /// without revisiting the review fails here, which is the point.
 const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // #220 adds five bounded, driver-neutral business-failure provenance types.
-    ("chunk", 37),
+    // #710 Slice B adds eight transaction-scoped Gate-B writer/enlistment types.
+    ("chunk", 45),
     ("chunk_builder", 2),
     ("chunk_runtime", 14),
     ("completion", 11),
