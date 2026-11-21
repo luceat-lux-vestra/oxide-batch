@@ -882,6 +882,11 @@ pub trait ChunkTransaction: Send {
     }
 
     /// Requires transaction-scoped Gate-B enlistment or returns a typed unsupported failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GateBEnlistmentError::Unsupported`] when this transaction
+    /// exposes no Gate-B enlistment capability.
     fn require_gate_b_enlistment(
         &mut self,
     ) -> Result<&mut dyn GateBEnlistment, GateBEnlistmentError> {
@@ -1358,6 +1363,11 @@ impl<'a> WriteContext<'a> {
     }
 
     /// Requires the writer's Gate-B enlistment or fails closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`GateBEnlistmentError::Unsupported`] when the writer context
+    /// contains no transaction-scoped Gate-B enlistment.
     pub fn require_gate_b_enlistment(
         &mut self,
     ) -> Result<&mut (dyn GateBEnlistment + 'a), GateBEnlistmentError> {
