@@ -521,8 +521,8 @@ pub use oxide_batch_core::{
     GateBContractError, GateBContractId, GateBContractVersion, GateBDefinitionContract,
     GateBEffectIdentity, GateBEffectJournal, GateBEffectScope, GateBEffectSlot,
     GateBInboundProtection, GateBLocalAtomicity, GateBMinimumValidityMs,
-    GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract,
-    GateBRequirements, GateBSemanticContract, MAX_GATE_B_IDENTIFIER_BYTES,
+    GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract, GateBRequirements,
+    GateBSemanticContract, MAX_GATE_B_IDENTIFIER_BYTES,
 };
 pub use oxide_batch_plan::{
     CompiledExecutionPlan, CompiledFlowScope, CustomLeafKind, CustomLeafNode, DeciderRevision,
