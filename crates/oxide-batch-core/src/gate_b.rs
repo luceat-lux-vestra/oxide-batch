@@ -60,7 +60,7 @@ pub enum GateBInboundProtection {
     /// No inbound deduplication protection is selected.
     #[default]
     None,
-    /// Stable inbound identity must be protected by InboxDedup semantics.
+    /// Stable inbound identity must be protected by `InboxDedup` semantics.
     InboxDedup,
 }
 
@@ -410,7 +410,7 @@ impl GateBEffectScope {
     }
 }
 
-/// Static EffectId derivation and effect-scope/slot declaration contract.
+/// Static `EffectId` derivation and effect-scope/slot declaration contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct GateBEffectIdentity {
     derivation_contract_version: GateBContractVersion,
@@ -427,7 +427,7 @@ impl GateBEffectIdentity {
     ///
     /// Rejects duplicate scope identifiers and declarations exceeding the
     /// current reader capability ceilings. Provider-key selection consistency
-    /// is validated by GateBDefinitionContract, where the remote requirement is
+    /// is validated by `GateBDefinitionContract`, where the remote requirement is
     /// also available.
     pub fn new(
         derivation_contract_version: GateBContractVersion,
@@ -467,7 +467,7 @@ impl GateBEffectIdentity {
         })
     }
 
-    /// Returns the EffectId derivation contract version.
+    /// Returns the `EffectId` derivation contract version.
     #[must_use]
     pub const fn derivation_contract_version(&self) -> GateBContractVersion {
         self.derivation_contract_version
@@ -574,7 +574,7 @@ impl GateBDefinitionContract {
     /// # Errors
     ///
     /// Rejects missing or forbidden remote contracts, provider-key binding
-    /// inconsistencies, and an InboxDedup floor without InboxDedup protection.
+    /// inconsistencies, and an `InboxDedup` floor without `InboxDedup` protection.
     pub fn new(
         requirements: GateBRequirements,
         effect_identity: GateBEffectIdentity,
@@ -644,7 +644,7 @@ impl GateBDefinitionContract {
         self.remote_contract.as_ref()
     }
 
-    /// Returns the definition-required InboxDedup floor when selected.
+    /// Returns the definition-required `InboxDedup` floor when selected.
     #[must_use]
     pub const fn inbox_dedup_minimum_validity_ms(&self) -> Option<GateBMinimumValidityMs> {
         self.inbox_dedup_minimum_validity_ms
@@ -666,9 +666,9 @@ pub enum GateBContractError {
     SurroundingWhitespace,
     /// A logical identifier contained a control character.
     ControlCharacter,
-    /// The same EffectScopeId was declared more than once.
+    /// The same `EffectScopeId` was declared more than once.
     DuplicateEffectScope,
-    /// The same EffectSlotId was declared more than once inside one scope.
+    /// The same `EffectSlotId` was declared more than once inside one scope.
     DuplicateEffectSlot,
     /// The declaration exceeds the reader's effect-scope capability ceiling.
     TooManyEffectScopes {
@@ -680,7 +680,7 @@ pub enum GateBContractError {
         /// Maximum accepted total slots.
         max: usize,
     },
-    /// Idempotent external replay was selected without an EffectJournal.
+    /// Idempotent external replay was selected without an `EffectJournal`.
     IdempotentExternalEffectRequiresJournal,
     /// Selected semantics require a portable remote contract.
     RemoteContractRequired,
@@ -690,7 +690,7 @@ pub enum GateBContractError {
     ProviderKeyBindingRequired,
     /// A provider-key binding version cannot exist without a remote contract.
     ProviderKeyBindingRequiresRemoteContract,
-    /// An InboxDedup floor was supplied without InboxDedup protection.
+    /// An `InboxDedup` floor was supplied without `InboxDedup` protection.
     InboxDedupFloorRequiresInboxDedup,
 }
 
