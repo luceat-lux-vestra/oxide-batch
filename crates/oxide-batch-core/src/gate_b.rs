@@ -1113,7 +1113,7 @@ mod tests {
             Err(GateBContractError::SurroundingWhitespace)
         );
         assert_eq!(
-            EffectSlotId::new("slot\n"),
+            EffectSlotId::new("slot\nid"),
             Err(GateBContractError::ControlCharacter)
         );
         assert_eq!(
