@@ -87,7 +87,8 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // #604 adds the restart-relevant parameter-incrementer identity.
     // #606 adds the execution-definition RestartPolicy; the older
     // RestartabilityDeclaration remains the component-state capability contract.
-    ("oxide_batch_core", 122),
+    // #710 adds the Gate-B portable semantic/identity contract surface.
+    ("oxide_batch_core", 144),
     // #264 adds the reviewed M7 plan surface: CompiledFlowScope, NestedFlow,
     // and MAX_FLOW_COMPOSITION_DEPTH. #265 adds the nested-job declaration
     // contract. #266 adds CustomLeafKind and CustomLeafNode. #276 adds only
