@@ -111,7 +111,9 @@ const REVIEWED_SURFACE: &[(&str, usize)] = &[
     // explicit facade-owned restart identity.
     // #550 adds immutable registry binding construction/error values.
     // #617 adds seven bounded, redacted M7 explorer projection descriptors.
-    ("oxide_batch_repository", 130),
+    // #710 Slice C adds the typed durable-effect persistence descriptor and
+    // its fail-closed negotiation error.
+    ("oxide_batch_repository", 132),
     // #301 exposes the process-local repeat runtime contract: callback/policy/
     // interceptor traits and registrations, redacted failure/context values,
     // policy outcome, and the bounded secondary-failure ceiling.
