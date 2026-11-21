@@ -178,6 +178,15 @@ mod resolves {
         ScopedFactoryContext, ScopedFactoryError,
     };
 
+    pub use oxide_batch::{
+        EffectId, EffectScopeId, EffectSlotId, GATE_B_CONTRACT_VERSION, GateBAmbiguityReplay,
+        GateBContractError, GateBContractId, GateBContractVersion, GateBDefinitionContract,
+        GateBEffectIdentity, GateBEffectJournal, GateBEffectScope, GateBEffectSlot,
+        GateBInboundProtection, GateBLocalAtomicity, GateBMinimumValidityMs,
+        GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract,
+        GateBRequirements, GateBSemanticContract, MAX_GATE_B_IDENTIFIER_BYTES,
+    };
+
     #[cfg(feature = "mongodb")]
     pub use oxide_batch::{
         MongoChunkStateError, MongoChunkStateProvider, MongoChunkTransactionManager, MongoConfig,

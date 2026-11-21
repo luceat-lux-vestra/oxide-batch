@@ -1351,6 +1351,14 @@
       "covered_by": "crates/oxide-batch/tests/parameter_incrementer.rs::rejects_excess_and_duplicate_fields_before_application_code; crates/oxide-batch/tests/parameter_incrementer.rs::excessive_prior_parameter_set_is_rejected_before_callback"
     },
     {
+      "resource": "Gate-B identifier construction-input ceiling",
+      "symbols": [
+        "MAX_GATE_B_IDENTIFIER_BYTES"
+      ],
+      "reason": "This M8 Gate-B ceiling bounds the UTF-8 byte length of static caller-supplied semantic-contract, effect-scope, and effect-slot identifier strings at construction time. It is a fail-closed definition/contract-validation limit, not a framework-owned runtime resource such as a queue, buffer, connection pool, cache, worker set, or retained result set, so the M5 operational resource campaign excludes it rather than fabricating saturation evidence for a static identifier bound.",
+      "covered_by": "crates/oxide-batch-core/src/gate_b.rs::tests::identifiers_versions_and_validity_floors_are_bounded"
+    },
+    {
       "resource": "distributed and remote execution resources",
       "symbols": [],
       "reason": "No remote worker, broker credit, or assignment queue exists in the accepted M0-M4 scope. A campaign row for one would be a claim about unwritten code.",
