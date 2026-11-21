@@ -2666,8 +2666,7 @@ where
         return Verdict::Terminal(item_listener_outcome(failure.kind()));
     }
 
-    let write_context =
-        WriteContext::with_resources(scope.stop, transaction.writer_resources());
+    let write_context = WriteContext::with_resources(scope.stop, transaction.writer_resources());
     match invoke_writer(components.writer, &outputs.values, write_context).await {
         Invoked::Completed(WriteOutcome::Written) => {
             let failures = components
