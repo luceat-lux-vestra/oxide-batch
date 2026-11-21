@@ -557,7 +557,10 @@ impl fmt::Debug for GateBEffectIntent<'_> {
             .debug_struct("GateBEffectIntent")
             .field("effect_id", self.effect_id)
             .field("request_identity_bytes", &self.request_identity.len())
-            .field("destination_identity_bytes", &self.destination_identity.len())
+            .field(
+                "destination_identity_bytes",
+                &self.destination_identity.len(),
+            )
             .field(
                 "provider_key_binding_bytes",
                 &self.provider_key_binding.map(<[u8]>::len),
@@ -616,7 +619,10 @@ impl fmt::Debug for GateBOutboxObligation<'_> {
         formatter
             .debug_struct("GateBOutboxObligation")
             .field("effect_id", self.effect_id)
-            .field("destination_identity_bytes", &self.destination_identity.len())
+            .field(
+                "destination_identity_bytes",
+                &self.destination_identity.len(),
+            )
             .field("encoded_obligation_bytes", &self.encoded_obligation.len())
             .finish()
     }
