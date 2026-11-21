@@ -603,7 +603,10 @@ impl GateBDefinitionContract {
             return Err(GateBContractError::ProviderKeyBindingRequiresRemoteContract);
         }
 
-        match (requirements.requires_remote_contract(), remote_contract.is_some()) {
+        match (
+            requirements.requires_remote_contract(),
+            remote_contract.is_some(),
+        ) {
             (true, false) => return Err(GateBContractError::RemoteContractRequired),
             (false, true) => return Err(GateBContractError::RemoteContractForbidden),
             _ => {}
@@ -696,7 +699,10 @@ impl fmt::Display for GateBContractError {
         match self {
             Self::EmptyIdentifier => formatter.write_str("Gate-B identifier is empty"),
             Self::IdentifierTooLong { max_bytes } => {
-                write!(formatter, "Gate-B identifier exceeds {max_bytes} UTF-8 bytes")
+                write!(
+                    formatter,
+                    "Gate-B identifier exceeds {max_bytes} UTF-8 bytes"
+                )
             }
             Self::SurroundingWhitespace => {
                 formatter.write_str("Gate-B identifier has surrounding whitespace")
@@ -714,11 +720,14 @@ impl fmt::Display for GateBContractError {
                 write!(formatter, "Gate-B definition exceeds {max} effect scopes")
             }
             Self::TooManyEffectSlots { max } => {
-                write!(formatter, "Gate-B definition exceeds {max} total effect slots")
+                write!(
+                    formatter,
+                    "Gate-B definition exceeds {max} total effect slots"
+                )
             }
-            Self::IdempotentExternalEffectRequiresJournal => formatter.write_str(
-                "idempotent external effects require a durable effect journal",
-            ),
+            Self::IdempotentExternalEffectRequiresJournal => {
+                formatter.write_str("idempotent external effects require a durable effect journal")
+            }
             Self::RemoteContractRequired => {
                 formatter.write_str("selected Gate-B semantics require a remote contract")
             }
@@ -728,12 +737,11 @@ impl fmt::Display for GateBContractError {
             Self::ProviderKeyBindingRequired => formatter.write_str(
                 "idempotent external effects require a provider-key binding contract version",
             ),
-            Self::ProviderKeyBindingRequiresRemoteContract => formatter.write_str(
-                "provider-key binding contract version requires a remote contract",
-            ),
-            Self::InboxDedupFloorRequiresInboxDedup => formatter.write_str(
-                "InboxDedup minimum validity requires InboxDedup protection",
-            ),
+            Self::ProviderKeyBindingRequiresRemoteContract => formatter
+                .write_str("provider-key binding contract version requires a remote contract"),
+            Self::InboxDedupFloorRequiresInboxDedup => {
+                formatter.write_str("InboxDedup minimum validity requires InboxDedup protection")
+            }
         }
     }
 }
@@ -811,9 +819,13 @@ mod tests {
         )
         .expect("composition is valid");
 
-        let definition =
-            GateBDefinitionContract::new(requirements, identity(None).unwrap(), Some(remote()), None)
-                .expect("remote contract satisfies BestEffort");
+        let definition = GateBDefinitionContract::new(
+            requirements,
+            identity(None).unwrap(),
+            Some(remote()),
+            None,
+        )
+        .expect("remote contract satisfies BestEffort");
 
         assert_eq!(
             definition.requirements().outbound_obligation(),
@@ -853,7 +865,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            GateBDefinitionContract::new(requirements, identity(None).unwrap(), Some(remote()), None),
+            GateBDefinitionContract::new(
+                requirements,
+                identity(None).unwrap(),
+                Some(remote()),
+                None
+            ),
             Err(GateBContractError::ProviderKeyBindingRequired)
         );
     }
@@ -982,12 +999,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            GateBDefinitionContract::new(
-                without_inbox,
-                identity(None).unwrap(),
-                None,
-                Some(floor),
-            ),
+            GateBDefinitionContract::new(without_inbox, identity(None).unwrap(), None, Some(floor),),
             Err(GateBContractError::InboxDedupFloorRequiresInboxDedup)
         );
 
@@ -1032,9 +1044,14 @@ mod tests {
         );
 
         let scope_a = GateBEffectScope::new(EffectScopeId::new("a").unwrap(), Vec::new()).unwrap();
-        let identity =
-            GateBEffectIdentity::new(version(1), version(1), version(1), None, vec![scope_b, scope_a])
-                .unwrap();
+        let identity = GateBEffectIdentity::new(
+            version(1),
+            version(1),
+            version(1),
+            None,
+            vec![scope_b, scope_a],
+        )
+        .unwrap();
         assert_eq!(
             identity
                 .scopes()
@@ -1067,13 +1084,7 @@ mod tests {
             })
             .collect::<Vec<_>>();
         assert_eq!(
-            GateBEffectIdentity::new(
-                version(1),
-                version(1),
-                version(1),
-                None,
-                too_many_scopes,
-            ),
+            GateBEffectIdentity::new(version(1), version(1), version(1), None, too_many_scopes,),
             Err(GateBContractError::TooManyEffectScopes { max: MAX_NODES })
         );
 
