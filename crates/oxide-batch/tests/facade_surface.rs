@@ -158,6 +158,10 @@ mod resolves {
         BusinessTransactionErrorKind, FailureCode, FailureOutcome, FailureProvenance, SqlStateCode,
     };
     pub use oxide_batch::{
+        ChunkWriterResources, GateBEffectIntent, GateBEnlistment, GateBEnlistmentError,
+        GateBEnlistmentOutcome, GateBInboxGuard, GateBInboxGuardOutcome, GateBOutboxObligation,
+    };
+    pub use oxide_batch::{
         DefinitionRevisionProjection, DefinitionUpgradeProjection, ForkLineageProjection,
         NestedJobLinkProjection, RepeatStateProjection, RestartControlDescriptor,
         ScopeResolutionProjection,
