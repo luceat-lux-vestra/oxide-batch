@@ -1,6 +1,6 @@
 # ADR-0013: M7 Advanced Flow, Scope, Repeat, and Definition Evolution
 
-- **State:** Accepted
+- **State:** Accepted; partially superseded by [ADR-0017](0017-canonical-compiled-plan-manifest-v1-reset.md) for format-4 / formats-1-3 future-readability requirements only
 - **Date:** 2026-09-07
 - **Owners:** runtime, API, repository, and operator maintainers
 - **Deciders:** project owner
@@ -9,6 +9,9 @@
   [ADR-0009](0009-definition-fingerprint-input-set.md)
 - **Canonical contract:**
   [M7 advanced-flow, scope, repeat, and evolution contract](../m7-advanced-flow-scope-repeat-and-evolution.md)
+- **Partial supersession scope:** ADR-0017 replaces the preview manifest-family
+  preservation boundary. Advanced flow, scope, repeat, definition evolution,
+  and the ordered repository-schema chain remain authoritative.
 
 ## Context
 
