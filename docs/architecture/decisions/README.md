@@ -23,7 +23,7 @@ data, correctness, security, or dependency direction.
 | [0003](0003-postgres-metadata.md) | PostgreSQL metadata repository | Superseded by ADR-0006 |
 | [0004](0004-job-definition-restart-compatibility.md) | Job-definition identity and restart compatibility | Accepted |
 | [0005](0005-compiled-execution-plan.md) | Compiled execution plan | Accepted |
-| [0006](0006-repository-capability-model.md) | Repository services and capability model | Accepted |
+| [0006](0006-repository-capability-model.md) | Repository services and capability model | Accepted; M8 durable-effect delivery/profile scope partially superseded by ADR-0016 |
 | [0007](0007-control-plane-boundary.md) | Core and control-plane boundary | Accepted |
 | [0008](0008-item-component-contract.md) | Item component contract and erasure boundary | Accepted; partially supersedes ADR-0002 |
 | [0009](0009-definition-fingerprint-input-set.md) | Definition fingerprint input set | Accepted |
