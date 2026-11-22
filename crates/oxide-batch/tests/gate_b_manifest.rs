@@ -2,6 +2,8 @@
 
 #![allow(clippy::expect_used)]
 
+use sha2::{Digest, Sha256};
+
 use oxide_batch::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ChunkSize, ComponentRevision,
     DefinitionIdentity, DefinitionManifest, DefinitionRevision, EffectScopeId, EffectSlotId,
@@ -9,7 +11,7 @@ use oxide_batch::{
     GateBDefinitionContract, GateBEffectIdentity, GateBEffectJournal, GateBEffectScope,
     GateBEffectSlot, GateBInboundProtection, GateBLocalAtomicity, GateBMinimumValidityMs,
     GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract, GateBRequirements,
-    GateBSemanticContract, JobName, ManifestError, NodeId, PartitionBudget, PartitionCount,
+    GateBSemanticContract, JobName, ManifestError, MAX_NODES, MAX_TRANSITIONS, NodeId, PartitionBudget, PartitionCount,
     PartitionedStepNode, RestartPolicy, StateSchemaId, StateSchemaVersion, StepComponents, StepName,
     StepNode, TerminalKind,
 };
@@ -18,6 +20,16 @@ const LEGACY_TASKLET: &[u8] =
     include_bytes!("fixtures/GATE-B-FORMAT5-001/legacy-format1-tasklet.manifest.json");
 const LEGACY_CHUNK: &[u8] =
     include_bytes!("fixtures/GATE-B-FORMAT5-001/legacy-format1-chunk.manifest.json");
+const FORMAT5_BASE1_TASKLET: &[u8] =
+    include_bytes!("fixtures/GATE-B-FORMAT5-001/format5-base1-tasklet.manifest.json");
+const FORMAT5_BASE1_CHUNK: &[u8] =
+    include_bytes!("fixtures/GATE-B-FORMAT5-001/format5-base1-chunk.manifest.json");
+const FORMAT5_BASE2: &[u8] =
+    include_bytes!("fixtures/GATE-B-FORMAT5-001/format5-base2.manifest.json");
+const FORMAT5_BASE3: &[u8] =
+    include_bytes!("fixtures/GATE-B-FORMAT5-001/format5-base3.manifest.json");
+const FORMAT5_BASE4: &[u8] =
+    include_bytes!("fixtures/GATE-B-FORMAT5-001/format5-base4.manifest.json");
 
 fn version(value: u16) -> GateBContractVersion {
     GateBContractVersion::new(value).expect("non-zero Gate-B version")
@@ -189,6 +201,34 @@ fn outer(identity: &DefinitionIdentity) -> serde_json::Value {
 
 fn canonical(value: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(value).expect("canonical json")
+}
+
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    Sha256::digest(bytes).into()
+}
+
+fn changed_at(
+    original: &serde_json::Value,
+    pointer: &str,
+    value: serde_json::Value,
+) -> serde_json::Value {
+    let mut changed = original.clone();
+    *changed
+        .pointer_mut(pointer)
+        .expect("fingerprint mutation path must exist") = value;
+    changed
+}
+
+fn assert_digest_changed(
+    label: &str,
+    baseline: &[u8; 32],
+    changed: &serde_json::Value,
+) {
+    let changed_digest = sha256(&canonical(changed));
+    assert_ne!(
+        baseline, &changed_digest,
+        "{label} must remain definition-fingerprint material"
+    );
 }
 
 #[test]
@@ -437,4 +477,338 @@ fn format5_contains_no_deployment_or_runtime_effect_identity_values() {
     ] {
         assert!(!encoded.contains(excluded), "{excluded} must stay out of definition identity");
     }
+}
+
+
+#[test]
+fn format5_materialized_goldens_cover_all_legacy_base_families() {
+    let cases = [
+        (legacy_tasklet(), FORMAT5_BASE1_TASKLET),
+        (legacy_chunk(), FORMAT5_BASE1_CHUNK),
+        (format2_plan().definition_identity().clone(), FORMAT5_BASE2),
+        (format3_plan().definition_identity().clone(), FORMAT5_BASE3),
+        (format4_plan().definition_identity().clone(), FORMAT5_BASE4),
+    ];
+
+    for (legacy, expected) in cases {
+        let wrapped = legacy
+            .with_gate_b(gate_b_contract())
+            .expect("format-5 golden producer");
+        assert_eq!(
+            wrapped.canonical_manifest(),
+            expected,
+            "materialized format-5 golden must match the real producer"
+        );
+        let read = DefinitionManifest::read_verified(expected, wrapped.manifest_digest())
+            .expect("materialized golden is a valid format-5 manifest");
+        assert_eq!(read.format(), 5);
+    }
+}
+
+#[test]
+fn every_static_gate_b_projection_field_changes_the_format5_fingerprint() {
+    let wrapped = legacy_tasklet()
+        .with_gate_b(gate_b_contract())
+        .expect("format-5 wrapper");
+    let original = outer(&wrapped);
+    let baseline = sha256(&canonical(&original));
+
+    let mutations = [
+        (
+            "contract_version",
+            "/gate_b/contract_version",
+            serde_json::json!(2),
+        ),
+        (
+            "local_atomicity",
+            "/gate_b/requirements/local_atomicity",
+            serde_json::json!("none"),
+        ),
+        (
+            "effect_journal",
+            "/gate_b/requirements/effect_journal",
+            serde_json::json!("not_required"),
+        ),
+        (
+            "outbound_obligation",
+            "/gate_b/requirements/outbound_obligation",
+            serde_json::json!("none"),
+        ),
+        (
+            "inbound_protection",
+            "/gate_b/requirements/inbound_protection",
+            serde_json::json!("none"),
+        ),
+        (
+            "ambiguity_replay",
+            "/gate_b/requirements/ambiguity_replay",
+            serde_json::json!("at_least_once"),
+        ),
+        (
+            "native_message_mode",
+            "/gate_b/requirements/native_message_transaction/mode",
+            serde_json::json!("none"),
+        ),
+        (
+            "native_message_contract_id",
+            "/gate_b/requirements/native_message_transaction/semantic_contract_id",
+            serde_json::json!("native-message-tx-v2"),
+        ),
+        (
+            "native_message_contract_version",
+            "/gate_b/requirements/native_message_transaction/semantic_contract_version",
+            serde_json::json!(6),
+        ),
+        (
+            "effect_id_derivation_version",
+            "/gate_b/effect_identity/derivation_contract_version",
+            serde_json::json!(2),
+        ),
+        (
+            "occurrence_key_version",
+            "/gate_b/effect_identity/occurrence_key_contract_version",
+            serde_json::json!(3),
+        ),
+        (
+            "request_identity_version",
+            "/gate_b/effect_identity/request_identity_contract_version",
+            serde_json::json!(4),
+        ),
+        (
+            "provider_key_binding_version",
+            "/gate_b/effect_identity/provider_key_binding_contract_version",
+            serde_json::json!(5),
+        ),
+        (
+            "effect_scope_id",
+            "/gate_b/effect_identity/scopes/0/id",
+            serde_json::json!("alpha-v2"),
+        ),
+        (
+            "effect_slot_id",
+            "/gate_b/effect_identity/scopes/0/slots/0/id",
+            serde_json::json!("primary-v2"),
+        ),
+        (
+            "logical_destination_contract",
+            "/gate_b/effect_identity/scopes/0/slots/0/logical_destination_contract",
+            serde_json::json!("logical-destination-v2"),
+        ),
+        (
+            "remote_semantic_profile_id",
+            "/gate_b/remote_contract/semantic_profile_id",
+            serde_json::json!("remote-profile-v2"),
+        ),
+        (
+            "remote_semantic_profile_version",
+            "/gate_b/remote_contract/semantic_profile_version",
+            serde_json::json!(7),
+        ),
+        (
+            "remote_ack_contract_id",
+            "/gate_b/remote_contract/acknowledgement_contract_id",
+            serde_json::json!("remote-ack-v2"),
+        ),
+        (
+            "remote_ack_contract_version",
+            "/gate_b/remote_contract/acknowledgement_contract_version",
+            serde_json::json!(8),
+        ),
+        (
+            "remote_unknown_contract_id",
+            "/gate_b/remote_contract/unknown_outcome_contract_id",
+            serde_json::json!("remote-unknown-v2"),
+        ),
+        (
+            "remote_unknown_contract_version",
+            "/gate_b/remote_contract/unknown_outcome_contract_version",
+            serde_json::json!(9),
+        ),
+        (
+            "remote_minimum_validity",
+            "/gate_b/remote_contract/minimum_validity_ms",
+            serde_json::json!(30_001),
+        ),
+        (
+            "inbox_dedup_minimum_validity",
+            "/gate_b/inbox_dedup_minimum_validity_ms",
+            serde_json::json!(60_001),
+        ),
+    ];
+
+    for (label, pointer, value) in mutations {
+        assert_digest_changed(label, &baseline, &changed_at(&original, pointer, value));
+    }
+}
+
+#[test]
+fn format5_reader_rejects_duplicate_and_overbound_effect_identity() {
+    let wrapped = legacy_tasklet()
+        .with_gate_b(gate_b_contract())
+        .expect("format-5 wrapper");
+    let original = outer(&wrapped);
+
+    let first_scope = original["gate_b"]["effect_identity"]["scopes"][0].clone();
+    let mut duplicate_scope = original.clone();
+    duplicate_scope["gate_b"]["effect_identity"]["scopes"]
+        .as_array_mut()
+        .expect("scope array")
+        .insert(1, first_scope);
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&duplicate_scope)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let first_slot = original["gate_b"]["effect_identity"]["scopes"][0]["slots"][0].clone();
+    let mut duplicate_slot = original.clone();
+    duplicate_slot["gate_b"]["effect_identity"]["scopes"][0]["slots"]
+        .as_array_mut()
+        .expect("slot array")
+        .insert(1, first_slot);
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&duplicate_slot)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut too_many_scopes = original.clone();
+    too_many_scopes["gate_b"]["effect_identity"]["scopes"] = serde_json::Value::Array(
+        (0..=MAX_NODES)
+            .map(|index| {
+                serde_json::json!({
+                    "id": format!("s{index:04}"),
+                    "slots": []
+                })
+            })
+            .collect(),
+    );
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&too_many_scopes)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut too_many_slots = original;
+    too_many_slots["gate_b"]["effect_identity"]["scopes"] = serde_json::json!([
+        {
+            "id": "scope",
+            "slots": (0..=MAX_TRANSITIONS)
+                .map(|index| serde_json::json!({ "id": format!("{index:04x}") }))
+                .collect::<Vec<_>>()
+        }
+    ]);
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&too_many_slots)),
+        Err(ManifestError::MalformedGateB)
+    );
+}
+
+#[test]
+fn format5_reader_rejects_gate_b_cross_field_and_nested_contract_violations() {
+    let wrapped = legacy_tasklet()
+        .with_gate_b(gate_b_contract())
+        .expect("format-5 wrapper");
+    let original = outer(&wrapped);
+
+    let mut idempotent_without_journal = original.clone();
+    idempotent_without_journal["gate_b"]["requirements"]["effect_journal"] =
+        serde_json::json!("not_required");
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&idempotent_without_journal)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut missing_remote = original.clone();
+    missing_remote["gate_b"]
+        .as_object_mut()
+        .expect("Gate-B object")
+        .remove("remote_contract");
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&missing_remote)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut forbidden_remote = original.clone();
+    forbidden_remote["gate_b"]["requirements"]["ambiguity_replay"] = serde_json::json!("none");
+    forbidden_remote["gate_b"]["requirements"]["native_message_transaction"] =
+        serde_json::json!({ "mode": "none" });
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&forbidden_remote)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut missing_provider_binding = original.clone();
+    missing_provider_binding["gate_b"]["effect_identity"]
+        .as_object_mut()
+        .expect("effect identity")
+        .remove("provider_key_binding_contract_version");
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&missing_provider_binding)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut binding_without_remote = original.clone();
+    binding_without_remote["gate_b"]
+        .as_object_mut()
+        .expect("Gate-B object")
+        .remove("remote_contract");
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&binding_without_remote)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut inbox_floor_without_inbox = original.clone();
+    inbox_floor_without_inbox["gate_b"]["requirements"]["inbound_protection"] =
+        serde_json::json!("none");
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&inbox_floor_without_inbox)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut native_none_with_contract = original.clone();
+    native_none_with_contract["gate_b"]["requirements"]["native_message_transaction"]["mode"] =
+        serde_json::json!("none");
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&native_none_with_contract)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut native_required_without_contract = original.clone();
+    native_required_without_contract["gate_b"]["requirements"]["native_message_transaction"] =
+        serde_json::json!({ "mode": "required" });
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&native_required_without_contract)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut zero_remote_floor = original.clone();
+    zero_remote_floor["gate_b"]["remote_contract"]["minimum_validity_ms"] =
+        serde_json::json!(0);
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&zero_remote_floor)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut zero_inbox_floor = original.clone();
+    zero_inbox_floor["gate_b"]["inbox_dedup_minimum_validity_ms"] = serde_json::json!(0);
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&zero_inbox_floor)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut unknown_nested = original.clone();
+    unknown_nested["gate_b"]["effect_identity"]["scopes"][0]["slots"][0]
+        .as_object_mut()
+        .expect("slot object")
+        .insert("unknown".to_owned(), serde_json::json!(true));
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&unknown_nested)),
+        Err(ManifestError::MalformedGateB)
+    );
+
+    let mut null_nested_optional = original;
+    null_nested_optional["gate_b"]["effect_identity"]["scopes"][0]["slots"][0]
+        ["logical_destination_contract"] = serde_json::Value::Null;
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&null_nested_optional)),
+        Err(ManifestError::MalformedGateB)
+    );
 }

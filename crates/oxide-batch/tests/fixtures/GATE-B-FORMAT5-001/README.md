@@ -26,11 +26,27 @@ Formats 2, 3, and 4 retain their pre-existing immutable evidence:
 
 Those legacy values are never regenerated or re-pinned by this scenario.
 
-## Format-5 generation
+## Materialized format-5 vectors
 
 The focused integration suite builds each legacy base through its real producer,
-wraps it with a typed `GateBDefinitionContract`, and verifies that serializing
-the nested `base` reproduces the original legacy bytes exactly.
+wraps it with the typed `GateBDefinitionContract`, and compares the complete
+canonical outer bytes against add-only materialized vectors:
+
+- `format5-base1-tasklet.manifest.json` — SHA-256
+  `15f55b5f36b86251201ec12c92262bb37e1e57a43cb6b7f776d1bcce17da4ef6`;
+- `format5-base1-chunk.manifest.json` — SHA-256
+  `1d63b4960a3634a2a9471724bebd03a9b057f37fd1b87a306b8b20d41905fa5b`;
+- `format5-base2.manifest.json` — SHA-256
+  `d650b92159209c480b54687d4e9e2f49c3ea9266ea5330aa35aef23161ad9772`;
+- `format5-base3.manifest.json` — SHA-256
+  `9106d457a8bc9b99f475f28c1c0039a498fa803c99971ff84ba03f9fd70ff1e9`;
+- `format5-base4.manifest.json` — SHA-256
+  `4b393cf2955f180174c546c40f315b89499500baeef457514dd995efdb4033fd`.
+
+The vectors contain the same non-trivial Gate-B contract used by
+`gate_b_manifest.rs`: canonical scope/slot ordering, provider-key binding,
+native-message semantics, remote acknowledgement/unknown-outcome identities,
+and both definition-level validity floors.
 
 Validation command:
 
@@ -38,7 +54,14 @@ Validation command:
 cargo test -p oxide-batch --test gate_b_manifest
 ```
 
-The format-5 vectors remain generated assertions in the focused test until the
-implementation has passed executable validation. A later validation-only work
-unit may materialize add-only format-5 byte fixtures from the validated
-producer; it must not rewrite the release-backed legacy baselines.
+### Regeneration discipline
+
+Regeneration is deliberately manual and add-only. Only a reviewed Gate-B
+manifest-contract evolution may replace a format-5 vector. Reconstruct the
+corresponding legacy definition through the named producer helper in
+`gate_b_manifest.rs`, apply `with_gate_b(gate_b_contract())`, serialize
+`canonical_manifest()` without a trailing newline, update the matching
+format-5 fixture and recorded SHA-256, then run the focused validation command.
+
+Never regenerate, replace, or re-pin the release-backed format-1/2/3/4
+baselines as part of format-5 regeneration.
