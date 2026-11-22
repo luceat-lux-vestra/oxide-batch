@@ -156,7 +156,7 @@ fn format3_plan() -> oxide_batch::CompiledExecutionPlan {
         ComponentRevision::new("partitioner-v1").expect("partitioner"),
         ComponentRevision::new("aggregation-v1").expect("aggregation"),
         PartitionCount::new(2).expect("partition count"),
-        PartitionBudget::new(1, 1).expect("partition budget"),
+        PartitionBudget::new(1, 2).expect("partition budget"),
     );
     FlowGraph::new(id.clone())
         .with_node(FlowNode::partitioned_step(partition))
