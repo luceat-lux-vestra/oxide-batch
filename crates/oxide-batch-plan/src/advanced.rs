@@ -5,7 +5,7 @@ use super::{
     MAX_OUTGOING_TRANSITIONS, MAX_SCOPED_COMPONENTS, MAX_SPLIT_BRANCHES, MAX_TRANSITIONS,
     NestedFlow, NodeId, ParameterIncrementerIdentity, PlanError, RepeatId, RestartPolicy,
     ScopeKind, ScopedComponentDefinition, ScopedComponentId, StepNode, TerminalKind, Value,
-    check_unambiguous, json,
+    assign_decision_sequences, check_unambiguous, json,
 };
 
 #[derive(Clone, Debug)]
@@ -33,7 +33,7 @@ pub(super) fn compile(
     let parameter_incrementer = graph.parameter_incrementer.clone();
     let mut compiler = AdvancedCompiler::default();
     let root_scope = compiler.compile_scope(graph, 1)?;
-    let decision_sequences = compiler.assign_decision_sequences()?;
+    let decision_sequences = assign_decision_sequences(&compiler.transitions)?;
     let manifest = compiler.manifest(
         job_name,
         &root_scope,
@@ -618,20 +618,6 @@ impl AdvancedCompiler {
         }
         on_path.remove(id);
         Ok(())
-    }
-
-    fn assign_decision_sequences(&self) -> Result<BTreeMap<NodeId, u64>, PlanError> {
-        let mut sequences = BTreeMap::new();
-        for (index, source) in self.transitions.keys().enumerate() {
-            let sequence = u64::try_from(index)
-                .ok()
-                .and_then(|value| value.checked_add(1))
-                .ok_or(PlanError::TooManyTransitions {
-                    max: MAX_TRANSITIONS,
-                })?;
-            sequences.insert(source.clone(), sequence);
-        }
-        Ok(sequences)
     }
 
     fn manifest(
