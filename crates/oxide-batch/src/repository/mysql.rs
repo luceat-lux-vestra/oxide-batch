@@ -1046,30 +1046,6 @@ impl RepositoryUnitOfWork for MysqlUnitOfWork<'_> {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
 
-            let existing = sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM ob_flow_decision WHERE job_execution_id = ?",
-            )
-            .bind(request.job_execution_id().get())
-            .fetch_one(&mut **self.connection()?)
-            .await
-            .map_err(|_| RepositoryError::Unavailable)?;
-            let existing =
-                u64::try_from(existing).map_err(|_| RepositoryError::FlowStateCorrupt)?;
-            let advanced = manifest
-                .get("format")
-                .and_then(Value::as_u64)
-                .is_some_and(|format| {
-                    format == u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW)
-                });
-            if !advanced
-                && request.sequence().get()
-                    != existing
-                        .checked_add(1)
-                        .ok_or(RepositoryError::FlowStateCorrupt)?
-            {
-                return Err(RepositoryError::ConcurrentModification);
-            }
-
             if let Some(step_id) = request.source_step_execution_id() {
                 let valid = sqlx::query_scalar::<_, i64>(
                     "SELECT COUNT(*) FROM ob_step_execution source                      JOIN ob_job_execution source_job ON source_job.id = source.job_execution_id                      JOIN ob_job_execution target_job ON target_job.id = ?                      WHERE source.id = ?                        AND source_job.job_instance_id = target_job.job_instance_id                        AND source.step_logical_id = ?",
