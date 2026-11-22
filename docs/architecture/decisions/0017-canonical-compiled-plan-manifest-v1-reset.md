@@ -109,6 +109,24 @@ manifest change. Unknown members fail closed in the current version.
 The grammar is canonical JSON and remains subject to the framework manifest
 size/depth/collection bounds.
 
+`manifest_version` identifies only the manifest grammar and reader contract.
+It is not an execution-semantic, capability, node-kind, or builder-origin
+discriminator.
+
+Runtime, repository, launcher, and adapter code must not branch on
+`manifest_version` to decide:
+
+- whether a plan is one-step, ordinary flow, local scale, or advanced flow;
+- which node kinds are executable;
+- which durable decision sequence rule applies;
+- how terminal status is derived;
+- which repository invariant is enforced; or
+- which optional capability is available.
+
+Those semantics come from the normalized `CompiledExecutionPlan` and its
+explicit typed members. A manifest-version check is valid only for selecting
+the grammar/parser or rejecting an unsupported grammar.
+
 ### 3. The manifest is projected from the normalized plan
 
 The canonical projection represents all currently accepted restart-relevant
@@ -128,6 +146,32 @@ compiled-plan semantics, including:
 
 A builder-specific representation must not create a different fingerprint when
 it lowers to the same normalized plan and restart semantics.
+
+The normalized plan must be semantically complete: no observable execution or
+repository behavior may depend on remembering which legacy builder/manifest
+family produced it.
+
+For one-step tasklet/chunk jobs, the compiled one-node plan must encode the
+standalone terminal behavior that was historically supplied by a format-1
+runtime special case. In particular, a successfully completed step with a
+bounded custom successful exit code still completes the standalone job unless
+an explicit normalized transition says otherwise. The plan may express this
+with deterministic transition structure such as exact failure/stop mappings
+plus a less-specific completion mapping, or an equivalent typed rule. The
+runtime must not recover this behavior from `manifest_version` or builder
+origin.
+
+Durable flow-decision identity is also one normalized-plan semantic. Every
+transition source that can persist a `FlowDecision` must have one explicit,
+deterministic compiled decision-sequence identity. Runtime and repository
+validation use that explicit plan identity uniformly. They must not choose
+between append-order and compiled-sequence behavior by inspecting
+`manifest_version` or a historical format number.
+
+Repository validation may read the canonical manifest through the typed
+manifest/plan contract when it needs restart-relevant declaration evidence, but
+adapter implementations must not independently reinterpret manifest-version
+numbers as execution feature flags.
 
 ### 4. Fingerprint semantics are preserved
 
@@ -427,6 +471,13 @@ Implementation following this ADR must prove at least:
 
 - TaskletJob and ChunkJob lower to the same canonical plan projection used by
   graph jobs;
+- `manifest_version` is used only for grammar dispatch/rejection, never as an
+  execution-semantic or repository feature flag;
+- one-step custom successful exit behavior is represented by the normalized
+  plan and passes trace-equivalence tests without a version/builder special
+  case;
+- every durable flow-decision source has deterministic compiled sequence
+  identity and repositories validate that explicit identity uniformly;
 - all current restart-relevant advanced-flow semantics are represented;
 - equivalent normalized definitions produce identical canonical bytes;
 - throughput/capacity-only changes do not change fingerprint;
