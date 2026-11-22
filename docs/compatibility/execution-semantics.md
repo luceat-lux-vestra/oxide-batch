@@ -35,9 +35,12 @@ contexts, definitions, protocol messages, or diagnostics.
 ## Definition identity and restart
 
 [ADR-0004](../architecture/decisions/0004-job-definition-restart-compatibility.md)
-is binding: every execution references an immutable revision, canonical
-manifest, and fingerprint. Same revision with different fingerprint is
-definition drift.
+remains binding for definition identity and fail-closed restart.
+[ADR-0017](../architecture/decisions/0017-canonical-compiled-plan-manifest-v1-reset.md)
+replaces only the historical preview-format support boundary.
+
+Every execution references an immutable revision, canonical manifest, and
+fingerprint. Same revision with different fingerprint is definition drift.
 
 A restart:
 
@@ -46,20 +49,26 @@ A restart:
 - requires the same fingerprint or one explicit directed compatibility edge;
 - never infers compatibility from names, revision ordering, deserialization,
   or semantic-version syntax;
-- atomically records any context upgrade and the new execution;
+- atomically records any context upgrade and the new execution; and
 - preserves the guarantee and meaning of already committed effects.
+
+Canonical manifest v1 is the current target identity. Historical preview
+formats 1-4 have no compatibility/migration edge into v1 and are not
+restartable by the new line. A detected historical preview manifest fails
+explicitly before lifecycle mutation. Upgrade to the new line therefore
+requires reset/recreation of OxideBatch-owned preview metadata when historical
+definition/execution rows exist.
 
 For definitions that select ADR-0016 `durable_effects`, M8 version 1 is
 stricter: exact-manifest restart is allowed, but a different-digest compatible
-upgrade fails closed even when an ordinary direct compatibility edge exists.
-Legacy definitions keep the existing ADR-0004 compatibility rules. A fork
-creates a new instance and copies no durable-effect state by default.
+upgrade fails closed even when an ordinary direct compatibility edge exists. A
+fork creates a new instance and copies no durable-effect state by default.
 
 [RFC-0004](../rfcs/0004-compiled-execution-plan.md) and
 [ADR-0005](../architecture/decisions/0005-compiled-execution-plan.md) accept
-`Strict`, `Compatible`, and lineage-preserving `Fork`. A
-disabled-by-default audited `Force` mode remains unavailable until separately
-approved. ADR-0004 behavior remains authoritative during staged lowering.
+`Strict`, `Compatible`, and lineage-preserving `Fork` for supported
+canonical definitions. A disabled-by-default audited `Force` mode remains
+unavailable until separately approved.
 
 ## Lifecycle rules
 
