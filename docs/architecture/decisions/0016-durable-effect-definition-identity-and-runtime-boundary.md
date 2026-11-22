@@ -160,10 +160,15 @@ Therefore:
 - an effect-bearing definition has at least one effect node and at least one
   slot; and
 - a pure InboxDedup definition may validly contain no effect node/slot
-  declaration.
+  declaration; and
+- even without effect slots, a pure InboxDedup definition must contain at least
+  one supported direct chunk step in the embedded base, because the Inbox guard
+  is available only through the chunk transaction/runtime path.
 
 This keeps inbound message identity separate from outbound/logical effect
-identity.
+identity. For mixed graphs, the requirement is definition-wide capability
+selection; actual Inbox guard invocation is possible only from a chunk
+`WriteContext`.
 
 ### 5. One framework-owned EffectId derivation contract
 
@@ -296,6 +301,9 @@ not repurpose an unrelated mutable environment value as this bound.
 ### 8. Reader and producer validate the same base-to-effect binding
 
 The format-5 producer and strict reader enforce the same semantic checks.
+
+For pure InboxDedup without `effect_identity`, the embedded base must still
+contain at least one supported direct chunk step.
 
 For every effect node declaration:
 
@@ -544,7 +552,8 @@ Implementation work following this ADR must prove at least:
 
 ### Conditional effect identity
 
-- pure InboxDedup format 5 without `effect_identity` succeeds;
+- pure InboxDedup format 5 without `effect_identity` succeeds when the base
+  contains at least one supported direct chunk step;
 - pure InboxDedup with `effect_identity` is rejected;
 - EffectJournal or Outbox without `effect_identity` is rejected;
 - effect-bearing identity with no nodes/slots is rejected.
