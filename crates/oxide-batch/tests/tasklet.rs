@@ -23,10 +23,10 @@ use oxide_batch::{
     BoxFuture, ComponentRevision, DefinitionArtifactId, DefinitionRegistration, DefinitionRegistry,
     DefinitionRevision, ExitCode, ExitStatus, FailureCategory, InMemoryJobRepository,
     JobInstanceKey, JobLauncher, JobName, JobParameter, JobParameters, JobRepository, LaunchError,
-    OwnerToken, ParameterName,
-    ParameterRole, ParameterValue, RepositoryError, ShutdownCoordinator, StopPollInterval,
-    StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
-    TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
+    OwnerToken, ParameterName, ParameterRole, ParameterValue, RepositoryError,
+    ShutdownCoordinator, StopPollInterval, StopSource, StopTiming, StopToken, Tasklet,
+    TaskletContext, TaskletError, TaskletExecutionOutcome, TaskletFailure, TaskletJob,
+    TaskletOutcome, TaskletStep,
 };
 
 struct Fixture {
