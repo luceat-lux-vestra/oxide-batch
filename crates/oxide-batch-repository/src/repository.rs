@@ -13,10 +13,11 @@ use oxide_batch_core::{
     BatchStatus, DefinitionIdentity, DefinitionRevision, DefinitionUpgrade,
     DefinitionUpgradeExecution, DomainError, ExecutionContext, ExecutionMetadata,
     ExecutionTimestamps, ExecutionVersion, ExitStatus, FailureCategory, FailureId, FailureSummary,
-    IdentifierKind, JobExecution, JobExecutionId, JobInstance, JobInstanceId, JobInstanceKey,
-    JobName, JobParameters, LifecycleError, LifecycleTransition, NodeId, RecoveryDecisionId,
-    RepeatId, ScopeKind, ScopedComponentId, StartLimit, StepExecution, StepExecutionId, StepName,
-    StepPartitionId,
+    GateBContractVersion, GateBDefinitionContract, GateBEffectJournal, GateBInboundProtection,
+    GateBMinimumValidityMs, GateBOutboundObligation, IdentifierKind, JobExecution, JobExecutionId,
+    JobInstance, JobInstanceId, JobInstanceKey, JobName, JobParameters, LifecycleError,
+    LifecycleTransition, NodeId, RecoveryDecisionId, RepeatId, ScopeKind, ScopedComponentId,
+    StartLimit, StepExecution, StepExecutionId, StepName, StepPartitionId,
 };
 
 use crate::{
@@ -1711,6 +1712,187 @@ impl RepositoryCapability {
     }
 }
 
+/// A versioned, deployment-owned Gate-B persistence capability profile.
+///
+/// This descriptor certifies only repository/local persistence semantics. It
+/// never certifies remote idempotency, acknowledgement, unknown-outcome, or
+/// broker-native transaction semantics.
+///
+/// Profile versions are explicit and non-zero. Chunk enlistment limits are
+/// optional as a pair: omitting them makes no unbounded-capacity claim.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DurableEffectPersistenceDescriptor {
+    contract_version: GateBContractVersion,
+    effect_journal_profile_version: Option<GateBContractVersion>,
+    outbox_profile_version: Option<GateBContractVersion>,
+    inbox_dedup_profile_version: Option<GateBContractVersion>,
+    inbox_dedup_effective_window_ms: Option<GateBMinimumValidityMs>,
+    max_chunk_effect_records: Option<NonZeroU64>,
+    max_chunk_effect_encoded_bytes: Option<NonZeroU64>,
+}
+
+impl DurableEffectPersistenceDescriptor {
+    /// Starts a persistence profile for one recognized Gate-B contract version.
+    #[must_use]
+    pub const fn new(contract_version: GateBContractVersion) -> Self {
+        Self {
+            contract_version,
+            effect_journal_profile_version: None,
+            outbox_profile_version: None,
+            inbox_dedup_profile_version: None,
+            inbox_dedup_effective_window_ms: None,
+            max_chunk_effect_records: None,
+            max_chunk_effect_encoded_bytes: None,
+        }
+    }
+
+    /// Declares certified `EffectJournal` persistence semantics.
+    #[must_use]
+    pub const fn with_effect_journal(mut self, profile_version: GateBContractVersion) -> Self {
+        self.effect_journal_profile_version = Some(profile_version);
+        self
+    }
+
+    /// Declares certified Outbox persistence semantics.
+    #[must_use]
+    pub const fn with_outbox(mut self, profile_version: GateBContractVersion) -> Self {
+        self.outbox_profile_version = Some(profile_version);
+        self
+    }
+
+    /// Declares certified `InboxDedup` persistence and its effective safety window.
+    #[must_use]
+    pub const fn with_inbox_dedup(
+        mut self,
+        profile_version: GateBContractVersion,
+        effective_window_ms: GateBMinimumValidityMs,
+    ) -> Self {
+        self.inbox_dedup_profile_version = Some(profile_version);
+        self.inbox_dedup_effective_window_ms = Some(effective_window_ms);
+        self
+    }
+
+    /// Declares bounded transaction-scoped Gate-B enlistment capacity.
+    #[must_use]
+    pub const fn with_chunk_enlistment_limits(
+        mut self,
+        max_records: NonZeroU64,
+        max_encoded_bytes: NonZeroU64,
+    ) -> Self {
+        self.max_chunk_effect_records = Some(max_records);
+        self.max_chunk_effect_encoded_bytes = Some(max_encoded_bytes);
+        self
+    }
+
+    /// Returns the Gate-B contract version this persistence profile implements.
+    #[must_use]
+    pub const fn contract_version(self) -> GateBContractVersion {
+        self.contract_version
+    }
+
+    /// Returns the certified `EffectJournal` profile version, when declared.
+    #[must_use]
+    pub const fn effect_journal_profile_version(self) -> Option<GateBContractVersion> {
+        self.effect_journal_profile_version
+    }
+
+    /// Returns the certified Outbox profile version, when declared.
+    #[must_use]
+    pub const fn outbox_profile_version(self) -> Option<GateBContractVersion> {
+        self.outbox_profile_version
+    }
+
+    /// Returns the certified `InboxDedup` profile version, when declared.
+    #[must_use]
+    pub const fn inbox_dedup_profile_version(self) -> Option<GateBContractVersion> {
+        self.inbox_dedup_profile_version
+    }
+
+    /// Returns the deployment's effective `InboxDedup` safety window.
+    #[must_use]
+    pub const fn inbox_dedup_effective_window_ms(self) -> Option<GateBMinimumValidityMs> {
+        self.inbox_dedup_effective_window_ms
+    }
+
+    /// Returns the bounded chunk effect-record capacity, when certified.
+    #[must_use]
+    pub const fn max_chunk_effect_records(self) -> Option<NonZeroU64> {
+        self.max_chunk_effect_records
+    }
+
+    /// Returns the bounded chunk encoded-byte capacity, when certified.
+    #[must_use]
+    pub const fn max_chunk_effect_encoded_bytes(self) -> Option<NonZeroU64> {
+        self.max_chunk_effect_encoded_bytes
+    }
+}
+
+/// A fail-closed Gate-B repository persistence negotiation failure.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum DurableEffectNegotiationError {
+    /// The definition requires Gate-B persistence but the adapter declares no profile.
+    PersistenceProfileMissing,
+    /// The adapter's persistence profile targets another Gate-B contract version.
+    ContractVersionMismatch {
+        /// Gate-B contract version required by the definition/runtime.
+        required: u16,
+        /// Gate-B contract version advertised by the adapter profile.
+        advertised: GateBContractVersion,
+    },
+    /// Required `EffectJournal` persistence is not certified.
+    EffectJournalProfileMissing,
+    /// Required Outbox persistence is not certified.
+    OutboxProfileMissing,
+    /// Required `InboxDedup` persistence is not certified.
+    InboxDedupProfileMissing,
+    /// The certified `InboxDedup` window is shorter than the definition floor.
+    InboxDedupWindowTooShort {
+        /// Definition-required minimum safety window.
+        required: GateBMinimumValidityMs,
+        /// Adapter-advertised effective safety window.
+        effective: GateBMinimumValidityMs,
+    },
+}
+
+impl fmt::Display for DurableEffectNegotiationError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::PersistenceProfileMissing => {
+                formatter.write_str("repository declares no Gate-B persistence profile")
+            }
+            Self::ContractVersionMismatch {
+                required,
+                advertised,
+            } => write!(
+                formatter,
+                "repository Gate-B persistence contract version {} does not match required version {required}",
+                advertised.get()
+            ),
+            Self::EffectJournalProfileMissing => {
+                formatter.write_str("repository does not certify EffectJournal persistence")
+            }
+            Self::OutboxProfileMissing => {
+                formatter.write_str("repository does not certify Outbox persistence")
+            }
+            Self::InboxDedupProfileMissing => {
+                formatter.write_str("repository does not certify InboxDedup persistence")
+            }
+            Self::InboxDedupWindowTooShort {
+                required,
+                effective,
+            } => write!(
+                formatter,
+                "repository InboxDedup window {} ms is below required {} ms",
+                effective.get(),
+                required.get()
+            ),
+        }
+    }
+}
+
+impl Error for DurableEffectNegotiationError {}
+
 /// The versioned capability descriptor a durable adapter publishes.
 ///
 /// Negotiation reads this descriptor before a launch does any durable work, so
@@ -1727,11 +1909,12 @@ pub struct RepositoryDescriptor {
     descriptor_version: u32,
     schema_version: u32,
     capabilities: BTreeSet<RepositoryCapability>,
+    durable_effect_persistence: Option<DurableEffectPersistenceDescriptor>,
 }
 
 impl RepositoryDescriptor {
     /// The descriptor shape this runtime publishes and understands.
-    pub const CURRENT_VERSION: u32 = 1;
+    pub const CURRENT_VERSION: u32 = 2;
 
     /// Declares the capabilities an adapter connected to `schema_version`
     /// provides.
@@ -1748,7 +1931,89 @@ impl RepositoryDescriptor {
             descriptor_version: Self::CURRENT_VERSION,
             schema_version,
             capabilities: capabilities.into_iter().collect(),
+            durable_effect_persistence: None,
         }
+    }
+
+    /// Adds the deployment's typed Gate-B persistence capability profile.
+    #[must_use]
+    pub const fn with_durable_effect_persistence(
+        mut self,
+        profile: DurableEffectPersistenceDescriptor,
+    ) -> Self {
+        self.durable_effect_persistence = Some(profile);
+        self
+    }
+
+    /// Returns the typed Gate-B persistence capability profile, when declared.
+    #[must_use]
+    pub fn durable_effect_persistence(&self) -> Option<&DurableEffectPersistenceDescriptor> {
+        self.durable_effect_persistence.as_ref()
+    }
+
+    /// Requires the local persistence semantics selected by a Gate-B definition.
+    ///
+    /// This method intentionally does not negotiate or certify remote
+    /// replay/idempotency, acknowledgement, unknown-outcome, or broker-native
+    /// transaction semantics.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DurableEffectNegotiationError`] when a required local
+    /// persistence profile is absent, its Gate-B contract version differs, or
+    /// the certified `InboxDedup` safety window is below the definition floor.
+    pub fn require_durable_effect_persistence(
+        &self,
+        definition: &GateBDefinitionContract,
+    ) -> Result<(), DurableEffectNegotiationError> {
+        let requirements = definition.requirements();
+        let requires_effect_journal = requirements.effect_journal() == GateBEffectJournal::Required;
+        let requires_outbox = requirements.outbound_obligation() == GateBOutboundObligation::Outbox;
+        let requires_inbox =
+            requirements.inbound_protection() == GateBInboundProtection::InboxDedup;
+
+        if !requires_effect_journal && !requires_outbox && !requires_inbox {
+            return Ok(());
+        }
+
+        let profile = self
+            .durable_effect_persistence
+            .ok_or(DurableEffectNegotiationError::PersistenceProfileMissing)?;
+
+        if profile.contract_version().get() != definition.contract_version() {
+            return Err(DurableEffectNegotiationError::ContractVersionMismatch {
+                required: definition.contract_version(),
+                advertised: profile.contract_version(),
+            });
+        }
+
+        if requires_effect_journal && profile.effect_journal_profile_version().is_none() {
+            return Err(DurableEffectNegotiationError::EffectJournalProfileMissing);
+        }
+
+        if requires_outbox && profile.outbox_profile_version().is_none() {
+            return Err(DurableEffectNegotiationError::OutboxProfileMissing);
+        }
+
+        if requires_inbox {
+            if profile.inbox_dedup_profile_version().is_none() {
+                return Err(DurableEffectNegotiationError::InboxDedupProfileMissing);
+            }
+            let effective = profile
+                .inbox_dedup_effective_window_ms()
+                .ok_or(DurableEffectNegotiationError::InboxDedupProfileMissing)?;
+
+            if let Some(required) = definition.inbox_dedup_minimum_validity_ms()
+                && effective < required
+            {
+                return Err(DurableEffectNegotiationError::InboxDedupWindowTooShort {
+                    required,
+                    effective,
+                });
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns the version of this descriptor's shape.

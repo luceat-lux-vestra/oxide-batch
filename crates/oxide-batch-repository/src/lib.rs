@@ -87,11 +87,11 @@ pub use repeat::{
     RepeatCommitRequest, RepeatDecision, RepeatExecution, RepeatLineage, RepeatOrdinal,
 };
 pub use repository::{
-    BoxFuture, Clock, ExecutionControl, IdGenerationError, IdGenerator, JobInstanceSelection,
-    JobRepository, MAX_FORK_SOURCE_STEPS, RecoveryDecision, RecoveryDisposition, RecoveryField,
-    RecoveryRequest, RecoveryRequestError, RecoveryResult, RepositoryCapability,
-    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator,
-    SystemClock,
+    BoxFuture, Clock, DurableEffectNegotiationError, DurableEffectPersistenceDescriptor,
+    ExecutionControl, IdGenerationError, IdGenerator, JobInstanceSelection, JobRepository,
+    MAX_FORK_SOURCE_STEPS, RecoveryDecision, RecoveryDisposition, RecoveryField, RecoveryRequest,
+    RecoveryRequestError, RecoveryResult, RepositoryCapability, RepositoryDescriptor,
+    RepositoryError, RepositoryUnitOfWork, SequentialIdGenerator, SystemClock,
 };
 // Internal adapter helpers keep parent and child recovery transformations aligned
 // without extending the facade's supported public surface.
