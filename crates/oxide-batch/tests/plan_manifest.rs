@@ -139,12 +139,16 @@ fn a_format2_runtime_still_reads_format1_manifests() -> Result<(), Box<dyn Error
 
 #[test]
 fn a_newer_manifest_is_rejected_rather_than_guessed() {
-    let newer = br#"{"entry":"load","format":5,"job":"daily_import","nodes":[],"transitions":[]}"#;
+    let supported = oxide_batch_core::MANIFEST_FORMAT_GATE_B;
+    let newer_format = supported.saturating_add(1);
+    let newer = format!(
+        r#"{{"entry":"load","format":{newer_format},"job":"daily_import","nodes":[],"transitions":[]}}"#
+    );
     assert_eq!(
-        DefinitionManifest::read(newer),
+        DefinitionManifest::read(newer.as_bytes()),
         Err(ManifestError::UnsupportedFormat {
-            format: 5,
-            supported: 4,
+            format: newer_format,
+            supported,
         })
     );
 }
