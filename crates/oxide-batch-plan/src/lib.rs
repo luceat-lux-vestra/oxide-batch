@@ -1463,6 +1463,7 @@ impl FlowGraph {
         }
 
         check_reachable_and_acyclic(&entry, &nodes, &compiled)?;
+        let decision_sequences = assign_decision_sequences(&compiled)?;
 
         let manifest = flow_manifest(job_name, &entry, &nodes, &compiled, local_scale);
         let canonical = serde_json::to_vec(&manifest)
@@ -1480,9 +1481,25 @@ impl FlowGraph {
             transitions: compiled,
             split_branch_scopes: BTreeMap::new(),
             nested_scopes: BTreeMap::new(),
-            decision_sequences: BTreeMap::new(),
+            decision_sequences,
         })
     }
+}
+
+fn assign_decision_sequences(
+    transitions: &BTreeMap<NodeId, Vec<FlowTransition>>,
+) -> Result<BTreeMap<NodeId, u64>, PlanError> {
+    let mut sequences = BTreeMap::new();
+    for (index, source) in transitions.keys().enumerate() {
+        let sequence = u64::try_from(index)
+            .ok()
+            .and_then(|value| value.checked_add(1))
+            .ok_or(PlanError::TooManyTransitions {
+                max: MAX_TRANSITIONS,
+            })?;
+        sequences.insert(source.clone(), sequence);
+    }
+    Ok(sequences)
 }
 
 fn check_local_scale_subset(
@@ -1899,9 +1916,11 @@ impl CompiledExecutionPlan {
         self.nested_scopes.get(owner)
     }
 
-    /// Returns the canonical format-4 decision sequence for one transition source.
+    /// Returns the deterministic compiled sequence identity for one transition source.
     ///
-    /// Formats 1-3 return `None` and retain their historical append sequence.
+    /// Executable flow plans assign this identity independently of historical
+    /// manifest format. The standalone one-step compatibility plan does not
+    /// persist `FlowDecision` and therefore carries no sequence identity.
     #[must_use]
     pub fn decision_sequence(&self, source: &NodeId) -> Option<u64> {
         self.decision_sequences.get(source).copied()
