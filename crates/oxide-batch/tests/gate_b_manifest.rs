@@ -717,6 +717,12 @@ fn format5_reader_rejects_gate_b_cross_field_and_nested_contract_violations() {
     );
 
     let mut missing_remote = original.clone();
+    missing_remote["gate_b"]["requirements"]["ambiguity_replay"] =
+        serde_json::json!("best_effort");
+    missing_remote["gate_b"]["effect_identity"]
+        .as_object_mut()
+        .expect("effect identity")
+        .remove("provider_key_binding_contract_version");
     missing_remote["gate_b"]
         .as_object_mut()
         .expect("Gate-B object")
