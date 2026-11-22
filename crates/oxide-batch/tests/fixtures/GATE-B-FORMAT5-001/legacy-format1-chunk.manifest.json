@@ -1,0 +1,1 @@
+{"checkpoint":{"schema":"test.position","version":1},"chunk_size":2,"components":{"checkpoint":"checkpoint-v1","processor":"processor-v1","reader":"reader-v1","writer":"writer-v1"},"context":{"schema":"test.context","version":1},"delivery_mode":"atomic_same_resource","format":1,"job":"gate_b_v07_chunk","kind":"chunk","step":"only","transaction_boundary":"chunk"}
