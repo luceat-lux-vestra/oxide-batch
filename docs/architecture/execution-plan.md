@@ -73,6 +73,11 @@ It adds `restart_policy`, `parameter_incrementer`, `scoped_components`,
 and `durable_effects` only when their restart-relevant semantics are
 selected.
 
+`manifest_version` is a grammar/parser version only. It never selects runtime
+behavior, repository invariants, node kinds, plan capabilities, or builder
+origin. Once a document is parsed into the normalized plan/definition model,
+execution semantics come only from explicit typed plan state.
+
 The manifest records restart-relevant, non-secret structure and identity. It
 does not contain executable Rust values, credentials, endpoints, item/user
 data, framework capacity ceilings, telemetry, diagnostics, or
@@ -145,6 +150,19 @@ entry points. Their target lowering path is:
 No wrapper retains a private manifest representation merely for historical
 compatibility.
 
+The one-node lowering is semantically complete. Standalone tasklet/chunk
+behavior that was previously supplied by a format-specific runtime branch is
+encoded in the normalized plan itself. A successful custom step exit remains a
+successful standalone job through explicit transition/terminal semantics rather
+than a one-step version check. The target representation should use ordinary
+plan rules, for example exact failure/stop transitions plus a less-specific
+completion transition, when that preserves the observable contract.
+
+A standalone wrapper path does not become a durable flow merely because it is
+represented as a one-node plan: it need not persist a `FlowDecision` where
+the current standalone lifecycle has no such durable decision. This distinction
+is explicit execution-path semantics, not manifest-version semantics.
+
 The source cutover intentionally removes the old preview-format restart
 boundary. Persisted preview definitions/executions using historical formats are
 not migrated into manifest v1 and are not restartable by the new line.
@@ -172,6 +190,12 @@ The semantic payload survives in canonical manifest v1:
 - M7 advanced flow, nested structure, repeat, scope/late binding, restart
   policy, parameter incrementer, and durable decision identity remain
   represented by the normalized compiled plan.
+
+Durable flow-decision sequencing is normalized as one explicit plan semantic.
+Every transition source that can persist `FlowDecision` owns a deterministic
+compiled sequence identity. Runtime and repository code validate that identity
+uniformly; they do not select append-count versus compiled-sequence behavior
+from `manifest_version` or any historical format number.
 
 Historical format numbers and golden vectors are not copied into the new
 manifest and do not select restart compatibility.
@@ -203,6 +227,12 @@ framework capability ceiling does not change an unchanged definition's bytes.
 
 Closed-object parsing, canonical ordering, duplicate rejection, and bounded
 collection validation apply to every manifest-v1 structure.
+
+Repository adapters do not independently inspect `manifest_version` as a
+semantic feature switch. Where repository-side correctness validation needs
+definition evidence, it consumes the typed canonical manifest/plan semantics
+and explicit node/transition/decision identity instead of re-deriving behavior
+from version numbers.
 
 ## Evidence
 
