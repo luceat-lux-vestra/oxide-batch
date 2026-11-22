@@ -1,9 +1,13 @@
 # ADR-0004: Job-definition Identity and Restart Compatibility
 
-- **State:** Accepted
+- **State:** Accepted; partially superseded by [ADR-0017](0017-canonical-compiled-plan-manifest-v1-reset.md) for historical preview-manifest encoding/reader compatibility only
 - **Date:** 2026-07-29
 - **Owners:** runtime and API maintainers
 - **Deciders:** project owner
+- **Partial supersession scope:** ADR-0017 replaces the historical preview-format
+  encoding/support boundary. This ADR remains authoritative for definition
+  identity, SHA-256 fingerprinting, exact-digest restart, explicit direct
+  compatibility edges, and fail-closed drift.
 
 ## Context
 
