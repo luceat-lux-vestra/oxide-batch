@@ -1788,10 +1788,10 @@ pub struct CompiledExecutionPlan {
 impl CompiledExecutionPlan {
     /// Lowers one validated wrapper step into an in-memory compatibility plan.
     ///
-    /// The plan reuses `definition` unchanged, so its manifest bytes, format,
-    /// and fingerprint stay exactly what the wrapper persisted. The synthetic
-    /// graph maps the framework's own exit codes onto terminals and adds no
-    /// node an application could observe as a new durable decision.
+    /// The plan reuses `definition` unchanged while carrying the complete
+    /// standalone terminal semantics itself. Exact failure/stop exits win over
+    /// the less-specific completion fallback, so custom successful exit codes
+    /// complete without any runtime branch on manifest format.
     #[doc(hidden)]
     pub fn compatibility_one_step(
         definition: DefinitionIdentity,
@@ -1801,14 +1801,14 @@ impl CompiledExecutionPlan {
         let mut nodes = BTreeMap::new();
         nodes.insert(entry.clone(), FlowNode::step(step));
         let mut edges = Vec::with_capacity(3);
-        for (code, terminal) in [
-            ("COMPLETED", TerminalKind::Complete),
+        for (pattern, terminal) in [
             ("FAILED", TerminalKind::Fail),
             ("STOPPED", TerminalKind::Stop),
+            ("*", TerminalKind::Complete),
         ] {
             edges.push(FlowTransition::new(
                 entry.clone(),
-                ExitPattern::new(code)?,
+                ExitPattern::new(pattern)?,
                 FlowTarget::Terminal(terminal),
             ));
         }
