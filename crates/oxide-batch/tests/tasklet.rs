@@ -21,8 +21,9 @@ use ids::DeterministicIds;
 use oxide_batch::{
     ActorRef, BatchStatus, BlockingTasklet, BlockingTaskletAdapter, BlockingTaskletContext,
     BoxFuture, ComponentRevision, DefinitionArtifactId, DefinitionRegistration, DefinitionRegistry,
-    DefinitionRevision, FailureCategory, InMemoryJobRepository, JobInstanceKey, JobLauncher,
-    JobName, JobParameter, JobParameters, JobRepository, LaunchError, OwnerToken, ParameterName,
+    DefinitionRevision, ExitCode, ExitStatus, FailureCategory, InMemoryJobRepository,
+    JobInstanceKey, JobLauncher, JobName, JobParameter, JobParameters, JobRepository, LaunchError,
+    OwnerToken, ParameterName,
     ParameterRole, ParameterValue, RepositoryError, ShutdownCoordinator, StopPollInterval,
     StopSource, StopTiming, StopToken, Tasklet, TaskletContext, TaskletError,
     TaskletExecutionOutcome, TaskletFailure, TaskletJob, TaskletOutcome, TaskletStep,
@@ -115,6 +116,49 @@ impl Tasklet for BorrowingTasklet {
             Ok(TaskletOutcome::Completed)
         })
     }
+}
+
+struct CustomSuccessfulExitTasklet;
+
+impl Tasklet for CustomSuccessfulExitTasklet {
+    fn execute<'a>(
+        &'a self,
+        _context: TaskletContext<'a>,
+    ) -> BoxFuture<'a, Result<TaskletOutcome, TaskletError>> {
+        Box::pin(async {
+            Ok(TaskletOutcome::CompletedWith(ExitStatus::new(
+                ExitCode::new("COMPLETED_WITH_WARNINGS").map_err(TaskletError::from_error)?,
+            )))
+        })
+    }
+}
+
+#[tokio::test]
+async fn custom_successful_exit_is_completed_by_the_one_step_plan() -> Result<(), Box<dyn Error>> {
+    let fixture = Fixture::new()?;
+    let definition = job(Arc::new(CustomSuccessfulExitTasklet))?;
+    let parameters = parameters()?;
+    let (_source, stop) = StopSource::new();
+
+    let report = fixture
+        .launcher()
+        .launch(&definition, &parameters, &stop)
+        .await?;
+
+    assert_eq!(report.outcome(), TaskletExecutionOutcome::Completed);
+    assert_eq!(
+        report.step_execution().metadata().exit_status().to_string(),
+        "COMPLETED_WITH_WARNINGS"
+    );
+    assert_eq!(
+        report.job_execution().metadata().status(),
+        BatchStatus::Completed
+    );
+    assert_eq!(
+        report.job_execution().metadata().exit_status().to_string(),
+        "COMPLETED"
+    );
+    Ok(())
 }
 
 #[tokio::test]
