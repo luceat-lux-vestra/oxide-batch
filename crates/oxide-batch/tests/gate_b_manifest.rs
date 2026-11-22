@@ -2,8 +2,6 @@
 
 #![allow(clippy::expect_used)]
 
-use sha2::{Digest, Sha256};
-
 use oxide_batch::{
     ChunkComponentRevisions, ChunkDeliveryMode, ChunkRestartContract, ChunkSize, ComponentRevision,
     DefinitionIdentity, DefinitionManifest, DefinitionRevision, EffectScopeId, EffectSlotId,
@@ -11,8 +9,9 @@ use oxide_batch::{
     GateBDefinitionContract, GateBEffectIdentity, GateBEffectJournal, GateBEffectScope,
     GateBEffectSlot, GateBInboundProtection, GateBLocalAtomicity, GateBMinimumValidityMs,
     GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract, GateBRequirements,
-    GateBSemanticContract, JobName, ManifestError, MAX_NODES, MAX_TRANSITIONS, NodeId, PartitionBudget, PartitionCount,
-    PartitionedStepNode, RestartPolicy, StateSchemaId, StateSchemaVersion, StepComponents, StepName,
+    GateBSemanticContract, JobName, ManifestError, MAX_NODES, MAX_TRANSITIONS, NodeId,
+    PartitionBudget, PartitionCount, PartitionedStepNode, RestartPolicy, StateSchemaId,
+    StateSchemaVersion, StepComponents, StepName,
     StepNode, TerminalKind,
 };
 
@@ -42,19 +41,71 @@ fn semantic(id: &str, value: u16) -> GateBSemanticContract {
     )
 }
 
-fn gate_b_contract() -> GateBDefinitionContract {
+#[derive(Clone)]
+struct GateBTestSpec {
+    local_atomicity: GateBLocalAtomicity,
+    effect_journal: GateBEffectJournal,
+    outbound_obligation: GateBOutboundObligation,
+    inbound_protection: GateBInboundProtection,
+    ambiguity_replay: GateBAmbiguityReplay,
+    native_message_contract: Option<(&'static str, u16)>,
+    derivation_contract_version: u16,
+    occurrence_key_contract_version: u16,
+    request_identity_contract_version: u16,
+    provider_key_binding_contract_version: Option<u16>,
+    alpha_scope_id: &'static str,
+    primary_slot_id: &'static str,
+    logical_destination_contract: &'static str,
+    remote_profile: (&'static str, u16),
+    remote_acknowledgement: (&'static str, u16),
+    remote_unknown_outcome: (&'static str, u16),
+    remote_minimum_validity_ms: Option<u64>,
+    inbox_dedup_minimum_validity_ms: Option<u64>,
+    reverse_declaration_order: bool,
+}
+
+fn gate_b_spec() -> GateBTestSpec {
+    GateBTestSpec {
+        local_atomicity: GateBLocalAtomicity::AtomicSameResource,
+        effect_journal: GateBEffectJournal::Required,
+        outbound_obligation: GateBOutboundObligation::Outbox,
+        inbound_protection: GateBInboundProtection::InboxDedup,
+        ambiguity_replay: GateBAmbiguityReplay::IdempotentExternalEffect,
+        native_message_contract: Some(("native-message-tx", 5)),
+        derivation_contract_version: 1,
+        occurrence_key_contract_version: 2,
+        request_identity_contract_version: 3,
+        provider_key_binding_contract_version: Some(4),
+        alpha_scope_id: "alpha",
+        primary_slot_id: "primary",
+        logical_destination_contract: "logical-destination-v1",
+        remote_profile: ("remote-profile", 6),
+        remote_acknowledgement: ("remote-ack", 7),
+        remote_unknown_outcome: ("remote-unknown", 8),
+        remote_minimum_validity_ms: Some(30_000),
+        inbox_dedup_minimum_validity_ms: Some(60_000),
+        reverse_declaration_order: false,
+    }
+}
+
+fn gate_b_contract_from_spec(spec: &GateBTestSpec) -> GateBDefinitionContract {
+    let primary = GateBEffectSlot::new(
+        EffectSlotId::new(spec.primary_slot_id).expect("slot id"),
+        Some(
+            GateBContractId::new(spec.logical_destination_contract)
+                .expect("destination contract"),
+        ),
+    );
+    let secondary =
+        GateBEffectSlot::new(EffectSlotId::new("secondary").expect("slot id"), None);
+    let alpha_slots = if spec.reverse_declaration_order {
+        vec![primary, secondary]
+    } else {
+        vec![secondary, primary]
+    };
     let alpha = GateBEffectScope::new(
-        EffectScopeId::new("alpha").expect("scope id"),
-        vec![
-            GateBEffectSlot::new(
-                EffectSlotId::new("secondary").expect("slot id"),
-                None,
-            ),
-            GateBEffectSlot::new(
-                EffectSlotId::new("primary").expect("slot id"),
-                Some(GateBContractId::new("logical-destination-v1").expect("destination contract")),
-            ),
-        ],
+        EffectScopeId::new(spec.alpha_scope_id).expect("scope id"),
+        alpha_slots,
     )
     .expect("canonical alpha scope");
     let zeta = GateBEffectScope::new(
@@ -65,42 +116,84 @@ fn gate_b_contract() -> GateBDefinitionContract {
         )],
     )
     .expect("canonical zeta scope");
+    let scopes = if spec.reverse_declaration_order {
+        vec![alpha, zeta]
+    } else {
+        vec![zeta, alpha]
+    };
 
     let identity = GateBEffectIdentity::new(
-        version(1),
-        version(2),
-        version(3),
-        Some(version(4)),
-        vec![zeta, alpha],
+        version(spec.derivation_contract_version),
+        version(spec.occurrence_key_contract_version),
+        version(spec.request_identity_contract_version),
+        spec.provider_key_binding_contract_version.map(version),
+        scopes,
     )
     .expect("canonical effect identity");
 
+    let native_message_transaction = spec.native_message_contract.map_or(
+        GateBNativeMessageTransaction::None,
+        |(id, contract_version)| {
+            GateBNativeMessageTransaction::Required(semantic(id, contract_version))
+        },
+    );
     let requirements = GateBRequirements::new(
-        GateBLocalAtomicity::AtomicSameResource,
-        GateBEffectJournal::Required,
-        GateBOutboundObligation::Outbox,
-        GateBInboundProtection::InboxDedup,
-        GateBAmbiguityReplay::IdempotentExternalEffect,
-        GateBNativeMessageTransaction::Required(semantic("native-message-tx", 5)),
+        spec.local_atomicity,
+        spec.effect_journal,
+        spec.outbound_obligation,
+        spec.inbound_protection,
+        spec.ambiguity_replay,
+        native_message_transaction,
     )
     .expect("valid requirements");
 
-    let remote = GateBRemoteContract::new(
-        semantic("remote-profile", 6),
-        semantic("remote-ack", 7),
-        semantic("remote-unknown", 8),
-    )
-    .with_minimum_validity(
-        GateBMinimumValidityMs::new(30_000).expect("positive remote validity floor"),
+    let mut remote = GateBRemoteContract::new(
+        semantic(spec.remote_profile.0, spec.remote_profile.1),
+        semantic(
+            spec.remote_acknowledgement.0,
+            spec.remote_acknowledgement.1,
+        ),
+        semantic(spec.remote_unknown_outcome.0, spec.remote_unknown_outcome.1),
     );
+    if let Some(minimum) = spec.remote_minimum_validity_ms {
+        remote = remote.with_minimum_validity(
+            GateBMinimumValidityMs::new(minimum).expect("positive remote validity floor"),
+        );
+    }
 
     GateBDefinitionContract::new(
         requirements,
         identity,
         Some(remote),
-        Some(GateBMinimumValidityMs::new(60_000).expect("positive inbox floor")),
+        spec.inbox_dedup_minimum_validity_ms.map(|minimum| {
+            GateBMinimumValidityMs::new(minimum).expect("positive inbox floor")
+        }),
     )
     .expect("valid Gate-B definition")
+}
+
+fn gate_b_contract() -> GateBDefinitionContract {
+    gate_b_contract_from_spec(&gate_b_spec())
+}
+
+fn format5_identity(spec: &GateBTestSpec) -> DefinitionIdentity {
+    legacy_tasklet()
+        .with_gate_b(gate_b_contract_from_spec(spec))
+        .expect("valid format-5 test identity")
+}
+
+fn assert_producer_fingerprint_changes(
+    label: &str,
+    baseline: &GateBTestSpec,
+    changed: &GateBTestSpec,
+) {
+    let baseline = format5_identity(baseline);
+    let changed = format5_identity(changed);
+    assert_ne!(
+        baseline.manifest_digest(),
+        changed.manifest_digest(),
+        "{label} must remain producer-owned definition-fingerprint material"
+    );
 }
 
 fn legacy_tasklet() -> DefinitionIdentity {
@@ -203,34 +296,6 @@ fn canonical(value: &serde_json::Value) -> Vec<u8> {
     serde_json::to_vec(value).expect("canonical json")
 }
 
-fn sha256(bytes: &[u8]) -> [u8; 32] {
-    Sha256::digest(bytes).into()
-}
-
-fn changed_at(
-    original: &serde_json::Value,
-    pointer: &str,
-    value: serde_json::Value,
-) -> serde_json::Value {
-    let mut changed = original.clone();
-    *changed
-        .pointer_mut(pointer)
-        .expect("fingerprint mutation path must exist") = value;
-    changed
-}
-
-fn assert_digest_changed(
-    label: &str,
-    baseline: &[u8; 32],
-    changed: &serde_json::Value,
-) {
-    let changed_digest = sha256(&canonical(changed));
-    assert_ne!(
-        baseline, &changed_digest,
-        "{label} must remain definition-fingerprint material"
-    );
-}
-
 #[test]
 fn v0_7_0_format1_tasklet_and_chunk_bytes_are_immutable() {
     let tasklet = legacy_tasklet();
@@ -308,16 +373,29 @@ fn compiled_plan_gate_b_opt_in_preserves_execution_topology() {
 
 #[test]
 fn gate_b_scope_and_slot_declaration_order_is_canonical() {
-    let wrapped = legacy_tasklet()
-        .with_gate_b(gate_b_contract())
-        .expect("format-5 wrapper");
-    let document = outer(&wrapped);
+    let canonical = format5_identity(&gate_b_spec());
+    let mut reversed_spec = gate_b_spec();
+    reversed_spec.reverse_declaration_order = true;
+    let reversed = format5_identity(&reversed_spec);
+
+    assert_eq!(
+        canonical.canonical_manifest(),
+        reversed.canonical_manifest(),
+        "semantically unordered scope/slot declarations must normalize to identical bytes"
+    );
+    assert_eq!(
+        canonical.manifest_digest(),
+        reversed.manifest_digest(),
+        "declaration order must not change the definition fingerprint"
+    );
+
+    let document = outer(&canonical);
     let scopes = document["gate_b"]["effect_identity"]["scopes"]
         .as_array()
         .expect("scope array");
-
     assert_eq!(scopes[0]["id"].as_str(), Some("alpha"));
     assert_eq!(scopes[1]["id"].as_str(), Some("zeta"));
+
     let slots = scopes[0]["slots"].as_array().expect("slot array");
     assert_eq!(slots[0]["id"].as_str(), Some("primary"));
     assert_eq!(slots[1]["id"].as_str(), Some("secondary"));
@@ -479,7 +557,6 @@ fn format5_contains_no_deployment_or_runtime_effect_identity_values() {
     }
 }
 
-
 #[test]
 fn format5_materialized_goldens_cover_all_legacy_base_families() {
     let cases = [
@@ -506,139 +583,109 @@ fn format5_materialized_goldens_cover_all_legacy_base_families() {
 }
 
 #[test]
-fn every_static_gate_b_projection_field_changes_the_format5_fingerprint() {
-    let wrapped = legacy_tasklet()
-        .with_gate_b(gate_b_contract())
-        .expect("format-5 wrapper");
-    let original = outer(&wrapped);
-    let baseline = sha256(&canonical(&original));
+fn every_mutable_static_gate_b_field_changes_the_producer_fingerprint() {
+    let baseline = gate_b_spec();
 
-    let mutations = [
-        (
-            "contract_version",
-            "/gate_b/contract_version",
-            serde_json::json!(2),
-        ),
-        (
-            "local_atomicity",
-            "/gate_b/requirements/local_atomicity",
-            serde_json::json!("none"),
-        ),
-        (
-            "effect_journal",
-            "/gate_b/requirements/effect_journal",
-            serde_json::json!("not_required"),
-        ),
-        (
-            "outbound_obligation",
-            "/gate_b/requirements/outbound_obligation",
-            serde_json::json!("none"),
-        ),
-        (
-            "inbound_protection",
-            "/gate_b/requirements/inbound_protection",
-            serde_json::json!("none"),
-        ),
-        (
-            "ambiguity_replay",
-            "/gate_b/requirements/ambiguity_replay",
-            serde_json::json!("at_least_once"),
-        ),
-        (
-            "native_message_mode",
-            "/gate_b/requirements/native_message_transaction/mode",
-            serde_json::json!("none"),
-        ),
-        (
-            "native_message_contract_id",
-            "/gate_b/requirements/native_message_transaction/semantic_contract_id",
-            serde_json::json!("native-message-tx-v2"),
-        ),
-        (
-            "native_message_contract_version",
-            "/gate_b/requirements/native_message_transaction/semantic_contract_version",
-            serde_json::json!(6),
-        ),
-        (
-            "effect_id_derivation_version",
-            "/gate_b/effect_identity/derivation_contract_version",
-            serde_json::json!(2),
-        ),
-        (
-            "occurrence_key_version",
-            "/gate_b/effect_identity/occurrence_key_contract_version",
-            serde_json::json!(3),
-        ),
-        (
-            "request_identity_version",
-            "/gate_b/effect_identity/request_identity_contract_version",
-            serde_json::json!(4),
-        ),
-        (
-            "provider_key_binding_version",
-            "/gate_b/effect_identity/provider_key_binding_contract_version",
-            serde_json::json!(5),
-        ),
-        (
-            "effect_scope_id",
-            "/gate_b/effect_identity/scopes/0/id",
-            serde_json::json!("alpha-v2"),
-        ),
-        (
-            "effect_slot_id",
-            "/gate_b/effect_identity/scopes/0/slots/0/id",
-            serde_json::json!("primary-v2"),
-        ),
-        (
-            "logical_destination_contract",
-            "/gate_b/effect_identity/scopes/0/slots/0/logical_destination_contract",
-            serde_json::json!("logical-destination-v2"),
-        ),
-        (
-            "remote_semantic_profile_id",
-            "/gate_b/remote_contract/semantic_profile_id",
-            serde_json::json!("remote-profile-v2"),
-        ),
-        (
-            "remote_semantic_profile_version",
-            "/gate_b/remote_contract/semantic_profile_version",
-            serde_json::json!(7),
-        ),
-        (
-            "remote_ack_contract_id",
-            "/gate_b/remote_contract/acknowledgement_contract_id",
-            serde_json::json!("remote-ack-v2"),
-        ),
-        (
-            "remote_ack_contract_version",
-            "/gate_b/remote_contract/acknowledgement_contract_version",
-            serde_json::json!(8),
-        ),
-        (
-            "remote_unknown_contract_id",
-            "/gate_b/remote_contract/unknown_outcome_contract_id",
-            serde_json::json!("remote-unknown-v2"),
-        ),
-        (
-            "remote_unknown_contract_version",
-            "/gate_b/remote_contract/unknown_outcome_contract_version",
-            serde_json::json!(9),
-        ),
-        (
-            "remote_minimum_validity",
-            "/gate_b/remote_contract/minimum_validity_ms",
-            serde_json::json!(30_001),
-        ),
-        (
-            "inbox_dedup_minimum_validity",
-            "/gate_b/inbox_dedup_minimum_validity_ms",
-            serde_json::json!(60_001),
-        ),
-    ];
+    let mut changed = baseline.clone();
+    changed.local_atomicity = GateBLocalAtomicity::None;
+    assert_producer_fingerprint_changes("local_atomicity", &baseline, &changed);
 
-    for (label, pointer, value) in mutations {
-        assert_digest_changed(label, &baseline, &changed_at(&original, pointer, value));
-    }
+    let mut journal_baseline = baseline.clone();
+    journal_baseline.ambiguity_replay = GateBAmbiguityReplay::AtLeastOnce;
+    journal_baseline.provider_key_binding_contract_version = None;
+    let mut changed = journal_baseline.clone();
+    changed.effect_journal = GateBEffectJournal::NotRequired;
+    assert_producer_fingerprint_changes("effect_journal", &journal_baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.outbound_obligation = GateBOutboundObligation::None;
+    assert_producer_fingerprint_changes("outbound_obligation", &baseline, &changed);
+
+    let mut inbound_baseline = baseline.clone();
+    inbound_baseline.inbox_dedup_minimum_validity_ms = None;
+    let mut changed = inbound_baseline.clone();
+    changed.inbound_protection = GateBInboundProtection::None;
+    assert_producer_fingerprint_changes("inbound_protection", &inbound_baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.ambiguity_replay = GateBAmbiguityReplay::AtLeastOnce;
+    assert_producer_fingerprint_changes("ambiguity_replay", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.native_message_contract = None;
+    assert_producer_fingerprint_changes("native_message_transaction", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.native_message_contract = Some(("native-message-tx-v2", 5));
+    assert_producer_fingerprint_changes("native_message_contract_id", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.native_message_contract = Some(("native-message-tx", 6));
+    assert_producer_fingerprint_changes("native_message_contract_version", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.derivation_contract_version = 2;
+    assert_producer_fingerprint_changes("effect_id_derivation_version", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.occurrence_key_contract_version = 3;
+    assert_producer_fingerprint_changes("occurrence_key_version", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.request_identity_contract_version = 4;
+    assert_producer_fingerprint_changes("request_identity_version", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.provider_key_binding_contract_version = Some(5);
+    assert_producer_fingerprint_changes("provider_key_binding_version", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.alpha_scope_id = "alpha-v2";
+    assert_producer_fingerprint_changes("effect_scope_id", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.primary_slot_id = "primary-v2";
+    assert_producer_fingerprint_changes("effect_slot_id", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.logical_destination_contract = "logical-destination-v2";
+    assert_producer_fingerprint_changes("logical_destination_contract", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.remote_profile = ("remote-profile-v2", 6);
+    assert_producer_fingerprint_changes("remote_semantic_profile_id", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.remote_profile = ("remote-profile", 7);
+    assert_producer_fingerprint_changes("remote_semantic_profile_version", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.remote_acknowledgement = ("remote-ack-v2", 7);
+    assert_producer_fingerprint_changes("remote_ack_contract_id", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.remote_acknowledgement = ("remote-ack", 8);
+    assert_producer_fingerprint_changes("remote_ack_contract_version", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.remote_unknown_outcome = ("remote-unknown-v2", 8);
+    assert_producer_fingerprint_changes("remote_unknown_contract_id", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.remote_unknown_outcome = ("remote-unknown", 9);
+    assert_producer_fingerprint_changes("remote_unknown_contract_version", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.remote_minimum_validity_ms = Some(30_001);
+    assert_producer_fingerprint_changes("remote_minimum_validity", &baseline, &changed);
+
+    let mut changed = baseline.clone();
+    changed.inbox_dedup_minimum_validity_ms = Some(60_001);
+    assert_producer_fingerprint_changes(
+        "inbox_dedup_minimum_validity",
+        &baseline,
+        &changed,
+    );
 }
 
 #[test]
