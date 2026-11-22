@@ -79,7 +79,8 @@ use serde_json::{Value, json};
 
 use oxide_batch_core::{
     ChunkComponentRevisions, ChunkSize, ComponentRevision, DefinitionError, DefinitionIdentity,
-    DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget, InFlightPolicy,
+    DefinitionRevision, DefinitionTokenKind, ExitCode, FaultPolicy, FlowTarget,
+    GateBDefinitionContract, InFlightPolicy,
     JobName, MAX_NODES, MAX_PARTITIONS, MAX_TRANSITIONS, NodeId, ParameterIncrementerIdentity,
     ParameterName, RestartPolicy, StartControls, StepName, TerminalKind, definition_token,
     validate_token,
@@ -1471,6 +1472,7 @@ impl FlowGraph {
             .map_err(PlanError::Manifest)?;
         Ok(CompiledExecutionPlan {
             definition,
+            gate_b_definition: None,
             job_restart_policy: RestartPolicy::Restartable,
             parameter_incrementer: None,
             scoped_components: BTreeMap::new(),
@@ -1773,6 +1775,7 @@ fn flow_manifest(
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledExecutionPlan {
     definition: DefinitionIdentity,
+    gate_b_definition: Option<GateBDefinitionContract>,
     job_restart_policy: RestartPolicy,
     parameter_incrementer: Option<ParameterIncrementerIdentity>,
     scoped_components: BTreeMap<(ScopeKind, ScopedComponentId), ScopedComponentDefinition>,
@@ -1817,6 +1820,7 @@ impl CompiledExecutionPlan {
         transitions.insert(entry.clone(), edges);
         Ok(Self {
             definition,
+            gate_b_definition: None,
             job_restart_policy: RestartPolicy::Restartable,
             parameter_incrementer: None,
             scoped_components: BTreeMap::new(),
@@ -1834,6 +1838,30 @@ impl CompiledExecutionPlan {
     #[must_use]
     pub const fn definition_identity(&self) -> &DefinitionIdentity {
         &self.definition
+    }
+
+    /// Explicitly opts this compiled plan into Gate-B manifest format 5.
+    ///
+    /// The execution graph is unchanged. Only the definition identity is wrapped
+    /// around its exact legacy manifest and the validated Gate-B contract is
+    /// retained for later repository/runtime negotiation.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlanError::Manifest`] when the definition cannot be wrapped.
+    pub fn with_gate_b(mut self, contract: GateBDefinitionContract) -> Result<Self, PlanError> {
+        self.definition = self
+            .definition
+            .with_gate_b(contract.clone())
+            .map_err(PlanError::Manifest)?;
+        self.gate_b_definition = Some(contract);
+        Ok(self)
+    }
+
+    /// Borrows the structured Gate-B definition contract when selected.
+    #[must_use]
+    pub const fn gate_b_definition(&self) -> Option<&GateBDefinitionContract> {
+        self.gate_b_definition.as_ref()
     }
 
     /// Returns the execution-definition restart policy for this job.
