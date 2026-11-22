@@ -1,9 +1,11 @@
 # M8 Gate-B — Durable-Effect Persistence and Chunk Enlistment
 
-**State:** Accepted M8 design, revised by
-[ADR-0016](../architecture/decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md).
-The earlier remote semantic-contract model is retained only as superseded design
-history in ADR-0015.
+**State:** Accepted M8 design. Local durable-effect semantics are governed by
+[ADR-0016](../architecture/decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md);
+their manifest representation is governed by
+[ADR-0017](../architecture/decisions/0017-canonical-compiled-plan-manifest-v1-reset.md).
+The earlier remote semantic-contract model and format-5 wrapper remain only as
+superseded design history.
 **Owner:** M8 tracker
 [#201](https://github.com/luceat-lux-vestra/oxide-batch/issues/201)
 **M9 consumer:** integration tracker
@@ -15,7 +17,8 @@ the [repository and transaction model](../architecture/repository-and-transactio
 the [execution semantics](../compatibility/execution-semantics.md),
 [ADR-0004](../architecture/decisions/0004-job-definition-restart-compatibility.md),
 [ADR-0009](../architecture/decisions/0009-definition-fingerprint-input-set.md),
-and [ADR-0016](../architecture/decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md).
+[ADR-0016](../architecture/decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md),
+and [ADR-0017](../architecture/decisions/0017-canonical-compiled-plan-manifest-v1-reset.md).
 
 Gate-B remains an internal M8 workstream name. The next-release public and
 durable-wire vocabulary uses durable-effect, effect, Outbox, and Inbox terms
@@ -296,6 +299,7 @@ M9 consumer adapters must define when an acknowledgement/delete/offset change is
 allowed relative to the committed Inbox authority.
 
 
+
 ## Repository capability declaration
 
 EffectJournal, Outbox, and InboxDedup persistence are separate optional
@@ -312,76 +316,89 @@ A deployment-owned durable-effect descriptor may certify:
 
 Version authorities are deliberately separate:
 
-- format-5 `durable_effects.contract_version` versions definition/wire
-  semantics;
+- canonical manifest `manifest_version` versions the definition grammar;
 - `effect_identity.contract_version` versions EffectId derivation semantics;
 - each local persistence profile version certifies one deployment capability;
 - repository descriptor version only versions the descriptor envelope.
 
-Equal integers across these families imply nothing. A repository must not
-satisfy a definition merely because some descriptor-wide version equals the
-manifest contract version.
+Equal integers across these families imply nothing.
+
+Initial M8 local profile recognition is exact and framework-owned:
+
+- EffectJournal requirement accepts EffectJournal persistence profile v1;
+- Outbox requirement accepts Outbox persistence profile v1;
+- InboxDedup requirement accepts InboxDedup persistence profile v1.
+
+Unknown profile versions fail closed. Numeric ordering does not imply
+compatibility. A later runtime accepts another profile version only through an
+explicit governed mapping.
+
+These deployment profile versions are not serialized into the definition
+manifest.
+
+The descriptor-wide Gate-B contract-version equality relation is not a valid
+compatibility rule and must be removed from the implementation.
 
 Definition/plan construction remains deployment-independent. It validates
 static shape and chunk binding only.
 
 The live repository descriptor is negotiated at launch/restart before lifecycle
 mutation. Equivalent pre-lifecycle checking is required on both FlowLauncher
-and standalone chunk JobLauncher paths. The current existence of descriptor
-types or direct helper tests is not support evidence until those runtime paths
-are wired and certified.
+and standalone chunk JobLauncher paths. Descriptor types or direct helper tests
+alone are not support evidence until those runtime paths are wired and
+certified.
 
 
-## Definition identity and manifest format 5
+## Definition identity in canonical manifest v1
 
-[ADR-0016](../architecture/decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md)
-owns the exact definition projection.
+[ADR-0017](../architecture/decisions/0017-canonical-compiled-plan-manifest-v1-reset.md)
+owns the manifest representation.
 
-A durable-effect definition uses format 5 with exactly:
+Durable effects do not create a new manifest format. They are an optional
+`durable_effects` member of the one canonical compiled-plan manifest v1.
 
-- `base`: exact frozen legacy format-1/2/3/4 projection;
-- `durable_effects`: closed versioned M8 contract; and
-- `format = 5`.
+The M8 durable-effect projection contains only restart-relevant local semantics:
+
+- `effect_journal`;
+- `outbound_obligation`;
+- `inbound_protection`;
+- conditional effect-identity contract/version;
+- canonical compiled `NodeId` / `EffectSlotId` declarations when an
+  EffectJournal/Outbox logical effect identity is required; and
+- optional InboxDedup minimum validity floor.
+
+At least one durable-effect requirement must be selected when the member is
+present.
+
+Pure InboxDedup does not carry effect identity. It remains usable only from the
+chunk runtime path where the transaction-scoped Inbox guard exists.
+
+EffectJournal or Outbox requires effect identity and at least one valid chunk
+effect site.
 
 The internal Gate-B codename is not durable wire vocabulary.
 
-`durable_effects.requirements` always contains exactly:
+EffectId derives from the canonical-v1 definition fingerprint plus the logical
+job-instance identity, compiled `NodeId`, `EffectSlotId`, and a
+restart-stable logical occurrence input. The existing
+`JobInstanceKey::digest()` is the preferred logical-instance identity input
+unless implementation review establishes a correctness reason otherwise.
 
-- `effect_journal`;
-- `outbound_obligation`; and
-- `inbound_protection`.
-
-At least one is non-default.
-
-`effect_identity` is required iff EffectJournal or Outbox is selected and is
-forbidden for pure InboxDedup. When present it contains one framework-owned
-identity-contract version plus canonical compiled `NodeId` / `EffectSlotId`
-declarations.
-
-`inbox_dedup_minimum_validity_ms` is optional, positive, and valid only when
-InboxDedup is selected. The deployment effective window remains outside the
-fingerprint.
-
-The entire format-5 document remains under the existing manifest byte ceiling.
-Nested objects are closed; unknown members and JSON `null` fail closed.
-Producer and persisted reader perform the same base-to-effect-node
-cross-validation and canonical-order checks.
-
-Released formats 1 through 4 remain byte-for-byte immutable.
+Historical preview formats 1-4 are not embedded, wrapped, or cross-validated.
+Proposed format 5 is never released.
 
 ### Restart boundary
 
 M8 version 1 allows strict restart only for durable-effect definitions.
 
 If either source or target selects `durable_effects` and the source/target
-manifest digests differ, compatible restart fails closed before lifecycle
-mutation even when an ordinary ADR-0004 direct compatibility edge exists.
+canonical manifest digests differ, compatible restart fails closed before
+lifecycle mutation even when an ordinary ADR-0004 direct compatibility edge
+exists.
 
-Legacy definitions retain their existing compatible-restart behavior.
-
-Fork creates a new job instance and copies no EffectJournal, Outbox, InboxDedup,
-or EffectId state by default. Existing durable-effect records remain source
-facts and are never re-derived or retargeted by an upgrade.
+A fork creates a new job instance and copies no EffectJournal, Outbox,
+InboxDedup, or EffectId state by default. Existing durable-effect records remain
+source facts and are never re-derived or retargeted by an upgrade.
 
 A later ADR may authorize compatible durable-effect restart only after it
 defines explicit bounded live-effect continuity and mapping semantics.
