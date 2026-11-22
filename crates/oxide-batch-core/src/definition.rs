@@ -42,8 +42,10 @@ pub const MANIFEST_FORMAT_LOCAL_SCALE: u16 = 3;
 /// The canonical manifest format for bounded M7 composed flows, including
 /// additive scoped-component definition identity.
 pub const MANIFEST_FORMAT_ADVANCED_FLOW: u16 = 4;
+/// The canonical manifest format for structured Gate-B definition identity.
+pub const MANIFEST_FORMAT_GATE_B: u16 = 5;
 /// The newest canonical manifest format this runtime can interpret.
-pub(crate) const SUPPORTED_MANIFEST_FORMAT: u16 = MANIFEST_FORMAT_ADVANCED_FLOW;
+pub(crate) const SUPPORTED_MANIFEST_FORMAT: u16 = MANIFEST_FORMAT_GATE_B;
 const LEGACY_REVISION: &str = "__m1_repository_port_v1";
 const LEGACY_MANIFEST: &[u8] =
     br#"{"format":1,"repository_port":"m1","revision":"__m1_repository_port_v1"}"#;
@@ -1399,6 +1401,54 @@ impl DefinitionIdentity {
         ))
     }
 
+    /// Wraps this exact legacy definition identity in manifest format 5.
+    ///
+    /// The existing canonical format-1/2/3/4 object is retained byte-for-byte
+    /// as the nested `base` projection. Only an explicit Gate-B opt-in creates
+    /// a format-5 identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`DefinitionError::ManifestEncoding`] when this identity is not
+    /// a bound format-1/2/3/4 definition or the Gate-B wrapper cannot be
+    /// encoded canonically. Returns [`DefinitionError::ManifestTooLarge`] when
+    /// the complete format-5 wrapper exceeds the durable manifest bound.
+    pub fn with_gate_b(
+        self,
+        contract: crate::GateBDefinitionContract,
+    ) -> Result<Self, DefinitionError> {
+        if !matches!(
+            self.manifest_format,
+            MANIFEST_FORMAT_ONE_STEP
+                | MANIFEST_FORMAT_FLOW
+                | MANIFEST_FORMAT_LOCAL_SCALE
+                | MANIFEST_FORMAT_ADVANCED_FLOW
+        ) {
+            return Err(DefinitionError::ManifestEncoding);
+        }
+        let job_name = self
+            .job_name
+            .clone()
+            .ok_or(DefinitionError::ManifestEncoding)?;
+        let base: serde_json::Value = serde_json::from_slice(&self.canonical_manifest)
+            .map_err(|_| DefinitionError::ManifestEncoding)?;
+        let wrapped = crate::manifest_v5::wrap(base, &contract)
+            .map_err(|_| DefinitionError::ManifestEncoding)?;
+        let canonical =
+            serde_json::to_vec(&wrapped).map_err(|_| DefinitionError::ManifestEncoding)?;
+        if canonical.len() > MAX_MANIFEST_BYTES {
+            return Err(DefinitionError::ManifestTooLarge {
+                max_bytes: MAX_MANIFEST_BYTES,
+            });
+        }
+        Ok(Self::from_canonical(
+            Some(job_name),
+            self.revision,
+            canonical,
+            MANIFEST_FORMAT_GATE_B,
+        ))
+    }
+
     /// Encodes a one-step manifest this crate composed itself.
     fn encode(
         job_name: JobName,
@@ -1586,6 +1636,7 @@ pub struct DefinitionManifest {
     job_name: Option<JobName>,
     node_count: Option<usize>,
     transition_count: Option<usize>,
+    gate_b: Option<crate::GateBDefinitionContract>,
 }
 
 impl DefinitionManifest {
@@ -1619,6 +1670,17 @@ impl DefinitionManifest {
             .and_then(|format| u16::try_from(format).ok())
             .ok_or(ManifestError::MissingFormat)?;
         check_manifest_format(format)?;
+        if format == MANIFEST_FORMAT_GATE_B {
+            let parsed = crate::manifest_v5::read(&document)?;
+            return Ok(Self {
+                format,
+                digest: Sha256::digest(bytes).into(),
+                job_name: parsed.job_name,
+                node_count: parsed.node_count,
+                transition_count: parsed.transition_count,
+                gate_b: Some(parsed.gate_b),
+            });
+        }
         if format != MANIFEST_FORMAT_ADVANCED_FLOW
             && (members.contains_key("parameter_incrementer")
                 || contains_object_key(&document, "restart_policy"))
@@ -1682,6 +1744,7 @@ impl DefinitionManifest {
             job_name,
             node_count,
             transition_count,
+            gate_b: None,
         })
     }
 
@@ -1727,6 +1790,14 @@ impl DefinitionManifest {
     #[must_use]
     pub const fn transition_count(&self) -> Option<usize> {
         self.transition_count
+    }
+
+    /// Borrows the structured Gate-B definition contract for format 5.
+    ///
+    /// Legacy format-1/2/3/4 manifests return `None`.
+    #[must_use]
+    pub const fn gate_b_definition(&self) -> Option<&crate::GateBDefinitionContract> {
+        self.gate_b.as_ref()
     }
 }
 
@@ -2140,6 +2211,17 @@ pub enum ManifestError {
         /// Newest format this runtime interprets.
         supported: u16,
     },
+    /// A format-5 wrapper contains an invalid or non-closed legacy base.
+    MalformedBase,
+    /// A format-5 wrapper contains an invalid or non-closed Gate-B projection.
+    MalformedGateB,
+    /// The Gate-B semantic contract version is newer than this runtime understands.
+    UnsupportedGateBContractVersion {
+        /// Contract version found in the manifest.
+        version: u16,
+        /// Newest Gate-B contract version this runtime interprets.
+        supported: u16,
+    },
     /// A flow manifest omitted or malformed its graph members.
     MalformedGraph,
     /// A flow manifest declared a graph larger than this runtime accepts.
@@ -2175,6 +2257,16 @@ impl fmt::Display for ManifestError {
             Self::UnsupportedFormat { format, supported } => write!(
                 formatter,
                 "definition manifest format {format} is newer than the supported format {supported}"
+            ),
+            Self::MalformedBase => {
+                formatter.write_str("format-5 manifest contains an invalid legacy base")
+            }
+            Self::MalformedGateB => {
+                formatter.write_str("format-5 manifest contains an invalid Gate-B contract")
+            }
+            Self::UnsupportedGateBContractVersion { version, supported } => write!(
+                formatter,
+                "Gate-B contract version {version} is newer than the supported version {supported}"
             ),
             Self::MalformedGraph => {
                 formatter.write_str("flow manifest has no readable node and transition members")
