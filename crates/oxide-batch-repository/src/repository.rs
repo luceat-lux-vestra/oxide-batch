@@ -1746,7 +1746,7 @@ impl DurableEffectPersistenceDescriptor {
         }
     }
 
-    /// Declares certified EffectJournal persistence semantics.
+    /// Declares certified `EffectJournal` persistence semantics.
     #[must_use]
     pub const fn with_effect_journal(mut self, profile_version: GateBContractVersion) -> Self {
         self.effect_journal_profile_version = Some(profile_version);
@@ -1760,7 +1760,7 @@ impl DurableEffectPersistenceDescriptor {
         self
     }
 
-    /// Declares certified InboxDedup persistence and its effective safety window.
+    /// Declares certified `InboxDedup` persistence and its effective safety window.
     #[must_use]
     pub const fn with_inbox_dedup(
         mut self,
@@ -1790,7 +1790,7 @@ impl DurableEffectPersistenceDescriptor {
         self.contract_version
     }
 
-    /// Returns the certified EffectJournal profile version, when declared.
+    /// Returns the certified `EffectJournal` profile version, when declared.
     #[must_use]
     pub const fn effect_journal_profile_version(self) -> Option<GateBContractVersion> {
         self.effect_journal_profile_version
@@ -1802,13 +1802,13 @@ impl DurableEffectPersistenceDescriptor {
         self.outbox_profile_version
     }
 
-    /// Returns the certified InboxDedup profile version, when declared.
+    /// Returns the certified `InboxDedup` profile version, when declared.
     #[must_use]
     pub const fn inbox_dedup_profile_version(self) -> Option<GateBContractVersion> {
         self.inbox_dedup_profile_version
     }
 
-    /// Returns the deployment's effective InboxDedup safety window.
+    /// Returns the deployment's effective `InboxDedup` safety window.
     #[must_use]
     pub const fn inbox_dedup_effective_window_ms(self) -> Option<GateBMinimumValidityMs> {
         self.inbox_dedup_effective_window_ms
@@ -1840,13 +1840,13 @@ pub enum DurableEffectNegotiationError {
         /// Gate-B contract version advertised by the adapter profile.
         advertised: GateBContractVersion,
     },
-    /// Required EffectJournal persistence is not certified.
+    /// Required `EffectJournal` persistence is not certified.
     EffectJournalProfileMissing,
     /// Required Outbox persistence is not certified.
     OutboxProfileMissing,
-    /// Required InboxDedup persistence is not certified.
+    /// Required `InboxDedup` persistence is not certified.
     InboxDedupProfileMissing,
-    /// The certified InboxDedup window is shorter than the definition floor.
+    /// The certified `InboxDedup` window is shorter than the definition floor.
     InboxDedupWindowTooShort {
         /// Definition-required minimum safety window.
         required: GateBMinimumValidityMs,
@@ -1961,7 +1961,7 @@ impl RepositoryDescriptor {
     ///
     /// Returns [`DurableEffectNegotiationError`] when a required local
     /// persistence profile is absent, its Gate-B contract version differs, or
-    /// the certified InboxDedup safety window is below the definition floor.
+    /// the certified `InboxDedup` safety window is below the definition floor.
     pub fn require_durable_effect_persistence(
         &self,
         definition: &GateBDefinitionContract,
