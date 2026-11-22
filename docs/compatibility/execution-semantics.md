@@ -35,9 +35,12 @@ contexts, definitions, protocol messages, or diagnostics.
 ## Definition identity and restart
 
 [ADR-0004](../architecture/decisions/0004-job-definition-restart-compatibility.md)
-is binding: every execution references an immutable revision, canonical
-manifest, and fingerprint. Same revision with different fingerprint is
-definition drift.
+remains binding for definition identity and fail-closed restart.
+[ADR-0017](../architecture/decisions/0017-canonical-compiled-plan-manifest-v1-reset.md)
+replaces only the historical preview-format support boundary.
+
+Every execution references an immutable revision, canonical manifest, and
+fingerprint. Same revision with different fingerprint is definition drift.
 
 A restart:
 
@@ -46,14 +49,26 @@ A restart:
 - requires the same fingerprint or one explicit directed compatibility edge;
 - never infers compatibility from names, revision ordering, deserialization,
   or semantic-version syntax;
-- atomically records any context upgrade and the new execution;
+- atomically records any context upgrade and the new execution; and
 - preserves the guarantee and meaning of already committed effects.
+
+Canonical manifest v1 is the current target identity. Historical preview
+formats 1-4 have no compatibility/migration edge into v1 and are not
+restartable by the new line. A detected historical preview manifest fails
+explicitly before lifecycle mutation. Upgrade to the new line therefore
+requires reset/recreation of OxideBatch-owned preview metadata when historical
+definition/execution rows exist.
+
+For definitions that select ADR-0016 `durable_effects`, M8 version 1 is
+stricter: exact-manifest restart is allowed, but a different-digest compatible
+upgrade fails closed even when an ordinary direct compatibility edge exists. A
+fork creates a new instance and copies no durable-effect state by default.
 
 [RFC-0004](../rfcs/0004-compiled-execution-plan.md) and
 [ADR-0005](../architecture/decisions/0005-compiled-execution-plan.md) accept
-`Strict`, `Compatible`, and lineage-preserving `Fork`. A
-disabled-by-default audited `Force` mode remains unavailable until separately
-approved. ADR-0004 behavior remains authoritative during staged lowering.
+`Strict`, `Compatible`, and lineage-preserving `Fork` for supported
+canonical definitions. A disabled-by-default audited `Force` mode remains
+unavailable until separately approved.
 
 ## Lifecycle rules
 
@@ -119,43 +134,45 @@ Item-stream open/update/close order, component state schema/version, and
 checkpoint ownership are explicit. A restartable step cannot contain required
 state that is neither reconstructible nor checkpointed.
 
+
 ## Transaction and delivery semantics
 
 For an enlisted same-resource writer, one certified transaction contains the
-business writes and the framework progress they protect: affected counters,
-context/checkpoint, optimistic version, and any selected Outbox or InboxDedup
-record whose correctness depends on the same commit. All commit or roll back
-together. A separate metadata write before or after that business transaction
-does not satisfy the Outbox/Inbox atomicity contract.
+business writes and framework progress they protect plus any selected local
+EffectJournal, Outbox, or InboxDedup record whose correctness depends on the
+same commit.
 
-Cross-resource delivery uses the semantic requirements defined by
-[RFC-0007](../rfcs/0007-repository-services-and-capabilities.md), the
-[repository model](../architecture/repository-and-transaction-model.md), and the
-[M8 Gate-B record](../project/m8-gate-b-durable-effect-delivery.md):
+M8 version 1 defines exactly three local durable-effect requirement families:
 
-- atomic same resource;
-- transactional message;
-- outbox;
-- inbox/deduplication;
-- idempotent external effect/effect journal;
-- at-least-once;
-- best effort with manual reconciliation.
+- EffectJournal intent persistence;
+- Outbox obligation persistence; and
+- InboxDedup protection.
 
-These profiles are composable requirements, not seven mutually exclusive values
-or a strength ladder. For example, an Outbox obligation may later be delivered
-through an IdempotentExternalEffect profile. The current public
-`ChunkDeliveryMode` remains the existing compatibility surface until a later
-API decision.
+They compose and are not a delivery-strength ladder.
+`ChunkDeliveryMode::AtomicSameResource` remains the existing authority for
+same-resource business/progress atomicity.
 
-A durable cross-resource effect has one replay-stable logical EffectId and
-separate physical attempts. Durable-journal profiles record intent before
-exposure, commit an exposure-authorization fence before the remote call, retain
-acknowledgement/reconciliation evidence, and never infer remote absence from a
-timeout or missing acknowledgement.
+The durable-effect enlistment port exists on the chunk transaction/writer path.
+A standalone chunk or directly bound flow chunk may select it. A tasklet,
+decider, custom leaf, nested-job boundary, split manager, or node without the
+same transaction-scoped port cannot declare M8 durable-effect semantics.
 
-There is no generic exactly-once guarantee across arbitrary resources. Every
-adapter states acknowledgement, offset, commit, redelivery, idempotency-window,
-and unknown-outcome behavior. Telemetry is never correctness authority.
+Effect identity is conditional: EffectJournal or Outbox requires a
+replay-stable `EffectId` contract and effect slots; pure InboxDedup does not.
+Static plan validation checks this shape and the compiled chunk binding without
+consulting a live deployment.
+
+Repository capability is negotiated later, at launch/restart before lifecycle
+mutation. Both FlowLauncher and standalone chunk JobLauncher must fail closed
+when the selected deployment cannot satisfy the definition. A descriptor helper
+or unit test alone is not runtime support evidence.
+
+M8 version 1 does not define provider/broker replay, acknowledgement,
+native-transaction, provider idempotency, or unknown-outcome contracts. Those
+are M9 integration semantics.
+
+There is no generic exactly-once guarantee across arbitrary resources.
+Telemetry is never correctness authority.
 
 ## Retry, skip, rollback, and repeat
 

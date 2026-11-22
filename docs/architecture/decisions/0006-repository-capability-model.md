@@ -1,11 +1,15 @@
 # ADR-0006: Repository Services and Capability Model
 
-- **State:** Accepted
+- **State:** Accepted; partially superseded by [ADR-0016](0016-durable-effect-definition-identity-and-runtime-boundary.md) for M8 durable-effect delivery/profile scope
 - **Date:** 2026-07-30
 - **Owners:** repository and runtime maintainers
 - **Deciders:** project owner
 - **Governing RFC:** [RFC-0007](../../rfcs/0007-repository-services-and-capabilities.md)
 - **Supersedes:** [ADR-0003](0003-postgres-metadata.md)
+- **Partial supersession scope:** ADR-0016 narrows mandatory M8 durable-effect
+  definition semantics to local EffectJournal/Outbox/InboxDedup correctness.
+  This ADR remains authoritative for repository-service separation,
+  repository-owned transactions, and capability negotiation.
 
 ## Context
 

@@ -51,23 +51,55 @@ Compilation MUST reject:
 Compilation emits stable, bounded diagnostics without parameters, contexts,
 credentials, item values, or component-private data.
 
+
 ## Manifest, fingerprint, and registry
 
-The neutral definition manifest is a bounded, canonical, versioned
-representation of restart- and deployment-relevant structure. It records node
-and component IDs, graph edges, parameter schema, checkpoint/context codec
-versions, capabilities, delivery mode, and the resource policies that change
-durable meaning. It does not contain executable Rust code, secrets, endpoints,
-user data, framework capacity bounds, or throughput-only budgets.
+[ADR-0017](decisions/0017-canonical-compiled-plan-manifest-v1-reset.md)
+defines one canonical definition manifest projected from the normalized
+`CompiledExecutionPlan`.
 
-Canonical bytes are hashed to produce the fingerprint. Exact encoding remains
-the one accepted by ADR-0004 until a superseding ADR changes it. Equivalent
-source builders MUST produce identical canonical bytes; a changed
-restart-relevant value MUST change the fingerprint.
+All supported job forms use that same projection. A one-step tasklet or chunk
+is a one-node compiled plan; it does not own a separate durable format.
 
-`DefinitionRegistry` resolves `(definition_id, revision)` to one immutable
-manifest and executable assembly. Binding the same pair to a different
-fingerprint is definition drift.
+Canonical manifest v1 has the universally required root:
+
+- `manifest_version = 1`;
+- `job`;
+- `entry`;
+- `nodes`; and
+- `transitions`.
+
+It adds `restart_policy`, `parameter_incrementer`, `scoped_components`,
+and `durable_effects` only when their restart-relevant semantics are
+selected.
+
+`manifest_version` is a grammar/parser version only. It never selects runtime
+behavior, repository invariants, node kinds, plan capabilities, or builder
+origin. Once a document is parsed into the normalized plan/definition model,
+execution semantics come only from explicit typed plan state.
+
+The manifest records restart-relevant, non-secret structure and identity. It
+does not contain executable Rust values, credentials, endpoints, item/user
+data, framework capacity ceilings, telemetry, diagnostics, or
+throughput-only budgets.
+
+Canonical bytes are hashed with SHA-256 to produce the definition fingerprint.
+[ADR-0009](decisions/0009-definition-fingerprint-input-set.md) remains the
+normative membership rule: only values that select or reinterpret durable
+restart state enter the fingerprint.
+
+Equivalent normalized plans MUST produce identical canonical bytes regardless
+of which public builder API produced them. A changed restart-relevant semantic
+MUST change the fingerprint.
+
+`DefinitionRegistry` binds an immutable definition/revision to the canonical
+manifest and fingerprint. Rebinding the same identity to another fingerprint is
+definition drift.
+
+Historical preview formats 1-4 are not current runtime compatibility targets.
+The new reader may identify them only far enough to return an explicit
+unsupported-preview-manifest error before lifecycle mutation. It does not
+execute, migrate, or reinterpret those documents.
 
 ## Static and erased components
 
@@ -103,99 +135,104 @@ checkpoint, or strengthen the recorded guarantee of past effects.
 Plan manifest and fingerprint versions have explicit readers and migration
 rules. A runtime rejects newer versions it cannot interpret.
 
+
 ## Current-to-target migration
 
-Current `TaskletJob` and `TaskletStep` APIs remain compatibility wrappers. The
-staged path is:
+Current `TaskletJob`, `ChunkJob`, and wrapper APIs remain supported facade
+entry points. Their target lowering path is:
 
-1. produce an equivalent one-step definition and plan;
-2. compare lifecycle traces and repository writes;
-3. route execution through the compiled plan without changing the facade;
-4. add general flow node types;
-5. deprecate wrappers only through the public compatibility policy.
+1. construct the equivalent validated compiled-plan node(s);
+2. normalize through the same `CompiledExecutionPlan` model used by flows;
+3. project one canonical manifest v1 from that plan;
+4. derive one definition fingerprint from those canonical bytes; and
+5. execute through the same compiled-plan runtime path.
 
-## M3 bounded lowering and flow slice
+No wrapper retains a private manifest representation merely for historical
+compatibility.
 
-M3 implements the acyclic step/decision/terminal subset, deterministic exit
-patterns, durable decisions, and start controls specified by the
-[basic-flow contract](basic-flow.md). Its fixed graph and manifest bounds are
-implementation requirements, not defaults that a caller may disable.
+The one-node lowering is semantically complete. Standalone tasklet/chunk
+behavior that was previously supplied by a format-specific runtime branch is
+encoded in the normalized plan itself. A successful custom step exit remains a
+successful standalone job through explicit transition/terminal semantics rather
+than a one-step version check. The target representation should use ordinary
+plan rules, for example exact failure/stop transitions plus a less-specific
+completion transition, when that preserves the observable contract.
 
-Manifest format 2 is canonical JSON and captures the graph, fault policies,
-authoritative listener/decider revisions, and start controls. Format-1
-one-step wrappers remain readable and lower without changing their original
-bytes, fingerprint, normalized repository writes, or callback trace. Moving a
-persisted definition from format 1 to 2 requires a direct compatibility edge;
-schema migration never rewrites manifest identity.
+A standalone wrapper path does not become a durable flow merely because it is
+represented as a one-node plan: it need not persist a `FlowDecision` where
+the current standalone lifecycle has no such durable decision. This distinction
+is explicit execution-path semantics, not manifest-version semantics.
 
-## M4 bounded local-scale slice
+The source cutover intentionally removes the old preview-format restart
+boundary. Persisted preview definitions/executions using historical formats are
+not migrated into manifest v1 and are not restartable by the new line.
+Operational upgrade guidance is published with that source cutover.
 
-M4 adds exactly one split node kind and one partitioned step node kind to the
-M3 acyclic subset, with the branch, partition, budget, ownership, aggregation,
-and thread-safety rules fixed by the
-[M4 bounded local-scale contract](local-scale.md). Compilation rejects nested
-splits, partitioned steps inside a branch, decision nodes inside a branch, and
-any zero, contradictory, or unbounded budget.
+## Historical delivery slices
 
-Manifest format 3 adds those node kinds and the partition count, partitioner,
-and aggregation identity that select durable assignment or change aggregate
-meaning, which therefore participate in the fingerprint. Concurrency and
-connection budgets do not: they bound throughput, and the same contract's
-sequential fallback equivalence requires them to leave every normalized durable
-observation unchanged. The delivered M4 projection hashed them anyway;
-[ADR-0009](decisions/0009-definition-fingerprint-input-set.md) removed them and
-re-pinned the format-3 vector once. Formats 1 and 2 remain readable and their
-bytes are never rewritten; moving a persisted definition to format 3 requires
-one direct compatibility edge. M4 keeps the accepted ADR-0002 boxed component
-boundary and does not implement the RFC-0005 static hot path.
+M3, M4, M5, and M7 introduced the flow, local-scale, fingerprint, advanced
+flow, scope, repeat, and definition-evolution semantics that the current
+compiled plan still owns.
 
-## M5 stabilization slice
+Their historical implementation used manifest formats 2, 3, and 4 (with
+one-step format 1). Those format-specific records remain valid evidence for the
+release lines they describe, but they are not current parser or compatibility
+requirements after ADR-0017.
 
-M5 stabilizes the delivered manifest and fingerprint path. It adds no node
-kind, no manifest format, and no new restart mode.
+The semantic payload survives in canonical manifest v1:
 
-**Canonical restart-relevant manifest.** The manifest records exactly the
-values that select or reinterpret durable state: node and component logical
-IDs, graph edges and their stable ordering, the parameter schema, checkpoint
-and context codec versions, declared capabilities that change durable meaning,
-delivery mode, start controls, fault-policy identity, and the partition count,
-partitioner, and aggregation identity that select assignment or change
-aggregate meaning. Display names, storage keys, adapter primary keys, runtime
-execution IDs, telemetry attributes, framework capacity bounds, resource
-budgets that change only throughput, and diagnostic text are excluded and MUST
-NOT change a fingerprint.
-[ADR-0009](decisions/0009-definition-fingerprint-input-set.md) is the normative
-input set, and the projection carries an executable member allowlist so a new
-member cannot enter it without a superseding decision.
+- M3 step/decision/transition/start/fault semantics are represented by the
+  normalized node and transition projection;
+- M4 split/partition/aggregation identity remains restart-relevant where it
+  changes durable assignment or aggregate meaning;
+- M5's ADR-0009 input-set rule remains binding and excludes throughput-only
+  budgets and framework capability ceilings;
+- M7 advanced flow, nested structure, repeat, scope/late binding, restart
+  policy, parameter incrementer, and durable decision identity remain
+  represented by the normalized compiled plan.
 
-**Fingerprint stability.** Canonical bytes are deterministic across processes,
-architectures, framework releases, and repeated compilation of an unchanged
-definition. Equivalent source builders produce identical bytes; any change to a
-recorded restart-relevant value changes the fingerprint. Formats 1, 2, and 3
-keep their format identifiers, canonical encoding rules, and readers. ADR-0009
-re-pinned the format-2 and format-3 vectors exactly once when it removed the
-excluded values from the projection; format 1 was unaffected. After that
-re-pin, M5 adds vectors rather than replacing them, and a later change to the
-input set requires a superseding ADR.
+Durable flow-decision sequencing is normalized as one explicit plan semantic.
+Every transition source that can persist `FlowDecision` owns a deterministic
+compiled sequence identity. Runtime and repository code validate that identity
+uniformly; they do not select append-count versus compiled-sequence behavior
+from `manifest_version` or any historical format number.
 
-**Compatibility edges.** A persisted definition moves between manifest formats
-only through one direct, bounded, deterministic, one-way edge, as already
-accepted for format 1 to 2 and format 2 to 3. Edges are non-transitive and
-never rewrite the bytes of a stored earlier-format manifest.
+Historical format numbers and golden vectors are not copied into the new
+manifest and do not select restart compatibility.
 
-**Fail-closed drift detection.** Restart resolves `(definition_id, revision)`
-to its recorded manifest and compares the proposed fingerprint before any
-lifecycle write. A mismatch without an accepted compatibility edge rejects the
-restart with a typed error and changes no durable state. Binding the same
-`(definition_id, revision)` to a different fingerprint is definition drift and
-is rejected rather than reconciled. A runtime rejects a manifest format newer
-than it can read.
+## Compatibility and preview reset
 
-**Delivered subset boundary.** M5 stabilizes fingerprinting, drift detection,
-and restart identity over the delivered M2-M4 subset. General compiled-plan
-restart, the M7 `DefinitionRegistry` as a public service, schema-transforming
-upgrade edges, and `Fork` lineage remain M7. M5 keeps the accepted ADR-0002
-boxed component boundary and does not implement the RFC-0005 static hot path.
+For canonical manifest v1:
+
+- exact fingerprint restart remains compatible;
+- a different fingerprint is incompatible by default;
+- one explicit bounded direct compatibility edge may authorize a compatible
+  definition evolution where the owning semantics permit it;
+- edges are one-way and non-transitive;
+- definition drift fails before lifecycle mutation; and
+- a newer/unknown canonical manifest version fails closed.
+
+Historical preview manifests have no compatibility edge into canonical v1.
+They fail explicitly and require preview metadata reset/recreation before the
+new line is used when old definition/execution rows exist.
+
+Durable-effect definitions are stricter: a different-digest compatible restart
+remains unavailable until explicit live-effect continuity/mapping is defined.
+
+## Canonical v1 bounds
+
+The canonical document remains bounded. Node/transition/nesting/identifier
+ceilings are reader/compiler capabilities, not fingerprint members. Raising a
+framework capability ceiling does not change an unchanged definition's bytes.
+
+Closed-object parsing, canonical ordering, duplicate rejection, and bounded
+collection validation apply to every manifest-v1 structure.
+
+Repository adapters do not independently inspect `manifest_version` as a
+semantic feature switch. Where repository-side correctness validation needs
+definition evidence, it consumes the typed canonical manifest/plan semantics
+and explicit node/transition/decision identity instead of re-deriving behavior
+from version numbers.
 
 ## Evidence
 

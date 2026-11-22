@@ -1,6 +1,6 @@
 # ADR-0015: Gate-B Definition Identity and Manifest Fingerprint Projection
 
-- **State:** Accepted
+- **State:** Superseded by [ADR-0016](0016-durable-effect-definition-identity-and-runtime-boundary.md)
 - **Date:** 2026-11-20
 - **Owners:** runtime, API, repository, and integration maintainers
 - **Deciders:** project owner
@@ -13,6 +13,9 @@
   [ADR-0013](0013-m7-advanced-flow-scope-repeat-and-evolution.md)
 - **Canonical Gate-B contract:**
   [M8 Gate-B durable-effect delivery](../../project/m8-gate-b-durable-effect-delivery.md)
+- **Replacement:** ADR-0016 narrows M8 to the enforceable local durable-effect
+  boundary and replaces this ADR's mandatory remote semantic-contract model and
+  `gate_b` format-5 projection. This document is retained as decision history.
 
 ## Context
 

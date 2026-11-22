@@ -108,9 +108,11 @@ Adapters publish a versioned descriptor covering:
 - lease/fencing and server-time behavior;
 - backup, restore, retention, and rolling-upgrade support.
 
-Plan compilation evaluates static capabilities. Connection/launch time
-negotiation validates actual deployed capabilities. A missing requirement
-fails explicitly; it does not degrade the delivery guarantee.
+Plan/definition compilation validates static requirement shape and executable
+binding only; it is deployment-independent and does not inspect a live
+repository descriptor. Launch/restart negotiation validates actual deployed
+capabilities before lifecycle mutation. A missing requirement fails explicitly;
+it does not degrade the delivery guarantee.
 
 The mandatory runnable core is below optional capability negotiation. A
 repository described as runnable core must execute an ordinary one-step tasklet
@@ -135,66 +137,57 @@ scan/delete path. Archive/export and retention scheduling are not inferred from
 those repository capabilities; the [M8 Gate-C record](../project/m8-gate-c-retention-portability.md)
 owns their separate operational-service boundary.
 
-## Transaction and delivery requirements
 
-The canonical M8 durable-effect semantics are frozen by the
-[Gate-B record](../project/m8-gate-b-durable-effect-delivery.md).
+## Durable-effect persistence requirements
 
-| Requirement/profile | Required behavior |
+The canonical M8 local durable-effect semantics are frozen by
+[ADR-0016](decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md)
+and the [Gate-B record](../project/m8-gate-b-durable-effect-delivery.md).
+
+| Requirement | Required repository behavior |
 | --- | --- |
-| `AtomicSameResource` | business writes and protected progress commit in one resource transaction |
-| `TransactionalMessage` | only the exact broker transaction/ack/offset operations named by the adapter profile are atomic |
-| `Outbox` | the authorizing local mutation and outbound obligation commit together; later dispatch may duplicate |
+| `EffectJournal` | the open chunk transaction can stage immutable logical effect intent |
+| `Outbox` | the authorizing local mutation, protected progress, and outbound obligation commit together |
 | `InboxDedup` | inbound identity, protected local mutation, and consumed progress commit together within the certified dedup window |
-| `IdempotentExternalEffect` | the same logical EffectId/request/key may replay only under the certified provider idempotency contract |
-| `AtLeastOnce` | retry is allowed with documented duplicate possibility |
-| `BestEffort` | no default automatic retry after possible exposure; reconciliation/operator action may be required |
 
-These names are semantic requirements/profiles, not a strength ladder and not a
-requirement for one flat public enum. Valid plans may compose requirements such
-as Outbox plus IdempotentExternalEffect or InboxDedup plus an Outbox obligation.
-The current `ChunkDeliveryMode` compatibility surface remains unchanged until a
-separate API decision.
+These are separate optional repository capabilities even when one adapter
+stores them together. `ChunkDeliveryMode::AtomicSameResource` remains the
+single same-resource business/progress atomicity authority.
 
-There is no universal transaction-manager abstraction and no generic
-cross-resource exactly-once claim. A component or adapter cannot advertise a
-stronger profile than its local and remote resources actually certify.
+For chunk execution, selected EffectJournal/Outbox/Inbox records participate in
+the same `ChunkTransaction` as the protected work. An independent repository
+write before or after that transaction does not satisfy the requirement.
 
-### Durable effect authority
+The M8 EffectJournal floor owns durable local effect intent only. Remote
+exposure, acknowledgement, provider query, replay/idempotency, broker-native
+transactions, and unknown-outcome interpretation are M9 integration semantics.
 
-A cross-resource durable effect uses a replay-stable logical `EffectId` and
-separate physical attempts. Durable-journal profiles progress monotonically
-through `IntentDurable`, an `ExposureGranted` authorization fence,
-`Acknowledged` evidence, and `Terminal` local disposition. From
-`ExposureGranted` onward the remote effect is conservatively treated as
-possibly applied even if the process crashed before the actual network call.
+A deployment-owned durable-effect persistence descriptor may certify:
 
-Repository-commit ambiguity and remote-effect ambiguity remain distinct.
-Repository ambiguity is resolved by a fresh repository read before another
-external call. Remote ambiguity is resolved only through the selected
-idempotency/query/reconciliation contract; timeout or missing acknowledgement
-never proves non-application.
+- EffectJournal persistence profile version;
+- Outbox persistence profile version;
+- InboxDedup persistence profile version;
+- effective InboxDedup window; and
+- bounded per-chunk record/byte limits.
 
-### Effect persistence and chunk atomicity
+These profile versions are independent from both
+`durable_effects.contract_version` and
+`effect_identity.contract_version`. Equal numeric values across those
+families have no compatibility meaning. A descriptor-wide envelope version, if
+present, versions the descriptor shape only and must not be compared to the
+manifest grammar as proof of semantic support.
 
-Effect-journal persistence, Outbox persistence, and InboxDedup persistence are
-separate optional semantic capabilities even if an adapter shares their
-physical storage.
+Definition construction does not inspect this deployment descriptor. Launcher
+and compatible-entry paths negotiate it before lifecycle mutation. Equivalent
+pre-lifecycle checking is required for FlowLauncher and standalone chunk
+JobLauncher paths.
 
-Outbox and InboxDedup correctness is defined by the transaction that protects
-business work and framework progress. For chunk execution, their required
-records must be able to participate in the same `ChunkTransaction` boundary:
-an Outbox obligation commits with the authorizing business mutation and
-checkpoint/progress; an Inbox marker commits with the protected business effect
-and consumed progress. Implementing either only as an independent
-`JobRepository` unit of work before or after the business transaction does not
-satisfy the profile.
+The existence of the descriptor type or direct descriptor unit tests is not
+support evidence. Support requires the actual launcher wiring plus certified
+adapter persistence/crash evidence.
 
-The effect journal owns cross-resource intent/fencing/acknowledgement/
-reconciliation evidence. It records `ExposureGranted` before remote invocation
-and never treats its own missing acknowledgement as proof of remote absence.
-Exact port names and schema layout are implementation decisions deferred until
-the portable transaction shape is accepted.
+There is no universal transaction manager and no generic cross-resource
+exactly-once claim.
 
 ## Same-resource path
 

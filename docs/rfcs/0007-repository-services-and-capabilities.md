@@ -125,3 +125,34 @@ capability-specific evidence and explicit limitations. A support claim remains
 release- and version-specific. Gate-A, Gate-B, and Gate-C are the M8 design
 records that specialize this RFC without creating a lowest-common-denominator
 database or delivery abstraction.
+
+
+## Post-acceptance specialization — ADR-0016
+
+[RFC-0007](0007-repository-services-and-capabilities.md) remains the accepted
+M5-M9 target vocabulary. [ADR-0016](../architecture/decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md)
+narrows which parts are mandatory **M8 version-1 definition contracts**.
+
+For M8 version 1:
+
+- `ChunkDeliveryMode::AtomicSameResource` remains the existing atomicity
+  authority rather than becoming a second durable-effect requirement;
+- `EffectJournal`, `Outbox`, and `InboxDedup` are the local
+  durable-effect requirement families;
+- `TransactionalMessage`, `IdempotentExternalEffect`, `AtLeastOnce`,
+  `BestEffort`, provider acknowledgement, provider unknown-outcome, and
+  provider-key/idempotency semantics remain M9 integration/profile targets;
+- provider/broker semantics become definition identity only through a later
+  governed extension backed by executable adapter evidence; and
+- capability negotiation remains fail closed, but live deployment capability
+  is checked at launch/restart rather than by deployment-independent plan
+  compilation.
+
+This specialization does not retract RFC-0007's broader integration vocabulary.
+It prevents that future vocabulary from being serialized as a mandatory M8
+contract before an executable adapter owns the semantics.
+
+The Gate-B reconciliation section above is historical to the original accepted
+RFC. ADR-0016 and the current
+[M8 durable-effect record](../project/m8-gate-b-durable-effect-delivery.md)
+are the later authority for M8 version-1 durable-effect scope.

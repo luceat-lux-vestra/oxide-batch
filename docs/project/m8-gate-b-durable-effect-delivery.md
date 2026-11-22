@@ -1,9 +1,11 @@
-# M8 Gate-B — Durable Effects, Idempotency, and Delivery Semantics
+# M8 Gate-B — Durable-Effect Persistence and Chunk Enlistment
 
-**State:** Accepted design by Gate-B
-[#644](https://github.com/luceat-lux-vestra/oxide-batch/issues/644). P133-P139
-semantics are frozen; implementation and support claims remain separately
-evidence-gated under M8/M9 ownership.
+**State:** Accepted M8 design. Local durable-effect semantics are governed by
+[ADR-0016](../architecture/decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md);
+their manifest representation is governed by
+[ADR-0017](../architecture/decisions/0017-canonical-compiled-plan-manifest-v1-reset.md).
+The earlier remote semantic-contract model and format-5 wrapper remain only as
+superseded design history.
 **Owner:** M8 tracker
 [#201](https://github.com/luceat-lux-vestra/oxide-batch/issues/201)
 **M9 consumer:** integration tracker
@@ -15,507 +17,500 @@ the [repository and transaction model](../architecture/repository-and-transactio
 the [execution semantics](../compatibility/execution-semantics.md),
 [ADR-0004](../architecture/decisions/0004-job-definition-restart-compatibility.md),
 [ADR-0009](../architecture/decisions/0009-definition-fingerprint-input-set.md),
-the [Gate-A repository portability record](m8-gate-a-repository-portability.md),
-and the [Gate-C retention portability record](m8-gate-c-retention-portability.md).
+[ADR-0016](../architecture/decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md),
+and [ADR-0017](../architecture/decisions/0017-canonical-compiled-plan-manifest-v1-reset.md).
 
-This record consolidates Gate-B checkpoints P133-P139 into one portable
-correctness contract. PostgreSQL may become the first implementation of some
-primitives, but PostgreSQL tables, SQL, client behavior, and transaction
-mechanics do not define the portable semantics.
+Gate-B remains an internal M8 workstream name. The next-release public and
+durable-wire vocabulary uses durable-effect, effect, Outbox, and Inbox terms
+rather than the Gate-B codename.
 
-It is a design contract, not implementation or support evidence. It adds no
-public API, repository capability enum, schema/table, migration, manifest
-member, fingerprint byte, broker adapter, workflow, or support claim.
+This record defines the M8 portable correctness floor for durable effect intent,
+Outbox, InboxDedup, and transaction-scoped enlistment. It deliberately does not
+standardize provider/broker acknowledgement, remote replay, unknown-outcome, or
+idempotency semantics before M9 has concrete adapters that can enforce them.
+
+This record is a design contract, not implementation, adapter-certification, or
+release-support evidence. A merged type or descriptor helper does not prove the
+launcher, persistence adapter, restart path, or EffectId derivation satisfies
+this record.
 
 ## Design principles
 
-Gate-B follows five rules.
+M8 follows six rules.
 
-1. **Unknown stays unknown.** A timeout, disconnect, missing acknowledgement,
-   process crash, or absent local acknowledgement never proves that a remote
-   effect did not happen.
-2. **Local and remote authority are distinct.** Repository metadata proves local
-   intent, fencing, acknowledgement evidence, and local disposition. Only the
-   remote authority or its certified idempotency/query contract proves the
-   corresponding remote state.
-3. **No generic cross-resource exactly-once.** Stronger semantics exist only
-   inside the exact resource and profile that certifies them.
-4. **Guarantees compose explicitly.** Outbox, inbox/dedup, broker transactions,
-   and idempotent external effects are semantic requirements/profiles, not a
-   single strength ladder.
-5. **Capability absence fails closed.** Compilation, launch, restart, or the
-   feature operation rejects an unsatisfied requirement instead of silently
-   selecting a weaker delivery guarantee.
+1. **Only enforceable semantics become definition contracts.** A manifest must
+   not claim a guarantee that the executable runtime has no port to enforce.
+2. **One transaction owns one atomicity claim.** EffectJournal intent, Outbox,
+   or InboxDedup records that protect chunk work must stage in the same real
+   `ChunkTransaction` as the business mutation and protected progress.
+3. **Existing authority is reused.** `ChunkDeliveryMode::AtomicSameResource`
+   remains the authority for same-resource business/progress atomicity; M8 does
+   not create a duplicate local-atomicity declaration.
+4. **Logical effect identity is restart-stable.** A logical `EffectId` is
+   distinct from physical attempts, execution IDs, wall clock, connections, and
+   payload equality.
+5. **Capability absence fails closed.** A definition requiring a local durable
+   effect capability does not silently degrade when the selected repository
+   profile lacks it.
+6. **Remote semantics are evidence-driven extensions.** M9 adapters document
+   exact protocol behavior first. A shared portable remote contract is promoted
+   only when multiple concrete consumers prove it is useful.
 
-## Same-resource versus cross-resource authority
+## M8 version-1 requirement model
 
-### Atomic same resource
+The mandatory M8 durable-effect definition contains three composable local
+persistence requirements.
 
-`AtomicSameResource` is the fast path where the business mutation and the
-framework progress it protects participate in one adapter-owned transaction.
-For a chunk this includes the checkpoint/context/counters/version and every
-selected local obligation that correctness requires in that transaction.
+| Requirement | Values | Portable meaning |
+| --- | --- | --- |
+| Effect journal | `not_required`, `required` | the open chunk transaction can durably stage immutable logical effect intent |
+| Outbound obligation | `none`, `outbox` | the authorizing mutation, protected progress, and outbound obligation commit or roll back together |
+| Inbound protection | `none`, `inbox_dedup` | the inbound identity guard, protected local mutation, and consumed progress commit or roll back together |
 
-The acknowledged commit of that resource is the authority. If commit
-acknowledgement is ambiguous, the existing `CommitOutcomeUnknown` contract
-applies and a fresh healthy repository observation is required. Gate-B does not
-translate that ambiguity into a fictional remote-effect result.
+These requirements are orthogonal. A definition may require any valid
+composition.
 
-A writer on another connection, an HTTP call, a broker send, or any operation
-that cannot enlist in that same commit is cross-resource even when it uses the
-same vendor or logical application.
+The M8 version-1 model does **not** include:
 
-### Cross-resource effects
+- a second local-atomicity field;
+- external `best_effort`, `at_least_once`, or provider-idempotent replay
+  modes;
+- broker-native transaction contracts;
+- portable remote semantic-profile IDs;
+- acknowledgement-contract IDs;
+- unknown-outcome-contract IDs;
+- provider-key binding contracts; or
+- provider idempotency validity floors.
 
-Cross-resource effects have at least two authorities:
+Those are M9-or-later concerns until an executable integration owns them.
 
-- the local durable authority, which records the logical obligation and its
-  recovery state;
-- the external resource, which owns the truth about whether the remote effect
-  exists or was accepted when that resource exposes a reliable contract.
+## Runtime applicability
 
-Neither side silently rewrites the other. Remote evidence is consumed only
-after it is durably bound to the logical effect.
+The M8 durable-effect contract is initially chunk-runtime only.
+
+Supported bindings are:
+
+- a standalone `ChunkJob`; and
+- a direct compiled `FlowNode::Step` with `StepComponents::Chunk` when the
+  runtime binding supplies the transaction-scoped durable-effect enlistment
+  path.
+
+A mixed graph may contain tasklet and chunk nodes. Only explicitly bound chunk
+nodes may own durable-effect sites.
+
+The initial contract does not apply to:
+
+- `TaskletJob` or `StepComponents::Tasklet`;
+- custom-leaf bodies;
+- deciders;
+- nested-job boundaries;
+- split managers;
+- partition managers or workers that do not expose an explicit chunk effect
+  binding; or
+- any future node kind without the same transaction-scoped enforcement path.
+
+Compilation or definition construction fails before manifest production when an
+effect site targets an unsupported node. The runtime never treats an unsupported
+site as a no-op.
+
+## Same-resource authority
+
+`ChunkDeliveryMode::AtomicSameResource` remains the existing declaration that
+business writes and the framework progress they protect share one resource
+transaction.
+
+When durable-effect enlistment is also selected, an adapter may lend a
+transaction-scoped durable-effect port from that same `ChunkTransaction`.
+This does not create a second transaction manager or generic distributed
+transaction abstraction.
+
+A separate repository write before or after the chunk transaction does not
+satisfy EffectJournal intent, Outbox, or InboxDedup atomicity when that record is
+part of the protected chunk outcome.
+
+An ambiguous local commit remains governed by the existing
+`CommitOutcomeUnknown` contract. A fresh durable repository observation is
+required before the framework infers whether the local transaction committed.
+
 
 ## Logical effect identity
 
-`EffectId` is the conceptual replay-stable identity of one logical external
-effect obligation. This record does not add a public Rust type.
-
-An EffectId:
-
-- is immutable once durable intent exists;
-- survives process retry and supported restart for the same logical obligation;
-- does not change merely because a physical dispatch attempt changes;
-- is not a payload hash, wall clock, connection ID, random per-attempt request
-  ID, `JobExecutionId`, or `StepExecutionId`;
-- differs for distinct logical obligations even when their payload bytes match.
-
-An `EffectAttempt` is physical provenance underneath one EffectId. Attempts
-must be monotonically distinguishable but are never the deduplication identity.
-
-For chunk writers, a transient chunk number or raw item ordinal is insufficient
-by itself. The occurrence identity must be reconstructible from restart-stable
-logical source/effect identity: durable progress plus a stable component-owned
-occurrence key, or an explicit application operation key. A component that
-cannot reproduce such an identity cannot claim a delivery profile whose
-correctness depends on deduplication or idempotent replay.
-
-## Durable effect state
-
-Profiles that claim durable effect recovery use this semantic state model.
-
-| State | Durable meaning |
-| --- | --- |
-| `NoRecord` | no durable effect obligation exists |
-| `IntentDurable` | EffectId, destination/operation identity, request identity, and any required provider-key binding are durable |
-| `ExposureGranted` | one physical attempt has been durably authorized to cross the local boundary; from this point the remote effect is conservatively treated as possibly applied |
-| `Acknowledged` | bounded certified acknowledgement/remote evidence has been durably recorded |
-| `Terminal` | the final local disposition allowed by the selected delivery requirements is durable |
-
-`ExposureGranted` is an authorization fence, not proof that bytes reached the
-network. A crash immediately after this transition therefore creates a
-deliberate conservative false-positive ambiguity. That is safer than allowing a
-remote effect with no durable local trace.
-
-State is monotonic under compare-and-swap, idempotent append, or equivalent
-serialization. A later attempt cannot erase an earlier exposure or
-acknowledgement.
-
-Two ambiguity classes remain separate:
-
-- **repository outcome unknown:** the local state/progress transaction may or may
-  not have committed; resolve it by a fresh repository read before any remote
-  call;
-- **external effect outcome unknown:** exposure is durable and the remote effect
-  may or may not have happened; resolve it only through the selected delivery
-  profile's safe replay/query contract or explicit reconciliation.
-
-## Delivery requirements are composable
-
-RFC-0007's delivery vocabulary names semantic profiles. It must not be
-implemented as an assumption that every plan selects exactly one value from one
-flat enum.
-
-The current public `ChunkDeliveryMode` remains the compatibility surface it is
-today (`AtomicSameResource` and `AtLeastOnce`) until a later implementation
-decision changes it. Gate-B does not add enum variants.
-
-| Requirement/profile | Portable guarantee and non-guarantee |
-| --- | --- |
-| `AtomicSameResource` | one resource commit owns business mutation plus protected framework progress; no cross-resource claim |
-| `TransactionalMessage` | only the exact broker-native operations named by the adapter profile are atomic; unrelated repository work is not implied; an unknown broker commit requires the adapter's certified safe-retry rule or reconciliation rather than a generic resend |
-| `Outbox` | the authorizing local mutation and outbound obligation commit together; later dispatch may duplicate |
-| `InboxDedup` | the stable inbound identity, protected local mutation, and consumed progress commit together; duplicate suppression lasts only for the certified marker window |
-| `IdempotentExternalEffect` | automatic replay is allowed only with the same certified remote key/request identity and within the provider contract's validity |
-| `AtLeastOnce` | retry after ambiguity is permitted because duplicates are part of the contract |
-| `BestEffort` | no default automatic retry after possible exposure; reconciliation/manual handling may be required |
-
-Valid compositions include, for example, Outbox plus
-IdempotentExternalEffect, and InboxDedup protecting local work that also
-creates an Outbox obligation. An implementation should normalize the required
-semantics into orthogonal requirement dimensions rather than hash or negotiate
-an arbitrary adapter capability superset.
-
-## Persistence and transaction ownership
-
-Gate-B defines three optional persistence semantics. Exact trait names and
-schema layout are deferred.
-
-### Effect journal
-
-An effect journal persists EffectId state, canonical request identity,
-provider-key binding where required, attempt provenance, acknowledgement,
-reconciliation evidence, and terminal disposition.
-
-Durable intent exists before first external exposure. If a local business or
-framework mutation creates an effect obligation whose correctness requires that
-the obligation cannot be lost, the intent and that authorizing mutation must
-commit in one certified local transaction, or the authorizing mutation/progress
-must remain uncommitted and unadvanced until durable intent is proven. A
-best-effort dual write to an independent journal cannot claim the stronger
-no-lost-obligation contract.
-
-`ExposureGranted` is committed before the remote call. If that commit is
-unknown, no remote call may occur until a healthy repository read resolves the
-local state.
-
-The effect journal owns local evidence only; it is not proof that the remote
-effect is present or absent.
-
-### Outbox
-
-Outbox correctness depends on the transaction that authorizes the outbound
-obligation.
-
-For chunk processing, the Outbox obligation must be able to join the same
-`ChunkTransaction` boundary that commits the protected business writes and
-checkpoint/progress. Placing an Outbox insert only in an independent
-`JobRepository` unit of work before or after the business transaction does not
-satisfy the Outbox profile.
-
-The dispatcher consumes committed obligations. Multiple dispatchers use durable
-claim/CAS/fencing or equivalent serialization for physical-attempt ownership,
-but Outbox alone still permits duplicate remote delivery after ambiguity.
-
-### Inbox/dedup
-
-InboxDedup likewise requires the inbound marker, protected local business
-effect, and consumed framework progress to commit in the same certified local
-transaction. For a chunk-backed consumer, this requires integration with the
-same `ChunkTransaction` boundary; a marker written independently before the
-business effect can lose work, and a marker written independently afterward can
-repeat work.
-
-Concurrent deliveries serialize through durable uniqueness/CAS/transactional
-conflict. Matching identity plus matching request identity returns the recorded
-disposition. Matching identity with a conflicting request is rejected.
-
-For a non-transactional broker acknowledgement, ack/delete/offset advancement
-must not become durable before the Inbox marker, protected effect, and consumed
-progress commit when that ordering could lose the message. If that local commit
-is unknown, a fresh repository read resolves the Inbox authority before either
-reprocessing or acknowledging the delivery.
-
-### Capability declaration
-
-Effect-journal, Outbox, and InboxDedup persistence are separate semantic
-capabilities even if one backend stores them in one physical journal/table or
-collection. Declaring a capability means certifying its atomicity, concurrency,
-unknown-outcome behavior, migration/restore preservation, retention, and
-resource bounds. Merely having a table with a familiar name is insufficient.
-
-Runnable-core repository support requires none of the three. Plans that need
-one fail closed on an adapter that does not declare and certify it.
-
-The minimum semantic mapping is:
-
-- `IdempotentExternalEffect` requires effect-journal persistence plus a
-  certified remote idempotency contract;
-- `Outbox` requires Outbox persistence; effect-journal persistence is added
-  only when the selected composition also needs effect-level remote
-  reconciliation;
-- `InboxDedup` requires InboxDedup persistence plus a restart-stable inbound
-  identity in the authenticated producer/stream/message namespace;
-- `TransactionalMessage` relies on the named broker-native transaction
-  contract and does not imply unrelated repository persistence;
-- `AtLeastOnce` and `BestEffort` do not require an effect journal merely by
-  name, although an application may still choose one for provenance.
-
-## Idempotency-key lifecycle and request identity
-
-The framework EffectId and a remote provider idempotency key are distinct.
-
-A remote key is bound to exactly one EffectId and one immutable canonical
-request identity inside a reviewed provider key namespace. That namespace
-covers the logical application/tenant scope, provider/destination identity,
-non-secret provider account or credential scope, operation/endpoint semantic
-class, and environment/API version when the provider's uniqueness rules depend
-on them. The binding is durable before exposure and cannot be rotated after
-exposure to escape an unknown outcome.
-
-A key may be application-supplied under a validated deterministic contract or
-framework-derived from stable logical identity using a versioned,
-domain-separated derivation. It must not be derived from wall clock, physical
-attempt identity, or payload hash alone.
-
-Canonical request identity is versioned and deterministic. It covers every
-effect-relevant semantic field and excludes only fields proven effect-neutral,
-such as a transport retry counter or trace identifier.
-
-Reuse rules are fail-closed:
-
-- same EffectId/key/request may replay only when the selected delivery profile
-  permits it and the remote validity contract is still certified;
-- same key with a different request identity is a conflict;
-- a different EffectId must not deliberately reuse the same key namespace;
-- same payload with a different EffectId is a distinct logical obligation;
-- local commit ambiguity is reconciled before another exposure.
-
-A provider key whose validity is expired, evicted, or unprovable is not
-equivalent to "never applied." An exposed ambiguous effect is not blindly
-resent with either the old key or a new key.
-
-### Digest confidentiality
-
-The full canonical request-identity digest is correctness metadata, not
-automatically a public diagnostic field. Low-entropy request attributes can make
-an ordinary digest useful for offline guessing.
-
-Repository/internal conflict detection may retain the versioned identity digest
-under the protected metadata boundary. Operator/telemetry surfaces expose only
-a reviewed non-secret evidence identifier or fingerprint when needed. They do
-not expose the canonical preimage, raw provider key, or an unreviewed digest.
-A future keyed digest/HMAC design must separately define key rotation and
-restore semantics before becoming durable format.
-
-## Retention and minimal tombstones
-
-There is no universal fixed TTL.
-
-The effective safety window is bounded by the provider's conservative key/dedup
-validity, client retry/restart horizon, broker redelivery horizon, in-flight
-attempt/ack lag, reconciliation window, and cleanup safety margin.
-
-Unresolved `IntentDurable`, `ExposureGranted`, or acknowledged-but-not-final
-effects are not deleted merely because time elapsed. The minimum identity,
-binding, ambiguity, and reconciliation evidence survives until resolution or an
-explicit audited disposition.
-
-After an explicit disposition and after every advertised replay/dedup window
-ends, an implementation may compact a full effect record to a minimal tombstone
-rather than retain unbounded payload/history. The tombstone must preserve enough
-authority to prevent unsafe key/effect reuse and explain the remaining
-ambiguity/disposition, including at least the logical effect identity, protected
-request/key fingerprint or non-reuse fence, disposition class, and applicable
-identity/profile version.
-
-Generic Gate-C history purge has independent authority and must not cascade away
-the only live Gate-B effect/outbox/inbox evidence. Gate-C owns generic
-retention/archive operations; Gate-B owns the minimum effect/dedup survival
-floor.
-
-## Operator reconciliation and audit
-
-Telemetry is never correctness authority. Logs, spans, metrics, and diagnostic
-bundles may be lost or duplicated around a durable transition.
-
-Bounded effect inspection may expose reviewed fields such as opaque EffectId,
-delivery profile, durable state, attempt count/ordinal, bounded component and
-adapter class, contract versions, timestamps, bounded outcome/reconciliation
-class, and opaque failure identity. It excludes credentials, raw provider keys,
-request/response bodies, endpoints, SQL, business records, arbitrary remote
-error text, and unreviewed request digests.
-
-Effect list/query surfaces follow the existing explorer rules: keyset
-pagination, immutable ordering identity, statement/service deadline, and no
-unbounded scans. The Gate-B diagnostic floor uses a default page size of 50, a
-maximum page size of 500, and a complete encoded-response ceiling of 256 KiB.
-Mutable-state filters are evaluated at page read time and do not imply a
-cross-page snapshot.
-
-EffectId may be used as a bounded correlation field in logs/spans, but EffectId,
-provider-key fingerprints, canonical request digests, OperationId, ActorRef,
-evidence digests, attempt identity, remote references, business identifiers,
-and arbitrary reason/error text must not become metric labels. Existing
-observability cardinality budgets remain authoritative.
-
-A mutating reconciliation request conceptually reuses the existing operator
-envelope: ActorRef, bounded ReasonCode, OperationId, RequestDigest,
-ExpectedVersion, and an evidence/proposal digest. Deployment authentication and
-authorization remain outside the core.
-
-Accepted reconciliation appends immutable audit evidence and compare-and-swap
-advances local effect state in one local transaction. Rejected mutation
-attempts also append bounded audit evidence but do not change effect state.
-The audit record remains value-redacted and contains only reviewed bounded
-identity, version, disposition/outcome, reason, request/evidence digest, actor,
-and timing classes.
-
-The reconciliation transaction does not blindly call the remote system and it
-does not silently rewrite job/execution lifecycle. A later retry/dispatch is a
-separate action governed by the selected delivery requirements and the durable
-post-reconciliation state.
-
-Semantic dispositions may confirm applied/acknowledged, confirm not applied when
-the provider contract positively proves absence, keep the effect unresolved, or
-abandon automatic replay while retaining ambiguity. Timeout, 404 without a
-certified absence contract, missing acknowledgement, or missing local evidence
-are insufficient proof of non-application.
-
-Execution recovery remains a separate audited lifecycle authority.
-
-## Definition/plan identity and deployment negotiation
-
-Gate-B follows ADR-0009: only values that select or reinterpret durable state
-belong in the definition fingerprint.
-
-Restart-relevant Gate-B semantics include, when selected:
-
-- normalized delivery requirements;
-- required effect-journal/outbox/inbox persistence semantics;
-- EffectId occurrence/derivation contract version;
-- canonical request-identity contract version;
-- provider-key ownership/binding/derivation contract version;
-- the required remote semantic profile and acknowledgement/unknown-outcome
-  contract;
-- any definition-level validity floor whose interpretation changes whether an
-  existing effect may be replayed or deduplicated;
-- stable logical destination/effect-slot identity when it selects the logical
-  obligation.
-
-Deployment/runtime-only values include concrete repository/provider
-implementation, endpoints, region, account, credentials, concrete per-effect
-key bytes, observed provider TTL, compatible repository schema version, pool or
-worker counts, pure throughput/concurrency knobs, pure transport timeouts,
-telemetry configuration, and runtime process identity.
-
-Fingerprint exclusion is not permission to retarget existing effects.
-`IntentDurable` and later states retain their original provider/destination/key
-binding. A deployment change may service future unbound effects only when it
-satisfies the same compiled semantic requirement.
-
-Strict restart first checks normal definition compatibility and then negotiates
-live capabilities. Compatible restart cannot retroactively strengthen or weaken
-already-durable effects. Existing source effects retain their source contract;
-a changed identity/canonicalization/key-binding contract needs explicit
-continuity for every live obligation or restart fails closed.
-
-### ADR-0009 implementation blocker
-
-Current canonical manifests already hash the existing delivery mode, and
-ADR-0009 requires a superseding ADR for any later change to the fingerprint
-input set.
-
-Therefore no implementation may add Gate-B requirement fields to manifest bytes
-or silently re-pin golden fingerprints until a superseding/addendum decision
-names the exact normalized member set, encoding, legacy-format behavior, and
-compatibility/migration policy. This record intentionally does not choose a new
-manifest format or public API shape.
-
-## M9 integration handoff
-
-M8 Gate-B owns delivery correctness. M9 owns transport/provider mechanics.
-
-Every M9 effect/message adapter profile must declare the exact semantics it maps
-to Gate-B, including:
-
-- stable message/effect identity source and scope;
-- acknowledgement meaning and exposure boundary;
+`EffectId` is the opaque replay-stable identity of one logical effect
+occurrence. It is required only when the definition uses EffectJournal intent
+or Outbox obligations. Pure InboxDedup does not require EffectId.
+
+M8 version 1 uses one framework-owned effect-identity contract version. Its
+semantic input tuple contains at minimum:
+
+- the exact owning definition identity/fingerprint;
+- canonical logical job-instance identity derived from job name and identifying
+  parameters, not a repository-assigned execution attempt;
+- the compiled `NodeId`;
+- the `EffectSlotId`; and
+- restart-stable logical occurrence input.
+
+The occurrence input is reproducible from durable progress plus a stable
+component-owned occurrence key or is an explicit stable application operation
+key.
+
+A physical attempt, wall clock, connection identifier, random retry ID,
+`JobExecutionId`, `StepExecutionId`, or payload hash alone is never logical
+effect identity.
+
+Version `1` is not considered implemented until exact domain separation, byte
+framing, digest/derivation algorithm, canonical logical-instance encoding, and
+golden restart vectors are frozen and executable.
+
+
+## Effect-site identity
+
+M8 version 1 does not create an unrelated effect-scope namespace.
+
+A static effect site is identified by:
+
+- the existing compiled `NodeId` of the chunk step that owns the effect; and
+- one bounded `EffectSlotId` inside that node.
+
+Effect identity is conditional:
+
+- `effect_journal=required` or `outbound_obligation=outbox` requires an
+  effect-identity declaration;
+- a pure `inbound_protection=inbox_dedup` definition forbids effect identity
+  but still requires at least one supported direct chunk step in the compiled
+  plan; and
+- an effect-bearing declaration has at least one node and at least one slot.
+
+Canonical manifest-v1 production and reading both validate every declared
+effect `node_id` against the normalized compiled plan:
+
+- the node resolves exactly once;
+- it is a direct executable `FlowNode::Step`;
+- its `StepComponents` is `Chunk`; and
+- tasklet, decision, nested-job, custom-leaf, split, join, and unsupported
+  partition nodes cannot own M8 version-1 effect slots.
+
+A standalone `ChunkJob` first lowers to its ordinary one-node compiled plan,
+so its effect site uses that same compiled `NodeId` rather than a wrapper-only
+identity.
+
+Node and slot declarations are canonical, unique, and bounded. Effect nodes are
+limited by the compiled plan and the framework `MAX_NODES` ceiling. Total
+effect slots use one dedicated framework-owned durable-effect-slot reader
+ceiling; the bound is centralized in code and is not serialized.
+
+## Transaction-scoped enlistment
+
+The portable transaction-scoped port supports three operations.
+
+### Inbox guard
+
+An Inbox guard carries:
+
+- a restart-stable inbound identity; and
+- an opaque canonical request identity.
+
+The transaction returns one of:
+
+- first delivery;
+- duplicate with the same protected request; or
+- identity conflict.
+
+The guard is provisional until the enclosing chunk transaction commits.
+
+### Effect intent
+
+An effect intent carries:
+
+- `EffectId`;
+- opaque request identity; and
+- opaque destination/operation identity needed by the local durable record.
+
+M8 version 1 does not require a provider-key binding field. Provider-specific
+idempotency binding belongs to a later integration contract.
+
+The intent operation is idempotent by immutable logical identity: a matching
+existing intent succeeds, while incompatible content conflicts.
+
+### Outbox obligation
+
+An Outbox obligation carries:
+
+- `EffectId`;
+- opaque destination/operation identity; and
+- a bounded encoded obligation.
+
+The obligation is staged inside the same chunk transaction as the authorizing
+local mutation and protected progress.
+
+### Enlistment outcome
+
+A successful enlistment operation means only that the record is staged in the
+open transaction. It becomes authoritative only if the enclosing
+`ChunkTransaction` commits.
+
+Rollback discards the staged record. An unknown final commit remains unknown and
+is resolved through the repository's existing local commit-ambiguity rules.
+
+## EffectJournal persistence floor
+
+For M8 version 1, EffectJournal persistence means the repository can durably
+stage and preserve immutable logical effect intent under the transaction rules
+above.
+
+M8 does not yet standardize a provider/broker dispatch state machine. In
+particular, version 1 does not make `ExposureGranted`, remote
+`Acknowledged`, provider query results, or terminal remote dispositions part
+of the mandatory portable contract.
+
+M9 may extend the journal with exposure, attempt, acknowledgement, and
+reconciliation state when concrete integrations define the corresponding
+authority and failure semantics.
+
+This narrower M8 floor prevents the repository layer from claiming remote truth
+it cannot observe.
+
+## Outbox
+
+Outbox requires the authorizing local mutation, protected framework progress,
+and outbound obligation to commit in one certified transaction.
+
+A later dispatcher may deliver an Outbox record more than once unless its
+integration profile proves a stronger remote property. M8 does not infer
+provider idempotency from the existence of an Outbox row.
+
+The Outbox record is a local durable obligation, not evidence that the remote
+system accepted the effect.
+
+## InboxDedup
+
+InboxDedup requires the inbound marker, protected local business effect, and
+consumed framework progress to commit in the same certified local transaction.
+
+Concurrent deliveries serialize through durable uniqueness, compare-and-swap,
+transactional conflict, or an equivalent certified mechanism.
+
+Matching inbound identity with matching request identity returns the recorded
+duplicate disposition. Reusing the inbound identity for a conflicting request
+fails closed.
+
+A definition may declare a positive minimum InboxDedup validity floor. The
+deployment's effective safety window is a repository capability and must be at
+least that floor. The effective value itself is not definition identity.
+
+M8 does not define broker acknowledgement ordering beyond this local floor.
+M9 consumer adapters must define when an acknowledgement/delete/offset change is
+allowed relative to the committed Inbox authority.
+
+
+
+## Repository capability declaration
+
+EffectJournal, Outbox, and InboxDedup persistence are separate optional
+repository capabilities even when one backend stores them together.
+
+A deployment-owned durable-effect descriptor may certify:
+
+- EffectJournal persistence profile version;
+- Outbox persistence profile version;
+- InboxDedup persistence profile version;
+- effective InboxDedup validity window;
+- maximum effect records staged per chunk; and
+- maximum encoded durable-effect bytes staged per chunk.
+
+Version authorities are deliberately separate:
+
+- canonical manifest `manifest_version` versions the definition grammar;
+- `effect_identity.contract_version` versions EffectId derivation semantics;
+- each local persistence profile version certifies one deployment capability;
+- repository descriptor version only versions the descriptor envelope.
+
+Equal integers across these families imply nothing.
+
+Initial M8 local profile recognition is exact and framework-owned:
+
+- EffectJournal requirement accepts EffectJournal persistence profile v1;
+- Outbox requirement accepts Outbox persistence profile v1;
+- InboxDedup requirement accepts InboxDedup persistence profile v1.
+
+Unknown profile versions fail closed. Numeric ordering does not imply
+compatibility. A later runtime accepts another profile version only through an
+explicit governed mapping.
+
+These deployment profile versions are not serialized into the definition
+manifest.
+
+The descriptor-wide Gate-B contract-version equality relation is not a valid
+compatibility rule and must be removed from the implementation.
+
+Definition/plan construction remains deployment-independent. It validates
+static shape and chunk binding only.
+
+The live repository descriptor is negotiated at launch/restart before lifecycle
+mutation. Equivalent pre-lifecycle checking is required on both FlowLauncher
+and standalone chunk JobLauncher paths. Descriptor types or direct helper tests
+alone are not support evidence until those runtime paths are wired and
+certified.
+
+
+## Definition identity in canonical manifest v1
+
+[ADR-0017](../architecture/decisions/0017-canonical-compiled-plan-manifest-v1-reset.md)
+owns the manifest representation.
+
+Durable effects do not create a new manifest format. They are an optional
+`durable_effects` member of the one canonical compiled-plan manifest v1.
+
+The M8 durable-effect projection contains only restart-relevant local semantics:
+
+- `effect_journal`;
+- `outbound_obligation`;
+- `inbound_protection`;
+- conditional effect-identity contract/version;
+- canonical compiled `NodeId` / `EffectSlotId` declarations when an
+  EffectJournal/Outbox logical effect identity is required; and
+- optional InboxDedup minimum validity floor.
+
+At least one durable-effect requirement must be selected when the member is
+present.
+
+Pure InboxDedup does not carry effect identity. It remains usable only from the
+chunk runtime path where the transaction-scoped Inbox guard exists.
+
+EffectJournal or Outbox requires effect identity and at least one valid chunk
+effect site.
+
+The internal Gate-B codename is not durable wire vocabulary.
+
+EffectId derives from the canonical-v1 definition fingerprint plus the logical
+job-instance identity, compiled `NodeId`, `EffectSlotId`, and a
+restart-stable logical occurrence input. The existing
+`JobInstanceKey::digest()` is the preferred logical-instance identity input
+unless implementation review establishes a correctness reason otherwise.
+
+Historical preview formats 1-4 are not embedded, wrapped, or cross-validated.
+Proposed format 5 is never released.
+
+### Restart boundary
+
+M8 version 1 allows strict restart only for durable-effect definitions.
+
+If either source or target selects `durable_effects` and the source/target
+canonical manifest digests differ, compatible restart fails closed before
+lifecycle mutation even when an ordinary ADR-0004 direct compatibility edge
+exists.
+
+A fork creates a new job instance and copies no EffectJournal, Outbox,
+InboxDedup, or EffectId state by default. Existing durable-effect records remain
+source facts and are never re-derived or retargeted by an upgrade.
+
+A later ADR may authorize compatible durable-effect restart only after it
+defines explicit bounded live-effect continuity and mapping semantics.
+
+## Retention and cleanup
+
+Generic Gate-C history purge must not delete durable-effect records whose local
+correctness obligation is still live.
+
+At minimum:
+
+- pending Outbox obligations survive generic job-history deletion;
+- live InboxDedup markers survive until their certified safety window and
+  cleanup policy permit removal; and
+- unresolved EffectJournal intents survive until an explicit effect-specific
+  cleanup/disposition policy authorizes removal.
+
+Effect/dedup cleanup is a separately authorized bounded operation. Generic
+history retention does not silently decide remote application state.
+
+## M9 handoff: concrete remote semantics first
+
+M9 owns messaging, HTTP/webhook effect writers, and other remote integrations.
+
+Every concrete adapter that claims non-trivial delivery behavior must document
+and certify at least:
+
+- stable message/effect identity source;
+- exposure boundary;
+- acknowledgement meaning;
 - offset/cursor/visibility ownership;
-- redelivery, duplicate, rebalance, ordering, and partition behavior;
-- native transaction scope;
-- known-not-applied, known-applied/acknowledged, and unknown-outcome mapping;
-- idempotency/dedup key scope and validity when claimed;
-- remote query/reconciliation support when claimed;
-- required Gate-B persistence capabilities;
+- redelivery and duplicate behavior;
+- native transaction scope, when any;
+- known-not-applied, known-applied, and unknown-outcome mapping;
+- idempotency/dedup key scope and validity, when claimed;
 - checkpoint/progress ordering relative to acknowledgement or send;
-- bounded buffering, concurrency, in-flight work, message size, timeout, and
-  cancellation behavior;
-- poison/dead-letter policy;
-- redaction and supported remote product/protocol versions.
+- resource bounds and cancellation behavior; and
+- exact remote product/protocol versions.
 
-Broker-native "exactly once", publisher confirms, visibility timeouts, finite
-dedup windows, or HTTP status codes are accepted only for the exact certified
-scope. They never create a blanket cross-resource exactly-once claim.
+Those facts remain adapter-specific until evidence shows that two or more
+integrations need the same provider-neutral contract.
 
-Object-storage and HTTP readers do not require an effect journal merely because
-they are integrations. They use the ordinary checkpoint/restart/resource
-contract unless their operation actually performs duplicate-sensitive external
-mutation.
+A portable semantic-contract layer may be promoted later when:
 
-M9 item integrations remain distinct from M11 distributed worker transports
-even when both use the same broker product.
+1. multiple adapters require the same provider-neutral semantic identity;
+2. compatible restart across adapter/provider replacement requires it;
+3. third-party adapter compatibility cannot be represented by the existing
+   capability model; or
+4. durable reconciliation requires a finer stable semantic contract.
 
-## Certification floor
+M8 does not reserve speculative public fields merely to avoid future manifest
+evolution.
 
-Every claimed Gate-B persistence or M9 integration profile eventually requires
-deterministic evidence for the semantics it advertises.
+## Security and observability
 
-The shared suite includes:
+Credentials, endpoints, raw provider keys, request/response bodies, business
+records, SQL, and raw driver/provider errors do not enter public durable-effect
+diagnostics.
 
-- stable logical identity across restart/redelivery;
-- conflicting identity/request reuse;
-- crash before intent/local commit, after local commit, after exposure, after
-  remote response, and before/after acknowledgement persistence;
-- repository commit ambiguity and remote-effect ambiguity;
-- lost acknowledgements, redelivery, duplicate send, and concurrent
-  consumer/dispatcher behavior;
-- idempotency-key replay within and outside the certified validity window;
-- exact transaction scope and rollback;
-- checkpoint/progress versus acknowledgement ordering;
-- schema/profile migration and backup/restore preservation;
-- bounded buffers, queues, in-flight work, retry, payload size, and
-  cancellation;
-- sentinel redaction across errors, projections, audit, logs, spans, metrics,
-  and bundles.
+`EffectId` may be used as bounded correlation evidence in logs or spans when
+reviewed, but it must not become an unbounded metric label. Request identities
+and opaque destination identities are correctness metadata, not automatically
+public telemetry.
 
-M9 additionally runs provider/broker-specific destructive/crash/redelivery
-fixtures against the exact remote versions it claims. Infrastructure absence,
-mock-only tests, or generic read/write success cannot certify a delivery
-profile. Evidence records exact adapter/source revision, client and remote
-versions, profile descriptor, fault-fixture version, normalized result, resource
-report, redaction report, and known limitations.
 
-Support promotion remains versioned and capability-specific. Passing one
-profile does not certify another profile or remote version.
+## M8 validation floor
 
-## Implementation blockers and ordering
+Implementation and certification must prove:
 
-Gate-B semantics are sufficiently frozen for canonical documentation, but
-implementation decomposition remains blocked on these decisions/artifacts:
+- canonical manifest-v1 durable-effect projection is deterministic and closed;
+- historical preview formats are not embedded or used as durable-effect identity;
+- all-default durable-effect requirements are rejected;
+- pure InboxDedup works without effect identity and rejects an unnecessary
+  effect-identity object;
+- EffectJournal or Outbox requires non-empty effect nodes and slots;
+- tasklet/non-chunk effect bindings are rejected by both producer and reader;
+- standalone chunk and bound flow-chunk sites resolve existing compiled
+  `NodeId`;
+- node/slot order, uniqueness, identifier bounds, manifest-byte bound, and
+  dedicated effect-slot bound are enforced;
+- EffectId v1 domain separation, byte framing, algorithm, logical-instance
+  identity, and golden restart vectors are frozen before support is claimed;
+- manifest grammar version, EffectId version, repository descriptor version,
+  and persistence-profile versions are never compared as one version family;
+- FlowLauncher and standalone chunk JobLauncher reject missing required local
+  persistence capability before lifecycle mutation;
+- effective InboxDedup validity below the definition floor fails closed;
+- EffectJournal intent, Outbox, and InboxDedup staging occurs in the same real
+  `ChunkTransaction` as the protected business/progress work;
+- rollback removes provisional effect records;
+- local unknown commit is not guessed;
+- exact canonical-v1 strict restart succeeds subject to normal guards;
+- different-digest compatible restart involving durable effects fails closed;
+- fork copies no durable-effect state by default; and
+- no remote/provider/deployment value enters definition identity.
 
-1. accept this canonical record and close Gate-B only after cross-document
-   review;
-2. choose the implementation shape for composable delivery requirements without
-   expanding the existing flat `ChunkDeliveryMode` by assumption;
-3. freeze exact port placement so Outbox/Inbox atomic records can participate in
-   the same `ChunkTransaction` that owns protected business/progress state;
-4. accept the ADR-0009 follow-up before changing manifest/fingerprint inputs;
-5. define schema/migrations and adapter declarations only after the portable
-   port/capability shape is accepted;
-6. add reusable deterministic certification suites before any capability or
-   support promotion;
-7. let M9 #202 close its shared envelope/dead-letter/profile gates before
-   adapter-specific implementation issues.
+These are acceptance requirements, not claims that current main already
+satisfies them.
 
-No implementation issue may decide these semantics locally in a PR.
+## Explicit non-goals
 
-## Gate-B acceptance checklist
+M8 version 1 does not:
 
-The consolidated design covers:
-
-- durable logical effect identity and physical attempt identity;
-- same-resource versus cross-resource authority;
-- effect state and crash boundaries;
-- precise delivery requirements and their composition;
-- automatic retry versus reconciliation rules;
-- idempotency key, request identity, conflict, collision, and validity;
-- optional effect-journal/outbox/inbox persistence ownership;
-- bounded/redacted diagnostics, operator reconciliation, and append-only audit;
-- effect retention and Gate-C interaction;
-- definition/plan identity versus deployment-only values;
-- M9 handoff and certification floor.
-
-This checklist is design coverage only. It does not claim implementation,
-release-backed support, or ledger promotion.
+- provide a universal transaction manager;
+- add tasklet durable-effect enlistment;
+- define a generic provider/broker semantic registry;
+- standardize remote acknowledgement or unknown-outcome semantics;
+- standardize provider idempotency-key binding;
+- implement an Outbox dispatcher;
+- implement broker/HTTP provider adapters;
+- claim remote exactly-once delivery; or
+- make M9 integration certification unnecessary.
