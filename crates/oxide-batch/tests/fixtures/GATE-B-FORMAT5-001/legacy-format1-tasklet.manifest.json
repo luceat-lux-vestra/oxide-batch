@@ -1,1 +1,1 @@
-{"component":"tasklet-v1","delivery_mode":"best_effort","format":1,"job":"gate_b_v07_tasklet","kind":"tasklet","restart_state":"none","step":"only","transaction_boundary":"tasklet_completion"}
+{"component":{"tasklet":"tasklet-v1"},"delivery_mode":"best_effort","format":1,"job":"gate_b_v07_tasklet","kind":"tasklet","restart_state":"none","step":"only","transaction_boundary":"tasklet_completion"}
