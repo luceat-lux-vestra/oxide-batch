@@ -49,6 +49,12 @@ A restart:
 - atomically records any context upgrade and the new execution;
 - preserves the guarantee and meaning of already committed effects.
 
+For definitions that select ADR-0016 `durable_effects`, M8 version 1 is
+stricter: exact-manifest restart is allowed, but a different-digest compatible
+upgrade fails closed even when an ordinary direct compatibility edge exists.
+Legacy definitions keep the existing ADR-0004 compatibility rules. A fork
+creates a new instance and copies no durable-effect state by default.
+
 [RFC-0004](../rfcs/0004-compiled-execution-plan.md) and
 [ADR-0005](../architecture/decisions/0005-compiled-execution-plan.md) accept
 `Strict`, `Compatible`, and lineage-preserving `Fork`. A
@@ -119,40 +125,45 @@ Item-stream open/update/close order, component state schema/version, and
 checkpoint ownership are explicit. A restartable step cannot contain required
 state that is neither reconstructible nor checkpointed.
 
+
 ## Transaction and delivery semantics
 
 For an enlisted same-resource writer, one certified transaction contains the
-business writes and the framework progress they protect: affected counters,
-context/checkpoint, optimistic version, and any selected local durable-effect
-record whose correctness depends on the same commit.
+business writes and framework progress they protect plus any selected local
+EffectJournal, Outbox, or InboxDedup record whose correctness depends on the
+same commit.
 
-M8 version 1 defines three optional local durable-effect requirements:
+M8 version 1 defines exactly three local durable-effect requirement families:
 
 - EffectJournal intent persistence;
 - Outbox obligation persistence; and
 - InboxDedup protection.
 
-These are composable local persistence requirements, not a delivery-strength
-ladder. `ChunkDeliveryMode::AtomicSameResource` remains the existing authority
-for same-resource business/progress atomicity; M8 does not duplicate that
-meaning in a second requirement field.
+They compose and are not a delivery-strength ladder.
+`ChunkDeliveryMode::AtomicSameResource` remains the existing authority for
+same-resource business/progress atomicity.
 
-The M8 durable-effect enlistment port exists on the chunk transaction/writer
-path. A standalone chunk or directly bound flow chunk may select it. A tasklet,
-decider, custom leaf, nested-job boundary, split manager, or any node without
-the same transaction-scoped port cannot declare M8 durable-effect semantics.
-Compilation rejects an unsupported effect-site binding before manifest
-production.
+The durable-effect enlistment port exists on the chunk transaction/writer path.
+A standalone chunk or directly bound flow chunk may select it. A tasklet,
+decider, custom leaf, nested-job boundary, split manager, or node without the
+same transaction-scoped port cannot declare M8 durable-effect semantics.
 
-A durable logical effect uses a replay-stable `EffectId`, but M8 version 1
-does not define provider/broker replay, acknowledgement, native-transaction, or
-unknown-outcome contracts. Those are M9 integration semantics and become
-portable definition contracts only after an executable adapter model exists.
+Effect identity is conditional: EffectJournal or Outbox requires a
+replay-stable `EffectId` contract and effect slots; pure InboxDedup does not.
+Static plan validation checks this shape and the compiled chunk binding without
+consulting a live deployment.
 
-There is no generic exactly-once guarantee across arbitrary resources. M9
-adapters must document and certify acknowledgement, offset, commit, redelivery,
-idempotency-window, and unknown-outcome behavior for their exact remote
-versions. Telemetry is never correctness authority.
+Repository capability is negotiated later, at launch/restart before lifecycle
+mutation. Both FlowLauncher and standalone chunk JobLauncher must fail closed
+when the selected deployment cannot satisfy the definition. A descriptor helper
+or unit test alone is not runtime support evidence.
+
+M8 version 1 does not define provider/broker replay, acknowledgement,
+native-transaction, provider idempotency, or unknown-outcome contracts. Those
+are M9 integration semantics.
+
+There is no generic exactly-once guarantee across arbitrary resources.
+Telemetry is never correctness authority.
 
 ## Retry, skip, rollback, and repeat
 
