@@ -226,15 +226,17 @@ fn format4_reader_rejects_newer_noncanonical_oversized_and_overbound_documents()
     let plan = nested_plan("format4-reader")?;
     let canonical = plan.definition_identity().canonical_manifest();
 
+    let supported = oxide_batch_core::MANIFEST_FORMAT_GATE_B;
+    let newer_format = supported.saturating_add(1);
     let mut newer: serde_json::Value = serde_json::from_slice(canonical)?;
-    newer["format"] = serde_json::json!(5);
+    newer["format"] = serde_json::json!(newer_format);
     let newer = serde_json::to_vec(&newer)?;
     assert!(matches!(
         DefinitionManifest::read(&newer),
         Err(ManifestError::UnsupportedFormat {
-            format: 5,
-            supported: 4
-        })
+            format,
+            supported: observed_supported
+        }) if format == newer_format && observed_supported == supported
     ));
 
     let mut noncanonical = canonical.to_vec();
