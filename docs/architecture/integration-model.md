@@ -30,7 +30,7 @@ Each adapter declares:
 - read/write direction, format and schema versions;
 - restart and checkpoint ownership;
 - ordering, partitioning, thread-safety, and reentrancy;
-- transaction participation and supported Gate-B delivery requirements/profiles;
+- transaction participation and required local durable-effect capabilities;
 - acknowledgement, offset, redelivery, rebalance, and poison-message behavior;
 - idempotency, deduplication, outbox/inbox, and effect-journal hooks;
 - bounded buffering, concurrency, rate, timeout, and cancellation behavior;
@@ -52,27 +52,49 @@ Duplicate and unknown outcomes are expected. Adapters expose or derive the
 stable message/effect identity required by the selected profile; payload
 equality is never a deduplication identity.
 
-## M8 Gate-B handoff
+## M8 durable-effect handoff
 
-The [M8 Gate-B record](../project/m8-gate-b-durable-effect-delivery.md) is the
-single shared correctness model for outbox, inbox/dedup, effect journals,
-idempotency, exposure ambiguity, and reconciliation. M9 adapters map concrete
-protocol mechanics to that model rather than defining independent delivery
-semantics.
+The [M8 Gate-B record](../project/m8-gate-b-durable-effect-delivery.md) and
+[ADR-0016](decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md)
+define the local foundation that M9 integrations may consume:
 
-Each effect/message adapter profile names at least the identity scope,
-acknowledgement meaning, offset/cursor/visibility owner, exposure boundary,
-redelivery and duplicate behavior, exact native transaction scope,
-known/unknown outcome mapping, idempotency/dedup validity when claimed,
-required Gate-B persistence capabilities, checkpoint/ack ordering, resource
-bounds, redaction policy, and exact supported remote product/protocol versions.
+- replay-stable logical `EffectId`;
+- chunk-scoped EffectJournal intent persistence;
+- Outbox obligation persistence;
+- InboxDedup protection; and
+- fail-closed repository capability negotiation.
+
+M8 does not require a generic provider-neutral remote semantic-contract
+registry.
+
+M9 adapters first describe and certify their concrete protocol semantics. Each
+effect/message adapter profile names at least:
+
+- stable message/effect identity source and scope;
+- acknowledgement meaning and exposure boundary;
+- offset/cursor/visibility owner;
+- redelivery, duplicate, rebalance, ordering, and partition behavior;
+- exact native transaction scope;
+- known-not-applied, known-applied/acknowledged, and unknown-outcome mapping;
+- idempotency/dedup key scope and validity when claimed;
+- required local durable-effect persistence capabilities;
+- checkpoint/progress ordering relative to acknowledgement or send;
+- bounded buffering, concurrency, in-flight work, timeout, and cancellation;
+- redaction policy; and
+- exact supported remote product/protocol versions.
 
 Broker-native "exactly once", publisher confirms, finite dedup windows,
 visibility timeouts, or HTTP status codes are accepted only for their certified
 scope. They never imply that unrelated repository progress committed atomically.
 
-Certification is profile-specific. Generic read/write tests or mocks do not
-certify delivery guarantees; claimed crash/redelivery/rebalance/ambiguity
+A provider-neutral semantic contract becomes a candidate only after concrete
+evidence shows cross-adapter equivalence, adapter-replacement restart
+continuity, third-party extension need, or reconciliation need that the local
+M8 capability model cannot represent truthfully. Such a contract is introduced
+through a later governed version/ADR rather than ad hoc inside one adapter.
+
+Certification remains profile-specific. Generic read/write tests or mocks do
+not certify delivery guarantees; claimed crash/redelivery/rebalance/ambiguity
 behavior requires retained evidence against the named real remote version.
 Object-storage and HTTP readers remain ordinary checkpoint/restart integrations
 unless they actually perform duplicate-sensitive external mutation.
