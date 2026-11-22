@@ -1710,31 +1710,6 @@ impl RepositoryUnitOfWork for SqlServerUnitOfWork<'_> {
                 return Err(RepositoryError::FlowStateCorrupt);
             }
 
-            let existing = {
-                let connection = self.connection()?;
-                let row = TdsQuery::new(
-                    "SELECT COUNT_BIG(*) AS count FROM dbo.ob_flow_decision WHERE job_execution_id = @P1",
-                )
-                .i64(execution_id)
-                .one(connection)
-                .await?;
-                read_u64(&row, "count")?
-            };
-            let advanced = manifest
-                .get("format")
-                .and_then(Value::as_u64)
-                .is_some_and(|format| {
-                    format == u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW)
-                });
-            if !advanced
-                && request.sequence().get()
-                    != existing
-                        .checked_add(1)
-                        .ok_or(RepositoryError::FlowStateCorrupt)?
-            {
-                return Err(RepositoryError::ConcurrentModification);
-            }
-
             if let Some(step_id) = request.source_step_execution_id() {
                 let connection = self.connection()?;
                 let row = TdsQuery::new(
