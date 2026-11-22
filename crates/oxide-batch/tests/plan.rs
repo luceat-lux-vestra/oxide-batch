@@ -59,6 +59,24 @@ fn sequential_edges_continue_on_success_and_terminate_on_failure() -> Result<(),
 }
 
 #[test]
+fn decision_sequences_are_canonical_source_identities_not_append_ordinals(
+) -> Result<(), Box<dyn Error>> {
+    let first = NodeId::new("z_first")?;
+    let second = NodeId::new("a_second")?;
+    let plan = compile(
+        FlowGraph::new(first.clone())
+            .with_node(tasklet_node("z_first")?)
+            .with_node(tasklet_node("a_second")?)
+            .with_sequence(first.clone(), FlowTarget::Node(second.clone()))?
+            .with_sequence(second.clone(), FlowTarget::Terminal(TerminalKind::Complete))?,
+    )?;
+
+    assert_eq!(plan.decision_sequence(&second), Some(1));
+    assert_eq!(plan.decision_sequence(&first), Some(2));
+    Ok(())
+}
+
+#[test]
 fn exit_status_selects_the_most_specific_transition() -> Result<(), Box<dyn Error>> {
     let load = NodeId::new("load")?;
     let plan = compile(
