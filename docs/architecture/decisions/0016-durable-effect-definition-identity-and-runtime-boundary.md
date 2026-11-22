@@ -1,6 +1,6 @@
 # ADR-0016: Durable-Effect Definition Identity and Runtime Boundary
 
-- **State:** Accepted
+- **State:** Accepted; partially superseded by [ADR-0017](0017-canonical-compiled-plan-manifest-v1-reset.md) for legacy-format immutability and additive format-5 representation only
 - **Date:** 2026-11-22
 - **Owners:** runtime, API, repository, and integration maintainers
 - **Deciders:** project owner
@@ -15,6 +15,11 @@
 - **Extends:** [ADR-0004](0004-job-definition-restart-compatibility.md),
   [ADR-0005](0005-compiled-execution-plan.md), and
   [ADR-0009](0009-definition-fingerprint-input-set.md)
+- **Partial supersession scope:** ADR-0017 replaces the formats-1-4 preservation,
+  format-5 wrapper, legacy-base grammar, and wrapper-specific base/effect
+  cross-validation requirements. This ADR remains authoritative for the local
+  durable-effect model, runtime boundary, identity semantics, capability
+  negotiation, strict durable-effect restart, and M9 deferral.
 - **Canonical M8 record:**
   [M8 Gate-B durable-effect delivery](../../project/m8-gate-b-durable-effect-delivery.md)
 
