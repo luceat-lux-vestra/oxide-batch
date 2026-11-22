@@ -108,9 +108,11 @@ Adapters publish a versioned descriptor covering:
 - lease/fencing and server-time behavior;
 - backup, restore, retention, and rolling-upgrade support.
 
-Plan compilation evaluates static capabilities. Connection/launch time
-negotiation validates actual deployed capabilities. A missing requirement
-fails explicitly; it does not degrade the delivery guarantee.
+Plan/definition compilation validates static requirement shape and executable
+binding only; it is deployment-independent and does not inspect a live
+repository descriptor. Launch/restart negotiation validates actual deployed
+capabilities before lifecycle mutation. A missing requirement fails explicitly;
+it does not degrade the delivery guarantee.
 
 The mandatory runnable core is below optional capability negotiation. A
 repository described as runnable core must execute an ordinary one-step tasklet
@@ -135,6 +137,7 @@ scan/delete path. Archive/export and retention scheduling are not inferred from
 those repository capabilities; the [M8 Gate-C record](../project/m8-gate-c-retention-portability.md)
 owns their separate operational-service boundary.
 
+
 ## Durable-effect persistence requirements
 
 The canonical M8 local durable-effect semantics are frozen by
@@ -148,31 +151,43 @@ and the [Gate-B record](../project/m8-gate-b-durable-effect-delivery.md).
 | `InboxDedup` | inbound identity, protected local mutation, and consumed progress commit together within the certified dedup window |
 
 These are separate optional repository capabilities even when one adapter
-stores them together.
+stores them together. `ChunkDeliveryMode::AtomicSameResource` remains the
+single same-resource business/progress atomicity authority.
 
-`ChunkDeliveryMode::AtomicSameResource` remains the authority for
-same-resource business/progress atomicity. The repository capability model does
-not introduce a second local-atomicity declaration.
-
-Outbox and InboxDedup correctness is defined by the transaction that protects
-business work and framework progress. For chunk execution, their records must
-participate in the same `ChunkTransaction` boundary. An independent
-`JobRepository` write before or after the business transaction does not
-satisfy the requirement.
+For chunk execution, selected EffectJournal/Outbox/Inbox records participate in
+the same `ChunkTransaction` as the protected work. An independent repository
+write before or after that transaction does not satisfy the requirement.
 
 The M8 EffectJournal floor owns durable local effect intent only. Remote
 exposure, acknowledgement, provider query, replay/idempotency, broker-native
-transactions, and unknown-outcome interpretation are M9 integration semantics
-until a later portable contract is justified by concrete adapters.
+transactions, and unknown-outcome interpretation are M9 integration semantics.
 
-A deployment-owned durable-effect persistence descriptor may certify
-EffectJournal, Outbox, and InboxDedup profile versions, the effective
-InboxDedup window, and bounded per-chunk record/byte limits. Missing selected
-capability fails closed before lifecycle mutation. Deployment values do not
-enter definition identity.
+A deployment-owned durable-effect persistence descriptor may certify:
 
-There is no universal transaction-manager abstraction and no generic
-cross-resource exactly-once claim.
+- EffectJournal persistence profile version;
+- Outbox persistence profile version;
+- InboxDedup persistence profile version;
+- effective InboxDedup window; and
+- bounded per-chunk record/byte limits.
+
+These profile versions are independent from both
+`durable_effects.contract_version` and
+`effect_identity.contract_version`. Equal numeric values across those
+families have no compatibility meaning. A descriptor-wide envelope version, if
+present, versions the descriptor shape only and must not be compared to the
+manifest grammar as proof of semantic support.
+
+Definition construction does not inspect this deployment descriptor. Launcher
+and compatible-entry paths negotiate it before lifecycle mutation. Equivalent
+pre-lifecycle checking is required for FlowLauncher and standalone chunk
+JobLauncher paths.
+
+The existence of the descriptor type or direct descriptor unit tests is not
+support evidence. Support requires the actual launcher wiring plus certified
+adapter persistence/crash evidence.
+
+There is no universal transaction manager and no generic cross-resource
+exactly-once claim.
 
 ## Same-resource path
 
