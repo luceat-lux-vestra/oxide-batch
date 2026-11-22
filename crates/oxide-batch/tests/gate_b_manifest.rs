@@ -193,8 +193,16 @@ fn canonical(value: &serde_json::Value) -> Vec<u8> {
 
 #[test]
 fn v0_7_0_format1_tasklet_and_chunk_bytes_are_immutable() {
-    assert_eq!(legacy_tasklet().canonical_manifest(), LEGACY_TASKLET);
+    let tasklet = legacy_tasklet();
+    assert_eq!(tasklet.canonical_manifest(), LEGACY_TASKLET);
     assert_eq!(legacy_chunk().canonical_manifest(), LEGACY_CHUNK);
+
+    let tasklet_document: serde_json::Value =
+        serde_json::from_slice(tasklet.canonical_manifest()).expect("tasklet manifest");
+    assert_eq!(
+        tasklet_document["component"],
+        serde_json::json!({ "tasklet": "tasklet-v1" })
+    );
 }
 
 #[test]
@@ -347,6 +355,41 @@ fn format5_reader_fails_closed_on_unknown_members_nulls_versions_and_ordering() 
     assert_eq!(
         DefinitionManifest::read(&canonical(&unsorted_slots)),
         Err(ManifestError::MalformedGateB)
+    );
+}
+
+#[test]
+fn format5_reader_rejects_structurally_closed_but_impossible_legacy_semantics() {
+    let tasklet = legacy_tasklet()
+        .with_gate_b(gate_b_contract())
+        .expect("format-5 tasklet");
+    let mut tasklet_document = outer(&tasklet);
+    tasklet_document["base"]["transaction_boundary"] =
+        serde_json::json!("impossible_boundary");
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&tasklet_document)),
+        Err(ManifestError::MalformedBase)
+    );
+
+    let format2 = format2_plan()
+        .with_gate_b(gate_b_contract())
+        .expect("format-5 format-2 plan");
+    let mut format2_document = outer(format2.definition_identity());
+    format2_document["base"]["nodes"][0]["step"]["declaration"]["delivery_mode"] =
+        serde_json::json!("impossible_delivery");
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&format2_document)),
+        Err(ManifestError::MalformedBase)
+    );
+
+    let format4 = format4_plan()
+        .with_gate_b(gate_b_contract())
+        .expect("format-5 format-4 plan");
+    let mut format4_document = outer(format4.definition_identity());
+    format4_document["base"]["restart_policy"] = serde_json::json!("restartable");
+    assert_eq!(
+        DefinitionManifest::read(&canonical(&format4_document)),
+        Err(ManifestError::MalformedBase)
     );
 }
 
