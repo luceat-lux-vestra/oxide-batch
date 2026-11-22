@@ -123,39 +123,36 @@ state that is neither reconstructible nor checkpointed.
 
 For an enlisted same-resource writer, one certified transaction contains the
 business writes and the framework progress they protect: affected counters,
-context/checkpoint, optimistic version, and any selected Outbox or InboxDedup
-record whose correctness depends on the same commit. All commit or roll back
-together. A separate metadata write before or after that business transaction
-does not satisfy the Outbox/Inbox atomicity contract.
+context/checkpoint, optimistic version, and any selected local durable-effect
+record whose correctness depends on the same commit.
 
-Cross-resource delivery uses the semantic requirements defined by
-[RFC-0007](../rfcs/0007-repository-services-and-capabilities.md), the
-[repository model](../architecture/repository-and-transaction-model.md), and the
-[M8 Gate-B record](../project/m8-gate-b-durable-effect-delivery.md):
+M8 version 1 defines three optional local durable-effect requirements:
 
-- atomic same resource;
-- transactional message;
-- outbox;
-- inbox/deduplication;
-- idempotent external effect/effect journal;
-- at-least-once;
-- best effort with manual reconciliation.
+- EffectJournal intent persistence;
+- Outbox obligation persistence; and
+- InboxDedup protection.
 
-These profiles are composable requirements, not seven mutually exclusive values
-or a strength ladder. For example, an Outbox obligation may later be delivered
-through an IdempotentExternalEffect profile. The current public
-`ChunkDeliveryMode` remains the existing compatibility surface until a later
-API decision.
+These are composable local persistence requirements, not a delivery-strength
+ladder. `ChunkDeliveryMode::AtomicSameResource` remains the existing authority
+for same-resource business/progress atomicity; M8 does not duplicate that
+meaning in a second requirement field.
 
-A durable cross-resource effect has one replay-stable logical EffectId and
-separate physical attempts. Durable-journal profiles record intent before
-exposure, commit an exposure-authorization fence before the remote call, retain
-acknowledgement/reconciliation evidence, and never infer remote absence from a
-timeout or missing acknowledgement.
+The M8 durable-effect enlistment port exists on the chunk transaction/writer
+path. A standalone chunk or directly bound flow chunk may select it. A tasklet,
+decider, custom leaf, nested-job boundary, split manager, or any node without
+the same transaction-scoped port cannot declare M8 durable-effect semantics.
+Compilation rejects an unsupported effect-site binding before manifest
+production.
 
-There is no generic exactly-once guarantee across arbitrary resources. Every
-adapter states acknowledgement, offset, commit, redelivery, idempotency-window,
-and unknown-outcome behavior. Telemetry is never correctness authority.
+A durable logical effect uses a replay-stable `EffectId`, but M8 version 1
+does not define provider/broker replay, acknowledgement, native-transaction, or
+unknown-outcome contracts. Those are M9 integration semantics and become
+portable definition contracts only after an executable adapter model exists.
+
+There is no generic exactly-once guarantee across arbitrary resources. M9
+adapters must document and certify acknowledgement, offset, commit, redelivery,
+idempotency-window, and unknown-outcome behavior for their exact remote
+versions. Telemetry is never correctness authority.
 
 ## Retry, skip, rollback, and repeat
 
