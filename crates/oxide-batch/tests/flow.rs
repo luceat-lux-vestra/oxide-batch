@@ -702,6 +702,48 @@ async fn committed_transition_survives_restart() -> Result<(), Box<dyn Error>> {
 }
 
 #[tokio::test(flavor = "current_thread")]
+async fn compiled_decision_sequence_is_independent_of_append_order() -> Result<(), Box<dyn Error>> {
+    let first = NodeId::new("z_first")?;
+    let second = NodeId::new("a_second")?;
+    let plan = FlowGraph::new(first.clone())
+        .with_node(tasklet_node("z_first", StartControls::default())?)
+        .with_node(tasklet_node("a_second", StartControls::default())?)
+        .with_sequence(first.clone(), FlowTarget::Node(second.clone()))?
+        .with_sequence(second.clone(), FlowTarget::Terminal(TerminalKind::Complete))?
+        .compile(
+            &JobName::new("compiled-decision-sequence")?,
+            DefinitionRevision::new("v1")?,
+        )?;
+    let first_calls = Arc::new(AtomicUsize::new(0));
+    let second_calls = Arc::new(AtomicUsize::new(0));
+    let job = FlowJob::new(JobName::new("compiled-decision-sequence")?, plan)?
+        .with_tasklet_step(
+            first.clone(),
+            tasklet_step("z_first", first_calls.clone(), Behavior::Complete)?,
+        )?
+        .with_tasklet_step(
+            second.clone(),
+            tasklet_step("a_second", second_calls.clone(), Behavior::Complete)?,
+        )?;
+    let (clock, ids, repository) = infrastructure();
+    let (_, stop) = StopSource::new();
+
+    let report = FlowLauncher::new(&repository, clock.as_ref(), ids.as_ref())
+        .launch(&job, &JobParameters::new(), &stop)
+        .await?;
+
+    assert_eq!(report.outcome(), &FlowExecutionOutcome::Completed);
+    assert_eq!(first_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(second_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(report.decisions().len(), 2);
+    assert_eq!(report.decisions()[0].source_node_id(), &first);
+    assert_eq!(report.decisions()[0].sequence().get(), 2);
+    assert_eq!(report.decisions()[1].source_node_id(), &second);
+    assert_eq!(report.decisions()[1].sequence().get(), 1);
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
 async fn decider_result_and_target_commit_together() -> Result<(), Box<dyn Error>> {
     let decide = NodeId::new("decide")?;
     let run = NodeId::new("run")?;
