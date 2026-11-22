@@ -176,23 +176,26 @@ Effect identity is conditional:
 - `effect_journal=required` or `outbound_obligation=outbox` requires an
   effect-identity declaration;
 - a pure `inbound_protection=inbox_dedup` definition forbids effect identity
-  but still requires at least one supported direct chunk step in the base; and
+  but still requires at least one supported direct chunk step in the compiled
+  plan; and
 - an effect-bearing declaration has at least one node and at least one slot.
 
-The strict format-5 producer and reader both cross-check every declared
-`node_id` against the exact frozen legacy base:
+Canonical manifest-v1 production and reading both validate every declared
+effect `node_id` against the normalized compiled plan:
 
-- format-1 `kind=tasklet` cannot carry effect identity;
-- format-1 `kind=chunk` resolves the node using the existing one-step
-  compiled-node rule from its stable step identity;
-- format 2 through 4 effect nodes must resolve to direct
-  `FlowNode::Step` declarations whose `StepComponents` is `Chunk`;
+- the node resolves exactly once;
+- it is a direct executable `FlowNode::Step`;
+- its `StepComponents` is `Chunk`; and
 - tasklet, decision, nested-job, custom-leaf, split, join, and unsupported
   partition nodes cannot own M8 version-1 effect slots.
 
-Node and slot declarations are canonical, unique, and bounded. Nodes are
-limited by both the embedded base and the framework `MAX_NODES` ceiling.
-Total effect slots use one dedicated framework-owned durable-effect-slot reader
+A standalone `ChunkJob` first lowers to its ordinary one-node compiled plan,
+so its effect site uses that same compiled `NodeId` rather than a wrapper-only
+identity.
+
+Node and slot declarations are canonical, unique, and bounded. Effect nodes are
+limited by the compiled plan and the framework `MAX_NODES` ceiling. Total
+effect slots use one dedicated framework-owned durable-effect-slot reader
 ceiling; the bound is centralized in code and is not serialized.
 
 ## Transaction-scoped enlistment
@@ -468,7 +471,8 @@ public telemetry.
 
 Implementation and certification must prove:
 
-- v0.7.0 format-1/2/3/4 bytes and digests remain unchanged;
+- canonical manifest-v1 durable-effect projection is deterministic and closed;
+- historical preview formats are not embedded or used as durable-effect identity;
 - all-default durable-effect requirements are rejected;
 - pure InboxDedup works without effect identity and rejects an unnecessary
   effect-identity object;
@@ -489,7 +493,7 @@ Implementation and certification must prove:
   `ChunkTransaction` as the protected business/progress work;
 - rollback removes provisional effect records;
 - local unknown commit is not guessed;
-- exact format-5 strict restart succeeds subject to normal guards;
+- exact canonical-v1 strict restart succeeds subject to normal guards;
 - different-digest compatible restart involving durable effects fails closed;
 - fork copies no durable-effect state by default; and
 - no remote/provider/deployment value enters definition identity.
