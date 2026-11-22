@@ -37,8 +37,10 @@ Each adapter declares:
 - sensitive data, diagnostics, and telemetry;
 - supported product versions and feature limitations.
 
-Plan compilation rejects a requested guarantee or execution mode absent from
-the descriptor. Runtime negotiation confirms actual server/broker features.
+Plan compilation validates static adapter/definition shape without consulting a
+live deployment descriptor. Launch/restart negotiation confirms the actual
+selected repository/server/broker capabilities before lifecycle mutation and
+fails closed when a required capability is absent.
 
 ## Checkpoint and delivery rules
 
@@ -48,9 +50,10 @@ external publication occur relative to metadata commit. Broker-native
 semantics are preserved; they are not hidden behind a fictitious universal
 exactly-once interface.
 
-Duplicate and unknown outcomes are expected. Adapters expose or derive the
-stable message/effect identity required by the selected profile; payload
-equality is never a deduplication identity.
+Duplicate and unknown outcomes are expected. Each concrete adapter documents
+the stable message/effect identity its own semantics require; payload equality
+is never a deduplication identity. Provider-neutral profile identity is not an
+M8 prerequisite.
 
 ## M8 durable-effect handoff
 
@@ -62,10 +65,13 @@ define the local foundation that M9 integrations may consume:
 - chunk-scoped EffectJournal intent persistence;
 - Outbox obligation persistence;
 - InboxDedup protection; and
-- fail-closed repository capability negotiation.
+- fail-closed local repository capability negotiation before lifecycle
+  mutation.
 
 M8 does not require a generic provider-neutral remote semantic-contract
-registry.
+registry. EffectId derivation support itself remains unclaimed until ADR-0016's
+exact domain separation, byte framing, algorithm, and restart vectors are
+implemented.
 
 M9 adapters first describe and certify their concrete protocol semantics. Each
 effect/message adapter profile names at least:
