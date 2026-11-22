@@ -47,6 +47,7 @@ pub(super) fn compile(
 
     Ok(CompiledExecutionPlan {
         definition,
+        gate_b_definition: None,
         job_restart_policy: compiler.job_restart_policy,
         parameter_incrementer,
         scoped_components: compiler.scoped_components,
