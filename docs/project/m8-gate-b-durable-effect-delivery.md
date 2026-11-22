@@ -172,7 +172,8 @@ Effect identity is conditional:
 
 - `effect_journal=required` or `outbound_obligation=outbox` requires an
   effect-identity declaration;
-- a pure `inbound_protection=inbox_dedup` definition forbids effect identity;
+- a pure `inbound_protection=inbox_dedup` definition forbids effect identity
+  but still requires at least one supported direct chunk step in the base; and
 - an effect-bearing declaration has at least one node and at least one slot.
 
 The strict format-5 producer and reader both cross-check every declared
