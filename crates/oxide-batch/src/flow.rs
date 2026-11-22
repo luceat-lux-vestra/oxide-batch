@@ -44,11 +44,6 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
     ) {
         return false;
     }
-    let advanced = matches!(
-        format,
-        Some(value)
-            if value == u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW)
-    );
     let source_is_declared = document
         .get("nodes")
         .and_then(Value::as_array)
@@ -69,12 +64,12 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
                 };
                 node.get("id").and_then(Value::as_str) == Some(request.source_node_id().as_str())
                     && kind_matches
-                    && (!advanced
-                        || node.get("decision_sequence").and_then(Value::as_u64)
-                            == Some(request.sequence().get()))
             })
         });
-    if !source_is_declared {
+    if !source_is_declared
+        || manifest_decision_sequence(document, request.source_node_id())
+            != Some(request.sequence().get())
+    {
         return false;
     }
     document
@@ -93,6 +88,22 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
         })
         .and_then(|transition| transition.get("target"))
         .is_some_and(|target| manifest_target_matches(target, request.target()))
+}
+
+fn manifest_decision_sequence(
+    document: &serde_json::Map<String, Value>,
+    source: &NodeId,
+) -> Option<u64> {
+    let sources = document
+        .get("transitions")?
+        .as_array()?
+        .iter()
+        .map(|transition| transition.get("source")?.as_str())
+        .collect::<Option<BTreeSet<_>>>()?;
+    let index = sources
+        .iter()
+        .position(|candidate| *candidate == source.as_str())?;
+    u64::try_from(index).ok()?.checked_add(1)
 }
 
 fn manifest_target_matches(value: &Value, target: &FlowTarget) -> bool {
@@ -2836,7 +2847,7 @@ impl<'a> FlowLauncher<'a> {
                         }));
                     }
                 };
-                let sequence = decision_sequence_for(&job.plan, &transition_node, decisions.len())?;
+                let sequence = decision_sequence_for(&job.plan, &transition_node)?;
                 let request = FlowDecisionRequest::new(
                     execution_id,
                     sequence,
@@ -5911,32 +5922,13 @@ fn scope_execution_span(plan: &CompiledExecutionPlan, scope: &CompiledFlowScope)
 fn decision_sequence_for(
     plan: &CompiledExecutionPlan,
     source: &NodeId,
-    observed_count: usize,
 ) -> Result<FlowDecisionSequence, FlowRuntimeError> {
-    if matches!(
-        plan.manifest_format(),
-        oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW
-    ) {
-        let sequence = plan
-            .decision_sequence(source)
-            .ok_or(FlowRuntimeError::Repository(
-                RepositoryError::FlowStateCorrupt,
-            ))?;
-        FlowDecisionSequence::new(sequence).map_err(|_| FlowRuntimeError::DecisionSequenceExhausted)
-    } else {
-        next_sequence(observed_count)
-    }
-}
-
-fn next_sequence(length: usize) -> Result<FlowDecisionSequence, FlowRuntimeError> {
-    let next = u64::try_from(length)
-        .ok()
-        .and_then(|value| value.checked_add(1))
-        .ok_or(FlowRuntimeError::DecisionSequenceExhausted)?;
-    // The engine keeps the runtime error its callers already match on; the
-    // constructor's own domain error never escapes, because `next` is at
-    // least one here.
-    FlowDecisionSequence::new(next).map_err(|_| FlowRuntimeError::DecisionSequenceExhausted)
+    let sequence = plan
+        .decision_sequence(source)
+        .ok_or(FlowRuntimeError::Repository(
+            RepositoryError::FlowStateCorrupt,
+        ))?;
+    FlowDecisionSequence::new(sequence).map_err(|_| FlowRuntimeError::DecisionSequenceExhausted)
 }
 
 fn correlation(
