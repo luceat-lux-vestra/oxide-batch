@@ -1967,10 +1967,8 @@ impl RepositoryDescriptor {
         definition: &GateBDefinitionContract,
     ) -> Result<(), DurableEffectNegotiationError> {
         let requirements = definition.requirements();
-        let requires_effect_journal =
-            requirements.effect_journal() == GateBEffectJournal::Required;
-        let requires_outbox =
-            requirements.outbound_obligation() == GateBOutboundObligation::Outbox;
+        let requires_effect_journal = requirements.effect_journal() == GateBEffectJournal::Required;
+        let requires_outbox = requirements.outbound_obligation() == GateBOutboundObligation::Outbox;
         let requires_inbox =
             requirements.inbound_protection() == GateBInboundProtection::InboxDedup;
 
