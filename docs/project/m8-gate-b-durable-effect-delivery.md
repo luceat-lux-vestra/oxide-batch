@@ -26,6 +26,11 @@ Outbox, InboxDedup, and transaction-scoped enlistment. It deliberately does not
 standardize provider/broker acknowledgement, remote replay, unknown-outcome, or
 idempotency semantics before M9 has concrete adapters that can enforce them.
 
+This record is a design contract, not implementation, adapter-certification, or
+release-support evidence. A merged type or descriptor helper does not prove the
+launcher, persistence adapter, restart path, or EffectId derivation satisfies
+this record.
+
 ## Design principles
 
 M8 follows six rules.
@@ -124,37 +129,35 @@ An ambiguous local commit remains governed by the existing
 `CommitOutcomeUnknown` contract. A fresh durable repository observation is
 required before the framework infers whether the local transaction committed.
 
+
 ## Logical effect identity
 
 `EffectId` is the opaque replay-stable identity of one logical effect
-occurrence.
+occurrence. It is required only when the definition uses EffectJournal intent
+or Outbox obligations. Pure InboxDedup does not require EffectId.
 
-An EffectId:
+M8 version 1 uses one framework-owned effect-identity contract version. Its
+semantic input tuple contains at minimum:
 
-- survives process retry and supported restart for the same logical
-  occurrence;
-- does not change because a physical attempt changes;
-- is not a random retry ID, wall clock, connection ID, `JobExecutionId`,
-  `StepExecutionId`, or payload hash alone; and
-- differs for distinct logical occurrences even when their payload bytes are
-  equal.
+- the exact owning definition identity/fingerprint;
+- canonical logical job-instance identity derived from job name and identifying
+  parameters, not a repository-assigned execution attempt;
+- the compiled `NodeId`;
+- the `EffectSlotId`; and
+- restart-stable logical occurrence input.
 
-M8 version 1 uses one framework-owned effect-identity contract version. It
-selects the complete derivation algorithm rather than exposing speculative
-independent version axes.
+The occurrence input is reproducible from durable progress plus a stable
+component-owned occurrence key or is an explicit stable application operation
+key.
 
-The derivation combines:
+A physical attempt, wall clock, connection identifier, random retry ID,
+`JobExecutionId`, `StepExecutionId`, or payload hash alone is never logical
+effect identity.
 
-- the stable definition/effect-site identity; and
-- a restart-stable occurrence input.
+Version `1` is not considered implemented until exact domain separation, byte
+framing, digest/derivation algorithm, canonical logical-instance encoding, and
+golden restart vectors are frozen and executable.
 
-The occurrence input must be reproducible from durable progress plus a stable
-component-owned occurrence key, or from an explicit stable application
-operation key. A transient chunk number or in-memory item ordinal alone is not
-sufficient.
-
-The implementation must not claim support for an identity-contract version
-until the derivation implementation and restart evidence exist.
 
 ## Effect-site identity
 
@@ -165,15 +168,28 @@ A static effect site is identified by:
 - the existing compiled `NodeId` of the chunk step that owns the effect; and
 - one bounded `EffectSlotId` inside that node.
 
-The effect declaration is canonicalized by `NodeId`, then `EffectSlotId`.
-Duplicate node declarations and duplicate slots within one node fail closed.
+Effect identity is conditional:
 
-A standalone `ChunkJob` already compiles through a stable step/node identity.
-The durable-effect contract consumes that identity rather than duplicating it.
+- `effect_journal=required` or `outbound_obligation=outbox` requires an
+  effect-identity declaration;
+- a pure `inbound_protection=inbox_dedup` definition forbids effect identity;
+- an effect-bearing declaration has at least one node and at least one slot.
 
-Provider/destination identities used by a concrete runtime operation may still
-be recorded as runtime effect-intent bytes. They are not a second static
-definition namespace in M8 version 1.
+The strict format-5 producer and reader both cross-check every declared
+`node_id` against the exact frozen legacy base:
+
+- format-1 `kind=tasklet` cannot carry effect identity;
+- format-1 `kind=chunk` resolves the node using the existing one-step
+  compiled-node rule from its stable step identity;
+- format 2 through 4 effect nodes must resolve to direct
+  `FlowNode::Step` declarations whose `StepComponents` is `Chunk`;
+- tasklet, decision, nested-job, custom-leaf, split, join, and unsupported
+  partition nodes cannot own M8 version-1 effect slots.
+
+Node and slot declarations are canonical, unique, and bounded. Nodes are
+limited by both the embedded base and the framework `MAX_NODES` ceiling.
+Total effect slots use one dedicated framework-owned durable-effect-slot reader
+ceiling; the bound is centralized in code and is not serialized.
 
 ## Transaction-scoped enlistment
 
@@ -278,15 +294,14 @@ M8 does not define broker acknowledgement ordering beyond this local floor.
 M9 consumer adapters must define when an acknowledgement/delete/offset change is
 allowed relative to the committed Inbox authority.
 
+
 ## Repository capability declaration
 
 EffectJournal, Outbox, and InboxDedup persistence are separate optional
-repository capabilities even when one backend uses one physical table,
-collection, or log for all three.
+repository capabilities even when one backend stores them together.
 
-A deployment-owned durable-effect persistence descriptor may certify:
+A deployment-owned durable-effect descriptor may certify:
 
-- the framework-owned durable-effect persistence contract version;
 - EffectJournal persistence profile version;
 - Outbox persistence profile version;
 - InboxDedup persistence profile version;
@@ -294,35 +309,81 @@ A deployment-owned durable-effect persistence descriptor may certify:
 - maximum effect records staged per chunk; and
 - maximum encoded durable-effect bytes staged per chunk.
 
-These values are deployment capability, not definition fingerprint material.
+Version authorities are deliberately separate:
 
-Runnable-core repository support requires none of these optional capabilities.
-A definition that selects one fails closed at plan/launch/restart negotiation
-when the deployment does not certify it.
+- format-5 `durable_effects.contract_version` versions definition/wire
+  semantics;
+- `effect_identity.contract_version` versions EffectId derivation semantics;
+- each local persistence profile version certifies one deployment capability;
+- repository descriptor version only versions the descriptor envelope.
+
+Equal integers across these families imply nothing. A repository must not
+satisfy a definition merely because some descriptor-wide version equals the
+manifest contract version.
+
+Definition/plan construction remains deployment-independent. It validates
+static shape and chunk binding only.
+
+The live repository descriptor is negotiated at launch/restart before lifecycle
+mutation. Equivalent pre-lifecycle checking is required on both FlowLauncher
+and standalone chunk JobLauncher paths. The current existence of descriptor
+types or direct helper tests is not support evidence until those runtime paths
+are wired and certified.
+
 
 ## Definition identity and manifest format 5
 
 [ADR-0016](../architecture/decisions/0016-durable-effect-definition-identity-and-runtime-boundary.md)
-owns the durable definition projection.
+owns the exact definition projection.
 
-A durable-effect definition uses format 5 with:
+A durable-effect definition uses format 5 with exactly:
 
-- exact legacy `base` projection;
-- outer `format = 5`; and
-- a closed `durable_effects` object.
+- `base`: exact frozen legacy format-1/2/3/4 projection;
+- `durable_effects`: closed versioned M8 contract; and
+- `format = 5`.
 
-The version-1 durable-effect projection contains only:
+The internal Gate-B codename is not durable wire vocabulary.
 
-- EffectJournal requirement;
-- Outbox requirement;
-- InboxDedup requirement;
-- one framework-owned effect-identity contract version;
-- canonical compiled node/effect-slot declarations; and
-- optional definition-level InboxDedup minimum validity.
+`durable_effects.requirements` always contains exactly:
 
-Released format 1 through 4 bytes and digests remain immutable.
+- `effect_journal`;
+- `outbound_obligation`; and
+- `inbound_protection`.
 
-The internal Gate-B codename does not enter the durable wire format.
+At least one is non-default.
+
+`effect_identity` is required iff EffectJournal or Outbox is selected and is
+forbidden for pure InboxDedup. When present it contains one framework-owned
+identity-contract version plus canonical compiled `NodeId` / `EffectSlotId`
+declarations.
+
+`inbox_dedup_minimum_validity_ms` is optional, positive, and valid only when
+InboxDedup is selected. The deployment effective window remains outside the
+fingerprint.
+
+The entire format-5 document remains under the existing manifest byte ceiling.
+Nested objects are closed; unknown members and JSON `null` fail closed.
+Producer and persisted reader perform the same base-to-effect-node
+cross-validation and canonical-order checks.
+
+Released formats 1 through 4 remain byte-for-byte immutable.
+
+### Restart boundary
+
+M8 version 1 allows strict restart only for durable-effect definitions.
+
+If either source or target selects `durable_effects` and the source/target
+manifest digests differ, compatible restart fails closed before lifecycle
+mutation even when an ordinary ADR-0004 direct compatibility edge exists.
+
+Legacy definitions retain their existing compatible-restart behavior.
+
+Fork creates a new job instance and copies no EffectJournal, Outbox, InboxDedup,
+or EffectId state by default. Existing durable-effect records remain source
+facts and are never re-derived or retargeted by an upgrade.
+
+A later ADR may authorize compatible durable-effect restart only after it
+defines explicit bounded live-effect continuity and mapping semantics.
 
 ## Retention and cleanup
 
@@ -384,24 +445,39 @@ reviewed, but it must not become an unbounded metric label. Request identities
 and opaque destination identities are correctness metadata, not automatically
 public telemetry.
 
+
 ## M8 validation floor
 
 Implementation and certification must prove:
 
-- format-1/2/3/4 released bytes and digests remain unchanged;
-- unsupported tasklet/non-chunk effect bindings are rejected before manifest
-  production;
-- standalone chunk and bound flow-chunk sites use the existing compiled
+- v0.7.0 format-1/2/3/4 bytes and digests remain unchanged;
+- all-default durable-effect requirements are rejected;
+- pure InboxDedup works without effect identity and rejects an unnecessary
+  effect-identity object;
+- EffectJournal or Outbox requires non-empty effect nodes and slots;
+- tasklet/non-chunk effect bindings are rejected by both producer and reader;
+- standalone chunk and bound flow-chunk sites resolve existing compiled
   `NodeId`;
-- effect sites and slots canonicalize deterministically;
+- node/slot order, uniqueness, identifier bounds, manifest-byte bound, and
+  dedicated effect-slot bound are enforced;
+- EffectId v1 domain separation, byte framing, algorithm, logical-instance
+  identity, and golden restart vectors are frozen before support is claimed;
+- manifest grammar version, EffectId version, repository descriptor version,
+  and persistence-profile versions are never compared as one version family;
+- FlowLauncher and standalone chunk JobLauncher reject missing required local
+  persistence capability before lifecycle mutation;
+- effective InboxDedup validity below the definition floor fails closed;
 - EffectJournal intent, Outbox, and InboxDedup staging occurs in the same real
-  `ChunkTransaction` as protected business/progress work;
-- missing repository capability fails closed before lifecycle mutation;
-- InboxDedup validity floors are enforced against deployment capability;
+  `ChunkTransaction` as the protected business/progress work;
 - rollback removes provisional effect records;
-- local unknown commit is not guessed into committed or rolled back;
-- no remote/provider/deployment value enters definition identity; and
-- M8 makes no generic cross-resource exactly-once claim.
+- local unknown commit is not guessed;
+- exact format-5 strict restart succeeds subject to normal guards;
+- different-digest compatible restart involving durable effects fails closed;
+- fork copies no durable-effect state by default; and
+- no remote/provider/deployment value enters definition identity.
+
+These are acceptance requirements, not claims that current main already
+satisfies them.
 
 ## Explicit non-goals
 
