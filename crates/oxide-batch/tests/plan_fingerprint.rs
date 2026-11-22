@@ -556,13 +556,18 @@ fn newer_manifest_format_is_rejected() -> Result<(), Box<dyn Error>> {
         .definition_identity()
         .canonical_manifest()
         .to_vec();
-    let newer = String::from_utf8(canonical)?.replace("\"format\":3", "\"format\":5");
+    let supported = oxide_batch_core::MANIFEST_FORMAT_GATE_B;
+    let newer_format = supported.saturating_add(1);
+    let newer = String::from_utf8(canonical)?.replace(
+        "\"format\":3",
+        &format!("\"format\":{newer_format}"),
+    );
 
     assert_eq!(
         DefinitionManifest::read(newer.as_bytes()),
         Err(ManifestError::UnsupportedFormat {
-            format: 5,
-            supported: 4,
+            format: newer_format,
+            supported,
         })
     );
     // The digest is never consulted for a format the runtime cannot interpret,
@@ -571,8 +576,8 @@ fn newer_manifest_format_is_rejected() -> Result<(), Box<dyn Error>> {
     assert_eq!(
         DefinitionManifest::read_verified(newer.as_bytes(), &digest),
         Err(ManifestError::UnsupportedFormat {
-            format: 5,
-            supported: 4,
+            format: newer_format,
+            supported,
         })
     );
     Ok(())
