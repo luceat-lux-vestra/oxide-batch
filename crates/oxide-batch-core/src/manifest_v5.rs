@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 
 use crate::definition::{
     DefinitionManifest, ManifestError, MANIFEST_FORMAT_ADVANCED_FLOW, MANIFEST_FORMAT_FLOW,
-    MANIFEST_FORMAT_LOCAL_SCALE, MANIFEST_FORMAT_ONE_STEP,
+    MANIFEST_FORMAT_GATE_B, MANIFEST_FORMAT_LOCAL_SCALE, MANIFEST_FORMAT_ONE_STEP,
 };
 use crate::{
     EffectScopeId, EffectSlotId, GateBAmbiguityReplay, GateBContractId, GateBContractVersion,
@@ -33,14 +33,14 @@ pub(crate) fn wrap(
     validate_legacy_base(&base)?;
     Ok(json!({
         "base": base,
-        "format": 5,
+        "format": MANIFEST_FORMAT_GATE_B,
         "gate_b": project_gate_b(contract)
     }))
 }
 
 pub(crate) fn read(document: &Value) -> Result<Format5Read, ManifestError> {
     let root = exact_object(document, &["base", "format", "gate_b"], &[], ManifestError::MalformedGateB)?;
-    if root.get("format").and_then(Value::as_u64) != Some(5) {
+    if root.get("format").and_then(Value::as_u64) != Some(u64::from(MANIFEST_FORMAT_GATE_B)) {
         return Err(ManifestError::MissingFormat);
     }
 
