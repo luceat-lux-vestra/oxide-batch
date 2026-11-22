@@ -41,23 +41,22 @@ use oxide_batch::{
     GateBContractVersion, GateBDefinitionContract, GateBEffectIdentity, GateBEffectJournal,
     GateBInboundProtection, GateBLocalAtomicity, GateBMinimumValidityMs,
     GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract, GateBRequirements,
-    GateBSemanticContract, InMemoryJobRepository,
-    ItemProcessor, ItemReader, ItemWriter, JobExecutionId, JobInstanceId, JobName, JobParameters,
-    JobRepository, LateBoundInput, LateBoundSource, MissingParameterPolicy, NodeId,
-    NoopChunkCompletion, OwnerToken, ParameterCoercion, ParameterName, ParameterValueKind,
-    PartitionBudget, PartitionCount, PartitionKey, PartitionPlanEntry, PartitionPlanFactory,
-    PartitionTaskletFactory, PartitionedStepNode, ProcessContext, ProcessOutcome, ProcessorError,
-    ReadContext, ReadOutcome, ReaderError, RepeatCallbackError, RepeatContext, RepeatDefinition,
-    RepeatId, RepeatPolicy, RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind,
-    RepeatPolicyOutcome, RepeatPolicyRegistration, RepeatRuntimeRegistration, RepeatStateSchema,
-    RepositoryCapability, RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork,
-    ScopeFactoryKind, ScopeKind, ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition,
-    ScopedComponentFactory, ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration,
-    ScopedFactoryContext, ScopedFactoryError, SequentialIdGenerator, StateCodecError, StateLimits,
-    StateSchemaId, StateSchemaVersion, StepComponents, StepExecutionId, StepName, StepNode,
-    StopPollInterval, StopSource, SystemClock, Tasklet, TaskletContext, TaskletError,
-    TaskletOutcome, TaskletStep, TerminalKind, VersionedStateCodec, WriteContext, WriteOutcome,
-    WriterError,
+    GateBSemanticContract, InMemoryJobRepository, ItemProcessor, ItemReader, ItemWriter,
+    JobExecutionId, JobInstanceId, JobName, JobParameters, JobRepository, LateBoundInput,
+    LateBoundSource, MissingParameterPolicy, NodeId, NoopChunkCompletion, OwnerToken,
+    ParameterCoercion, ParameterName, ParameterValueKind, PartitionBudget, PartitionCount,
+    PartitionKey, PartitionPlanEntry, PartitionPlanFactory, PartitionTaskletFactory,
+    PartitionedStepNode, ProcessContext, ProcessOutcome, ProcessorError, ReadContext, ReadOutcome,
+    ReaderError, RepeatCallbackError, RepeatContext, RepeatDefinition, RepeatId, RepeatPolicy,
+    RepeatPolicyConfiguration, RepeatPolicyDefinition, RepeatPolicyKind, RepeatPolicyOutcome,
+    RepeatPolicyRegistration, RepeatRuntimeRegistration, RepeatStateSchema, RepositoryCapability,
+    RepositoryDescriptor, RepositoryError, RepositoryUnitOfWork, ScopeFactoryKind, ScopeKind,
+    ScopeResolverKind, ScopedCleanupError, ScopedComponentDefinition, ScopedComponentFactory,
+    ScopedComponentHandle, ScopedComponentId, ScopedComponentRegistration, ScopedFactoryContext,
+    ScopedFactoryError, SequentialIdGenerator, StateCodecError, StateLimits, StateSchemaId,
+    StateSchemaVersion, StepComponents, StepExecutionId, StepName, StepNode, StopPollInterval,
+    StopSource, SystemClock, Tasklet, TaskletContext, TaskletError, TaskletOutcome, TaskletStep,
+    TerminalKind, VersionedStateCodec, WriteContext, WriteOutcome, WriterError,
 };
 
 // ---------------------------------------------------------------------------
@@ -97,9 +96,7 @@ fn gate_b_remote_contract() -> GateBRemoteContract {
     )
 }
 
-fn gate_b_identity(
-    provider_key_binding: Option<GateBContractVersion>,
-) -> GateBEffectIdentity {
+fn gate_b_identity(provider_key_binding: Option<GateBContractVersion>) -> GateBEffectIdentity {
     GateBEffectIdentity::new(
         gate_b_version(1),
         gate_b_version(1),
@@ -126,11 +123,10 @@ fn gate_b_definition(
         GateBNativeMessageTransaction::None,
     )
     .expect("test Gate-B requirements are valid");
-    let remote_contract = (ambiguity_replay != GateBAmbiguityReplay::None)
-        .then(gate_b_remote_contract);
-    let provider_key_binding =
-        (ambiguity_replay == GateBAmbiguityReplay::IdempotentExternalEffect)
-            .then(|| gate_b_version(1));
+    let remote_contract =
+        (ambiguity_replay != GateBAmbiguityReplay::None).then(gate_b_remote_contract);
+    let provider_key_binding = (ambiguity_replay == GateBAmbiguityReplay::IdempotentExternalEffect)
+        .then(|| gate_b_version(1));
 
     GateBDefinitionContract::new(
         requirements,
@@ -232,8 +228,7 @@ fn durable_effect_profile_round_trips_versions_windows_and_chunk_limits() {
     assert_eq!(profile.max_chunk_effect_records(), Some(max_records));
     assert_eq!(profile.max_chunk_effect_encoded_bytes(), Some(max_bytes));
 
-    let descriptor =
-        RepositoryDescriptor::new(7, []).with_durable_effect_persistence(profile);
+    let descriptor = RepositoryDescriptor::new(7, []).with_durable_effect_persistence(profile);
     assert_eq!(descriptor.descriptor_version(), 2);
     assert_eq!(descriptor.durable_effect_persistence(), Some(&profile));
 }
