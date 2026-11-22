@@ -1,12 +1,16 @@
 # ADR-0009: Definition Fingerprint Input Set
 
-- **State:** Accepted
+- **State:** Accepted; partially superseded by [ADR-0017](0017-canonical-compiled-plan-manifest-v1-reset.md) for preview-format preservation/golden-vector requirements only
 - **Date:** 2026-08-03
 - **Owners:** runtime and API maintainers
 - **Deciders:** project owner
 - **Governing RFC:** [RFC-0004](../../rfcs/0004-compiled-execution-plan.md)
 - **Extends:** [ADR-0004](0004-job-definition-restart-compatibility.md) and
   [ADR-0005](0005-compiled-execution-plan.md)
+- **Partial supersession scope:** ADR-0017 replaces requirements that formats
+  1-3 remain future runtime compatibility artifacts. The restart-relevant
+  fingerprint input-set rule and exclusion of throughput/capacity values remain
+  authoritative.
 
 ## Context
 
