@@ -12,12 +12,42 @@ use crate::definition::{
     MANIFEST_FORMAT_GATE_B, MANIFEST_FORMAT_LOCAL_SCALE, MANIFEST_FORMAT_ONE_STEP,
 };
 use crate::{
-    EffectScopeId, EffectSlotId, GateBAmbiguityReplay, GateBContractId, GateBContractVersion,
+    BackoffKind, ChunkDeliveryMode, ClassifierRevision, ComponentRevision,
+    ComponentStreamIdentity, DefinitionRevision, DefinitionTokenKind, EffectScopeId, EffectSlotId,
+    FailureCategory, FaultPhase, GateBAmbiguityReplay, GateBContractId, GateBContractVersion,
     GateBDefinitionContract, GateBEffectIdentity, GateBEffectJournal, GateBEffectScope,
     GateBEffectSlot, GateBInboundProtection, GateBLocalAtomicity, GateBMinimumValidityMs,
     GateBNativeMessageTransaction, GateBOutboundObligation, GateBRemoteContract, GateBRequirements,
-    GateBSemanticContract, JobName, GATE_B_CONTRACT_VERSION,
+    GateBSemanticContract, JobName, NodeId, ParameterName, ParameterValueKind, ScopeFrameworkSource,
+    ScopeKind, ScopedComponentId, StateSchemaId, StateSchemaVersion, StepName, TerminalKind,
+    GATE_B_CONTRACT_VERSION, MAX_PARTITIONS, selector_path_is_valid, validate_token,
 };
+
+const TASKLET_DELIVERY_MODE: &str = "best_effort";
+const TASKLET_TRANSACTION_BOUNDARY: &str = "tasklet_completion";
+const CHUNK_TRANSACTION_BOUNDARY: &str = "chunk";
+const TASKLET_RESTART_STATE: &str = "none";
+const ROLLBACK_CHUNK_IN_FLIGHT_POLICY: &str = "rollback_chunk";
+const NON_RESTARTABLE_POLICY: &str = "not_restartable";
+const LOCAL_FAILURE_POLICIES: &[&str] = &["cancel_siblings", "drain_siblings"];
+const PARAMETER_COERCIONS: &[&str] = &[
+    "exact",
+    "string_to_i64",
+    "string_to_u64",
+    "string_to_bool",
+    "i64_to_u64",
+    "u64_to_i64",
+];
+const MISSING_PARAMETER_POLICIES: &[&str] = &["fail", "type_default"];
+const PARAMETER_ROLES: &[&str] = &["identifying", "non_identifying"];
+const NESTED_FRAMEWORK_FIELDS: &[&str] = &[
+    "parent_job_instance_id",
+    "parent_job_execution_id",
+    "parent_attempt",
+    "parent_definition_revision",
+    "parent_definition_fingerprint",
+    "nested_job_node_id",
+];
 
 pub(crate) struct Format5Read {
     pub(crate) job_name: Option<JobName>,
@@ -501,18 +531,23 @@ fn validate_format1(object: &Map<String, Value>) -> Result<(), ManifestError> {
                 &[],
                 ManifestError::MalformedBase,
             )?;
-            require_string_members(
+            validate_job_name_member(object, "job")?;
+            validate_step_name_member(object, "step")?;
+            require_exact_base_string(object, "kind", "tasklet")?;
+            require_exact_base_string(object, "delivery_mode", TASKLET_DELIVERY_MODE)?;
+            require_exact_base_string(object, "restart_state", TASKLET_RESTART_STATE)?;
+            require_exact_base_string(
                 object,
-                &[
-                    "component",
-                    "delivery_mode",
-                    "job",
-                    "kind",
-                    "restart_state",
-                    "step",
-                    "transaction_boundary",
-                ],
-            )
+                "transaction_boundary",
+                TASKLET_TRANSACTION_BOUNDARY,
+            )?;
+            let component = exact_object(
+                required(object, "component")?,
+                &["tasklet"],
+                &[],
+                ManifestError::MalformedBase,
+            )?;
+            validate_component_revision_member(component, "tasklet")
         }
         Some("chunk") => {
             exact_keys(
@@ -532,28 +567,30 @@ fn validate_format1(object: &Map<String, Value>) -> Result<(), ManifestError> {
                 &["completion_policy", "in_flight_policy", "streams"],
                 ManifestError::MalformedBase,
             )?;
-            require_string_members(
-                object,
-                &["delivery_mode", "job", "kind", "step", "transaction_boundary"],
-            )?;
-            if object.get("chunk_size").and_then(Value::as_u64).is_none() {
+            validate_job_name_member(object, "job")?;
+            validate_step_name_member(object, "step")?;
+            require_exact_base_string(object, "kind", "chunk")?;
+            require_exact_base_string(object, "transaction_boundary", CHUNK_TRANSACTION_BOUNDARY)?;
+            validate_chunk_delivery_mode_member(object, "delivery_mode")?;
+            if object
+                .get("chunk_size")
+                .and_then(Value::as_u64)
+                .is_none_or(|value| value == 0 || value > u64::from(u32::MAX))
+            {
                 return Err(ManifestError::MalformedBase);
             }
             validate_schema_descriptor(required(object, "checkpoint")?)?;
             validate_component_revisions(required(object, "components")?)?;
             validate_schema_descriptor(required(object, "context")?)?;
-            if let Some(value) = object.get("completion_policy")
-                && !value.is_string()
-            {
-                return Err(ManifestError::MalformedBase);
+            if let Some(value) = object.get("completion_policy") {
+                validate_component_revision_value(value)?;
             }
-            if let Some(value) = object.get("in_flight_policy")
-                && !value.is_string()
-            {
-                return Err(ManifestError::MalformedBase);
+            if let Some(value) = object.get("in_flight_policy") {
+                require_exact_value_string(value, ROLLBACK_CHUNK_IN_FLIGHT_POLICY)?;
             }
             if let Some(value) = object.get("streams") {
                 let streams = value.as_array().ok_or(ManifestError::MalformedBase)?;
+                let mut previous: Option<&str> = None;
                 for stream in streams {
                     let stream = exact_object(
                         stream,
@@ -561,7 +598,14 @@ fn validate_format1(object: &Map<String, Value>) -> Result<(), ManifestError> {
                         &[],
                         ManifestError::MalformedBase,
                     )?;
-                    require_string_members(stream, &["identity", "revision"])?;
+                    let identity = base_str(stream, "identity")?;
+                    ComponentStreamIdentity::new(identity.to_owned())
+                        .map_err(|_| ManifestError::MalformedBase)?;
+                    if previous.is_some_and(|candidate| candidate >= identity) {
+                        return Err(ManifestError::MalformedBase);
+                    }
+                    previous = Some(identity);
+                    validate_component_revision_member(stream, "revision")?;
                 }
             }
             Ok(())
@@ -582,7 +626,8 @@ fn validate_graph_root(object: &Map<String, Value>, format: u16) -> Result<(), M
         optional,
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["entry", "job"])?;
+    validate_node_id_member(object, "entry")?;
+    validate_job_name_member(object, "job")?;
 
     let nodes = required(object, "nodes")?
         .as_array()
@@ -604,12 +649,11 @@ fn validate_graph_root(object: &Map<String, Value>, format: u16) -> Result<(), M
             &[],
             ManifestError::MalformedBase,
         )?;
-        require_string_members(incrementer, &["kind", "revision"])?;
+        validate_definition_revision_member(incrementer, "kind")?;
+        validate_definition_revision_member(incrementer, "revision")?;
     }
-    if let Some(policy) = object.get("restart_policy")
-        && !policy.is_string()
-    {
-        return Err(ManifestError::MalformedBase);
+    if let Some(policy) = object.get("restart_policy") {
+        require_exact_value_string(policy, NON_RESTARTABLE_POLICY)?;
     }
     if let Some(scoped) = object.get("scoped_components") {
         let scoped = scoped.as_array().ok_or(ManifestError::MalformedBase)?;
@@ -655,8 +699,9 @@ fn validate_step(object: &Map<String, Value>, format: u16) -> Result<(), Manifes
         optional,
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["id", "kind"])?;
-    string_array(required(object, "listeners")?)?;
+    validate_node_id_member(object, "id")?;
+    require_exact_base_string(object, "kind", "step")?;
+    validate_component_revision_array(required(object, "listeners")?)?;
     validate_fault_policy(required(object, "policy")?)?;
     validate_start(required(object, "start")?, format)?;
     validate_step_body(required(object, "step")?)?;
@@ -678,7 +723,7 @@ fn validate_step_body(value: &Value) -> Result<(), ManifestError> {
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["kind", "name"])?;
+    validate_step_name_member(object, "name")?;
     let declaration = required(object, "declaration")?;
     match object.get("kind").and_then(Value::as_str) {
         Some("tasklet") => {
@@ -688,9 +733,12 @@ fn validate_step_body(value: &Value) -> Result<(), ManifestError> {
                 &[],
                 ManifestError::MalformedBase,
             )?;
-            require_string_members(
+            validate_component_revision_member(declaration, "component")?;
+            require_exact_base_string(declaration, "delivery_mode", TASKLET_DELIVERY_MODE)?;
+            require_exact_base_string(
                 declaration,
-                &["component", "delivery_mode", "transaction_boundary"],
+                "transaction_boundary",
+                TASKLET_TRANSACTION_BOUNDARY,
             )
         }
         Some("chunk") => {
@@ -707,17 +755,24 @@ fn validate_step_body(value: &Value) -> Result<(), ManifestError> {
                 &["in_flight_policy"],
                 ManifestError::MalformedBase,
             )?;
-            require_string_members(declaration, &["delivery_mode", "transaction_boundary"])?;
-            if declaration.get("size").and_then(Value::as_u64).is_none() {
+            require_exact_base_string(
+                declaration,
+                "transaction_boundary",
+                CHUNK_TRANSACTION_BOUNDARY,
+            )?;
+            validate_chunk_delivery_mode_member(declaration, "delivery_mode")?;
+            if declaration
+                .get("size")
+                .and_then(Value::as_u64)
+                .is_none_or(|value| value == 0 || value > u64::from(u32::MAX))
+            {
                 return Err(ManifestError::MalformedBase);
             }
             validate_schema_descriptor(required(declaration, "checkpoint")?)?;
             validate_component_revisions(required(declaration, "components")?)?;
             validate_schema_descriptor(required(declaration, "context")?)?;
-            if let Some(policy) = declaration.get("in_flight_policy")
-                && !policy.is_string()
-            {
-                return Err(ManifestError::MalformedBase);
+            if let Some(policy) = declaration.get("in_flight_policy") {
+                require_exact_value_string(policy, ROLLBACK_CHUNK_IN_FLIGHT_POLICY)?;
             }
             Ok(())
         }
@@ -737,18 +792,24 @@ fn validate_decision(object: &Map<String, Value>, format: u16) -> Result<(), Man
         optional,
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["id", "kind"])?;
+    validate_node_id_member(object, "id")?;
+    require_exact_base_string(object, "kind", "decision")?;
     let decision = exact_object(
         required(object, "decision")?,
         &["input_version", "revision"],
         &[],
         ManifestError::MalformedBase,
     )?;
-    if decision.get("input_version").and_then(Value::as_u64).is_none()
-        || decision.get("revision").and_then(Value::as_str).is_none()
+    if decision
+        .get("input_version")
+        .and_then(Value::as_u64)
+        .is_none_or(|value| value == 0 || value > u64::from(u32::MAX))
     {
         return Err(ManifestError::MalformedBase);
     }
+    let revision = base_str(decision, "revision")?;
+    validate_token(revision, DefinitionTokenKind::Decider)
+        .map_err(|_| ManifestError::MalformedBase)?;
     validate_optional_sequence(object)
 }
 
@@ -764,7 +825,8 @@ fn validate_join(object: &Map<String, Value>, format: u16) -> Result<(), Manifes
         optional,
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["id", "kind"])?;
+    validate_node_id_member(object, "id")?;
+    require_exact_base_string(object, "kind", "join")?;
     validate_optional_sequence(object)
 }
 
@@ -780,7 +842,10 @@ fn validate_split(object: &Map<String, Value>, format: u16) -> Result<(), Manife
         optional,
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["failure_policy", "id", "join", "kind"])?;
+    validate_node_id_member(object, "id")?;
+    validate_node_id_member(object, "join")?;
+    require_exact_base_string(object, "kind", "split")?;
+    require_one_of_base_strings(object, "failure_policy", LOCAL_FAILURE_POLICIES)?;
     let branches = required(object, "branches")?
         .as_array()
         .ok_or(ManifestError::MalformedBase)?;
@@ -813,8 +878,9 @@ fn validate_split(object: &Map<String, Value>, format: u16) -> Result<(), Manife
                         &[],
                         ManifestError::MalformedBase,
                     )?;
-                    require_string_members(branch_object, &["entry", "kind"])?;
-                    string_array(required(branch_object, "members")?)?;
+                    validate_node_id_member(branch_object, "entry")?;
+                    require_exact_base_string(branch_object, "kind", "flow")?;
+                    validate_node_id_array(required(branch_object, "members")?)?;
                     if branch_object.get("ordinal").and_then(Value::as_u64).is_none() {
                         return Err(ManifestError::MalformedBase);
                     }
@@ -859,11 +925,17 @@ fn validate_partitioned_step(
         optional,
         ManifestError::MalformedBase,
     )?;
-    require_string_members(
-        object,
-        &["aggregation", "failure_policy", "id", "kind", "partitioner", "step_name"],
-    )?;
-    if object.get("partition_count").and_then(Value::as_u64).is_none() {
+    validate_component_revision_member(object, "aggregation")?;
+    require_one_of_base_strings(object, "failure_policy", LOCAL_FAILURE_POLICIES)?;
+    validate_node_id_member(object, "id")?;
+    require_exact_base_string(object, "kind", "partitioned_step")?;
+    validate_component_revision_member(object, "partitioner")?;
+    validate_step_name_member(object, "step_name")?;
+    if object
+        .get("partition_count")
+        .and_then(Value::as_u64)
+        .is_none_or(|value| value == 0 || value > u64::try_from(MAX_PARTITIONS).unwrap_or(u64::MAX))
+    {
         return Err(ManifestError::MalformedBase);
     }
     validate_start(required(object, "start")?, format)?;
@@ -881,15 +953,23 @@ fn validate_nested_job(object: &Map<String, Value>) -> Result<(), ManifestError>
         &["decision_sequence"],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["id", "kind", "mapping_revision"])?;
+    validate_node_id_member(object, "id")?;
+    require_exact_base_string(object, "kind", "nested_job")?;
+    validate_component_revision_member(object, "mapping_revision")?;
     let child = exact_object(
         required(object, "child")?,
         &["fingerprint", "format", "job", "revision"],
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(child, &["fingerprint", "job", "revision"])?;
-    if child.get("format").and_then(Value::as_u64).is_none() {
+    validate_sha256_hex_member(child, "fingerprint")?;
+    validate_job_name_member(child, "job")?;
+    validate_definition_revision_member(child, "revision")?;
+    if child
+        .get("format")
+        .and_then(Value::as_u64)
+        .is_none_or(|value| !(1..=u64::from(MANIFEST_FORMAT_ADVANCED_FLOW)).contains(&value))
+    {
         return Err(ManifestError::MalformedBase);
     }
     let parameters = required(object, "parameters")?
@@ -908,7 +988,11 @@ fn validate_nested_mapping(value: &Value) -> Result<(), ManifestError> {
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["coercion", "expected", "missing", "role", "target"])?;
+    require_one_of_base_strings(object, "coercion", PARAMETER_COERCIONS)?;
+    validate_parameter_value_kind_member(object, "expected")?;
+    require_one_of_base_strings(object, "missing", MISSING_PARAMETER_POLICIES)?;
+    require_one_of_base_strings(object, "role", PARAMETER_ROLES)?;
+    validate_parameter_name_member(object, "target")?;
     validate_nested_source(required(object, "source")?)
 }
 
@@ -917,7 +1001,8 @@ fn validate_nested_source(value: &Value) -> Result<(), ManifestError> {
     match object.get("kind").and_then(Value::as_str) {
         Some("parent_parameter") => {
             exact_keys(object, &["kind", "name"], &[], ManifestError::MalformedBase)?;
-            require_string_members(object, &["kind", "name"])
+            require_exact_base_string(object, "kind", "parent_parameter")?;
+            validate_parameter_name_member(object, "name")
         }
         Some("parent_job_context") => {
             exact_keys(
@@ -926,9 +1011,10 @@ fn validate_nested_source(value: &Value) -> Result<(), ManifestError> {
                 &[],
                 ManifestError::MalformedBase,
             )?;
-            require_string_members(object, &["kind", "schema"])?;
-            string_array(required(object, "path")?)?;
-            require_u64_member(object, "schema_version")
+            require_exact_base_string(object, "kind", "parent_job_context")?;
+            validate_schema_id_member(object, "schema")?;
+            validate_selector_path(required(object, "path")?)?;
+            validate_schema_version_member(object, "schema_version")
         }
         Some("parent_step_context") => {
             exact_keys(
@@ -937,13 +1023,16 @@ fn validate_nested_source(value: &Value) -> Result<(), ManifestError> {
                 &[],
                 ManifestError::MalformedBase,
             )?;
-            require_string_members(object, &["kind", "node", "schema"])?;
-            string_array(required(object, "path")?)?;
-            require_u64_member(object, "schema_version")
+            require_exact_base_string(object, "kind", "parent_step_context")?;
+            validate_node_id_member(object, "node")?;
+            validate_schema_id_member(object, "schema")?;
+            validate_selector_path(required(object, "path")?)?;
+            validate_schema_version_member(object, "schema_version")
         }
         Some("framework") => {
             exact_keys(object, &["field", "kind"], &[], ManifestError::MalformedBase)?;
-            require_string_members(object, &["field", "kind"])
+            require_exact_base_string(object, "kind", "framework")?;
+            require_one_of_base_strings(object, "field", NESTED_FRAMEWORK_FIELDS)
         }
         _ => Err(ManifestError::MalformedBase),
     }
@@ -969,11 +1058,12 @@ fn validate_custom_leaf(
         &["decision_sequence"],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(
-        object,
-        &["handler_revision", "id", "kind", "leaf_kind", "step_name"],
-    )?;
-    string_array(required(object, "listeners")?)?;
+    validate_component_revision_member(object, "handler_revision")?;
+    validate_node_id_member(object, "id")?;
+    require_exact_base_string(object, "kind", "custom_leaf")?;
+    validate_generic_definition_token_member(object, "leaf_kind", DefinitionTokenKind::Component)?;
+    validate_step_name_member(object, "step_name")?;
+    validate_component_revision_array(required(object, "listeners")?)?;
     validate_fault_policy(required(object, "policy")?)?;
     validate_start(required(object, "start")?, format)?;
     let schema = exact_object(
@@ -982,8 +1072,8 @@ fn validate_custom_leaf(
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(schema, &["id"])?;
-    require_u64_member(schema, "version")?;
+    validate_schema_id_member(schema, "id")?;
+    validate_schema_version_member(schema, "version")?;
     validate_optional_sequence(object)
 }
 
@@ -994,8 +1084,10 @@ fn validate_nested_flow(object: &Map<String, Value>) -> Result<(), ManifestError
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["entry", "id", "kind"])?;
-    string_array(required(object, "members")?)?;
+    validate_node_id_member(object, "entry")?;
+    validate_node_id_member(object, "id")?;
+    require_exact_base_string(object, "kind", "nested_flow")?;
+    validate_node_id_array(required(object, "members")?)?;
     let exits = required(object, "exits")?
         .as_array()
         .ok_or(ManifestError::MalformedBase)?;
@@ -1012,7 +1104,8 @@ fn validate_scoped_component(value: &Value) -> Result<(), ManifestError> {
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["id", "scope"])?;
+    validate_scoped_component_id_member(object, "id")?;
+    validate_scope_kind_member(object, "scope")?;
     for key in ["factory", "resolver"] {
         let descriptor = exact_object(
             required(object, key)?,
@@ -1020,7 +1113,12 @@ fn validate_scoped_component(value: &Value) -> Result<(), ManifestError> {
             &[],
             ManifestError::MalformedBase,
         )?;
-        require_string_members(descriptor, &["kind", "revision"])?;
+        validate_generic_definition_token_member(
+            descriptor,
+            "kind",
+            DefinitionTokenKind::Component,
+        )?;
+        validate_component_revision_member(descriptor, "revision")?;
     }
     let inputs = required(object, "inputs")?
         .as_array()
@@ -1032,7 +1130,10 @@ fn validate_scoped_component(value: &Value) -> Result<(), ManifestError> {
             &[],
             ManifestError::MalformedBase,
         )?;
-        require_string_members(input, &["coercion", "expected", "missing", "name"])?;
+        require_one_of_base_strings(input, "coercion", PARAMETER_COERCIONS)?;
+        validate_parameter_value_kind_member(input, "expected")?;
+        require_one_of_base_strings(input, "missing", MISSING_PARAMETER_POLICIES)?;
+        validate_parameter_name_member(input, "name")?;
         validate_scoped_source(required(input, "source")?)?;
     }
     Ok(())
@@ -1043,7 +1144,8 @@ fn validate_scoped_source(value: &Value) -> Result<(), ManifestError> {
     match object.get("kind").and_then(Value::as_str) {
         Some("job_parameter") => {
             exact_keys(object, &["kind", "name"], &[], ManifestError::MalformedBase)?;
-            require_string_members(object, &["kind", "name"])
+            require_exact_base_string(object, "kind", "job_parameter")?;
+            validate_parameter_name_member(object, "name")
         }
         Some("job_context") => {
             exact_keys(
@@ -1052,9 +1154,10 @@ fn validate_scoped_source(value: &Value) -> Result<(), ManifestError> {
                 &[],
                 ManifestError::MalformedBase,
             )?;
-            require_string_members(object, &["kind", "schema"])?;
-            string_array(required(object, "path")?)?;
-            require_u64_member(object, "schema_version")
+            require_exact_base_string(object, "kind", "job_context")?;
+            validate_schema_id_member(object, "schema")?;
+            validate_selector_path(required(object, "path")?)?;
+            validate_schema_version_member(object, "schema_version")
         }
         Some("step_context") => {
             exact_keys(
@@ -1063,13 +1166,16 @@ fn validate_scoped_source(value: &Value) -> Result<(), ManifestError> {
                 &[],
                 ManifestError::MalformedBase,
             )?;
-            require_string_members(object, &["kind", "node", "schema"])?;
-            string_array(required(object, "path")?)?;
-            require_u64_member(object, "schema_version")
+            require_exact_base_string(object, "kind", "step_context")?;
+            validate_node_id_member(object, "node")?;
+            validate_schema_id_member(object, "schema")?;
+            validate_selector_path(required(object, "path")?)?;
+            validate_schema_version_member(object, "schema_version")
         }
         Some("framework") => {
             exact_keys(object, &["field", "kind"], &[], ManifestError::MalformedBase)?;
-            require_string_members(object, &["field", "kind"])
+            require_exact_base_string(object, "kind", "framework")?;
+            validate_scope_framework_source_member(object, "field")
         }
         _ => Err(ManifestError::MalformedBase),
     }
@@ -1082,7 +1188,7 @@ fn validate_repeat(value: &Value) -> Result<(), ManifestError> {
         &["nested"],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["id"])?;
+    validate_generic_definition_token_member(object, "id", DefinitionTokenKind::Repeat)?;
     let interceptors = required(object, "interceptors")?
         .as_array()
         .ok_or(ManifestError::MalformedBase)?;
@@ -1093,7 +1199,17 @@ fn validate_repeat(value: &Value) -> Result<(), ManifestError> {
             &[],
             ManifestError::MalformedBase,
         )?;
-        require_string_members(interceptor, &["id", "kind", "revision"])?;
+        validate_generic_definition_token_member(
+            interceptor,
+            "id",
+            DefinitionTokenKind::RepeatInterceptor,
+        )?;
+        validate_generic_definition_token_member(
+            interceptor,
+            "kind",
+            DefinitionTokenKind::RepeatInterceptor,
+        )?;
+        validate_component_revision_member(interceptor, "revision")?;
     }
     let policy = exact_object(
         required(object, "policy")?,
@@ -1101,7 +1217,13 @@ fn validate_repeat(value: &Value) -> Result<(), ManifestError> {
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(policy, &["configuration", "kind", "revision"])?;
+    validate_generic_definition_token_member(
+        policy,
+        "configuration",
+        DefinitionTokenKind::RepeatPolicy,
+    )?;
+    validate_generic_definition_token_member(policy, "kind", DefinitionTokenKind::RepeatPolicy)?;
+    validate_component_revision_member(policy, "revision")?;
     validate_schema_descriptor(required(object, "state")?)?;
     if let Some(nested) = object.get("nested") {
         validate_repeat(nested)?;
@@ -1116,16 +1238,32 @@ fn validate_transition(value: &Value) -> Result<(), ManifestError> {
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["pattern", "source"])?;
+    validate_generic_definition_token_member(object, "pattern", DefinitionTokenKind::Component)?;
+    validate_node_id_member(object, "source")?;
     let target = required(object, "target")?
         .as_object()
         .ok_or(ManifestError::MalformedBase)?;
     match (target.get("node"), target.get("terminal")) {
-        (Some(node), None) if node.is_string() => {
-            exact_keys(target, &["node"], &[], ManifestError::MalformedBase)
+        (Some(node), None) => {
+            exact_keys(target, &["node"], &[], ManifestError::MalformedBase)?;
+            let node = node.as_str().ok_or(ManifestError::MalformedBase)?;
+            NodeId::new(node.to_owned()).map_err(|_| ManifestError::MalformedBase)?;
+            Ok(())
         }
-        (None, Some(terminal)) if terminal.is_string() => {
-            exact_keys(target, &["terminal"], &[], ManifestError::MalformedBase)
+        (None, Some(terminal)) => {
+            exact_keys(target, &["terminal"], &[], ManifestError::MalformedBase)?;
+            let terminal = terminal.as_str().ok_or(ManifestError::MalformedBase)?;
+            if [
+                TerminalKind::Complete.as_str(),
+                TerminalKind::Fail.as_str(),
+                TerminalKind::Stop.as_str(),
+            ]
+            .contains(&terminal)
+            {
+                Ok(())
+            } else {
+                Err(ManifestError::MalformedBase)
+            }
         }
         _ => Err(ManifestError::MalformedBase),
     }
@@ -1146,14 +1284,15 @@ fn validate_start(value: &Value, format: u16) -> Result<(), ManifestError> {
         .get("allow_start_if_complete")
         .and_then(Value::as_bool)
         .is_none()
-        || object.get("start_limit").and_then(Value::as_u64).is_none()
+        || object
+            .get("start_limit")
+            .and_then(Value::as_u64)
+            .is_none_or(|value| value == 0 || value > u64::from(u32::MAX))
     {
         return Err(ManifestError::MalformedBase);
     }
-    if let Some(policy) = object.get("restart_policy")
-        && !policy.is_string()
-    {
-        return Err(ManifestError::MalformedBase);
+    if let Some(policy) = object.get("restart_policy") {
+        require_exact_value_string(policy, NON_RESTARTABLE_POLICY)?;
     }
     Ok(())
 }
@@ -1183,7 +1322,16 @@ fn validate_fault_policy(value: &Value) -> Result<(), ManifestError> {
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(backoff, &["kind"])?;
+    let backoff_kind = base_str(backoff, "kind")?;
+    if ![
+        BackoffKind::None.as_str(),
+        BackoffKind::Fixed.as_str(),
+        BackoffKind::Exponential.as_str(),
+    ]
+    .contains(&backoff_kind)
+    {
+        return Err(ManifestError::MalformedBase);
+    }
     for key in ["initial_ms", "maximum_ms", "multiplier"] {
         if !backoff.contains_key(key) || !backoff[key].is_number() {
             return Err(ManifestError::MalformedBase);
@@ -1195,7 +1343,9 @@ fn validate_fault_policy(value: &Value) -> Result<(), ManifestError> {
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(classifier, &["revision"])?;
+    let classifier_revision = base_str(classifier, "revision")?;
+    ClassifierRevision::new(classifier_revision.to_owned())
+        .map_err(|_| ManifestError::MalformedBase)?;
     let rules = required(classifier, "rules")?
         .as_array()
         .ok_or(ManifestError::MalformedBase)?;
@@ -1206,7 +1356,11 @@ fn validate_fault_policy(value: &Value) -> Result<(), ManifestError> {
             &[],
             ManifestError::MalformedBase,
         )?;
-        require_string_members(rule, &["category", "phase"])?;
+        validate_failure_category_member(rule, "category")?;
+        let phase = base_str(rule, "phase")?;
+        if FaultPhase::from_durable_name(phase).is_none() {
+            return Err(ManifestError::MalformedBase);
+        }
         if rule.get("retryable").and_then(Value::as_bool).is_none()
             || !rule
                 .get("skip")
@@ -1225,8 +1379,8 @@ fn validate_schema_descriptor(value: &Value) -> Result<(), ManifestError> {
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["schema"])?;
-    require_u64_member(object, "version")
+    validate_schema_id_member(object, "schema")?;
+    validate_schema_version_member(object, "version")
 }
 
 fn validate_component_revisions(value: &Value) -> Result<(), ManifestError> {
@@ -1236,7 +1390,10 @@ fn validate_component_revisions(value: &Value) -> Result<(), ManifestError> {
         &[],
         ManifestError::MalformedBase,
     )?;
-    require_string_members(object, &["checkpoint", "processor", "reader", "writer"])
+    for key in ["checkpoint", "processor", "reader", "writer"] {
+        validate_component_revision_member(object, key)?;
+    }
+    Ok(())
 }
 
 fn validate_optional_sequence(object: &Map<String, Value>) -> Result<(), ManifestError> {
@@ -1246,6 +1403,290 @@ fn validate_optional_sequence(object: &Map<String, Value>) -> Result<(), Manifes
         return Err(ManifestError::MalformedBase);
     }
     Ok(())
+}
+
+fn base_str<'a>(
+    object: &'a Map<String, Value>,
+    key: &str,
+) -> Result<&'a str, ManifestError> {
+    object
+        .get(key)
+        .and_then(Value::as_str)
+        .ok_or(ManifestError::MalformedBase)
+}
+
+fn require_exact_base_string(
+    object: &Map<String, Value>,
+    key: &str,
+    expected: &str,
+) -> Result<(), ManifestError> {
+    let actual = base_str(object, key)?;
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
+}
+
+fn require_exact_value_string(value: &Value, expected: &str) -> Result<(), ManifestError> {
+    if value.as_str() == Some(expected) {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
+}
+
+fn require_one_of_base_strings(
+    object: &Map<String, Value>,
+    key: &str,
+    allowed: &[&str],
+) -> Result<(), ManifestError> {
+    let actual = base_str(object, key)?;
+    if allowed.contains(&actual) {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
+}
+
+fn validate_job_name_member(object: &Map<String, Value>, key: &str) -> Result<(), ManifestError> {
+    JobName::new(base_str(object, key)?.to_owned())
+        .map(|_| ())
+        .map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_step_name_member(object: &Map<String, Value>, key: &str) -> Result<(), ManifestError> {
+    StepName::new(base_str(object, key)?.to_owned())
+        .map(|_| ())
+        .map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_node_id_member(object: &Map<String, Value>, key: &str) -> Result<(), ManifestError> {
+    NodeId::new(base_str(object, key)?.to_owned())
+        .map(|_| ())
+        .map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_parameter_name_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    ParameterName::new(base_str(object, key)?.to_owned())
+        .map(|_| ())
+        .map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_definition_revision_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    DefinitionRevision::new(base_str(object, key)?.to_owned())
+        .map(|_| ())
+        .map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_component_revision_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    validate_component_revision_value(
+        object.get(key).ok_or(ManifestError::MalformedBase)?,
+    )
+}
+
+fn validate_component_revision_value(value: &Value) -> Result<(), ManifestError> {
+    let value = value.as_str().ok_or(ManifestError::MalformedBase)?;
+    ComponentRevision::new(value.to_owned())
+        .map(|_| ())
+        .map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_generic_definition_token_member(
+    object: &Map<String, Value>,
+    key: &str,
+    kind: DefinitionTokenKind,
+) -> Result<(), ManifestError> {
+    validate_token(base_str(object, key)?, kind).map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_schema_id_member(object: &Map<String, Value>, key: &str) -> Result<(), ManifestError> {
+    StateSchemaId::new(base_str(object, key)?.to_owned())
+        .map(|_| ())
+        .map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_schema_version_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    let raw = object
+        .get(key)
+        .and_then(Value::as_u64)
+        .and_then(|value| u32::try_from(value).ok())
+        .ok_or(ManifestError::MalformedBase)?;
+    StateSchemaVersion::new(raw)
+        .map(|_| ())
+        .map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_chunk_delivery_mode_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    let actual = base_str(object, key)?;
+    if [
+        ChunkDeliveryMode::AtomicSameResource.manifest_name(),
+        ChunkDeliveryMode::AtLeastOnce.manifest_name(),
+    ]
+    .contains(&actual)
+    {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
+}
+
+fn validate_parameter_value_kind_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    let actual = base_str(object, key)?;
+    if [
+        ParameterValueKind::String.as_str(),
+        ParameterValueKind::I64.as_str(),
+        ParameterValueKind::U64.as_str(),
+        ParameterValueKind::Bool.as_str(),
+    ]
+    .contains(&actual)
+    {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
+}
+
+fn validate_scope_kind_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    let actual = base_str(object, key)?;
+    if [ScopeKind::Job.as_str(), ScopeKind::Step.as_str()].contains(&actual) {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
+}
+
+fn validate_scope_framework_source_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    let actual = base_str(object, key)?;
+    if [
+        ScopeFrameworkSource::JobInstanceId.as_str(),
+        ScopeFrameworkSource::JobExecutionId.as_str(),
+        ScopeFrameworkSource::StepExecutionId.as_str(),
+        ScopeFrameworkSource::Attempt.as_str(),
+        ScopeFrameworkSource::DefinitionRevision.as_str(),
+        ScopeFrameworkSource::DefinitionFingerprint.as_str(),
+        ScopeFrameworkSource::LogicalNodeId.as_str(),
+        ScopeFrameworkSource::StepName.as_str(),
+    ]
+    .contains(&actual)
+    {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
+}
+
+fn validate_scoped_component_id_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    ScopedComponentId::new(base_str(object, key)?.to_owned())
+        .map(|_| ())
+        .map_err(|_| ManifestError::MalformedBase)
+}
+
+fn validate_selector_path(value: &Value) -> Result<(), ManifestError> {
+    let segments = value.as_array().ok_or(ManifestError::MalformedBase)?;
+    let mut path = Vec::with_capacity(segments.len());
+    for segment in segments {
+        path.push(
+            segment
+                .as_str()
+                .ok_or(ManifestError::MalformedBase)?
+                .to_owned(),
+        );
+    }
+    if selector_path_is_valid(&path) {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
+}
+
+fn validate_node_id_array(value: &Value) -> Result<(), ManifestError> {
+    let values = value.as_array().ok_or(ManifestError::MalformedBase)?;
+    for value in values {
+        let raw = value.as_str().ok_or(ManifestError::MalformedBase)?;
+        NodeId::new(raw.to_owned()).map_err(|_| ManifestError::MalformedBase)?;
+    }
+    Ok(())
+}
+
+fn validate_component_revision_array(value: &Value) -> Result<(), ManifestError> {
+    let values = value.as_array().ok_or(ManifestError::MalformedBase)?;
+    for value in values {
+        validate_component_revision_value(value)?;
+    }
+    Ok(())
+}
+
+fn validate_sha256_hex_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    let value = base_str(object, key)?;
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
+}
+
+fn validate_failure_category_member(
+    object: &Map<String, Value>,
+    key: &str,
+) -> Result<(), ManifestError> {
+    let value = base_str(object, key)?;
+    let known = [
+        FailureCategory::InvalidDefinition,
+        FailureCategory::DuplicateExecution,
+        FailureCategory::IllegalTransition,
+        FailureCategory::TransientInfrastructure,
+        FailureCategory::PermanentInfrastructure,
+        FailureCategory::UserComponent,
+        FailureCategory::Cancelled,
+        FailureCategory::Serialization,
+        FailureCategory::Invariant,
+        FailureCategory::OptimisticConflict,
+        FailureCategory::Timeout,
+        FailureCategory::UnsupportedCapability,
+        FailureCategory::UnknownCommit,
+        FailureCategory::ShutdownIncomplete,
+        FailureCategory::StaleRecovered,
+    ];
+    if known.into_iter().any(|candidate| candidate.as_str() == value) {
+        Ok(())
+    } else {
+        Err(ManifestError::MalformedBase)
+    }
 }
 
 fn exact_object<'a>(
