@@ -1930,22 +1930,6 @@ impl RepositoryUnitOfWork for MongoUnitOfWork<'_> {
             }
 
             let decisions = self.repository.collection(DECISIONS);
-            let existing = decisions
-                .count_documents(doc! {
-                    "job_execution_id": u64_to_i64(request.job_execution_id().get())?
-                })
-                .session(self.session()?)
-                .await
-                .map_err(map_operation_error)?;
-            let advanced = manifest
-                .get("format")
-                .and_then(Value::as_u64)
-                .is_some_and(|format| {
-                    format == u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW)
-                });
-            if !advanced && request.sequence().get() != existing.saturating_add(1) {
-                return Err(RepositoryError::ConcurrentModification);
-            }
 
             if let Some(step_id) = request.source_step_execution_id() {
                 let steps = self.repository.collection(STEPS);
