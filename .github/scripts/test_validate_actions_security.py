@@ -77,6 +77,35 @@ require_pass(
     """,
 )
 
+require_pass(
+    "same-repository reusable workflow",
+    """
+    name: local-reuse
+    on: pull_request
+    permissions:
+      contents: read
+    jobs:
+      child:
+        uses: $/.github/workflows/child.yml
+        permissions:
+          contents: read
+    """,
+)
+
+require_rejection(
+    "malformed same-repository reusable workflow",
+    """
+    name: malformed-local-reuse
+    on: pull_request
+    permissions:
+      contents: read
+    jobs:
+      child:
+        uses: $/.github/actions/not-a-workflow
+    """,
+    "same-repository reusable workflow must be exactly",
+)
+
 LIFECYCLE_FIXTURE = """
 # lifecycle-owner: issue #593
 # lifecycle-retire: delete after bounded workflow research is recorded

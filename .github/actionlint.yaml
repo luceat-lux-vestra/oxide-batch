@@ -1,0 +1,7 @@
+# Compatibility adapter for GitHub.com's self-repository $/ reusable-workflow syntax.
+# actionlint 1.7.12 does not yet implement this syntax (rhysd/actionlint#711/#760).
+# Remove this exact diagnostic filter when the managed actionlint release supports it.
+paths:
+  .github/workflows/**/*.{yml,yaml}:
+    ignore:
+      - '^reusable workflow call "\$/\.github/workflows/[^"/]+\.ya?ml" at "uses" is not following the format '

@@ -1,13 +1,21 @@
 name: Fast compiler cache prime
 
 on:
-  # Trigger only after the read-only merged-PR signal has completed.
-  # workflow_run executes the protected default-branch workflow, never PR-head code.
-  workflow_run: # zizmor: ignore[dangerous-triggers] -- trusted default-branch source; upstream job, SHA, ref and live main checked before compiler/cache access.
-    workflows: ["M5 post-merge cache signal"]
-    types: [completed]
-  # Intentionally no scheduled prime: optional cache work only follows relevant
-  # merged dependency input changes; manual dispatch repairs evicted archives.
+  # Protected-main dependency/toolchain changes are the only automatic cache-write authority.
+  # This avoids privileged workflow_run cache writes entirely.
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '**/Cargo.toml'
+      - '**/Cargo.lock'
+      - '.cargo/**'
+      - '**/.cargo/**'
+      - 'rust-toolchain'
+      - 'rust-toolchain.toml'
+      - '.github/workflows/sccache-main-prime.yml'
+  # Manual dispatch repairs evicted protected-main cache entries.
   workflow_dispatch:
 
 permissions:
@@ -27,9 +35,7 @@ jobs:
   prime:
     name: main ${{ matrix.arch }} compiler cache prime
     cache-mode: write
-    # The successful merged-main signal job is verified again below against the
-    # exact upstream workflow run; closed-without-merge cannot populate caches.
-    if: ${{ github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request') }}
+    # Automatic writes run only from protected-main push; manual dispatch is owner-triggered.
     strategy:
       fail-fast: false
       matrix:
@@ -60,103 +66,6 @@ jobs:
       actions: write # Prune older protected-main Fast compiler-cache entries after a successful save.
       contents: read # Check out the exact protected default-branch source being cached.
     steps:
-      - name: Verify completed trusted merge signal
-        if: ${{ github.event_name == 'workflow_run' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-          UPSTREAM_RUN_ID: ${{ github.event.workflow_run.id }}
-          UPSTREAM_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
-          UPSTREAM_EVENT: ${{ github.event.workflow_run.event }}
-          UPSTREAM_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          [[ "$UPSTREAM_RUN_ID" =~ ^[0-9]+$ ]]
-          test "$UPSTREAM_EVENT" = pull_request
-          test "$UPSTREAM_CONCLUSION" = success
-          test "$GITHUB_REF" = "refs/heads/$DEFAULT_BRANCH"
-          [[ "$UPSTREAM_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$GITHUB_SHA" =~ ^[0-9a-f]{40}$ ]]
-
-          # On a closed, squash-merged PR, workflow_run.head_sha is the
-          # PR's last source HEAD, NOT the resulting protected-main merge SHA.
-          # Re-read both identities from GitHub's API rather than equating them.
-          upstream_run="$(gh api -H 'Accept: application/vnd.github+json' \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$UPSTREAM_RUN_ID")"
-          jq -e \
-            --argjson run_id "$UPSTREAM_RUN_ID" \
-            --arg head "$UPSTREAM_HEAD_SHA" \
-            --arg repo "$GITHUB_REPOSITORY" '
-              .id == $run_id and
-              .event == "pull_request" and
-              .status == "completed" and
-              .conclusion == "success" and
-              .path == ".github/workflows/m5-post-merge-cache-signal.yml" and
-              .head_sha == $head and
-              .head_repository.full_name == $repo
-            ' <<<"$upstream_run" >/dev/null
-
-          current_main="$(gh api -H 'Accept: application/vnd.github+json' \
-            "repos/$GITHUB_REPOSITORY/branches/$DEFAULT_BRANCH" --jq '.commit.sha')"
-          test "$current_main" = "$GITHUB_SHA"
-
-          # GitHub's workflow_run.pull_requests can be [] for merged PRs.
-          # Instead, require exactly one PR associated with this main commit
-          # whose source HEAD matches the successful upstream workflow.
-          linked_prs="$(gh api -H 'Accept: application/vnd.github+json' \
-            "repos/$GITHUB_REPOSITORY/commits/$GITHUB_SHA/pulls?per_page=100")"
-          pr_number="$(jq -er \
-            --arg main "$GITHUB_SHA" \
-            --arg head "$UPSTREAM_HEAD_SHA" \
-            --arg branch "$DEFAULT_BRANCH" \
-            --arg repo "$GITHUB_REPOSITORY" '
-              [
-                .[] | select(
-                  .state == "closed" and
-                  .merged_at != null and
-                  .merge_commit_sha == $main and
-                  .head.sha == $head and
-                  .head.repo.full_name == $repo and
-                  .base.ref == $branch and
-                  .base.repo.full_name == $repo
-                )
-              ] | if length == 1 then .[0].number else empty end
-            ' <<<"$linked_prs")"
-          [[ "$pr_number" =~ ^[0-9]+$ ]]
-
-          # Confirm the live PR's merged state; association with a commit
-          # alone is insufficient to authorize protected-main cache writes.
-          merged_pr="$(gh api -H 'Accept: application/vnd.github+json' \
-            "repos/$GITHUB_REPOSITORY/pulls/$pr_number")"
-          jq -e \
-            --argjson number "$pr_number" \
-            --arg main "$GITHUB_SHA" \
-            --arg head "$UPSTREAM_HEAD_SHA" \
-            --arg branch "$DEFAULT_BRANCH" \
-            --arg repo "$GITHUB_REPOSITORY" '
-              .number == $number and
-              .state == "closed" and
-              .merged == true and
-              .merged_at != null and
-              .merge_commit_sha == $main and
-              .head.sha == $head and
-              .head.repo.full_name == $repo and
-              .base.ref == $branch and
-              .base.repo.full_name == $repo
-            ' <<<"$merged_pr" >/dev/null
-
-          gh api -H 'Accept: application/vnd.github+json' \
-            "repos/$GITHUB_REPOSITORY/actions/runs/$UPSTREAM_RUN_ID/jobs?per_page=100" |
-            jq -e '
-              .total_count == 1 and
-              (.jobs | length) == 1 and
-              .jobs[0].name == "merged-main-signal" and
-              .jobs[0].conclusion == "success"
-            ' >/dev/null
-
-          echo "Verified merged PR #$pr_number: source $UPSTREAM_HEAD_SHA -> protected main $GITHUB_SHA"
-
       - name: Check out protected default branch
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

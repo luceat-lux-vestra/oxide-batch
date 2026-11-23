@@ -1,0 +1,3 @@
+# Source manifest for the CI-only zizmor scanner.
+# Dependabot pip/pip-compile owns version advancement and the generated hash lock.
+zizmor==1.33.0

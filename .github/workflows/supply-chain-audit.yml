@@ -14,7 +14,7 @@ concurrency:
 jobs:
   supply-chain:
     name: scheduled-supply-chain
-    uses: ./.github/workflows/supply-chain.yml
+    uses: $/.github/workflows/supply-chain.yml
     permissions:
       contents: read # Read repository contents for cargo-deny and policy validation.
 

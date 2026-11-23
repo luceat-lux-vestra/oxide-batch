@@ -17,7 +17,7 @@ jobs:
     steps:
       - name: Review dependency changes
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        uses: actions/dependency-review-action@bbc44d14a204704ccc493733616cd1e93a0321ec # v5.0.1
         with:
           base-ref: ${{ github.event.pull_request.base.sha }}
           head-ref: ${{ github.event.pull_request.head.sha }}
@@ -72,54 +72,135 @@ jobs:
         continue-on-error: true
         run: python3 -m json.tool .github/repository-settings-policy.json >/dev/null
 
-      - name: Install pinned static-analysis binaries
+      - name: Setup current Go stable for managed actionlint
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
-        id: install-scanners
+        id: setup-go
+        continue-on-error: true
+        uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version: stable
+          check-latest: true
+          cache: false
+
+      - name: Build managed actionlint
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.setup-go.outcome == 'success' }}
+        id: actionlint-build
         continue-on-error: true
         shell: bash
         run: |
           set -euo pipefail
           tool_dir="${RUNNER_TEMP}/actions-security-tools"
           mkdir -p "${tool_dir}"
-
-          # actionlint v1.7.12 Linux amd64 release artifact, verified before use.
-          actionlint_archive="actionlint_1.7.12_linux_amd64.tar.gz"
-          curl --fail --silent --show-error --location \
-            "https://github.com/rhysd/actionlint/releases/download/v1.7.12/${actionlint_archive}" \
-            --output "${tool_dir}/${actionlint_archive}"
-          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  ${tool_dir}/${actionlint_archive}" \
-            | sha256sum --check --strict
-          tar -xzf "${tool_dir}/${actionlint_archive}" -C "${tool_dir}" actionlint
+          (
+            cd .github/tools/actionlint
+            go build -mod=mod -o "${tool_dir}/actionlint" github.com/rhysd/actionlint/cmd/actionlint
+          )
           "${tool_dir}/actionlint" -version
-
-          # zizmor v1.29.0 Linux amd64 release artifact, verified before use.
-          zizmor_archive="zizmor-x86_64-unknown-linux-gnu.tar.gz"
-          curl --fail --silent --show-error --location \
-            "https://github.com/zizmorcore/zizmor/releases/download/v1.29.0/${zizmor_archive}" \
-            --output "${tool_dir}/${zizmor_archive}"
-          echo "dd96df044a6e8538d5f423790f453bdd03d49e5b2bcc38214acc41a2f1297839  ${tool_dir}/${zizmor_archive}" \
-            | sha256sum --check --strict
-          tar -xzf "${tool_dir}/${zizmor_archive}" -C "${tool_dir}" zizmor
-          "${tool_dir}/zizmor" --version
-
           printf 'ACTIONLINT=%s\n' "${tool_dir}/actionlint" >> "${GITHUB_ENV}"
-          printf 'ZIZMOR=%s\n' "${tool_dir}/zizmor" >> "${GITHUB_ENV}"
 
-      - name: Run actionlint
-        id: actionlint
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.install-scanners.outcome == 'success' }}
+      - name: Install managed zizmor
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        id: zizmor-install
         continue-on-error: true
         shell: bash
         run: |
-          # GitHub supports the documented cache-mode key, but pinned actionlint
+          set -euo pipefail
+          tool_dir="${RUNNER_TEMP}/actions-security-tools"
+          venv="${tool_dir}/zizmor-venv"
+          mkdir -p "${tool_dir}"
+          python3 -m venv "${venv}"
+          "${venv}/bin/python" -m pip install \
+            --disable-pip-version-check \
+            --no-input \
+            --only-binary=:all: \
+            --require-hashes \
+            -r .github/tools/zizmor/requirements.txt
+          "${venv}/bin/zizmor" --version
+          printf 'ZIZMOR=%s\n' "${venv}/bin/zizmor" >> "${GITHUB_ENV}"
+
+      - name: Prepare scanner negative-control workflow
+        if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
+        id: scanner-negative-fixture
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture_dir="${RUNNER_TEMP}/actions-security-negative/.github/workflows"
+          mkdir -p "${fixture_dir}"
+          fixture="${fixture_dir}/unsafe.yml"
+          unsafe_key="u""ses:"
+          unsafe_action="actions/checkout@v4"
+          {
+            printf '%s\n' 'name: Deliberately Unsafe'
+            printf '%s\n' 'on: push'
+            printf '%s\n' 'permissions: write-all'
+            printf '%s\n' 'jobs:'
+            printf '%s\n' '  unsafe:'
+            printf '%s\n' '    runs-on: ubuntu-nonexistent-runner'
+            printf '%s\n' '    steps:'
+            printf '%s\n' "      - ${unsafe_key} ${unsafe_action}"
+          } > "${fixture}"
+          printf 'SCANNER_NEGATIVE_FIXTURE=%s\n' "${fixture}" >> "${GITHUB_ENV}"
+
+      - name: Prove actionlint negative control
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.scanner-negative-fixture.outcome == 'success' }}
+        id: actionlint-negative
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          output="$("${ACTIONLINT}" -no-color "${SCANNER_NEGATIVE_FIXTURE}" 2>&1)" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "::error::actionlint accepted the deliberately invalid workflow."
+            exit 1
+          fi
+          if ! printf '%s' "${output}" | grep -q 'runner-label'; then
+            echo "::error::actionlint failed without the expected runner-label finding."
+            printf '%s\n' "${output}"
+            exit 1
+          fi
+
+      - name: Prove zizmor negative control
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.zizmor-install.outcome == 'success' && steps.scanner-negative-fixture.outcome == 'success' }}
+        id: zizmor-negative
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          status=0
+          output="$("${ZIZMOR}" \
+            --config .github/zizmor.yml \
+            --persona auditor \
+            --min-severity low \
+            --no-online-audits \
+            "${SCANNER_NEGATIVE_FIXTURE}" 2>&1)" || status=$?
+          if [ "${status}" -eq 0 ]; then
+            echo "::error::zizmor accepted the deliberately unsafe workflow."
+            exit 1
+          fi
+          if ! printf '%s' "${output}" | grep -q 'unpinned-uses'; then
+            echo "::error::zizmor failed without the expected unpinned-uses finding."
+            printf '%s\n' "${output}"
+            exit 1
+          fi
+
+      - name: Run actionlint
+        id: actionlint
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.actionlint-build.outcome == 'success' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          # GitHub supports the documented cache-mode key, but managed actionlint
           # v1.7.12 predates that schema addition. Ignore only that exact
           # compatibility false positive; all other actionlint findings remain binding.
           "${ACTIONLINT}" -color \
+            -config-file .github/actionlint.yaml \
             -ignore 'unexpected key "cache-mode" for "job" section'
 
       - name: Run zizmor full audit
         id: zizmor
-        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.install-scanners.outcome == 'success' }}
+        if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() && steps.zizmor-install.outcome == 'success' }}
         continue-on-error: true
         shell: bash
         run: |
@@ -127,7 +208,12 @@ jobs:
           # and narrowly suppressed must fail this stable PR context.
           # The checked-in config is the suppression inventory; repository-
           # specific policy independently proves its static trust boundaries.
-          "${ZIZMOR}" --config .github/zizmor.yml --persona auditor --min-severity low .github/workflows
+          "${ZIZMOR}" \
+            --config .github/zizmor.yml \
+            --persona auditor \
+            --min-severity low \
+            --no-online-audits \
+            .github/workflows
 
       - name: Validate deterministic Actions security policy
         id: policy
@@ -139,7 +225,12 @@ jobs:
         if: ${{ (github.event_name != 'pull_request' || github.event.pull_request.draft == false) && always() }}
         env:
           ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
-          INSTALL_SCANNERS_OUTCOME: ${{ steps.install-scanners.outcome }}
+          ACTIONLINT_BUILD_OUTCOME: ${{ steps.actionlint-build.outcome }}
+          ACTIONLINT_NEGATIVE_OUTCOME: ${{ steps.actionlint-negative.outcome }}
+          SETUP_GO_OUTCOME: ${{ steps.setup-go.outcome }}
+          SCANNER_NEGATIVE_FIXTURE_OUTCOME: ${{ steps.scanner-negative-fixture.outcome }}
+          ZIZMOR_INSTALL_OUTCOME: ${{ steps.zizmor-install.outcome }}
+          ZIZMOR_NEGATIVE_OUTCOME: ${{ steps.zizmor-negative.outcome }}
           POLICY_TESTS_OUTCOME: ${{ steps.policy-tests.outcome }}
           HARDENING_POLICY_TESTS_OUTCOME: ${{ steps.hardening-policy-tests.outcome }}
           CODEQL_RUST_IMPACT_TESTS_OUTCOME: ${{ steps.codeql-rust-impact-tests.outcome }}
@@ -155,7 +246,12 @@ jobs:
             "hardening-policy-tests:${HARDENING_POLICY_TESTS_OUTCOME}" \
             "codeql-rust-impact-tests:${CODEQL_RUST_IMPACT_TESTS_OUTCOME}" \
             "repository-settings-policy:${REPOSITORY_SETTINGS_POLICY_OUTCOME}" \
-            "scanner-install:${INSTALL_SCANNERS_OUTCOME}" \
+            "setup-go:${SETUP_GO_OUTCOME}" \
+            "actionlint-build:${ACTIONLINT_BUILD_OUTCOME}" \
+            "scanner-negative-fixture:${SCANNER_NEGATIVE_FIXTURE_OUTCOME}" \
+            "actionlint-negative:${ACTIONLINT_NEGATIVE_OUTCOME}" \
+            "zizmor-install:${ZIZMOR_INSTALL_OUTCOME}" \
+            "zizmor-negative:${ZIZMOR_NEGATIVE_OUTCOME}" \
             "actionlint:${ACTIONLINT_OUTCOME}" \
             "zizmor:${ZIZMOR_OUTCOME}" \
             "deterministic-policy:${POLICY_OUTCOME}"
