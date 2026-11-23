@@ -21,7 +21,9 @@ ACTION_LINE = re.compile(
 )
 SIMPLE_STATUSES = frozenset({"added", "modified", "removed"})
 MOVE_STATUSES = frozenset({"renamed", "copied"})
-M7_RELEASE_RECOVERY_CODEQL_BLOB = "2ae7cdb9fae8e3c9548fd1990a77b6da78e71161"
+# A production CodeQL workflow change must be independently classifiable from a
+# trusted base. No exception for a particular future Git blob is permitted.
+RUST_ARM_RUNNER_LINE = re.compile(r"^(?P<indent> {12})os: (?P<runner>ubuntu-\d{2}\.\d{2}-arm)\s*$")
 RELEVANT_PATHS = frozenset({
     ".github/workflows/codeql.yml",
     ".github/workflows/pr-ci.yml",
@@ -62,33 +64,57 @@ def _flatten_pages(raw: object) -> list[dict]:
     return records
 
 def require_supported_codeql_patch(record: dict) -> None:
+    """Admit only typed, independently reviewable CodeQL maintenance changes.
+
+    The trusted-base classifier runs before merge, so it cannot rely on a
+    proposed PR validator to authorize itself. Changes must be narrowly
+    constrained here; the PR CodeQL runtime separately checks its contract.
+    """
     if record.get("status") != "modified":
-        reject("codeql.yml compatibility classification only supports in-place modification")
+        reject("codeql.yml maintenance requires an in-place modification")
     patch = record.get("patch")
     if not isinstance(patch, str) or not patch:
         reject("codeql.yml patch is missing or truncated; refusing coverage claim")
 
-    # #666 bootstrap: pre-admit exactly one reviewed future production
-    # CodeQL workflow blob for the frozen M7 v0.7.0 recovery bridge.
-    # The trusted-base classifier sees the PR file's Git blob SHA, so this
-    # grants no generic workflow-edit capability and remains narrower than
-    # patch-shape matching.
-    if record.get("sha") == M7_RELEASE_RECOVERY_CODEQL_BLOB:
-        return
-
-    changed: list[tuple[str, str, str]] = []
+    action_changes: list[tuple[str, str, str]] = []
+    runner_changes: list[tuple[str, str]] = []
     for line in patch.splitlines():
         if line.startswith(("+++", "---", "@@")) or not line.startswith(("+", "-")):
             continue
-        match = ACTION_LINE.fullmatch(line[1:])
-        if match is None:
-            reject("unsupported codeql.yml mutation outside immutable init/analyze pin lines")
-        changed.append((line[0], match.group("action"), match.group("sha")))
-    shape = Counter((sign, action) for sign, action, _ in changed)
-    expected = Counter({("-", "init"): 1, ("+", "init"): 1, ("-", "analyze"): 1, ("+", "analyze"): 1})
-    if shape != expected:
-        reject("codeql.yml pin-only patch must replace exactly one init and one analyze pin")
+        value = line[1:]
+        action = ACTION_LINE.fullmatch(value)
+        if action is not None:
+            action_changes.append((line[0], action.group("action"), action.group("sha")))
+            continue
+        runner = RUST_ARM_RUNNER_LINE.fullmatch(value)
+        if runner is not None:
+            runner_changes.append((line[0], runner.group("runner")))
+            continue
+        reject("unsupported CodeQL production workflow mutation (not a typed action pin or Rust runner selector)")
 
+    if not action_changes and not runner_changes:
+        reject("CodeQL workflow patch has no supported changes")
+
+    if action_changes:
+        expected = Counter({("-", "init"): 1, ("+", "init"): 1, ("-", "analyze"): 1, ("+", "analyze"): 1})
+        if Counter((sign, action) for sign, action, _ in action_changes) != expected:
+            reject("CodeQL action upgrade must atomically replace init and analyze pins")
+        original = {action: sha for sign, action, sha in action_changes if sign == "-"}
+        replacement = {action: sha for sign, action, sha in action_changes if sign == "+"}
+        if original["init"] != original["analyze"] or replacement["init"] != replacement["analyze"]:
+            reject("CodeQL init/analyze action pin parity would be broken")
+        if original["init"] == replacement["init"]:
+            reject("CodeQL action pin was not changed")
+
+    if runner_changes:
+        if Counter(sign for sign, _ in runner_changes) != Counter({"-": 1, "+": 1}):
+            reject("CodeQL Rust ARM runner change must replace one runner selector")
+        if "          - language: rust" not in patch:
+            reject("CodeQL runner change is not inside the Rust matrix entry")
+        original = next(value for sign, value in runner_changes if sign == "-")
+        replacement = next(value for sign, value in runner_changes if sign == "+")
+        if original == replacement:
+            reject("CodeQL Rust ARM runner selector was not changed")
 
 def classify(pr: object, pages: object, *, repo: str, base: str, head: str, head_repo: str) -> bool:
     if not SHA.fullmatch(base) or not SHA.fullmatch(head):
@@ -282,24 +308,38 @@ def self_test() -> None:
         "+        uses: github/codeql-action/analyze@" + "2" * 40 + " # new",
     ])
     assert classify(pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml", "patch": allowed_patch}]], repo=repo, base=base, head=head, head_repo=head_repo)
-    recovery_patch = "@@ -1 +1 @@\n-old\n+reviewed M7 release recovery bridge"
+    runner_patch = "\\n".join([
+        "@@ -81,7 +81,7 @@",
+        "          - language: rust",
+        "            build-mode: none",
+        "-            os: ubuntu-24.04-arm",
+        "+            os: ubuntu-26.04-arm",
+    ])
     assert classify(
-        pr(),
-        [[{"status": "modified", "filename": ".github/workflows/codeql.yml",
-           "sha": M7_RELEASE_RECOVERY_CODEQL_BLOB, "patch": recovery_patch}]],
+        pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml", "patch": runner_patch}]],
         repo=repo, base=base, head=head, head_repo=head_repo,
     )
-    try:
-        classify(
-            pr(),
-            [[{"status": "modified", "filename": ".github/workflows/codeql.yml",
-               "sha": "0" * 40, "patch": recovery_patch}]],
-            repo=repo, base=base, head=head, head_repo=head_repo,
-        )
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("unreviewed non-pin codeql.yml blob was accepted")
+    assert classify(
+        pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml",
+                "patch": allowed_patch + "\\n" + runner_patch}]],
+        repo=repo, base=base, head=head, head_repo=head_repo,
+    )
+    for unsupported_patch in (
+        "@@ -1 +1 @@\\n-old\\n+unreviewed arbitrary workflow change",
+        "@@ -81,7 +81,7 @@\\n          - language: java\\n-            os: ubuntu-24.04-arm\\n+            os: ubuntu-26.04-arm",
+        "@@ -81,7 +81,7 @@\\n          - language: rust\\n-            os: ubuntu-24.04-arm\\n+            os: self-hosted",
+        runner_patch + "\\n+      security-events: write",
+        runner_patch.replace("ubuntu-26.04-arm", "ubuntu-24.04-arm"),
+    ):
+        try:
+            classify(
+                pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml",
+                         "patch": unsupported_patch}]], repo=repo, base=base, head=head, head_repo=head_repo,
+            )
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unsupported CodeQL workflow change was accepted")
     try:
         classify(pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml", "patch": allowed_patch + "\n+      security-events: write"}]], repo=repo, base=base, head=head, head_repo=head_repo)
     except ValueError:
