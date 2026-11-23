@@ -77,7 +77,7 @@ fn format3_manifest_has_a_golden_fingerprint() -> Result<(), Box<dyn Error>> {
         DefinitionRevision::new("v1")?,
     )?;
 
-    assert_eq!(plan.manifest_format(), 3);
+    assert_eq!(plan.definition_identity().manifest_format(), 3);
     assert_eq!(plan.node_count(), 4);
     assert_eq!(plan.transition_count(), 6);
     assert_eq!(
