@@ -431,6 +431,15 @@ async fn normalized_success(
     })
 }
 
+#[test]
+fn flow_job_accepts_local_scale_plan_without_manifest_kind_gate() -> Result<(), Box<dyn Error>> {
+    let name = JobName::new("local-scale-semantic-gate")?;
+    let plan = split_plan(&name, 2)?;
+
+    assert!(FlowJob::new(name, plan).is_ok());
+    Ok(())
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn parent_joins_every_branch_before_aggregating() -> Result<(), Box<dyn Error>> {
     let name = JobName::new("parallel-join")?;
