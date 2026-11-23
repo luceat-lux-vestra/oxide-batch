@@ -1036,7 +1036,9 @@ fn contract_check_fails_on_a_job_level_write_permission() -> Result<(), Box<dyn 
         let runner_line = workflow_text
             .lines()
             .find(|line| line.trim_start().starts_with("runs-on: "))
-            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing runner declaration"))?;
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidData, "missing runner declaration")
+            })?;
         insert_after(
             &workflow_path,
             &format!("{runner_line}\n"),
