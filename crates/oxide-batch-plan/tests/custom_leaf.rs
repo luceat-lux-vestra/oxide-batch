@@ -70,7 +70,9 @@ fn retry_policy() -> Result<FaultPolicy, Box<dyn Error>> {
 #[test]
 fn custom_leaf_forces_format_four() -> Result<(), Box<dyn Error>> {
     assert_eq!(
-        compiled("example", "handler-v1", "state", 1)?.manifest_format(),
+        compiled("example", "handler-v1", "state", 1)?
+            .definition_identity()
+            .manifest_format(),
         MANIFEST_FORMAT_ADVANCED_FLOW
     );
     Ok(())
