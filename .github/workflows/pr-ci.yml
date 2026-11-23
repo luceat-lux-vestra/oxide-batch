@@ -142,7 +142,7 @@ jobs:
   rust:
     needs: scope
     if: ${{ (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-    uses: ./.github/workflows/ci.yml
+    uses: $/.github/workflows/ci.yml
     permissions:
       actions: read # Reuse canonical exact-SHA Fast evidence in the called Rust authority.
       contents: read
@@ -150,70 +150,70 @@ jobs:
   dependency:
     needs: scope
     if: ${{ (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.docs_only != 'true') }}
-    uses: ./.github/workflows/dependency-review.yml
+    uses: $/.github/workflows/dependency-review.yml
     permissions:
       contents: read
 
   evidence:
     needs: scope
     if: ${{ (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.evidence_impact != 'false') }}
-    uses: ./.github/workflows/evidence.yml
+    uses: $/.github/workflows/evidence.yml
     permissions:
       contents: read
 
   supply:
     needs: scope
     if: ${{ (needs.scope.outputs.classification_outcome != 'success' || needs.scope.outputs.supply_chain_impact != 'false') }}
-    uses: ./.github/workflows/supply-chain.yml
+    uses: $/.github/workflows/supply-chain.yml
     permissions:
       contents: read
 
   campaign_soak:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-soak.yml') }}
-    uses: ./.github/workflows/m5-soak.yml
+    uses: $/.github/workflows/m5-soak.yml
     permissions:
       contents: read
 
   campaign_gate_b:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m6-gate-b.yml') }}
-    uses: ./.github/workflows/m6-gate-b.yml
+    uses: $/.github/workflows/m6-gate-b.yml
     permissions:
       contents: read
 
   campaign_gate_h:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m6-gate-h.yml') }}
-    uses: ./.github/workflows/m6-gate-h.yml
+    uses: $/.github/workflows/m6-gate-h.yml
     permissions:
       contents: read
 
   campaign_upgrade:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-upgrade.yml') }}
-    uses: ./.github/workflows/m5-upgrade.yml
+    uses: $/.github/workflows/m5-upgrade.yml
     permissions:
       contents: read
 
   campaign_security:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-security.yml') }}
-    uses: ./.github/workflows/m5-security.yml
+    uses: $/.github/workflows/m5-security.yml
     permissions:
       contents: read
 
   campaign_performance:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-performance.yml') }}
-    uses: ./.github/workflows/m5-performance.yml
+    uses: $/.github/workflows/m5-performance.yml
     permissions:
       contents: read
 
   campaign_conformance:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-conformance.yml') }}
-    uses: ./.github/workflows/m5-conformance.yml
+    uses: $/.github/workflows/m5-conformance.yml
     permissions:
       contents: read
       pull-requests: read # M5 trusted routing re-reads exact PR identity and changed-file metadata.
@@ -221,28 +221,28 @@ jobs:
   campaign_cancellation:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-cancellation.yml') }}
-    uses: ./.github/workflows/m5-cancellation.yml
+    uses: $/.github/workflows/m5-cancellation.yml
     permissions:
       contents: read
 
   campaign_crash_restore:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-crash-restore.yml') }}
-    uses: ./.github/workflows/m5-crash-restore.yml
+    uses: $/.github/workflows/m5-crash-restore.yml
     permissions:
       contents: read
 
   campaign_m6_conformance:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m6-conformance.yml') }}
-    uses: ./.github/workflows/m6-conformance.yml
+    uses: $/.github/workflows/m6-conformance.yml
     permissions:
       contents: read
 
   campaign_resource_bounds:
     needs: scope
     if: ${{ needs.scope.outputs.classification_outcome == 'success' && contains(needs.scope.outputs.direct_workflows, '.github/workflows/m5-resource-bounds.yml') }}
-    uses: ./.github/workflows/m5-resource-bounds.yml
+    uses: $/.github/workflows/m5-resource-bounds.yml
     permissions:
       contents: read
 

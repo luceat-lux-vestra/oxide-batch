@@ -11,6 +11,7 @@ from pathlib import Path
 FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
 READABLE_DIGEST_IMAGE = re.compile(r"^[^@\s]+:[^@\s]+@sha256:[0-9a-f]{64}$")
 USES_LINE = re.compile(r"^(?P<indent>\s*)(?P<dash>-\s*)?uses:\s*(?P<value>[^\s#]+)")
+SELF_REPOSITORY_WORKFLOW = re.compile(r"^\$/\.github/workflows/[^/\s]+\.ya?ml$")
 IMAGE_LINE = re.compile(r"^(?P<indent>\s*)image:\s*(?P<value>.+)$")
 PROGRAM_LINE = re.compile(
     r"^(?P<indent>\s*)(?P<dash>-\s*)?(?P<key>run|script):\s*(?P<value>.*)$"
@@ -190,6 +191,13 @@ def check_workflow(path: Path, text: str) -> list[str]:
             value = uses.group("value")
             if value.startswith("./"):
                 pass
+            elif SELF_REPOSITORY_WORKFLOW.fullmatch(value):
+                pass
+            elif value.startswith("$/"):
+                violations.append(
+                    f"{path}:{index + 1}: same-repository reusable workflow must be exactly "
+                    f"$/\.github/workflows/<file>.yml or .yaml: {value}"
+                )
             elif value.startswith("docker://"):
                 image = value.removeprefix("docker://")
                 if not READABLE_DIGEST_IMAGE.fullmatch(image):

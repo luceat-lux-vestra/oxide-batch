@@ -45,3 +45,27 @@ updates:
     labels:
       - dependencies
       - "area:ci"
+
+  - package-ecosystem: gomod
+    directory: /.github/tools/actionlint
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:45"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - "area:ci"
+
+  - package-ecosystem: pip
+    directory: /.github/tools/zizmor
+    schedule:
+      interval: weekly
+      day: monday
+      time: "10:00"
+      timezone: Asia/Seoul
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - "area:ci"

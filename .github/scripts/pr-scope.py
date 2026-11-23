@@ -545,7 +545,7 @@ def verify_pr_campaign_orchestration(
 
     reusable = set(
         re.findall(
-            r"^\s+uses:\s+\./(\.github/workflows/(?:m5|m6)-[^\s]+\.yml)\s*$",
+            r"^\s+uses:\s+\$/(\.github/workflows/(?:m5|m6)-[^\s]+\.yml)\s*$",
             source,
             flags=re.MULTILINE,
         )
@@ -574,7 +574,7 @@ def verify_pr_campaign_orchestration(
             "contains(needs.scope.outputs.direct_workflows, "
             f"'{campaign.workflow}')"
         )
-        uses = f"uses: ./{campaign.workflow}"
+        uses = f"uses: $/{campaign.workflow}"
         gate = f'require_campaign "{campaign.workflow}"'
         if source.count(condition) != 1:
             raise AssertionError(
