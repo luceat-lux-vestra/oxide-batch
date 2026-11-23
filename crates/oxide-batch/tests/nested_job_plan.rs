@@ -66,7 +66,7 @@ fn parent_plan(
 #[test]
 fn nested_job_forces_format_4_and_reader_accepts_it() -> Result<(), Box<dyn Error>> {
     let plan = parent_plan(vec![mapping("tenant")?], "mapping-v1")?;
-    assert_eq!(plan.manifest_format(), 4);
+    assert_eq!(plan.definition_identity().manifest_format(), 4);
     let manifest = DefinitionManifest::read(plan.definition_identity().canonical_manifest())?;
     assert_eq!(manifest.format(), 4);
     assert_eq!(manifest.node_count(), Some(1));
