@@ -15,12 +15,20 @@
       "mechanism": "Pin the reviewed upstream aarch64-unknown-linux-musl release archive and verify its SHA-256 before execution.",
       "owner": "luceat-lux-vestra/oxide-batch#718",
       "validation": "Supply-chain policy tests, exception-registry validation, cargo-deny full-graph check, actions-security, and Direct Merge Gate.",
-      "provenance": "cargo-deny 0.22.0; aarch64-unknown-linux-musl; sha256:4818d44cdcac285776336504fca722493ab634d3377b94a462e98aad3f41484a",
+      "provenance": {
+        "version": "0.22.0",
+        "artifacts": {
+          "aarch64-unknown-linux-musl": {
+            "url": "https://github.com/EmbarkStudios/cargo-deny/releases/download/0.22.0/cargo-deny-0.22.0-aarch64-unknown-linux-musl.tar.gz",
+            "sha256": "4818d44cdcac285776336504fca722493ab634d3377b94a462e98aad3f41484a"
+          }
+        }
+      },
       "revisit": {
         "review_by": "2027-02-22",
-        "rationale": "The maintained cargo-deny-action v2.1.3 Dockerfile installs an x86_64 cargo-deny archive without checksum verification, while this repository's supply-chain job is ARM64 and requires verified artifact identity. Adopting it would weaken platform and integrity guarantees.",
-        "evidence": "cargo-deny-action v2.1.3 commit 17aeb3c839e42274e2b8adf721c8c65edfdc74dd Dockerfile plus .github/workflows/supply-chain.yml",
-        "trigger": "A new stable cargo-deny release, or a maintained integration that supports ARM64 and verifies the selected cargo-deny artifact identity."
+        "rationale": "The repository requires an ARM64 checksum-verified artifact. The cargo-deny-specific maintained action currently downloads an x86_64 archive without checksum verification. The generic taiki-e/install-action v2.90.8 supports this pin safely, but this repository's selected-actions allowlist does not currently authorize that third-party action and the active connector cannot mutate the Administration-scoped allowlist.",
+        "evidence": "cargo-deny-action v2.1.3 commit 17aeb3c839e42274e2b8adf721c8c65edfdc74dd Dockerfile; taiki-e/install-action v2.90.8 commit fe3acb53a98b62c772db35de75ce0e4595e7ca8c manifest; repository selected-actions policy",
+        "trigger": "A new stable cargo-deny release, or an authorized maintained checksum-verifying installer becomes executable under the repository selected-actions policy."
       }
     },
     {
@@ -35,12 +43,24 @@
       "mechanism": "Pin reviewed upstream musl binaries per architecture, verify SHA-256, and include the tool version in the cache family so upgrades cannot reuse an older cache namespace.",
       "owner": "luceat-lux-vestra/oxide-batch#718",
       "validation": "Exact-head Rust PR CI, protected-main cache identity checks, sccache stats, actions-security, and Direct Merge Gate.",
-      "provenance": "sccache 0.20.0; aarch64 sha256:1bd78037804baeb9655f6baf8791f99c43388fae6d6b16944d3d93542fa5711a; x86_64 sha256:c3c5db9cd7e3be12b7bab350d8fe8ae7dcfb7269d5432b269e0dffa1a87c6ed2",
+      "provenance": {
+        "version": "0.20.0",
+        "artifacts": {
+          "aarch64-unknown-linux-musl": {
+            "url": "https://github.com/mozilla/sccache/releases/download/v0.20.0/sccache-v0.20.0-aarch64-unknown-linux-musl.tar.gz",
+            "sha256": "1bd78037804baeb9655f6baf8791f99c43388fae6d6b16944d3d93542fa5711a"
+          },
+          "x86_64-unknown-linux-musl": {
+            "url": "https://github.com/mozilla/sccache/releases/download/v0.20.0/sccache-v0.20.0-x86_64-unknown-linux-musl.tar.gz",
+            "sha256": "c3c5db9cd7e3be12b7bab350d8fe8ae7dcfb7269d5432b269e0dffa1a87c6ed2"
+          }
+        }
+      },
       "revisit": {
         "review_by": "2027-02-22",
-        "rationale": "The repository separates PR restore-only cache reads from protected-main cache writes. The maintained sccache action owns GitHub cache behavior and defaults to resolving the latest binary, which would change that authority/provenance contract rather than merely update a version.",
-        "evidence": ".github/workflows/ci.yml and .github/workflows/sccache-main-prime.yml protected-cache contract",
-        "trigger": "A new stable sccache release, a protected-cache architecture change, or a maintained integration that preserves explicit binary provenance and the existing read/write authority split."
+        "rationale": "The repository separates PR restore-only cache reads from protected-main cache writes and binds the compiler-cache namespace to tool provenance. taiki-e/install-action is a suitable generic checksum-verifying installer in principle, but v2.90.8 still resolves sccache 0.19.0 while upstream stable is 0.20.0, and the repository selected-actions allowlist does not currently authorize it.",
+        "evidence": "sccache v0.20.0 release assets plus protected-cache contracts in .github/workflows/ci.yml and .github/workflows/sccache-main-prime.yml; taiki-e/install-action v2.90.8 sccache manifest",
+        "trigger": "A new stable sccache release, or an authorized maintained installer catches up while preserving explicit resolved provenance and the protected read/write cache authority split."
       }
     },
     {
@@ -56,12 +76,20 @@
       "mechanism": "Pin the reviewed aarch64 release archive, verify SHA-256, execute a linker probe, and bind the mold version into the ARM64 compiler-cache namespace.",
       "owner": "luceat-lux-vestra/oxide-batch#718",
       "validation": "Verified installer probe, exact-head Rust CI, protected-main cache priming, and Direct Merge Gate.",
-      "provenance": "mold 3.0.0; aarch64-linux; sha256:52c759d3689babaea4c42af2f31062a74ab83e17ffb5a8090232534c67b70577",
+      "provenance": {
+        "version": "3.0.0",
+        "artifacts": {
+          "aarch64-linux": {
+            "url": "https://github.com/rui314/mold/releases/download/v3.0.0/mold-3.0.0-aarch64-linux.tar.gz",
+            "sha256": "52c759d3689babaea4c42af2f31062a74ab83e17ffb5a8090232534c67b70577"
+          }
+        }
+      },
       "revisit": {
         "review_by": "2027-02-22",
-        "rationale": "The linker version is part of compiler-cache and performance evidence identity. Automatic mutation without coordinated cache generation and validation could reuse or compare incompatible build evidence.",
-        "evidence": ".github/scripts/install-mold-arm64.sh plus cache-family declarations in CI and protected-main prime",
-        "trigger": "A new stable mold release, linker regression/security advisory, or a compiler-cache identity redesign."
+        "rationale": "The linker version is part of compiler-cache and performance evidence identity. taiki-e/install-action v2.90.8 supports the current checksum-backed mold release, but the repository selected-actions allowlist does not currently authorize that third-party action, so the verified local installer remains the executable path.",
+        "evidence": "mold 3.0.0 release artifact plus .github/scripts/install-mold-arm64.sh and protected cache identity",
+        "trigger": "A new stable mold release, linker regression/security advisory, compiler-cache identity redesign, or authorized maintained installer adoption."
       }
     },
     {
@@ -77,12 +105,20 @@
       "mechanism": "Pin the reviewed x86_64 GNU release archive, verify SHA-256 before extraction, verify the installed version, and keep the release workflow's explicit CycloneDX 1.5 output contract.",
       "owner": "luceat-lux-vestra/oxide-batch#718",
       "validation": "Installer version check, release workflow static/security validation, package/SBOM release checks, and Direct Merge Gate for changes.",
-      "provenance": "cargo-cyclonedx 0.5.10; x86_64-unknown-linux-gnu; sha256:2e4ef64a53c0a38d4b7d805c593b5f47ecd29821e98d81e484d03abaa0edb95f",
+      "provenance": {
+        "version": "0.5.10",
+        "artifacts": {
+          "x86_64-unknown-linux-gnu": {
+            "url": "https://github.com/CycloneDX/cyclonedx-rust-cargo/releases/download/cargo-cyclonedx-0.5.10/cargo-cyclonedx-x86_64-unknown-linux-gnu.tar.xz",
+            "sha256": "2e4ef64a53c0a38d4b7d805c593b5f47ecd29821e98d81e484d03abaa0edb95f"
+          }
+        }
+      },
       "revisit": {
         "review_by": "2027-02-22",
-        "rationale": "The tool changes generated release SBOM bytes and metadata and therefore belongs to reviewed release provenance rather than an unreviewed floating channel.",
-        "evidence": "docs/engineering/dependency-policy.md release tooling record and .github/workflows/release-draft.yml",
-        "trigger": "A new stable cargo-cyclonedx release, SBOM format/security requirement change, or release-provenance redesign."
+        "rationale": "The tool changes generated release SBOM bytes and metadata and must remain bound to reviewed provenance. taiki-e/install-action v2.90.8 supports the current checksum-backed release, but the repository selected-actions allowlist does not currently authorize that third-party action.",
+        "evidence": "cargo-cyclonedx 0.5.10 release artifact, release workflow CycloneDX 1.5 contract, and repository selected-actions policy",
+        "trigger": "A new stable cargo-cyclonedx release, SBOM format/security requirement change, release-provenance redesign, or authorized maintained installer adoption."
       }
     },
     {
@@ -98,14 +134,25 @@
         ".github/workflows/m5-soak.yml",
         ".github/workflows/m5-upgrade.yml",
         ".github/workflows/m6-conformance.yml",
-        ".github/workflows/m6-gate-b.yml"
+        ".github/workflows/m6-gate-b.yml",
+        ".github/scripts/validate_actions_security.py",
+        ".github/scripts/test_validate_actions_security.py",
+        "tests/fixtures/conformance/execution-contract.json",
+        "tests/fixtures/performance/execution-contract.json",
+        "tests/fixtures/cancellation/execution-contract.json",
+        "tests/fixtures/crash-restore/execution-contract.json"
       ],
       "strategy": "REVIEWED_FREEZE",
       "authority": "Official postgres container tags/digests and repository database support/campaign evidence",
       "mechanism": "Treat digest-pinned 15/18 images as certification inputs; update versions/digests only with the corresponding repository/campaign compatibility validation.",
       "owner": "luceat-lux-vestra/oxide-batch#718",
       "validation": "PostgreSQL design/repository/item-component jobs plus affected M5/M6 campaign contract checks and Direct Merge Gate.",
-      "provenance": "postgres:15 sha256:926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561; postgres:18 sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280",
+      "provenance": {
+        "images": {
+          "15": "postgres:15@sha256:926f8799aef36e00001cfe15fba7abbd37d3c5224ea57e4c858e4bb670f10561",
+          "18": "postgres:18@sha256:4ef4dbc939d61acea57712655ddb4b4ab27419c913f94cca0cd57cb3ea3c2280"
+        }
+      },
       "revisit": {
         "review_by": "2027-02-22",
         "rationale": "These images are tested compatibility/certification inputs whose digests are embedded in multiple exact campaign contracts; blind image updates would invalidate evidence without proving adapter compatibility.",
@@ -124,7 +171,11 @@
       "mechanism": "Keep the selected MySQL 8.4 patch digest as an explicit repository certification input until the lane is deliberately refreshed.",
       "owner": "luceat-lux-vestra/oxide-batch#718",
       "validation": "mysql-8.4.13-repository-core exact-head CI and Direct Merge Gate.",
-      "provenance": "mysql:8.4.13 sha256:f4539b86c82f2c168fc95b439448bde3b9f48e8460344ce41e39081867d2b58e",
+      "provenance": {
+        "images": {
+          "8.4.13": "mysql:8.4.13@sha256:f4539b86c82f2c168fc95b439448bde3b9f48e8460344ce41e39081867d2b58e"
+        }
+      },
       "revisit": {
         "review_by": "2027-02-22",
         "rationale": "The image is a compatibility certification input rather than a runtime dependency; changing it changes the tested database point.",
@@ -143,7 +194,11 @@
       "mechanism": "Keep the selected MariaDB 11.8 patch digest as an explicit repository certification input until the lane is deliberately refreshed.",
       "owner": "luceat-lux-vestra/oxide-batch#718",
       "validation": "mariadb-11.8.9-repository-core exact-head CI and Direct Merge Gate.",
-      "provenance": "mariadb:11.8.9 sha256:5578b77f7f2cbfad1ba71619b080dcfb5cf84e99b5293059afbe6cbca9a7ad0d",
+      "provenance": {
+        "images": {
+          "11.8.9": "mariadb:11.8.9@sha256:5578b77f7f2cbfad1ba71619b080dcfb5cf84e99b5293059afbe6cbca9a7ad0d"
+        }
+      },
       "revisit": {
         "review_by": "2027-02-22",
         "rationale": "The image is a compatibility certification input rather than a runtime dependency; changing it changes the tested database point.",
@@ -164,7 +219,12 @@
       "mechanism": "Update the image version/digest and the exact MongoDB CI/certification contract together after compatibility validation.",
       "owner": "luceat-lux-vestra/oxide-batch#718",
       "validation": "MongoDB CI contract validator, mongodb-8.0/8.2 repository-core jobs, certification evidence review, and Direct Merge Gate.",
-      "provenance": "mongo:8.0.38 sha256:d97fea17ccb8d004cd137be8dab54d70d0df11be69c9f422aefe4484c8414ab7; mongo:8.2.12 sha256:e0ce8c35124d4a9f9785532d1f268f39e9728ffa1cb38f46fa482436424c4bd3",
+      "provenance": {
+        "images": {
+          "8.0.38": "mongo:8.0.38@sha256:d97fea17ccb8d004cd137be8dab54d70d0df11be69c9f422aefe4484c8414ab7",
+          "8.2.12": "mongo:8.2.12@sha256:e0ce8c35124d4a9f9785532d1f268f39e9728ffa1cb38f46fa482436424c4bd3"
+        }
+      },
       "revisit": {
         "review_by": "2027-02-22",
         "rationale": "These exact images are part of the accepted MongoDB certification record; automatic mutation would make the checked-in evidence and tested compatibility point disagree.",
@@ -184,7 +244,16 @@
       "mechanism": "Update image tag, digest, expected product version, and runnable-core fixture together after repository compatibility validation.",
       "owner": "luceat-lux-vestra/oxide-batch#718",
       "validation": "sqlserver-2022/2025 repository-core jobs, runnable-core product-version assertion, and Direct Merge Gate.",
-      "provenance": "2022-CU28 sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f product 16.0.4325.4; 2025-CU11 sha256:05644dad1266ca3d445d1e8f6d2ebb9a6a03df9a39376e0f7b48917356dca9d9 product 17.0.5065.9",
+      "provenance": {
+        "images": {
+          "2022-CU28": "mcr.microsoft.com/mssql/server:2022-CU28-ubuntu-22.04@sha256:4525e3efac9f3e241cb003bb2ff2a82818b502f37e12049d788b1a9fa7e13b7f",
+          "2025-CU11": "mcr.microsoft.com/mssql/server:2025-CU11-ubuntu-24.04@sha256:05644dad1266ca3d445d1e8f6d2ebb9a6a03df9a39376e0f7b48917356dca9d9"
+        },
+        "product_versions": {
+          "2022-CU28": "16.0.4325.4",
+          "2025-CU11": "17.0.5065.9"
+        }
+      },
       "revisit": {
         "review_by": "2027-02-22",
         "rationale": "The image and reported SQL Server product version form one exact repository compatibility contract; an automatic image-only update would be internally inconsistent.",

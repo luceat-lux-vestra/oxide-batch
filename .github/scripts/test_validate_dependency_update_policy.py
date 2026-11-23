@@ -33,7 +33,15 @@ def valid_document() -> dict:
                 "mechanism": "verified immutable artifact",
                 "owner": "oxide-batch#718",
                 "validation": "test gate",
-                "provenance": "fixture version and digest",
+                "provenance": {
+                    "version": "1.2.3",
+                    "artifacts": {
+                        "linux": {
+                            "url": "https://example.invalid/tool-1.2.3.tar.gz",
+                            "sha256": "a" * 64,
+                        }
+                    },
+                },
                 "revisit": {
                     "review_by": "2027-02-22",
                     "rationale": "bounded compatibility evidence",
@@ -57,6 +65,14 @@ class DependencyUpdatePolicyTests(unittest.TestCase):
     def test_valid_finite_freeze_passes(self) -> None:
         self.assertEqual(self.validate(valid_document()), [])
 
+    def test_resolves_structured_provenance(self) -> None:
+        document = valid_document()
+        self.assertEqual(policy.resolve_value(document, "fixture", "version"), "1.2.3")
+        self.assertEqual(
+            policy.resolve_value(document, "fixture", "sha256", artifact="linux"),
+            "a" * 64,
+        )
+
     def test_expired_freeze_fails(self) -> None:
         errors = self.validate(valid_document(), today="2027-02-23")
         self.assertTrue(any("expired" in error for error in errors), errors)
@@ -66,6 +82,12 @@ class DependencyUpdatePolicyTests(unittest.TestCase):
         document["entries"][0]["revisit"]["review_by"] = "2027-02-23"
         errors = self.validate(document)
         self.assertTrue(any("maximum is 90" in error for error in errors), errors)
+
+    def test_future_review_date_fails(self) -> None:
+        document = valid_document()
+        document["reviewed_at"] = "2026-11-25"
+        errors = self.validate(document)
+        self.assertTrue(any("cannot be in the future" in error for error in errors), errors)
 
     def test_missing_source_path_fails(self) -> None:
         document = valid_document()
@@ -78,6 +100,12 @@ class DependencyUpdatePolicyTests(unittest.TestCase):
         document["entries"].append(copy.deepcopy(document["entries"][0]))
         errors = self.validate(document)
         self.assertTrue(any("duplicates" in error for error in errors), errors)
+
+    def test_invalid_artifact_checksum_fails(self) -> None:
+        document = valid_document()
+        document["entries"][0]["provenance"]["artifacts"]["linux"]["sha256"] = "bad"
+        errors = self.validate(document)
+        self.assertTrue(any("64 lowercase hex" in error for error in errors), errors)
 
 
 if __name__ == "__main__":

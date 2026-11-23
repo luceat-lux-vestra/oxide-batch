@@ -48,14 +48,15 @@ jobs:
           test "$RUNNER_OS" = "Linux"
           test "$RUNNER_ARCH" = "ARM64"
           test "$(uname -m)" = "aarch64"
-          version="0.22.0"
           target="aarch64-unknown-linux-musl"
-          sha256="4818d44cdcac285776336504fca722493ab634d3377b94a462e98aad3f41484a"
+          version="$(python3 .github/scripts/validate_dependency_update_policy.py --entry cargo-deny --field version)"
+          url="$(python3 .github/scripts/validate_dependency_update_policy.py --entry cargo-deny --artifact "$target" --field url)"
+          sha256="$(python3 .github/scripts/validate_dependency_update_policy.py --entry cargo-deny --artifact "$target" --field sha256)"
           dir="$(mktemp -d "$RUNNER_TEMP/cargo-deny.XXXXXX")"
           trap 'rm -rf "$dir"' EXIT
           archive="$dir/cargo-deny.tar.gz"
           curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$version/cargo-deny-$version-$target.tar.gz" \
+            "$url" \
             --output "$archive"
           echo "$sha256  $archive" | sha256sum --check --strict
           mkdir -p "$dir/bin"
