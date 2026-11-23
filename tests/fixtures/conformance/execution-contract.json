@@ -10,7 +10,7 @@
   "permissions": {
     "contents": "read"
   },
-  "runner": "ubuntu-26.04",
+  "runner": "ubuntu-latest",
   "script": "./tests/fixtures/conformance/run-ci-campaign.sh {major} \"$SHARD_INDEX\" 2",
   "script_path": "tests/fixtures/conformance/run-ci-campaign.sh",
   "supported_matrix": [
@@ -110,5 +110,6 @@
     "workflow": "8573c0f0d74f4ece373b4d6aab2de3d9e8ba762e",
     "script": "367726d79cf96f9a109261df313b9544e92d77de",
     "merge_script": "be228e6adcd1ff9981985b5179e553c494457f46"
-  }
+  },
+  "workflow_git_blob": "1b9dfd1a4b2c1387ed87a3d29673702189ccfe35"
 }
