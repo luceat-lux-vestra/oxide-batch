@@ -1916,6 +1916,23 @@ impl CompiledExecutionPlan {
         self.nested_scopes.get(owner)
     }
 
+    /// Returns whether this plan owns durable flow-decision semantics.
+    ///
+    /// Every transition source of a compiled flow carries one deterministic
+    /// decision-sequence identity. Standalone one-step compatibility plans
+    /// execute through the plan but persist no `FlowDecision`, so they do not
+    /// satisfy this capability.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn supports_flow_decision_persistence(&self) -> bool {
+        !self.decision_sequences.is_empty()
+            && self.decision_sequences.len() == self.transitions.len()
+            && self
+                .transitions
+                .keys()
+                .all(|source| self.decision_sequences.contains_key(source))
+    }
+
     /// Returns the deterministic compiled sequence identity for one transition source.
     ///
     /// Executable flow plans assign this identity independently of historical
