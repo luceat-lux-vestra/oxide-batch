@@ -770,7 +770,7 @@ jobs:
   sqlserver-repository-core:
     name: sqlserver-${{ matrix.lane }}-repository-core
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
