@@ -118,7 +118,7 @@ fn two_step_plan(
 fn repeat_definition_forces_format4_and_reader_accepts_it() -> Result<(), Box<dyn Error>> {
     let plan = two_step_plan(false, repeat("outer", "limit-10", &["audit"])?)?;
 
-    assert_eq!(plan.manifest_format(), 4);
+    assert_eq!(plan.definition_identity().manifest_format(), 4);
     let manifest = DefinitionManifest::read_verified(
         plan.definition_identity().canonical_manifest(),
         plan.fingerprint(),
@@ -448,7 +448,7 @@ fn old_format2_manifest_remains_readable_without_repeat_metadata() -> Result<(),
         DefinitionRevision::new("v1")?,
     )?;
 
-    assert_eq!(plan.manifest_format(), 2);
+    assert_eq!(plan.definition_identity().manifest_format(), 2);
     assert_eq!(
         DefinitionManifest::read_verified(
             plan.definition_identity().canonical_manifest(),
