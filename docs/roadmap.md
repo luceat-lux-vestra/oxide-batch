@@ -313,17 +313,16 @@ separate governance decision.
 
 ## M7 — Advanced Flow, Repeat, Scope, and Composition
 
-**Status:** Exit verification in progress — activated 2026-09-07 after #194
-closed the design gate and ADR-0013 became the binding M7 architecture
-decision.
+**Status:** Completed — umbrella #192, exit owner #200, and native milestone #8
+are closed/completed. The accepted M7 exit authority is
+[`m7-exit-evidence.md`](project/m7-exit-evidence.md). This historical
+completion does not by itself promote unreleased M7 implementation to a
+released compatibility claim.
 
-The active execution boundary is issue #192 / native milestone #8. All bounded
-implementation owners #195-#199 are complete. #200 is now the sole M7-wide
-conformance, restart, documentation-reconciliation, and exit-evidence owner;
-M7 remains open until #200 satisfies the milestone exit criteria. This does not
-promote unreleased M7 implementation to a released compatibility claim.
-The accepted #198 Gate-D matrix is in
+The accepted #198 Gate-D matrix remains in
 [`m7-gate-d-acceptance-evidence.md`](project/m7-gate-d-acceptance-evidence.md).
+Detailed issue status is intentionally not duplicated here; GitHub owns live
+execution state while this roadmap owns milestone scope and sequencing.
 
 Binding M7 authority is
 [ADR-0013](architecture/decisions/0013-m7-advanced-flow-scope-repeat-and-evolution.md)
@@ -372,6 +371,11 @@ definition-evolution guides plus ledger evidence.
 categories, not complete Spring Batch parity.
 
 ## M8 — Repository Portability and Capability Model
+
+**Status:** Active — umbrella #201 is assigned to native milestone #9. Before
+starting or continuing M8 work, fresh-read the umbrella, native milestone,
+owned child/dependency metadata, and accepted M8 gate records. Mutable child
+status is not duplicated in this roadmap.
 
 **Objective:** move beyond a PostgreSQL-only durable deployment while
 preserving explicit, adapter-specific semantics and fast paths.

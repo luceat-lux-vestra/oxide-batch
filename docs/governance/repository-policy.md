@@ -22,17 +22,23 @@ Allowed branch prefixes are `feat/`, `fix/`, `docs/`, `refactor/`, `test/`,
 ## Pull requests
 
 - Every post-bootstrap change to `main` must use a pull request.
-- One approving review is required.
 - Review conversations must be resolved.
-- Required status checks must pass.
-- Stale approvals are dismissed after new reviewable commits.
-- The latest reviewable push must be approved.
+- The required GitHub Actions `Direct Merge Gate` must pass.
+- Exact-final-HEAD review/evidence remains mandatory under repository policy;
+  a green gate is necessary but never sufficient.
+- The live main ruleset currently requires **0** approving reviews and does not
+  require latest-push approval. Do not fabricate a human approval requirement
+  that the repository has not adopted.
+- If reviews are present, stale reviews are dismissed after new reviewable
+  commits under the live ruleset configuration.
 - Only squash merge is enabled.
+- The live main ruleset has **no bypass actors**. Do not assume owner/admin
+  bypass authority; read live enforcement before a consequential merge action.
 
-While the project has one maintainer, the repository owner has pull-request-only
-bypass permission. This preserves a pull request and audit trail but permits the
-owner to merge without a second person. Direct pushes remain outside the normal
-workflow. The bypass will be removed when another active maintainer is added.
+The checked-in `.github/repository-settings-policy.json` records these
+repository controls and the live ruleset remains execution authority. If the
+checked-in policy and GitHub diverge, fail closed and reconcile the drift rather
+than choosing the more convenient state.
 
 The initial repository commit is the sole bootstrap exception because the
 ruleset cannot exist until the repository and its default branch exist.

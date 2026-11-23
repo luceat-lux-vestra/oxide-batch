@@ -29,28 +29,82 @@ errors, and structured concurrency. Treat “production-ready,” “compatible,
 “high performance,” and “beyond Spring” as evidence claims, never as design
 adjectives.
 
-## Current execution phase
+## Portable agent execution and engineering integrity
 
-The published boundary remains M6 / `0.6.0`. The active development milestone
-is **M7 — Advanced Flow, Repeat, Scope, and Composition**, owned by umbrella
-#192 and native milestone #8. M7 was activated after the accepted
-[ADR-0013](docs/architecture/decisions/0013-m7-advanced-flow-scope-repeat-and-evolution.md)
-and its canonical
-[architecture contract](docs/architecture/m7-advanced-flow-scope-repeat-and-evolution.md).
+This repository adopts the portable baseline **EG-AI-001** from
+`engineering-governance/main@672159e99d08fc65eee515c43946d0000d5b26a8`.
+That SHA is immutable adoption provenance, not a runtime dependency. These
+target-local instructions are self-contained and all stricter OxideBatch
+architecture, durability, compatibility, CI, release, security, and evidence
+contracts remain authoritative.
 
-Current owner state on this baseline:
+One explicit user authorization permits exactly one **bounded coherent work
+unit**. A work unit is not one API call, one file edit, one finding, or one
+lifecycle micro-step. Unless the active task or stricter target policy requires
+another shape, prefer these repository-rollout phases:
 
-- #195 advanced compiled flow/custom-step ownership — completed;
-- #196 job/step scope, factories, and late binding — completed;
-- #197 repeat/interceptors and flow-level fault semantics — completed;
-- #198 definition registry/evolution/fork lineage — completed;
-- #199 launcher/operator/explorer and incrementer semantics — completed;
-- #200 M7 conformance/restart/docs exit gate — open, unblocked, and the sole
-  remaining M7-wide exit owner.
+1. comprehensive audit + consolidated implementation + local/static/source
+   validation + one durable candidate;
+2. PR creation + one exact-HEAD CI/enforcement observation;
+3. comprehensive remediation across the complete observed failure set and
+   relevant adjacent surface, only when evidence requires it;
+4. final exact-candidate review + merge when every required precondition is
+   already PASS;
+5. post-merge verification + target closure/coordination.
 
-Do not treat merged M7 implementation as a released or `Verified` compatibility
-claim. M8-M14 remain later milestones, and historical M0-M6/M7 gate records stay
-point-in-time evidence rather than current status documents.
+**Audit before edit.** Inspect the relevant policy, architecture, workflow,
+validation, live-enforcement, open-work, and accepted-contract surface broadly
+enough to freeze the in-scope finding set before implementation. Do not
+intentionally operate as `find one problem -> patch -> CI -> next problem`.
+When later evidence exposes another defect, analyze the complete related
+surface and consolidate justified fixes before moving the candidate again.
+
+A selected work unit may contain multiple material mutations. Each
+consequential mutation still requires a fresh precondition check and
+authoritative postcondition read-back. Continue only while the mutation remains
+inside the selected unit. `PENDING`, `CONFLICT`, material `UNKNOWN`,
+`UNVERIFIED`, insufficient evidence, or a failed required boundary stops the
+unit rather than authorizing speculative continuation.
+
+For agent-side CI observation, take one bounded logical evidence snapshot for
+the exact candidate SHA. Use the minimum distinct evidence needed to establish
+required checks, event/provenance, rulesets and enforcement. Classify
+`PASS`, `FAIL`, `PENDING`, `UNVERIFIED`, or `BLOCKED`. Do not poll,
+wait-to-green, rerun-to-green, or patch the first failing check and immediately
+observe again.
+
+Production behavior and repository automation must obtain mutable or
+environment-dependent facts from their designated authority, explicit
+contract, discovery, configuration, or validated input. Do not hardcode
+machine-specific paths, transient IDs, mutable endpoints, current refs/SHAs, or
+runtime facts as universal assumptions; fabricate status/output/evidence;
+special-case fixtures, users, versions, environments, or CI paths to manufacture
+success; swallow required failures; or silently fall back to arbitrary values.
+Legitimate protocol/domain constants, canonical identifiers/URLs, reviewed
+dependency/security pins, reproducible fixtures, documented defaults, golden
+outputs, and explicit compatibility cases remain valid when their scope and
+rationale are clear.
+
+Do not claim that these instructions govern an OMP worker, subagent, IDE agent,
+local model, or other runtime until target-local loading has been demonstrated.
+Full multi-agent coverage additionally requires evidence for runtime version,
+configuration precedence, repository-local instruction loading, subagent
+inheritance, and applicable persistent rule files. Until then, OMP/subagent
+coverage is **UNVERIFIED**.
+
+## Current execution authority
+
+The published workspace boundary remains `0.6.0`. M7 delivery is historical
+and completed; its accepted authority is the M7 architecture/decision set and
+`docs/project/m7-exit-evidence.md`.
+
+Do **not** encode mutable current milestone child/issue status in this policy.
+Before milestone-scoped work, fresh-read `docs/roadmap.md`, the corresponding
+native GitHub milestone, the umbrella owner, and the accepted gate/ADR records.
+Live GitHub execution state owns current issue/milestone status; accepted
+repository documents own product semantics. A published release boundary,
+unreleased implementation milestone, and released/Verified compatibility claim
+remain distinct.
 
 ## Authority and required reading
 

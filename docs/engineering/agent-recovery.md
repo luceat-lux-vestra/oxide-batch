@@ -72,7 +72,13 @@ last_mutation:
 stop_condition: <repository-policy stop condition>
 ```
 
-The checkpoint records durable identity and phase, not volatile CI state. Do not store chat/model IDs, hidden reasoning, secrets, or private transcript content.
+The checkpoint is a **replace-in-place latest-state snapshot**, not an append-only execution log. Keep durable identity, concise completed outcomes needed for resumption, current phase/state, blockers, next safe work unit, and stop condition. Replace or remove superseded HEADs, CI snapshots, per-turn notes, and phase history rather than accumulating chronology in the comment. Git commits, PR history, Issue events, reviews, and retained evidence own that history.
+
+The checkpoint may summarize the **current** CI/verification judgment needed to resume safely, but that summary is only a hint. Fresh GitHub state remains authoritative.
+
+Use one checkpoint writer at a time. Where a version-checked update, lock, lease, or compare-and-swap mechanism exists, use it. If a concurrent or uncertain checkpoint write is detected, fresh-read the Issue/GitHub state, reconcile, and STOP rather than using last-writer-wins reasoning. Do not create a second marker comment to avoid a conflict.
+
+Do not store chat/model IDs, hidden reasoning, secrets, or private transcript content.
 
 ## Normal checkpoint boundaries
 
@@ -102,7 +108,7 @@ Before mutating interrupted work:
 5. read checks, reviews and threads when they affect the next decision
 6. compare checkpoint expectation with current GitHub state
 7. classify the relationship
-8. derive exactly one safe next action
+8. derive exactly one safe next **work unit** and its stop condition
 9. mutate only after required preconditions are proven
 ```
 
@@ -118,19 +124,54 @@ Use one classification:
 
 ## Mutation protocol
 
-Every material external mutation follows:
+A selected coherent work unit may contain multiple material external mutations.
+Every such mutation follows:
 
 ```text
 fresh precondition read
   -> bounded mutation
   -> authoritative read-back
   -> classify postcondition
-  -> checkpoint only after verified postcondition
+  -> advance the checkpoint only after a verified durable postcondition
+  -> continue only while still inside the selected work-unit scope
 ```
 
-If the response/session is lost after a mutation, never repeat the operation solely because the checkpoint did not advance. Re-read GitHub first.
+A verified internal mutation does not itself force an authorization STOP.
+Continue until the work unit's declared boundary, or stop earlier on a
+pending/conflicting/materially unknown/failed required boundary.
 
-For create operations, use stable identities and search/read before retrying. For ref movement, re-read the branch and record the verified SHA. For merge, pin the expected reviewed HEAD when supported and re-read PR/default-branch state before retrying an unknown outcome.
+For implementation and remediation work, audit the relevant surface before
+editing and prefer one consolidated candidate over repeated one-finding/one-patch
+cycles. If tests or CI expose additional failures, preserve the complete
+observed failure set and inspect the relevant adjacent surface before producing
+the next candidate.
+
+If the response/session is lost after a mutation, never repeat the operation
+solely because the checkpoint did not advance. Re-read GitHub first.
+
+For create operations, use stable identities and search/read before retrying.
+For ref movement, re-read the branch and record the verified SHA. For merge,
+pin the expected reviewed HEAD when supported and re-read PR/default-branch
+state before retrying an unknown outcome.
+
+## CI observation
+
+Agent-side CI observation is one bounded logical snapshot for the exact
+candidate SHA. It may read the minimum distinct check-run, workflow-run, status,
+ruleset, review, event, and provenance sources needed to classify the required
+obligations; it is not limited to one HTTP request.
+
+- queued/in-progress -> `PENDING`, STOP;
+- required evidence missing or provenance unresolved -> `UNVERIFIED` or
+  `BLOCKED`, STOP;
+- failed required evidence -> `FAIL`, preserve the complete failure set and
+  STOP unless comprehensive remediation was already explicitly inside the
+  selected unit;
+- passed evidence proves only its exact input/provenance.
+
+Do not repeatedly query evolving status to wait for green, silently rerun to
+improve a verdict, or cross automatically from observation into piecemeal
+remediation.
 
 ## Exact-HEAD evidence
 
@@ -153,7 +194,7 @@ Classify movement before deciding what prior evidence still proves:
 
 Before relying on same-HEAD evidence after base advancement, fresh-read the current PR HEAD, `main`, merge-base, live ruleset, required checks, review threads, and mergeability. Determine whether the evidence was produced for the unchanged HEAD itself or for an old synthetic merge/base+HEAD composition.
 
-For oxide-batch specifically, the live `Protect main` ruleset requires the GitHub Actions `Direct Merge Gate` with strict required-status-check enforcement. `AGENTS.md` also requires exact-HEAD proof, fail-closed material unknowns, required CI, and repository-state revalidation before completion. Those stricter requirements remain authoritative. Same-HEAD evidence reuse therefore never authorizes an out-of-date or otherwise invalid current composition.
+For oxide-batch specifically, the live `Protect main` ruleset requires the GitHub Actions `Direct Merge Gate`, while `strict_required_status_checks_policy=false`. Do not claim GitHub mechanically requires the branch to be current with the latest base. `AGENTS.md` still requires exact-HEAD proof, fail-closed material unknowns, required CI, and a current-composition/base-advancement judgment before completion. Those stricter repository rules remain authoritative even where the platform ruleset itself is non-strict.
 
 Evidence reuse is claim-scoped, not blanket merge authorization:
 
