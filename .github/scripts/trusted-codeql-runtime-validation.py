@@ -308,7 +308,7 @@ def self_test() -> None:
         "+        uses: github/codeql-action/analyze@" + "2" * 40 + " # new",
     ])
     assert classify(pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml", "patch": allowed_patch}]], repo=repo, base=base, head=head, head_repo=head_repo)
-    runner_patch = "\\n".join([
+    runner_patch = "\n".join([
         "@@ -81,7 +81,7 @@",
         "          - language: rust",
         "            build-mode: none",
@@ -321,14 +321,14 @@ def self_test() -> None:
     )
     assert classify(
         pr(), [[{"status": "modified", "filename": ".github/workflows/codeql.yml",
-                "patch": allowed_patch + "\\n" + runner_patch}]],
+                "patch": allowed_patch + "\n" + runner_patch}]],
         repo=repo, base=base, head=head, head_repo=head_repo,
     )
     for unsupported_patch in (
-        "@@ -1 +1 @@\\n-old\\n+unreviewed arbitrary workflow change",
-        "@@ -81,7 +81,7 @@\\n          - language: java\\n-            os: ubuntu-24.04-arm\\n+            os: ubuntu-26.04-arm",
-        "@@ -81,7 +81,7 @@\\n          - language: rust\\n-            os: ubuntu-24.04-arm\\n+            os: self-hosted",
-        runner_patch + "\\n+      security-events: write",
+        "@@ -1 +1 @@\n-old\n+unreviewed arbitrary workflow change",
+        "@@ -81,7 +81,7 @@\n          - language: java\n-            os: ubuntu-24.04-arm\n+            os: ubuntu-26.04-arm",
+        "@@ -81,7 +81,7 @@\n          - language: rust\n-            os: ubuntu-24.04-arm\n+            os: self-hosted",
+        runner_patch + "\n+      security-events: write",
         runner_patch.replace("ubuntu-26.04-arm", "ubuntu-24.04-arm"),
     ):
         try:
