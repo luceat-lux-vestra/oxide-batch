@@ -91,7 +91,7 @@ fn golden_plan() -> Result<oxide_batch::CompiledExecutionPlan, Box<dyn Error>> {
 fn format2_manifest_has_golden_bytes_and_fingerprint() -> Result<(), Box<dyn Error>> {
     let plan = golden_plan()?;
 
-    assert_eq!(plan.manifest_format(), 2);
+    assert_eq!(plan.definition_identity().manifest_format(), 2);
     assert_eq!(
         std::str::from_utf8(plan.definition_identity().canonical_manifest())?,
         std::str::from_utf8(GOLDEN_MANIFEST)?.trim_end_matches('\n')
@@ -253,7 +253,7 @@ fn a_format1_wrapper_lowers_without_changing_its_identity() -> Result<(), Box<dy
     )?;
     let plan = job.compiled_plan();
 
-    assert_eq!(plan.manifest_format(), 1);
+    assert_eq!(plan.definition_identity().manifest_format(), 1);
     assert_eq!(plan.fingerprint(), untouched.manifest_digest());
     assert_eq!(
         plan.definition_identity().canonical_manifest(),
