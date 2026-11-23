@@ -13,21 +13,39 @@ expected_sha256="$(python3 "$resolver" --root "$repo_root" --entry cargo-cyclone
 
 if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
   echo "::error::cargo-cyclonedx $version installer requires Linux x86_64" >&2
-  exit 1
+  exit 2
 fi
 
-tmpdir="$(mktemp -d "${RUNNER_TEMP:-/tmp}/cargo-cyclonedx.XXXXXX")"
-trap 'rm -rf "$tmpdir"' EXIT
-archive="$tmpdir/cargo-cyclonedx.tar.xz"
+: "${RUNNER_TEMP:?GitHub runner temporary directory is required}"
+: "${GITHUB_PATH:?GitHub PATH file is required}"
+work_dir="$(mktemp -d "$RUNNER_TEMP/cargo-cyclonedx-install.XXXXXX")"
+trap 'rm -rf "$work_dir"' EXIT
+archive="$work_dir/cargo-cyclonedx-$target.tar.xz"
+extract_root="$work_dir/extracted"
+install_root="$RUNNER_TEMP/cargo-cyclonedx-$version"
+bin_dir="$install_root/bin"
 
-curl --fail --location --retry 3 --retry-delay 2 "$url" --output "$archive"
-echo "$expected_sha256  $archive" | sha256sum --check --strict
+curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --retry-delay 2 \
+  "$url" \
+  --output "$archive"
+printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum --check --strict
 
-tar -xJf "$archive" -C "$tmpdir"
-binary="$tmpdir/cargo-cyclonedx-$target/cargo-cyclonedx"
-test -x "$binary"
+mkdir -p "$extract_root"
+tar --extract --xz --file "$archive" --directory "$extract_root"
 
-install_dir="${CARGO_HOME:-$HOME/.cargo}/bin"
-mkdir -p "$install_dir"
-install -m 0755 "$binary" "$install_dir/cargo-cyclonedx"
-test "$(cargo cyclonedx --version)" = "cargo-cyclonedx $version"
+mapfile -t binaries < <(find "$extract_root" -type f -name cargo-cyclonedx -print)
+if [ "${#binaries[@]}" -ne 1 ]; then
+  echo "::error::Expected exactly one cargo-cyclonedx binary; found ${#binaries[@]}" >&2
+  exit 3
+fi
+
+mkdir -p "$bin_dir"
+install -m 0755 "${binaries[0]}" "$bin_dir/cargo-cyclonedx"
+version_output="$(PATH="$bin_dir:$PATH" cargo cyclonedx --version)"
+if [[ "$version_output" != *"$version"* ]]; then
+  echo "::error::Expected cargo-cyclonedx version $version, observed: $version_output" >&2
+  exit 4
+fi
+
+echo "$bin_dir" >> "$GITHUB_PATH"
+echo "Verified official cargo-cyclonedx $version ($target): $version_output"
