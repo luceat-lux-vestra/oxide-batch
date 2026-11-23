@@ -220,10 +220,10 @@
       "version": "0.2.0"
     },
     {
-      "checksum": "cb4cb245038516f5f85277875cdaa4f7d2c9a0fa0468de06ed190163b1581fcf",
+      "checksum": "afa489199eaffb1211795df1c6236ce1ad0d41a6fa45250add73e3b02420f06e",
       "name": "form_urlencoded",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "version": "1.2.2"
+      "version": "1.2.3"
     },
     {
       "checksum": "262590f4fe6afeb0bc83be1daa64e52657fe185690a958af7f3ad0e92085c5ae",
@@ -862,10 +862,10 @@
       "version": "0.9.0"
     },
     {
-      "checksum": "ff67a8a4397373c3ef660812acab3268222035010ab8680ec4215f38ba3d0eed",
+      "checksum": "f00cd2407bb42c0ef17be88d4cf020f5cceffd121665bac9b8b9493a369b3b1a",
       "name": "url",
       "source": "registry+https://github.com/rust-lang/crates.io-index",
-      "version": "2.5.8"
+      "version": "2.5.9"
     },
     {
       "checksum": "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be",
