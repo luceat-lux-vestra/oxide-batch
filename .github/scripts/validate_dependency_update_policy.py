@@ -8,6 +8,7 @@ import datetime as dt
 import json
 import re
 from pathlib import Path, PurePosixPath
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from typing import Any
 
 SCHEMA = "oxide-batch/dependency-update-policy/v1"
@@ -101,6 +102,15 @@ def validate_document(document: Any, root: Path, today: dt.date) -> list[str]:
         errors.append(f"policy must be {POLICY!r}")
     if not _non_empty_text(document.get("owner")):
         errors.append("owner must be a non-empty string")
+
+    timezone = document.get("timezone")
+    if not _non_empty_text(timezone):
+        errors.append("timezone must be a non-empty IANA timezone")
+    else:
+        try:
+            ZoneInfo(timezone)
+        except ZoneInfoNotFoundError:
+            errors.append(f"timezone is not available: {timezone!r}")
 
     reviewed_raw = document.get("reviewed_at")
     try:
@@ -273,13 +283,19 @@ def main() -> int:
         return 1
 
     try:
-        today = (
-            dt.date.fromisoformat(args.today)
-            if args.today
-            else dt.datetime.now(dt.timezone.utc).date()
-        )
+        if args.today:
+            today = dt.date.fromisoformat(args.today)
+        else:
+            timezone = document.get("timezone")
+            if not _non_empty_text(timezone):
+                raise ValueError("registry timezone is missing")
+            try:
+                zone = ZoneInfo(timezone)
+            except ZoneInfoNotFoundError as error:
+                raise ValueError(f"unknown registry timezone: {timezone}") from error
+            today = dt.datetime.now(zone).date()
     except ValueError as error:
-        print(f"invalid --today value: {error}")
+        print(f"invalid policy date/timezone: {error}")
         return 1
 
     errors = validate_document(document, root, today)

@@ -65,3 +65,23 @@ jobs:
           test -x "$binary"
           test "$("$binary" --version)" = "cargo-deny $version"
           "$binary" --log-level warn --manifest-path ./Cargo.toml --all-features check
+
+  release-tool-artifact:
+    name: release-tool-artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact repository source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ github.repository }}
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate dependency update policy registry
+        run: python3 .github/scripts/validate_dependency_update_policy.py
+
+      - name: Verify protected-release SBOM tool artifact
+        shell: bash
+        run: bash .github/scripts/install-cargo-cyclonedx-prebuilt.sh

@@ -144,6 +144,15 @@ an owner, a finite review date, and an explicit unfreeze trigger. When a newer
 stable tool release is adopted, its immutable artifact digest and any cache or
 release provenance identity move in the same reviewed change.
 
+Hosted-runner lifecycle follows the same separation of concerns. Ordinary
+architecture-independent x64 jobs use GitHub's supported `ubuntu-latest`
+channel instead of accumulating static image-version pins. Evidence-producing
+M5/M6 workflows keep their explicit reviewed image because that image is part
+of the execution contract, and ARM64 remains explicit while GitHub provides no
+equivalent moving Ubuntu ARM alias. Those explicit runner changes therefore
+remain deliberate compatibility/evidence migrations rather than fake
+`latest` aliases.
+
 ## Update policy
 
 - Security and correctness updates are prioritized independently of the weekly
