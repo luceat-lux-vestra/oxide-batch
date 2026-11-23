@@ -173,7 +173,7 @@ fn flow_job_accepts_advanced_plan_without_manifest_kind_gate() -> Result<(), Box
 fn nested_flow_compiles_to_format4_and_reader_counts_structural_state() -> Result<(), Box<dyn Error>>
 {
     let plan = nested_plan("nested-format4")?;
-    assert_eq!(plan.manifest_format(), 4);
+    assert_eq!(plan.definition_identity().manifest_format(), 4);
     assert_eq!(plan.entry().as_str(), "prepare");
     assert_eq!(
         plan.nested_scope(&NodeId::new("embedded")?)
@@ -436,7 +436,7 @@ fn format4_rejects_foreign_join_entry_orphan_and_multi_owned_join() -> Result<()
 #[test]
 fn split_flow_scopes_are_bounded_and_globally_identified() -> Result<(), Box<dyn Error>> {
     let plan = split_flow_plan("split-flow-format4")?;
-    assert_eq!(plan.manifest_format(), 4);
+    assert_eq!(plan.definition_identity().manifest_format(), 4);
     assert_eq!(
         plan.split_branch_scope(&NodeId::new("parallel")?, 0)
             .expect("first branch scope")
