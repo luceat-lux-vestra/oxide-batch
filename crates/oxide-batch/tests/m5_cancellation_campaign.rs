@@ -686,9 +686,15 @@ fn contract_check_fails_on_an_added_trigger() -> Result<(), Box<dyn Error>> {
 #[test]
 fn contract_check_fails_on_a_job_level_write_permission() -> Result<(), Box<dyn Error>> {
     let passed = run_cancellation_contract_check(|sandbox| {
+        let workflow_path = sandbox.join(".github/workflows/m5-cancellation.yml");
+        let workflow_text = fs::read_to_string(&workflow_path)?;
+        let runner_line = workflow_text
+            .lines()
+            .find(|line| line.trim_start().starts_with("runs-on: "))
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "missing runner declaration"))?;
         insert_after(
-            &sandbox.join(".github/workflows/m5-cancellation.yml"),
-            "runs-on: ubuntu-24.04\n",
+            &workflow_path,
+            &format!("{runner_line}\n"),
             "    permissions:\n      contents: write\n",
         )
     })?;

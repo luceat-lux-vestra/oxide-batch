@@ -16,7 +16,7 @@ jobs:
     # Heavy final evidence: keep draft development on Fast branch CI only.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: postgres-${{ matrix.postgres }}-cancellation-campaign
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     # The floor is set by the declared deadline set rather than by the
     # workload: the accepted default deadline of 30 s has to be waited out
     # once, and the other two points add six seconds, so roughly forty seconds

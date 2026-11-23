@@ -241,7 +241,7 @@ pub fn workspace_root() -> PathBuf {
 /// numbers from an idle development host, and a reader who cannot see which
 /// one produced a figure cannot use it. Nothing here is asserted on.
 ///
-/// `runs-on: ubuntu-24.04` names an OS image, not stable hardware: GitHub does
+/// The hosted `runs-on` label names an OS image, not stable hardware: GitHub does
 /// not guarantee a fixed CPU model or clock speed for hosted runners, so the
 /// CPU model and logical core count are recorded precisely so a reader does
 /// not read that stability into the label.
