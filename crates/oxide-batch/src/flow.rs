@@ -985,7 +985,7 @@ impl FlowJob {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum FlowJobError {
-    /// The compiled plan does not own durable flow-decision semantics.
+    /// The compiled plan cannot be executed safely as a durable flow.
     UnsupportedPlan,
     /// The facade job name and manifest identity differ.
     JobNameMismatch,
@@ -1078,7 +1078,7 @@ impl fmt::Display for FlowJobError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::UnsupportedPlan => {
-                formatter.write_str("flow execution requires durable flow-decision plan semantics")
+                formatter.write_str("compiled plan cannot be executed safely as a durable flow")
             }
             Self::JobNameMismatch => formatter.write_str("flow job name does not match its plan"),
             Self::WrongNodeKind { node } => {
