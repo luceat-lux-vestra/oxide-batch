@@ -461,7 +461,10 @@ mod tests {
             )
             .expect("compiled");
 
-        assert_eq!(plan.manifest_format(), MANIFEST_FORMAT_ADVANCED_FLOW);
+        assert_eq!(
+            plan.definition_identity().manifest_format(),
+            MANIFEST_FORMAT_ADVANCED_FLOW
+        );
         assert_eq!(plan.scoped_components().len(), 1);
         let encoded = String::from_utf8(plan.definition_identity().canonical_manifest().to_vec())
             .expect("utf8 manifest");
