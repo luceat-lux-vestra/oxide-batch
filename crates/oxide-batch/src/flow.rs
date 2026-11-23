@@ -34,16 +34,6 @@ pub(crate) fn decision_matches_manifest(manifest: &Value, request: &FlowDecision
     let Some(document) = manifest.as_object() else {
         return false;
     };
-    let format = document.get("format").and_then(Value::as_u64);
-    if !matches!(
-        format,
-        Some(value)
-            if value == u64::from(oxide_batch_core::MANIFEST_FORMAT_FLOW)
-                || value == u64::from(oxide_batch_core::MANIFEST_FORMAT_LOCAL_SCALE)
-                || value == u64::from(oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW)
-    ) {
-        return false;
-    }
     let source_is_declared = document
         .get("nodes")
         .and_then(Value::as_array)
@@ -997,11 +987,6 @@ impl FlowJob {
 pub enum FlowJobError {
     /// The compiled plan does not own durable flow-decision semantics.
     UnsupportedPlan,
-    /// The runtime encountered a manifest shape it cannot execute safely.
-    UnsupportedManifest {
-        /// Observed manifest format.
-        format: u16,
-    },
     /// The facade job name and manifest identity differ.
     JobNameMismatch,
     /// The node is absent or has the other executable kind.
@@ -1094,12 +1079,6 @@ impl fmt::Display for FlowJobError {
         match self {
             Self::UnsupportedPlan => {
                 formatter.write_str("flow execution requires durable flow-decision plan semantics")
-            }
-            Self::UnsupportedManifest { format } => {
-                write!(
-                    formatter,
-                    "flow execution requires manifest format 2 or bounded format 3, found {format}"
-                )
             }
             Self::JobNameMismatch => formatter.write_str("flow job name does not match its plan"),
             Self::WrongNodeKind { node } => {
@@ -2813,9 +2792,7 @@ impl<'a> FlowLauncher<'a> {
                         }
                     }
                     FlowNode::Join(_) | _ => {
-                        return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
-                            format: job.plan.manifest_format(),
-                        }));
+                        return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedPlan));
                     }
                 };
 
@@ -2841,9 +2818,7 @@ impl<'a> FlowLauncher<'a> {
                         }));
                     }
                     Err(_) => {
-                        return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
-                            format: job.plan.manifest_format(),
-                        }));
+                        return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedPlan));
                     }
                 };
                 let sequence = decision_sequence_for(&job.plan, &transition_node)?;
@@ -2890,9 +2865,7 @@ impl<'a> FlowLauncher<'a> {
                 match target {
                     FlowTarget::Node(next) => {
                         if !scope.contains(&next) {
-                            return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedManifest {
-                                format: job.plan.manifest_format(),
-                            }));
+                            return Err(FlowRuntimeError::Job(FlowJobError::UnsupportedPlan));
                         }
                         node_id = next;
                     }
