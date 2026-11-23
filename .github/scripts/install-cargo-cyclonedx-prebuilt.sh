@@ -1,12 +1,15 @@
 #!/usr/bin/env bash
-# Install exactly the reviewed upstream cargo-cyclonedx 0.5.9 release binary.
+# Install the reviewed upstream cargo-cyclonedx release recorded by EG-DEP-001.
 # The protected release-tag workflow runs on ubuntu-latest (Linux x86_64).
-# Never execute a downloaded installer; verify the archive before extraction.
+# Never execute a downloaded installer; verify the configured archive before extraction.
 set -euo pipefail
 
-version="0.5.9"
+repo_root="$(git rev-parse --show-toplevel)"
+resolver="$repo_root/.github/scripts/validate_dependency_update_policy.py"
 target="x86_64-unknown-linux-gnu"
-expected_sha256="fb8dbee9f182173e062a64a387b21a0badc6fab8b2abf9294973f012972bf6d8"
+version="$(python3 "$resolver" --root "$repo_root" --entry cargo-cyclonedx --field version)"
+url="$(python3 "$resolver" --root "$repo_root" --entry cargo-cyclonedx --artifact "$target" --field url)"
+expected_sha256="$(python3 "$resolver" --root "$repo_root" --entry cargo-cyclonedx --artifact "$target" --field sha256)"
 
 if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
   echo "::error::cargo-cyclonedx $version installer requires Linux x86_64" >&2
@@ -23,7 +26,7 @@ install_root="$RUNNER_TEMP/cargo-cyclonedx-$version"
 bin_dir="$install_root/bin"
 
 curl --proto '=https' --tlsv1.2 --fail --location --retry 3 --retry-delay 2 \
-  "https://github.com/CycloneDX/cyclonedx-rust-cargo/releases/download/cargo-cyclonedx-$version/cargo-cyclonedx-$target.tar.xz" \
+  "$url" \
   --output "$archive"
 printf '%s  %s\n' "$expected_sha256" "$archive" | sha256sum --check --strict
 

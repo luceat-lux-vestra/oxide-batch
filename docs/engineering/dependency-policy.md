@@ -124,6 +124,35 @@ others:
   those pull requests still pass the normal review, dependency-review, and
   cargo-deny gates before merge.
 
+## External tool and service-image update ownership
+
+Fixed CI/release binaries and database service-image digests that are not
+natively managed by Dependabot are recorded in
+`.github/dependency-update-policy.json` under EG-DEP-001. For external tool
+binaries, the registry's structured provenance is the runtime source of truth
+for version, download URL, and SHA-256; workflows and installer scripts resolve
+those values rather than duplicating them. The accompanying
+validator runs in the supply-chain gate and rejects incomplete metadata,
+missing source paths, duplicate ownership, expired freezes, or freeze review
+windows longer than 90 days.
+
+A `REVIEWED_FREEZE` is not permission for indefinite stagnation. It is used
+only where automatic replacement would change a protected cache authority,
+release-generated output, artifact-integrity guarantee, or database
+certification input. Each freeze records the concrete incompatibility/evidence,
+an owner, a finite review date, and an explicit unfreeze trigger. When a newer
+stable tool release is adopted, its immutable artifact digest and any cache or
+release provenance identity move in the same reviewed change.
+
+Hosted-runner lifecycle follows the same separation of concerns. Ordinary
+architecture-independent x64 jobs use GitHub's supported `ubuntu-latest`
+channel instead of accumulating static image-version pins. Evidence-producing
+M5/M6 workflows keep their explicit reviewed image because that image is part
+of the execution contract, and ARM64 remains explicit while GitHub provides no
+equivalent moving Ubuntu ARM alias. Those explicit runner changes therefore
+remain deliberate compatibility/evidence migrations rather than fake
+`latest` aliases.
+
 ## Update policy
 
 - Security and correctness updates are prioritized independently of the weekly
@@ -174,13 +203,13 @@ Stable releases include or link:
 
 ## Release tooling record
 
-`cargo-cyclonedx 0.5.9` is the release-only SBOM generator. The protected
-tag workflow installs the exact upstream Linux x86_64 prebuilt binary after
-SHA-256 archive verification and a version check (rather than compiling via
-`cargo install`). The pinned installer lives at
-`.github/scripts/install-cargo-cyclonedx-prebuilt.sh`. The tool is
-Apache-2.0-licensed, declares Rust 1.85 as its MSRV, and does not enter the
-runtime dependency graph. The workflow generates CycloneDX 1.5 JSON for each
+`cargo-cyclonedx` is the release-only SBOM generator. Its exact reviewed
+version, upstream download URL, and SHA-256 are sourced from
+`.github/dependency-update-policy.json` by the protected release installer,
+which verifies the archive and installed version rather than compiling via
+`cargo install`. The installer lives at
+`.github/scripts/install-cargo-cyclonedx-prebuilt.sh`; the tool does not enter
+the runtime dependency graph. The workflow generates CycloneDX 1.5 JSON for each
 published workspace crate with all features and target dependencies before
 attesting the exact `.crate` artifacts. Upgrading the tool receives the same
 workflow, license, output-format, and package-content review as an Action
