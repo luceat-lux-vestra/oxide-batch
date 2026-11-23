@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "policy": "EG-DEP-001",
+  "owner": "luceat-lux-vestra/oxide-batch#718",
+  "reviewed_at": "2026-11-24",
+  "timezone": "Asia/Seoul",
+  "entries": [
+    {
+      "id": "cargo-deny",
+      "source": ".github/dependency-update-lifecycle.json#cargo-deny",
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "https://github.com/EmbarkStudios/cargo-deny/releases",
+      "mechanism": "exact upstream prebuilt archive verified by GitHub release SHA-256 digest; supply-chain workflow reads this registry",
+      "validation": [
+        "supply-chain",
+        "dependency-review",
+        "Direct Merge Gate"
+      ],
+      "owner": "oxide-batch maintainers",
+      "reason": "the official cargo-deny Action downloads its runtime binary without a checksum; keep the stronger verified-artifact contract until an equally verifiable maintained integration exists",
+      "review_by": "2027-02-22",
+      "revisit_trigger": "new stable cargo-deny release, security advisory, maintained checksum-verifying integration, or review deadline",
+      "pin": {
+        "repository": "EmbarkStudios/cargo-deny",
+        "version": "0.22.0",
+        "artifacts": {
+          "x86_64-unknown-linux-musl": {
+            "sha256": "98c56e6a408bfa5c3c60744b6015aaa6aa08f743fdeb88386d06fca035bb1786"
+          }
+        }
+      }
+    },
+    {
+      "id": "sccache",
+      "source": ".github/dependency-update-lifecycle.json#sccache",
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "https://github.com/mozilla/sccache/releases",
+      "mechanism": "exact upstream prebuilt archives verified by GitHub release SHA-256 digests; installers read this registry and cache identity includes the pinned version",
+      "validation": [
+        "quality-fast",
+        "integration shards",
+        "sccache-main-prime",
+        "Direct Merge Gate"
+      ],
+      "owner": "oxide-batch maintainers",
+      "reason": "sccache participates in the protected-main compiler-cache producer/consumer contract; an upgrade must rotate cache identity and prove restore/prime compatibility before merge",
+      "review_by": "2027-02-22",
+      "revisit_trigger": "new stable sccache release, security advisory, cache-format incompatibility, or review deadline",
+      "pin": {
+        "repository": "mozilla/sccache",
+        "version": "0.20.0",
+        "artifacts": {
+          "aarch64-unknown-linux-musl": {
+            "sha256": "1bd78037804baeb9655f6baf8791f99c43388fae6d6b16944d3d93542fa5711a"
+          },
+          "x86_64-unknown-linux-musl": {
+            "sha256": "c3c5db9cd7e3be12b7bab350d8fe8ae7dcfb7269d5432b269e0dffa1a87c6ed2"
+          }
+        }
+      }
+    },
+    {
+      "id": "mold",
+      "source": ".github/dependency-update-lifecycle.json#mold",
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "https://github.com/rui314/mold/releases",
+      "mechanism": "exact upstream ARM64 archive verified by GitHub release SHA-256 digest; installer reads this registry and cache identity includes the pinned version",
+      "validation": [
+        "quality-fast",
+        "integration shards",
+        "sccache-main-prime",
+        "Direct Merge Gate"
+      ],
+      "owner": "oxide-batch maintainers",
+      "reason": "mold is part of the ARM64 linker/cache execution contract; linker changes require cache rotation and compiler/linker validation rather than silent runtime drift",
+      "review_by": "2027-02-22",
+      "revisit_trigger": "new stable mold release, linker/security regression, cache contract change, or review deadline",
+      "pin": {
+        "repository": "rui314/mold",
+        "version": "3.0.0",
+        "artifacts": {
+          "aarch64-linux": {
+            "sha256": "52c759d3689babaea4c42af2f31062a74ab83e17ffb5a8090232534c67b70577"
+          }
+        }
+      }
+    },
+    {
+      "id": "cargo-cyclonedx",
+      "source": ".github/dependency-update-lifecycle.json#cargo-cyclonedx",
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "https://github.com/CycloneDX/cyclonedx-rust-cargo/releases",
+      "mechanism": "exact upstream release archive verified by GitHub release SHA-256 digest; protected release installer reads this registry",
+      "validation": [
+        "release policy tests",
+        "SBOM package-content review",
+        "Direct Merge Gate"
+      ],
+      "owner": "oxide-batch maintainers",
+      "reason": "cargo-cyclonedx changes release SBOM output and therefore release evidence; upgrades require explicit output-format/package-content review before becoming the protected tag producer",
+      "review_by": "2027-02-22",
+      "revisit_trigger": "new stable cargo-cyclonedx release, SBOM/security advisory, release-format requirement, or review deadline",
+      "pin": {
+        "repository": "CycloneDX/cyclonedx-rust-cargo",
+        "version": "0.5.10",
+        "artifacts": {
+          "x86_64-unknown-linux-gnu": {
+            "sha256": "2e4ef64a53c0a38d4b7d805c593b5f47ecd29821e98d81e484d03abaa0edb95f"
+          }
+        }
+      }
+    },
+    {
+      "id": "ordinary-x64-hosted-runners",
+      "source": ".github/workflows",
+      "strategy": "CHANNEL",
+      "authority": "GitHub-hosted runner image releases",
+      "mechanism": "architecture-independent ordinary x64 jobs use the supported ubuntu-latest production alias",
+      "validation": [
+        "PR CI",
+        "hardening audit",
+        "supply-chain",
+        "sccache-main-prime"
+      ],
+      "revisit_trigger": "GitHub changes the ubuntu-latest production alias contract"
+    },
+    {
+      "id": "arm64-hosted-runners",
+      "source": ".github/workflows",
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "GitHub-hosted runner image releases",
+      "mechanism": "ARM64 jobs use the newest GA architecture-specific label because GitHub provides no equivalent moving ubuntu-latest ARM alias",
+      "validation": [
+        "Rust CI",
+        "CodeQL",
+        "supply-chain consumers",
+        "Direct Merge Gate"
+      ],
+      "owner": "oxide-batch maintainers",
+      "reason": "there is no supported moving ARM64 Ubuntu alias; explicit GA migration must be validated across tool/cache and CodeQL contracts before changing the shared architecture lane",
+      "review_by": "2027-02-22",
+      "revisit_trigger": "new GA ARM64 Ubuntu image, GitHub ARM moving alias, runner deprecation/security notice, or review deadline"
+    },
+    {
+      "id": "database-ci-images",
+      "source": ".github/workflows/ci.yml",
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "upstream PostgreSQL, MongoDB, MySQL, MariaDB, and Microsoft SQL Server image registries/release notes",
+      "mechanism": "certification matrix changes are reviewed together with exact image digests, expected product versions, fixture contracts, and database-specific tests",
+      "validation": [
+        "database repository-core/design-gate lanes",
+        "campaign certification lanes",
+        "Direct Merge Gate"
+      ],
+      "owner": "oxide-batch maintainers",
+      "reason": "database images are certified compatibility inputs rather than implementation dependencies; changing a patch/CU changes the product-version claim and must not silently rewrite the tested support matrix",
+      "review_by": "2027-02-22",
+      "revisit_trigger": "database security advisory, supported-line patch/CU refresh, certification milestone, or review deadline"
+    },
+    {
+      "id": "campaign-x64-hosted-runners",
+      "source": ".github/workflows/m5-*.yml and .github/workflows/m6-*.yml",
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "GitHub-hosted runner image releases",
+      "mechanism": "campaign evidence workflows stay on an explicit reviewed runner image while ordinary non-evidence x64 CI uses ubuntu-latest",
+      "validation": [
+        "campaign execution-contract identity",
+        "campaign jobs",
+        "Direct Merge Gate"
+      ],
+      "owner": "oxide-batch maintainers",
+      "reason": "M5/M6 evidence producers bind execution contracts to the reviewed runner image; changing the image changes certification conditions and requires contract/evidence review",
+      "review_by": "2027-02-22",
+      "revisit_trigger": "runner deprecation/security notice, evidence refresh, certification milestone, or review deadline"
+    }
+  ]
+}

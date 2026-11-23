@@ -162,6 +162,31 @@ Response objectives:
 - every exception has an owner and expiry no longer than 90 days without
   renewed evidence.
 
+## Dependency/tool lifecycle ownership
+
+Repository-local update ownership is recorded in
+`.github/dependency-update-lifecycle.json` under central EG-DEP-001 semantics.
+The scheduled supply-chain workflow validates that registry and fails closed when
+a reviewed freeze is missing its owner/rationale/revisit trigger or reaches its
+review deadline.
+
+- Ordinary architecture-independent x64 GitHub-hosted jobs use
+  `ubuntu-latest`, so GitHub owns the production image channel. M5/M6 evidence
+  producers remain on their explicit reviewed runner while their execution
+  contracts bind that image; ARM64 remains explicit because GitHub provides no
+  equivalent moving ARM alias.
+- `cargo-deny 0.22.0`, `sccache 0.20.0`, `mold 3.0.0`, and
+  `cargo-cyclonedx 0.5.10` are sourced from their upstream release registries
+  and executed only after exact release-asset SHA-256 verification. Their
+  lifecycle entries carry finite review deadlines and concrete compatibility or
+  evidence reasons; they are not silent permanent pins.
+- The database service/container image matrix is a certification input. Exact
+  tags, digests, and expected product versions move together in reviewed
+  compatibility work rather than through an unrelated package updater.
+- Compiler-cache identity includes the resolved Rust compiler and the pinned
+  cache-affecting build-tool versions, so a tool upgrade cannot restore an
+  older incompatible cache family.
+
 ## Release evidence
 
 Stable releases include or link:
@@ -174,7 +199,7 @@ Stable releases include or link:
 
 ## Release tooling record
 
-`cargo-cyclonedx 0.5.9` is the release-only SBOM generator. The protected
+`cargo-cyclonedx 0.5.10` is the release-only SBOM generator. The protected
 tag workflow installs the exact upstream Linux x86_64 prebuilt binary after
 SHA-256 archive verification and a version check (rather than compiling via
 `cargo install`). The pinned installer lives at

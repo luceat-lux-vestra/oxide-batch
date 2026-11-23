@@ -37,6 +37,13 @@ def check_cache_scripts(consumer: str, producer: str, identity: str) -> list[str
         errors.append("sccache-main-prime.yml: producer must use the shared identity helper")
     if 'rustc -Vv' not in identity or "sha256sum rust-toolchain.toml" not in identity:
         errors.append("cache identity must hash both resolved rustc -Vv and toolchain.toml")
+    for required in (
+        ".github/dependency-update-lifecycle.json",
+        "entries['sccache']['pin']['version']",
+        "entries['mold']['pin']['version']",
+    ):
+        if required not in identity:
+            errors.append(f"cache identity must include lifecycle tool identity: {required}")
     if re.search(r'toolchain_hash="\$\(sha256sum rust-toolchain\.toml', consumer + producer):
         errors.append("old cache key hashes only the static toolchain file")
     return errors

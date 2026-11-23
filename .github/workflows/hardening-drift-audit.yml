@@ -25,7 +25,7 @@ permissions: {}
 jobs:
   detect:
     name: detect
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
       contents: read # Read only the trusted checked-out repository state.
@@ -138,7 +138,7 @@ jobs:
     name: report
     needs: detect
     if: always()
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
       contents: read # Read only the trusted reporter implementation.

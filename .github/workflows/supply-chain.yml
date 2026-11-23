@@ -12,7 +12,7 @@ concurrency:
 jobs:
   supply-chain:
     name: supply-chain
-    runs-on: ubuntu-26.04-arm
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - name: Check out repository
@@ -23,6 +23,20 @@ jobs:
           ref: ${{ github.sha }}
           fetch-depth: 1
           persist-credentials: false
+
+      - name: Test dependency-update lifecycle policy
+        run: python3 .github/scripts/validate_dependency_update_lifecycle.py --self-test
+
+      - name: Validate dependency-update lifecycle registry
+        run: python3 .github/scripts/validate_dependency_update_lifecycle.py
+
+      - name: Verify x64 compiler-cache tool artifact
+        shell: bash
+        run: bash .github/scripts/install-sccache.sh x86_64-unknown-linux-musl
+
+      - name: Verify protected-release SBOM tool artifact
+        shell: bash
+        run: bash .github/scripts/install-cargo-cyclonedx-prebuilt.sh
 
       - name: Test supply-chain exception policy
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
@@ -35,24 +49,4 @@ jobs:
       - name: Check advisories, licenses, bans, and sources
         if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$RUNNER_OS" = "Linux"
-          test "$RUNNER_ARCH" = "ARM64"
-          test "$(uname -m)" = "aarch64"
-          version="0.20.2"
-          target="aarch64-unknown-linux-musl"
-          sha256="995c82be0defc7a025cae49a2aa2644ce8245c9a3318fc4103907c6a285e8c7d"
-          dir="$(mktemp -d "$RUNNER_TEMP/cargo-deny.XXXXXX")"
-          trap 'rm -rf "$dir"' EXIT
-          archive="$dir/cargo-deny.tar.gz"
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/EmbarkStudios/cargo-deny/releases/download/$version/cargo-deny-$version-$target.tar.gz" \
-            --output "$archive"
-          echo "$sha256  $archive" | sha256sum --check --strict
-          mkdir -p "$dir/bin"
-          tar -xzf "$archive" -C "$dir/bin" --strip-components=1
-          binary="$dir/bin/cargo-deny"
-          test -x "$binary"
-          test "$("$binary" --version)" = "cargo-deny $version"
-          "$binary" --log-level warn --manifest-path ./Cargo.toml --all-features check
+        run: bash .github/scripts/run-cargo-deny.sh

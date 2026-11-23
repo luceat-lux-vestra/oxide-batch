@@ -52,6 +52,8 @@ jobs:
               'Triage advisories, licenses, bans, sources, and exception metadata according to',
               '`docs/engineering/dependency-policy.md`. Every active exception requires an',
               'owner, rationale, and unexpired date in `.github/supply-chain-exceptions.json`.',
+              'Dependency/tool pins and finite reviewed freezes must also remain valid in',
+              '`.github/dependency-update-lifecycle.json`.',
             ].join('\n');
 
             const issues = await github.paginate(

@@ -52,7 +52,7 @@ jobs:
           lock_hash="$(sha256sum Cargo.lock | awk '{print $1}')"
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
-          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
+          family="oxide-fast-sccache-v3-linux-arm64-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
           {
@@ -61,25 +61,11 @@ jobs:
             echo "key=$key"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install verified sccache 0.18.0
+      - name: Install verified sccache from lifecycle registry
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$RUNNER_ARCH" = ARM64
-          test "$(uname -m)" = aarch64
-          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
-          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
-            --output "$archive"
-          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
-            | sha256sum --check --strict
-          mkdir -p "$install_dir"
-          tar -xzf "$archive" -C "$install_dir" --strip-components=1
-          test -x "$install_dir/sccache"
-          echo "$install_dir" >> "$GITHUB_PATH"
+        run: bash .github/scripts/install-sccache.sh aarch64-unknown-linux-musl
 
-      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+      - name: Install verified mold from lifecycle registry
         shell: bash
         run: bash .github/scripts/install-mold-arm64.sh
 
@@ -212,7 +198,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
+          family="oxide-fast-sccache-v3-linux-arm64-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -222,28 +208,11 @@ jobs:
             echo "key=${key}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install verified sccache 0.18.0
+      - name: Install verified sccache from lifecycle registry
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$RUNNER_ARCH" = ARM64
-          test "$(uname -m)" = aarch64
-          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
-          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+        run: bash .github/scripts/install-sccache.sh aarch64-unknown-linux-musl
 
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
-            --output "$archive"
-
-          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
-            | sha256sum --check --strict
-
-          mkdir -p "$install_dir"
-          tar -xzf "$archive" -C "$install_dir" --strip-components=1
-          test -x "$install_dir/sccache"
-          echo "$install_dir" >> "$GITHUB_PATH"
-
-      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+      - name: Install verified mold from lifecycle registry
         shell: bash
         run: bash .github/scripts/install-mold-arm64.sh
 
@@ -317,7 +286,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
+          family="oxide-fast-sccache-v3-linux-arm64-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -327,28 +296,11 @@ jobs:
             echo "key=${key}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install verified sccache 0.18.0
+      - name: Install verified sccache from lifecycle registry
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$RUNNER_ARCH" = ARM64
-          test "$(uname -m)" = aarch64
-          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
-          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+        run: bash .github/scripts/install-sccache.sh aarch64-unknown-linux-musl
 
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
-            --output "$archive"
-
-          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
-            | sha256sum --check --strict
-
-          mkdir -p "$install_dir"
-          tar -xzf "$archive" -C "$install_dir" --strip-components=1
-          test -x "$install_dir/sccache"
-          echo "$install_dir" >> "$GITHUB_PATH"
-
-      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+      - name: Install verified mold from lifecycle registry
         shell: bash
         run: bash .github/scripts/install-mold-arm64.sh
 
@@ -422,7 +374,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
+          family="oxide-fast-sccache-v3-linux-arm64-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -432,28 +384,11 @@ jobs:
             echo "key=${key}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install verified sccache 0.18.0
+      - name: Install verified sccache from lifecycle registry
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$RUNNER_ARCH" = ARM64
-          test "$(uname -m)" = aarch64
-          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
-          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+        run: bash .github/scripts/install-sccache.sh aarch64-unknown-linux-musl
 
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
-            --output "$archive"
-
-          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
-            | sha256sum --check --strict
-
-          mkdir -p "$install_dir"
-          tar -xzf "$archive" -C "$install_dir" --strip-components=1
-          test -x "$install_dir/sccache"
-          echo "$install_dir" >> "$GITHUB_PATH"
-
-      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+      - name: Install verified mold from lifecycle registry
         shell: bash
         run: bash .github/scripts/install-mold-arm64.sh
 
@@ -527,7 +462,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
+          family="oxide-fast-sccache-v3-linux-arm64-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -537,28 +472,11 @@ jobs:
             echo "key=${key}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install verified sccache 0.18.0
+      - name: Install verified sccache from lifecycle registry
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$RUNNER_ARCH" = ARM64
-          test "$(uname -m)" = aarch64
-          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
-          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+        run: bash .github/scripts/install-sccache.sh aarch64-unknown-linux-musl
 
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
-            --output "$archive"
-
-          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
-            | sha256sum --check --strict
-
-          mkdir -p "$install_dir"
-          tar -xzf "$archive" -C "$install_dir" --strip-components=1
-          test -x "$install_dir/sccache"
-          echo "$install_dir" >> "$GITHUB_PATH"
-
-      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+      - name: Install verified mold from lifecycle registry
         shell: bash
         run: bash .github/scripts/install-mold-arm64.sh
 
@@ -770,7 +688,7 @@ jobs:
   sqlserver-repository-core:
     name: sqlserver-${{ matrix.lane }}-repository-core
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1319,7 +1237,7 @@ jobs:
           [[ "$toolchain_hash" =~ ^[0-9a-f]{64}$ ]]
           [[ "$lock_hash" =~ ^[0-9a-f]{64}$ ]]
 
-          family="oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-${toolchain_hash}"
+          family="oxide-fast-sccache-v3-linux-arm64-${toolchain_hash}"
           lock_prefix="${family}-${lock_hash}-"
           key="${lock_prefix}${BASE_SHA}"
 
@@ -1329,28 +1247,11 @@ jobs:
             echo "key=${key}"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Install verified sccache 0.18.0
+      - name: Install verified sccache from lifecycle registry
         shell: bash
-        run: |
-          set -euo pipefail
-          test "$RUNNER_ARCH" = ARM64
-          test "$(uname -m)" = aarch64
-          archive="$RUNNER_TEMP/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz"
-          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+        run: bash .github/scripts/install-sccache.sh aarch64-unknown-linux-musl
 
-          curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-aarch64-unknown-linux-musl.tar.gz" \
-            --output "$archive"
-
-          echo "2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a  $archive" \
-            | sha256sum --check --strict
-
-          mkdir -p "$install_dir"
-          tar -xzf "$archive" -C "$install_dir" --strip-components=1
-          test -x "$install_dir/sccache"
-          echo "$install_dir" >> "$GITHUB_PATH"
-
-      - name: Install verified mold 3.0.0 for ARM64 Rust linking
+      - name: Install verified mold from lifecycle registry
         shell: bash
         run: bash .github/scripts/install-mold-arm64.sh
 
