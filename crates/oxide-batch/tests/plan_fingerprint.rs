@@ -746,7 +746,7 @@ fn format1_and_format2_bytes_are_never_rewritten() -> Result<(), Box<dyn Error>>
             &JobName::new("daily_import")?,
             DefinitionRevision::new("v1")?,
         )?;
-    assert_eq!(format2.manifest_format(), 2);
+    assert_eq!(format2.definition_identity().manifest_format(), 2);
     let canonical = std::str::from_utf8(format2.definition_identity().canonical_manifest())?;
     assert!(canonical.contains(r#""format":2"#));
     assert!(
