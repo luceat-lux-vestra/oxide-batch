@@ -102,7 +102,7 @@ fn scoped_component_declaration_order_does_not_change_manifest_or_fingerprint()
     let first = plan(alpha.clone(), Some(zeta.clone()))?;
     let second = plan(zeta, Some(alpha))?;
 
-    assert_eq!(first.manifest_format(), 4);
+    assert_eq!(first.definition_identity().manifest_format(), 4);
     assert_eq!(
         first.definition_identity().canonical_manifest(),
         second.definition_identity().canonical_manifest()
