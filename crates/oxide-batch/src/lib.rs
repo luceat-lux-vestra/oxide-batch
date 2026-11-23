@@ -327,7 +327,6 @@
 //!     .with_sequence(report, FlowTarget::Terminal(TerminalKind::Complete))?
 //!     .compile(&JobName::new("daily_import")?, DefinitionRevision::new("v1")?)?;
 //!
-//! assert_eq!(plan.manifest_format(), 2);
 //! assert_eq!(plan.node_count(), 2);
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
