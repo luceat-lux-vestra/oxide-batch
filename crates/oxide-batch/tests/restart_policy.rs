@@ -126,8 +126,8 @@ fn restart_policy_is_format4_only_and_default_preserves_legacy_identity()
         RestartPolicy::Restartable,
         false,
     )?;
-    assert_eq!(legacy.manifest_format(), 2);
-    assert_eq!(explicit_default.manifest_format(), 2);
+    assert_eq!(legacy.definition_identity().manifest_format(), 2);
+    assert_eq!(explicit_default.definition_identity().manifest_format(), 2);
     assert_eq!(legacy.fingerprint(), explicit_default.fingerprint());
 
     let job_nonrestartable = failing_plan(
@@ -136,7 +136,7 @@ fn restart_policy_is_format4_only_and_default_preserves_legacy_identity()
         RestartPolicy::Restartable,
         false,
     )?;
-    assert_eq!(job_nonrestartable.manifest_format(), 4);
+    assert_eq!(job_nonrestartable.definition_identity().manifest_format(), 4);
     assert_eq!(
         job_nonrestartable.job_restart_policy(),
         RestartPolicy::NotRestartable
@@ -149,7 +149,7 @@ fn restart_policy_is_format4_only_and_default_preserves_legacy_identity()
         RestartPolicy::NotRestartable,
         false,
     )?;
-    assert_eq!(step_nonrestartable.manifest_format(), 4);
+    assert_eq!(step_nonrestartable.definition_identity().manifest_format(), 4);
     assert_ne!(legacy.fingerprint(), step_nonrestartable.fingerprint());
 
     let job_manifest: serde_json::Value = serde_json::from_slice(
