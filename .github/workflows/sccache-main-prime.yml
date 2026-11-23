@@ -41,7 +41,7 @@ jobs:
       matrix:
         include:
           - arch: arm64
-            runner: ubuntu-24.04-arm
+            runner: ubuntu-26.04-arm
             runner_arch: ARM64
             uname_arch: aarch64
             cache_prefix: oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-

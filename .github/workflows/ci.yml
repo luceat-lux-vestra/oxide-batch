@@ -14,7 +14,7 @@ jobs:
   quality-fast:
     name: quality-fast-internal
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -183,7 +183,7 @@ jobs:
   quality-integration-0:
     name: quality-integration-0-internal
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -288,7 +288,7 @@ jobs:
   quality-integration-1:
     name: quality-integration-1-internal
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -393,7 +393,7 @@ jobs:
   quality-integration-2:
     name: quality-integration-2-internal
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -498,7 +498,7 @@ jobs:
   quality-integration-3:
     name: quality-integration-3-internal
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -603,7 +603,7 @@ jobs:
   quality-bin-doc:
     name: quality-bin-doc-internal
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -629,7 +629,7 @@ jobs:
   quality-contracts:
     name: quality-contracts-internal
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -672,7 +672,7 @@ jobs:
     name: quality
     needs: [quality-fast, quality-integration-0, quality-integration-1, quality-integration-2, quality-integration-3, quality-bin-doc, quality-contracts]
     if: ${{ always() }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 5
     steps:
       - name: Draft final-gate placeholder
@@ -717,7 +717,7 @@ jobs:
 
   packaging:
     name: packaging
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -739,7 +739,7 @@ jobs:
 
   msrv:
     name: msrv
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     steps:
       - name: Check out repository
@@ -807,7 +807,7 @@ jobs:
   mongodb-repository-core:
     name: mongodb-${{ matrix.lane }}-repository-core
     if: ${{ github.event.pull_request.draft == false }}
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 25
     strategy:
       fail-fast: false
@@ -930,7 +930,7 @@ jobs:
 
   mysql-repository-core:
     name: mysql-8.4.13-repository-core
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     services:
       mysql:
@@ -971,7 +971,7 @@ jobs:
 
   mariadb-repository-core:
     name: mariadb-11.8.9-repository-core
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     services:
       mariadb:
@@ -1012,7 +1012,7 @@ jobs:
 
   postgres-design-gate:
     name: postgres-${{ matrix.postgres }}-design-gate
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1039,7 +1039,7 @@ jobs:
 
   postgres-repository:
     name: postgres-${{ matrix.postgres }}-repository
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -1266,7 +1266,7 @@ jobs:
 
   postgres-item-components:
     name: postgres-${{ matrix.postgres }}-item-components
-    runs-on: ubuntu-24.04-arm
+    runs-on: ubuntu-26.04-arm
     timeout-minutes: 20
     strategy:
       fail-fast: false
