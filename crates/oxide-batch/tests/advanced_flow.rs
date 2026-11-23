@@ -161,6 +161,15 @@ fn tasklet(
 }
 
 #[test]
+fn flow_job_accepts_advanced_plan_without_manifest_kind_gate() -> Result<(), Box<dyn Error>> {
+    let name = JobName::new("advanced-semantic-gate")?;
+    let plan = nested_plan(name.as_str())?;
+
+    assert!(FlowJob::new(name, plan).is_ok());
+    Ok(())
+}
+
+#[test]
 fn nested_flow_compiles_to_format4_and_reader_counts_structural_state() -> Result<(), Box<dyn Error>>
 {
     let plan = nested_plan("nested-format4")?;
