@@ -577,21 +577,15 @@ impl fmt::Debug for FlowJob {
 }
 
 impl FlowJob {
-    /// Starts binding executable components to a compiled format-2 or format-3 plan.
+    /// Starts binding executable components to a compiled durable-flow plan.
     ///
     /// # Errors
     ///
-    /// Rejects a compatibility plan or a plan identified under another job.
+    /// Rejects a plan without durable flow-decision semantics or a plan
+    /// identified under another job.
     pub fn new(name: JobName, plan: CompiledExecutionPlan) -> Result<Self, FlowJobError> {
-        if !matches!(
-            plan.manifest_format(),
-            oxide_batch_core::MANIFEST_FORMAT_FLOW
-                | oxide_batch_core::MANIFEST_FORMAT_LOCAL_SCALE
-                | oxide_batch_core::MANIFEST_FORMAT_ADVANCED_FLOW
-        ) {
-            return Err(FlowJobError::UnsupportedManifest {
-                format: plan.manifest_format(),
-            });
+        if !plan.supports_flow_decision_persistence() {
+            return Err(FlowJobError::UnsupportedPlan);
         }
         if plan.definition_identity().job_name() != Some(&name) {
             return Err(FlowJobError::JobNameMismatch);
@@ -1001,7 +995,9 @@ impl FlowJob {
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[non_exhaustive]
 pub enum FlowJobError {
-    /// General flows require canonical manifest format 2.
+    /// The compiled plan does not own durable flow-decision semantics.
+    UnsupportedPlan,
+    /// The runtime encountered a manifest shape it cannot execute safely.
     UnsupportedManifest {
         /// Observed manifest format.
         format: u16,
@@ -1096,6 +1092,9 @@ pub enum FlowJobError {
 impl fmt::Display for FlowJobError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::UnsupportedPlan => {
+                formatter.write_str("flow execution requires durable flow-decision plan semantics")
+            }
             Self::UnsupportedManifest { format } => {
                 write!(
                     formatter,
