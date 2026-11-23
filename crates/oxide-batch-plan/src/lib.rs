@@ -1880,12 +1880,6 @@ impl CompiledExecutionPlan {
         self.scoped_components.get(&(scope, id.clone()))
     }
 
-    /// Returns the canonical manifest format this plan is identified by.
-    #[must_use]
-    pub const fn manifest_format(&self) -> u16 {
-        self.definition.manifest_format()
-    }
-
     /// Returns the SHA-256 definition fingerprint.
     #[must_use]
     pub const fn fingerprint(&self) -> &[u8; 32] {
