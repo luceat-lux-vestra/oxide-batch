@@ -124,6 +124,23 @@ others:
   those pull requests still pass the normal review, dependency-review, and
   cargo-deny gates before merge.
 
+## External tool and service-image update ownership
+
+Fixed CI/release binaries and database service-image digests that are not
+natively managed by Dependabot are recorded in
+`.github/dependency-update-policy.json` under EG-DEP-001. The accompanying
+validator runs in the supply-chain gate and rejects incomplete metadata,
+missing source paths, duplicate ownership, expired freezes, or freeze review
+windows longer than 90 days.
+
+A `REVIEWED_FREEZE` is not permission for indefinite stagnation. It is used
+only where automatic replacement would change a protected cache authority,
+release-generated output, artifact-integrity guarantee, or database
+certification input. Each freeze records the concrete incompatibility/evidence,
+an owner, a finite review date, and an explicit unfreeze trigger. When a newer
+stable tool release is adopted, its immutable artifact digest and any cache or
+release provenance identity move in the same reviewed change.
+
 ## Update policy
 
 - Security and correctness updates are prioritized independently of the weekly
@@ -174,12 +191,12 @@ Stable releases include or link:
 
 ## Release tooling record
 
-`cargo-cyclonedx 0.5.9` is the release-only SBOM generator. The protected
+`cargo-cyclonedx 0.5.10` is the release-only SBOM generator. The protected
 tag workflow installs the exact upstream Linux x86_64 prebuilt binary after
 SHA-256 archive verification and a version check (rather than compiling via
 `cargo install`). The pinned installer lives at
 `.github/scripts/install-cargo-cyclonedx-prebuilt.sh`. The tool is
-Apache-2.0-licensed, declares Rust 1.85 as its MSRV, and does not enter the
+Apache-2.0-licensed, declares Rust 1.86 as its MSRV, and does not enter the
 runtime dependency graph. The workflow generates CycloneDX 1.5 JSON for each
 published workspace crate with all features and target dependencies before
 attesting the exact `.crate` artifacts. Upgrading the tool receives the same

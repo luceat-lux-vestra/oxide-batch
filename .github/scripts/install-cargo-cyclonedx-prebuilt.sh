@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Install exactly the reviewed upstream cargo-cyclonedx 0.5.9 release binary.
+# Install exactly the reviewed upstream cargo-cyclonedx 0.5.10 release binary.
 # The protected release-tag workflow runs on ubuntu-latest (Linux x86_64).
 # Never execute a downloaded installer; verify the archive before extraction.
 set -euo pipefail
 
-version="0.5.9"
+version="0.5.10"
 target="x86_64-unknown-linux-gnu"
-expected_sha256="fb8dbee9f182173e062a64a387b21a0badc6fab8b2abf9294973f012972bf6d8"
+expected_sha256="2e4ef64a53c0a38d4b7d805c593b5f47ecd29821e98d81e484d03abaa0edb95f"
 
 if [ "$(uname -s)" != "Linux" ] || [ "$(uname -m)" != "x86_64" ]; then
   echo "::error::cargo-cyclonedx $version installer requires Linux x86_64" >&2

@@ -44,16 +44,16 @@ jobs:
             runner: ubuntu-26.04-arm
             runner_arch: ARM64
             uname_arch: aarch64
-            cache_prefix: oxide-fast-sccache-v2-linux-arm64-mold-3.0.0-
+            cache_prefix: oxide-fast-sccache-v3-linux-arm64-sccache-0.20.0-mold-3.0.0-
             artifact_triple: aarch64-unknown-linux-musl
-            artifact_sha256: 2b3284d5da3b46a47dc4229e75bb7b88ac4aa99c8d754fb7d2f84997e5a4354a
+            artifact_sha256: 1bd78037804baeb9655f6baf8791f99c43388fae6d6b16944d3d93542fa5711a
           - arch: x64
             runner: ubuntu-26.04
             runner_arch: X64
             uname_arch: x86_64
-            cache_prefix: oxide-fast-sccache-v1-linux-
+            cache_prefix: oxide-fast-sccache-v2-linux-x64-sccache-0.20.0-
             artifact_triple: x86_64-unknown-linux-musl
-            artifact_sha256: 45f1447fbe231e3037bde351ef70677dd212216c8d62ae7ca409fecc4d6acc89
+            artifact_sha256: c3c5db9cd7e3be12b7bab350d8fe8ae7dcfb7269d5432b269e0dffa1a87c6ed2
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 20
     env:
@@ -127,16 +127,16 @@ jobs:
         if: ${{ steps.restore-cache.outputs.cache-hit == 'true' }}
         run: echo "Exact protected-main Fast compiler cache already exists; no prime work is needed."
 
-      - name: Install verified sccache 0.18.0
+      - name: Install verified sccache 0.20.0
         if: ${{ steps.restore-cache.outputs.cache-hit != 'true' }}
         shell: bash
         run: |
           set -euo pipefail
-          archive="$RUNNER_TEMP/sccache-v0.18.0-${SCCACHE_ARTIFACT_TRIPLE}.tar.gz"
-          install_dir="$RUNNER_TEMP/sccache-v0.18.0"
+          archive="$RUNNER_TEMP/sccache-v0.20.0-${SCCACHE_ARTIFACT_TRIPLE}.tar.gz"
+          install_dir="$RUNNER_TEMP/sccache-v0.20.0"
 
           curl --fail --location --retry 3 --retry-delay 2 \
-            "https://github.com/mozilla/sccache/releases/download/v0.18.0/sccache-v0.18.0-${SCCACHE_ARTIFACT_TRIPLE}.tar.gz" \
+            "https://github.com/mozilla/sccache/releases/download/v0.20.0/sccache-v0.20.0-${SCCACHE_ARTIFACT_TRIPLE}.tar.gz" \
             --output "$archive"
 
           echo "$SCCACHE_ARTIFACT_SHA256  $archive" \
