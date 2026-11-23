@@ -5,3 +5,8 @@ paths:
   .github/workflows/**/*.{yml,yaml}:
     ignore:
       - '^reusable workflow call "\$/\.github/workflows/[^"/]+\.ya?ml" at "uses" is not following the format '
+# GitHub-hosted Ubuntu 26.04 Arm64 is GA, but actionlint 1.7.12 predates this label.
+# Remove this compatibility entry when the managed actionlint release recognizes it natively.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04-arm

@@ -19,7 +19,7 @@ REQUIRED_JOB_LITERALS = (
     'lane: "8.2"',
     'version: "8.2.12"',
     "mongo:8.2.12@sha256:e0ce8c35124d4a9f9785532d1f268f39e9728ffa1cb38f46fa482436424c4bd3",
-    "runs-on: ubuntu-24.04-arm",
+    "runs-on: ubuntu-26.04-arm",
     "if: ${{ github.event.pull_request.draft == false }}",
     "OXIDEBATCH_MONGODB_LANE: ${{ matrix.lane }}",
     "OXIDEBATCH_MONGODB_TEST_URI: mongodb://127.0.0.1:27017/?replicaSet=rs0",
