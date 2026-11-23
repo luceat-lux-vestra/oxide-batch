@@ -13,11 +13,12 @@ use oxide_batch::{
     DecisionInputVersion, DecisionNode, DefinitionArtifactId, DefinitionRegistration,
     DefinitionRegistry, DefinitionRevision, ExitCode, ExitPattern, ExitStatus, FlowEvent,
     FlowEventKind, FlowEventSink, FlowExecutionOutcome, FlowFailure, FlowGraph, FlowJob,
-    FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition, FlowTransitionKind,
+    FlowJobError, FlowLauncher, FlowNode, FlowRuntimeError, FlowTarget, FlowTransition,
+    FlowTransitionKind,
     InMemoryJobRepository, JobExecutionDecider, JobInstanceKey, JobName, JobParameters,
     JobRepository, NodeId, RepositoryError, SequentialIdGenerator, ShutdownCoordinator,
     StartControls, StartLimit, StepComponents, StepName, StepNode, StopSource, Tasklet,
-    TaskletContext, TaskletError, TaskletOutcome, TaskletStep, TerminalKind,
+    TaskletContext, TaskletError, TaskletJob, TaskletOutcome, TaskletStep, TerminalKind,
 };
 
 #[derive(Debug)]
@@ -212,6 +213,38 @@ fn tasklet_step(
         StepName::new(name)?,
         Arc::new(CountingTasklet { calls, behavior }),
     ))
+}
+
+#[test]
+fn flow_job_gate_uses_compiled_flow_semantics_not_manifest_format() -> Result<(), Box<dyn Error>> {
+    let flow_name = JobName::new("semantic-flow-gate")?;
+    let flow_node = NodeId::new("only")?;
+    let flow_plan = FlowGraph::new(flow_node.clone())
+        .with_node(tasklet_node("only", StartControls::default())?)
+        .with_sequence(
+            flow_node,
+            FlowTarget::Terminal(TerminalKind::Complete),
+        )?
+        .compile(&flow_name, DefinitionRevision::new("v1")?)?;
+    assert!(FlowJob::new(flow_name, flow_plan).is_ok());
+
+    let standalone_name = JobName::new("standalone-one-step")?;
+    let standalone = TaskletJob::new(
+        standalone_name.clone(),
+        tasklet_step(
+            "only",
+            Arc::new(AtomicUsize::new(0)),
+            Behavior::Complete,
+        )?,
+        DefinitionRevision::new("v1")?,
+        &ComponentRevision::new("only-v1")?,
+    )?;
+    assert_eq!(
+        FlowJob::new(standalone_name, standalone.compiled_plan().clone())
+            .expect_err("standalone one-step plans must not enter FlowJob"),
+        FlowJobError::UnsupportedPlan
+    );
+    Ok(())
 }
 
 #[tokio::test(flavor = "current_thread")]
