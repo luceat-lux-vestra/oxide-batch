@@ -14,6 +14,11 @@ on:
       - '**/.cargo/**'
       - 'rust-toolchain'
       - 'rust-toolchain.toml'
+      - '.github/dependency-update-policy.json'
+      - '.github/scripts/ensure-stable-rust.sh'
+      - '.github/scripts/install-mold-arm64.sh'
+      - '.github/scripts/rust-cache-identity.sh'
+      - '.github/scripts/validate_dependency_update_policy.py'
       - '.github/workflows/sccache-main-prime.yml'
   # Manual dispatch repairs evicted protected-main cache entries.
   workflow_dispatch:
