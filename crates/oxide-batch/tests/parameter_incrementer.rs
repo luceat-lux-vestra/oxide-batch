@@ -299,12 +299,12 @@ fn incrementer_identity_is_restart_relevant_only_when_explicitly_declared()
 -> Result<(), Box<dyn Error>> {
     let name = JobName::new("incrementer-fingerprint")?;
     let legacy = flow_plan(&name, None)?;
-    assert_eq!(legacy.manifest_format(), 2);
+    assert_eq!(legacy.definition_identity().manifest_format(), 2);
     assert!(legacy.parameter_incrementer_identity().is_none());
 
     let v1_identity = incrementer_identity("run-id-v1")?;
     let v1 = flow_plan(&name, Some(v1_identity.clone()))?;
-    assert_eq!(v1.manifest_format(), 4);
+    assert_eq!(v1.definition_identity().manifest_format(), 4);
     assert_eq!(v1.parameter_incrementer_identity(), Some(&v1_identity));
     assert_ne!(legacy.fingerprint(), v1.fingerprint());
 
