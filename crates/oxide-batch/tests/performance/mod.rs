@@ -261,12 +261,12 @@ pub fn measurement_environment(worker_threads: usize) -> Value {
         "cpu_model": cpu_model(),
         "kernel": kernel_version(),
         "resident_kib": resident_kib(),
-        "hardware_stability_note": "runs-on: ubuntu-24.04 names an OS image, not stable CPU \
+        "hardware_stability_note": "The GitHub-hosted runs-on channel selects an OS image, not stable CPU \
                                     hardware. GitHub-hosted runners are not a guarantee of \
                                     consistent physical or virtual hardware between runs, so the \
-                                    CPU model and core count are recorded rather than assumed \
-                                    stable, and no throughput or latency figure here is compared \
-                                    across runs as if the hardware were held constant.",
+                                    resolved OS/kernel plus CPU model and core count are recorded \
+                                    rather than assumed stable, and no throughput or latency figure \
+                                    here is compared across runs as if the hardware were held constant.",
     })
 }
 
