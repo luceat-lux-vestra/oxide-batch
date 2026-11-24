@@ -10,7 +10,7 @@
   "permissions": {
     "contents": "read"
   },
-  "runner": "ubuntu-26.04",
+  "runner": "ubuntu-latest",
   "script": "./tests/fixtures/conformance/run-ci-campaign.sh {major} \"$SHARD_INDEX\" 2",
   "script_path": "tests/fixtures/conformance/run-ci-campaign.sh",
   "supported_matrix": [

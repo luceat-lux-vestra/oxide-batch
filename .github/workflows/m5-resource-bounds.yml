@@ -16,7 +16,7 @@ jobs:
     # Heavy final evidence: keep draft development on Fast branch CI only.
     if: ${{ github.event_name != 'pull_request' || github.event.pull_request.draft == false }}
     name: postgres-${{ matrix.postgres }}-resource-bounds-campaign
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     strategy:
       fail-fast: false
