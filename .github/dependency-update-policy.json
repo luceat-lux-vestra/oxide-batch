@@ -260,6 +260,30 @@
         "evidence": ".github/workflows/ci.yml and tests/fixtures/sqlserver/run-ci-runnable-core.sh",
         "trigger": "A new supported SQL Server CU/security release or repository support-matrix change."
       }
+    },
+    {
+      "id": "github-hosted-arm64-runner",
+      "source": "GitHub-hosted Ubuntu Arm64 runner generation used by active ARM64 CI, security, and cache jobs",
+      "source_paths": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/codeql.yml",
+        ".github/workflows/sccache-main-prime.yml",
+        ".github/workflows/supply-chain.yml"
+      ],
+      "strategy": "REVIEWED_FREEZE",
+      "authority": "GitHub-hosted runners documentation and Ubuntu runner GA announcements",
+      "mechanism": "Use the current GA versioned Arm64 label only because GitHub provides no official moving Ubuntu Arm64 alias. Do not add a bespoke updater; central EG-DEP-001 drift review owns stale-generation detection and the repository migrates to an official moving alias when GitHub provides one.",
+      "owner": "luceat-lux-vestra/oxide-batch#731",
+      "validation": "Exact-head ARM64 Rust, packaging, supply-chain, CodeQL and protected-main cache-prime coverage plus dependency-policy validation and Direct Merge Gate.",
+      "provenance": {
+        "label": "ubuntu-26.04-arm"
+      },
+      "revisit": {
+        "review_by": "2027-02-22",
+        "rationale": "This is a bounded provider-gap review, not a reproducibility or compatibility contract. GitHub currently exposes versioned Ubuntu Arm64 labels but no ubuntu-latest-arm equivalent.",
+        "evidence": "GitHub-hosted runner documentation plus active ARM64 workflow coverage reconciled by oxide-batch#731.",
+        "trigger": "GitHub publishes an official moving Ubuntu Arm64 alias, a newer supported GA Ubuntu Arm64 generation, or a runner-image security/support change."
+      }
     }
   ],
   "timezone": "Asia/Seoul"

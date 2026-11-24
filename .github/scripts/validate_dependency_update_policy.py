@@ -27,6 +27,7 @@ REVISIT_FIELDS = {"review_by", "rationale", "evidence", "trigger"}
 MAX_FREEZE_DAYS = 90
 SHA256 = re.compile(r"^[0-9a-f]{64}$")
 DIGEST_IMAGE = re.compile(r"^[^@\s]+@sha256:[0-9a-f]{64}$")
+GITHUB_ARM_RUNNER = re.compile(r"^ubuntu-\d{2}\.\d{2}-arm$")
 
 
 def _non_empty_text(value: Any) -> bool:
@@ -45,8 +46,15 @@ def _validate_provenance(value: Any, prefix: str, errors: list[str]) -> None:
 
     artifacts = value.get("artifacts")
     images = value.get("images")
-    if artifacts is None and images is None:
-        errors.append(f"{prefix}.provenance must declare artifacts or images")
+    label = value.get("label")
+    if artifacts is None and images is None and label is None:
+        errors.append(f"{prefix}.provenance must declare artifacts, images, or label")
+
+    if label is not None:
+        if not _non_empty_text(label) or GITHUB_ARM_RUNNER.fullmatch(label) is None:
+            errors.append(
+                f"{prefix}.provenance.label must be a versioned GitHub-hosted Ubuntu Arm64 label"
+            )
 
     if artifacts is not None:
         if not _non_empty_text(value.get("version")):

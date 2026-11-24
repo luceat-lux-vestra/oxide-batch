@@ -2,7 +2,7 @@
   "document": "How CI executes and merges the sharded M6 full component conformance campaign",
   "workflow_path": ".github/workflows/m6-conformance.yml",
   "workflow_name": "M6 Full Component Conformance",
-  "runner": "ubuntu-26.04",
+  "runner": "ubuntu-latest",
   "script": "./tests/fixtures/m6-conformance/run-ci-campaign.sh \"$SHARD_INDEX\" 2",
   "script_path": "tests/fixtures/m6-conformance/run-ci-campaign.sh",
   "command": [
@@ -29,7 +29,7 @@
     "15",
     "18"
   ],
-  "workflow_git_blob": "26019567f92646caea8eceedee4f398cba986ed6",
+  "workflow_git_blob": "a9f443fb3749641e5371f27e7a8040417d059cfb",
   "triggers": {
     "workflow_call": true,
     "workflow_dispatch": true

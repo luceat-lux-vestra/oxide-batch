@@ -110,6 +110,20 @@ class DependencyUpdatePolicyTests(unittest.TestCase):
         errors = self.validate(document)
         self.assertTrue(any("duplicates" in error for error in errors), errors)
 
+    def test_versioned_arm_runner_label_provenance_passes(self) -> None:
+        document = valid_document()
+        document["entries"][0]["provenance"] = {"label": "ubuntu-26.04-arm"}
+        self.assertEqual(self.validate(document), [])
+
+    def test_non_versioned_arm_runner_label_provenance_fails(self) -> None:
+        document = valid_document()
+        document["entries"][0]["provenance"] = {"label": "ubuntu-latest-arm"}
+        errors = self.validate(document)
+        self.assertTrue(
+            any("versioned GitHub-hosted Ubuntu Arm64 label" in error for error in errors),
+            errors,
+        )
+
     def test_invalid_artifact_checksum_fails(self) -> None:
         document = valid_document()
         document["entries"][0]["provenance"]["artifacts"]["linux"]["sha256"] = "bad"
