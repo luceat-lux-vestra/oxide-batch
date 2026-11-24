@@ -3,7 +3,7 @@
   "note": "This contract is the canonical execution description beside the campaign script. The dedicated workflow is a reusable/manual provisioning and call layer invoked by the PR campaign orchestrator, and its contract-check step fails closed when the workflow drifts from these values. Only the dedicated soak workflow is in this campaign's semantic closure, so unrelated quality or build changes in ci.yml do not invalidate retained soak evidence.",
   "identity_note": "workflow_git_blob and script_git_blob are the fail-closed authority, not the literal/semantic fields below them. They are each file's exact `git hash-object` identity: any byte-level change to the workflow or the script — an added trigger, a job-level permission override, a widened matrix, an appended command, even one changed comment byte — moves the identity and fails the contract check, whether or not every literal field below still happens to read true. The literal fields exist for a readable diagnostic, not as the boundary. This document does not hash itself: that would be self-referential, since updating the identities to match a legitimate change would also change the file recording them.",
   "workflow_path": ".github/workflows/m5-soak.yml",
-  "workflow_git_blob": "5c978037063ddd9f1e20766a9f2a7076d09272ad",
+  "workflow_git_blob": "5a851bd24f7563b4fcff63531dde87b29ca62c1f",
   "workflow_name": "M5 Soak",
   "triggers": {
     "workflow_call": true,
@@ -12,7 +12,7 @@
   "permissions": {
     "contents": "read"
   },
-  "runner": "ubuntu-26.04",
+  "runner": "ubuntu-latest",
   "script": "./tests/fixtures/soak/run-ci-campaign.sh ${{ matrix.postgres }}",
   "script_path": "tests/fixtures/soak/run-ci-campaign.sh",
   "script_git_blob": "dc995a3ba36e68417bee03d172e37c7623e8c401",
