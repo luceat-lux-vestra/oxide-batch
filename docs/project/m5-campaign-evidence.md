@@ -2196,8 +2196,8 @@ soak needs is the resource trajectory that led to it, and a job that uploaded
 only green reports would discard exactly the evidence worth reading. The job's
 timeout is `60` minutes — higher than the other campaigns because the window is
 minutes of work rather than seconds, and still a ceiling, because a soak that
-stopped making progress must fail rather than occupy a runner. It uses the
-explicit `ubuntu-24.04` label and `contents: read` permissions.
+stopped making progress must fail rather than occupy a runner. It uses the repository-owned
+`ubuntu-latest` x64 channel and `contents: read` permissions.
 
 ### Results
 
@@ -2800,8 +2800,8 @@ range, each provisioning its own server and calling
 [`run-ci-campaign.sh`](../../tests/fixtures/cancellation/run-ci-campaign.sh);
 how the campaign is executed lives in
 [`execution-contract.json`](../../tests/fixtures/cancellation/execution-contract.json)
-beside the campaign rather than in the workflow. The workflow uses the explicit
-`ubuntu-24.04` label, `contents: read` permissions, and the contract checker.
+beside the campaign rather than in the workflow. The workflow uses the repository-owned
+`ubuntu-latest` x64 channel, `contents: read` permissions, and the contract checker.
 Reports are retained on failure as well as success, because a failed
 cancellation campaign is mostly worth reading for the latency and
 unjoined-count detail that led there.

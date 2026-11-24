@@ -258,10 +258,14 @@ pub fn measurement_environment(worker_threads: usize) -> Value {
             .map_or_default(std::num::NonZeroUsize::get),
         "os": env::consts::OS,
         "arch": env::consts::ARCH,
+        "github_actions": variable("GITHUB_ACTIONS"),
+        "runner_os": variable("RUNNER_OS"),
+        "runner_arch": variable("RUNNER_ARCH"),
+        "runner_name": variable("RUNNER_NAME"),
         "cpu_model": cpu_model(),
         "kernel": kernel_version(),
         "resident_kib": resident_kib(),
-        "hardware_stability_note": "runs-on: ubuntu-24.04 names an OS image, not stable CPU \
+        "hardware_stability_note": "the selected GitHub-hosted runner image/channel does not name stable CPU \
                                     hardware. GitHub-hosted runners are not a guarantee of \
                                     consistent physical or virtual hardware between runs, so the \
                                     CPU model and core count are recorded rather than assumed \
@@ -407,7 +411,7 @@ pub fn kernel_version() -> Option<String> {
 ///
 /// Best effort and never asserted on: this exists so a reader comparing two
 /// runs can see whether the hardware actually differed rather than assume the
-/// `ubuntu-24.04` label means it did not.
+/// `runs-on` selection means it did not.
 #[must_use]
 pub fn cpu_model() -> Option<String> {
     if cfg!(target_os = "linux") {
