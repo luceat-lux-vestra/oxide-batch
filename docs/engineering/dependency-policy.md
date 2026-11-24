@@ -145,13 +145,21 @@ stable tool release is adopted, its immutable artifact digest and any cache or
 release provenance identity move in the same reviewed change.
 
 Hosted-runner lifecycle follows the same separation of concerns. Ordinary
-architecture-independent x64 jobs use GitHub's supported `ubuntu-latest`
-channel instead of accumulating static image-version pins. Evidence-producing
-M5/M6 workflows keep their explicit reviewed image because that image is part
-of the execution contract, and ARM64 remains explicit while GitHub provides no
-equivalent moving Ubuntu ARM alias. Those explicit runner changes therefore
-remain deliberate compatibility/evidence migrations rather than fake
-`latest` aliases.
+and evidence-producing architecture-independent x64 jobs use GitHub's supported
+`ubuntu-latest` channel instead of accumulating static image-version pins.
+For M5/M6 campaigns, the moving runner channel is part of the active execution
+contract while the resolved OS, kernel, CPU, and other environment details are
+run provenance. Historical retained evidence keeps the environment recorded by
+its producer run; current workflows do not freeze an old image to preserve that
+history.
+
+ARM64 uses the newest supported GA versioned GitHub-hosted runner label only
+because GitHub does not currently provide an equivalent moving Ubuntu ARM64
+alias. The versioned ARM64 label is not a `REVIEWED_FREEZE` and is not an
+evidence-compatibility contract. Do not add a bespoke updater solely for this
+label: central EG-DEP-001 drift auditing owns stale-label detection, and the
+repository should migrate to an official moving ARM64 alias when GitHub
+provides one.
 
 ## Update policy
 

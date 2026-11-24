@@ -16,7 +16,7 @@ jobs:
   route:
     if: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft == false }}
     name: trusted-campaign-route
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       classification_outcome: ${{ steps.classify.outcome }}
@@ -88,7 +88,7 @@ jobs:
     needs: route
     if: >-
       ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 55
     strategy:
       fail-fast: false
@@ -140,7 +140,7 @@ jobs:
     needs: route
     if: >-
       ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 55
     strategy:
       fail-fast: false
@@ -192,7 +192,7 @@ jobs:
     needs: [route, conformance-shard-15]
     if: >-
       ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -231,7 +231,7 @@ jobs:
     needs: [route, conformance-shard-18]
     if: >-
       ${{ always() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.draft == false && (needs.route.result != 'success' || needs.route.outputs.classification_outcome != 'success' || contains(needs.route.outputs.direct_workflows, '.github/workflows/m5-conformance.yml')))) }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Check out repository
@@ -269,7 +269,7 @@ jobs:
     name: postgres-${{ matrix.postgres }}-conformance-campaign
     needs: [route, conformance-deep-15, conformance-deep-18]
     if: ${{ always() }}
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     strategy:
       fail-fast: false

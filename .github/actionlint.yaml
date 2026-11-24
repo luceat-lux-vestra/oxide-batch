@@ -10,4 +10,3 @@ paths:
 self-hosted-runner:
   labels:
     - ubuntu-26.04-arm
-    - ubuntu-26.04
